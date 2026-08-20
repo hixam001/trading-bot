@@ -1,0 +1,20 @@
+# Core async & web framework
+fastapi[standard]==0.115.5
+uvicorn[standard]==0.32.1
+websockets==13.1
+
+# Async HTTP client (Ollama + external APIs)
+httpx==0.28.1
+
+# Async SQLite
+aiosqlite==0.20.0
+
+# Environment config
+python-dotenv==1.0.1
+
+# Scheduling (learning loop daily job)
+apscheduler==3.10.4
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.24.0

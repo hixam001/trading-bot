@@ -1,0 +1,10 @@
+# Placeholder — operator-supplied ingested material goes here.
+# Files placed in this directory are automatically loaded by knowledge_base.py
+# and added to the LLM's context (up to the character budget in config.py).
+#
+# Supported formats: .md, .txt
+# Examples: rug-pull case studies, tokenomics guides, post-mortems.
+#
+# This directory is tracked in git (so the ingested/ folder exists) but its
+# contents are typically operator-specific and may be gitignored depending
+# on your workflow.
