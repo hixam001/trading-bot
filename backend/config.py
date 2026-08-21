@@ -97,6 +97,10 @@ MIN_AGE_HOURS: int = 1              # must be at least 1h old
 MAX_AGE_HOURS: int = 168            # must be less than 7 days old
 MIN_VOLUME_24H_USD: float = 5_000.0
 MIN_MARKET_CAP_USD: float = 50_000.0
+# Volume-to-market-cap ratio (per memecoin_evaluation_notes.md section 3):
+# 24h volume below ~80% of market cap is a manipulation/bundling signal.
+# Only fires when market_cap_usd > 0 (guards against division by zero).
+MIN_VOLUME_TO_MCAP_RATIO: float = float(os.getenv("MIN_VOLUME_TO_MCAP_RATIO", "0.80"))
 # Trend-based filter (P2-5): if 1h volume is below this fraction of 6h volume,
 # the token's momentum has collapsed — only fires when both fields are non-None.
 # 3% is a conservative floor (proportional share = ~16.7%; 3% catches only clear collapses).

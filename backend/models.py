@@ -69,6 +69,12 @@ class Candidate:
     mint_authority_revoked: Optional[bool] = None
     freeze_authority_revoked: Optional[bool] = None
     is_likely_honeypot: Optional[bool] = None
+    # Additional security signals from Birdeye token_security endpoint:
+    #   mutable_metadata — True means name/symbol/URI can be changed post-launch
+    #                       (classic rug setup: launch legit, swap to scam metadata)
+    #   transfer_fee_enable — True means Token-2022 sell tax is active (hidden cost)
+    mutable_metadata: Optional[bool] = None
+    transfer_fee_enable: Optional[bool] = None
     # Trend / momentum fields (P2-5) — None = not available from this backend
     # Birdeye trending endpoint returns priceChange1hPercent, volume1hUSD, volume6hUSD.
     # Mock backend provides synthetic values.
@@ -96,6 +102,8 @@ class Candidate:
             "mint_authority_revoked": self.mint_authority_revoked,
             "freeze_authority_revoked": self.freeze_authority_revoked,
             "is_likely_honeypot": self.is_likely_honeypot,
+            "mutable_metadata": self.mutable_metadata,
+            "transfer_fee_enable": self.transfer_fee_enable,
             # Trend fields
             "price_change_1h_pct": self.price_change_1h_pct,
             "volume_1h_usd": self.volume_1h_usd,

@@ -112,7 +112,7 @@ async def check_ollama_health() -> dict:
 # Scoring prompt builder
 # ---------------------------------------------------------------------------
 
-def _build_scoring_prompt(candidate: Candidate, kb_context: str) -> str:
+def _build_scoring_prompt(candidate: Candidate, kb_context: str, soft_flags: list[str] | None = None) -> str:
     # Format security fields — None means "not checked" (different from False = "checked, safe")
     def _fmt_bool_or_unknown(val: Optional[bool], true_label: str, false_label: str) -> str:
         if val is None:
@@ -128,6 +128,12 @@ def _build_scoring_prompt(candidate: Candidate, kb_context: str) -> str:
     sec_honeypot = _fmt_bool_or_unknown(
         candidate.is_likely_honeypot, "YES (honeypot suspected — reject)", "NO (not flagged)"
     )
+    sec_mutable = _fmt_bool_or_unknown(
+        candidate.mutable_metadata, "YES (metadata mutable — creator can change name/symbol)", "NO (metadata locked)"
+    )
+    sec_fee = _fmt_bool_or_unknown(
+        candidate.transfer_fee_enable, "YES (sell tax active — hidden exit cost)", "NO (no transfer fee)"
+    )
 
     # Format trend fields — None means "not available from this backend"
     def _fmt_float_or_na(val: Optional[float], fmt: str = ".2f") -> str:
@@ -136,6 +142,21 @@ def _build_scoring_prompt(candidate: Candidate, kb_context: str) -> str:
     trend_1h_pct  = _fmt_float_or_na(candidate.price_change_1h_pct, "+.1f")
     trend_vol_1h  = f"${candidate.volume_1h_usd:,.0f}" if candidate.volume_1h_usd is not None else "n/a"
     trend_vol_6h  = f"${candidate.volume_6h_usd:,.0f}" if candidate.volume_6h_usd is not None else "n/a"
+
+    # Pre-filter risk flags section — only rendered when flags were raised
+    flags = soft_flags or []
+    if flags:
+        flags_lines = "\n".join(f"  - {f}" for f in flags)
+        soft_flags_section = f"""\n## Pre-filter Risk Flags
+The following signals were raised by deterministic checks but did not automatically
+reject this candidate. You must weigh them together as a set, not individually:
+{flags_lines}
+A single flag alone does not justify a fail verdict. Multiple stacking flags should
+lower your confidence and may justify fail — but explain which combination drove
+your decision, not just the presence of any one flag.
+"""
+    else:
+        soft_flags_section = "\n## Pre-filter Risk Flags\n  (none raised — candidate passed all soft checks cleanly)\n"
 
     return f"""You are a Solana memecoin paper-trading analyst. Evaluate the candidate token below for a simulated trade entry.
 
@@ -157,12 +178,14 @@ def _build_scoring_prompt(candidate: Candidate, kb_context: str) -> str:
 - Mint authority revoked: {sec_mint}
 - Freeze authority revoked: {sec_freeze}
 - Likely honeypot: {sec_honeypot}
+- Metadata mutable: {sec_mutable}
+- Transfer fee active: {sec_fee}
 
 ## Trend / Momentum (last 1h and 6h)
 - Price change 1h: {trend_1h_pct}%
 - Volume 1h: {trend_vol_1h}
 - Volume 6h: {trend_vol_6h}
-
+{soft_flags_section}
 ## Instructions
 Respond ONLY with a single valid JSON object — no preamble, no explanation, no markdown fences.
 The JSON must contain exactly these fields:
@@ -180,6 +203,7 @@ The JSON must contain exactly these fields:
 1. SECURITY CLAIMS: Only mention mint authority, freeze authority, or honeypot status in your thesis or risk_flags if the corresponding field above is NOT 'unknown (not checked)'. If a security field is unknown, write 'security status unknown' rather than speculating. Never invent a security claim not supported by the data above.
 2. TREND GROUNDING: Your thesis MUST reference at least one specific number from the Trend/Momentum section above (price change %, volume 1h, or volume 6h). A thesis that contains no specific numbers from the data will be rejected. Do not write a thesis that could apply equally to any token.
 3. NO BOILERPLATE: Do not reuse generic phrases. Every thesis must be unique to this specific token's numbers.
+4. SOFT FLAGS: If pre-filter risk flags were raised, your risk_flags array MUST reference which flag(s) most influenced your verdict. Do not ignore them. Do not hard-reject on a single soft flag — explain how the combination factored into your confidence.
 """
 
 
@@ -291,9 +315,17 @@ def _extract_json_from_response(text: str) -> Optional[dict]:
 # Main scoring function
 # ---------------------------------------------------------------------------
 
-async def score_candidate(candidate: Candidate, kb_context: str) -> Optional[Verdict]:
+async def score_candidate(
+    candidate: Candidate,
+    kb_context: str,
+    soft_flags: list[str] | None = None,
+) -> Optional[Verdict]:
     """
     Score a single candidate using the local Ollama LLM.
+
+    soft_flags — risk flag strings from the deterministic filter's Tier 2 checks.
+    These are injected into the scoring prompt so the LLM weighs them together
+    rather than having them be an invisible pre-filter rejection.
 
     Returns a validated Verdict, or None if the LLM call fails or returns
     a malformed response (fail closed — the candidate is skipped).
@@ -301,7 +333,7 @@ async def score_candidate(candidate: Candidate, kb_context: str) -> Optional[Ver
     Timing is logged so the tick loop can track LLM latency (performance-
     discipline rule 7: measure before optimizing).
     """
-    prompt = _build_scoring_prompt(candidate, kb_context)
+    prompt = _build_scoring_prompt(candidate, kb_context, soft_flags=soft_flags)
     client = _get_client()
     t_start = time.monotonic()
 

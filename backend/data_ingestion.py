@@ -119,7 +119,7 @@ async def _get_with_retry(
 _MOCK_TOKENS = [
     {
         "symbol": "BONK2",   "mint": "Bon2K9GQmXfzrqLvQ8PtHH1mnXpkHkFMwGJzEzmZNKM",
-        "base_price": 0.0000234,  "liq": 145_000, "vol": 87_000,  "holders": 3200,  "top_pct": 4.2,  "age_h": 36.0,   "mcap": 420_000,
+        "base_price": 0.0000234,  "liq": 145_000, "vol": 450_000,  "holders": 3200,  "top_pct": 4.2,  "age_h": 36.0,   "mcap": 420_000,
         # Security (verified revocations)
         "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
         # Trend (strong upward momentum)
@@ -127,7 +127,7 @@ _MOCK_TOKENS = [
     },
     {
         "symbol": "MOONCAT",  "mint": "MooNjH3vBcYE8mBn3E9bM5GhqK2vUrXjL4d7fKwD1",
-        "base_price": 0.00000087, "liq": 62_000,  "vol": 31_000,  "holders": 1100,  "top_pct": 9.8,  "age_h": 18.0,   "mcap": 180_000,
+        "base_price": 0.00000087, "liq": 62_000,  "vol": 120_000,  "holders": 1100,  "top_pct": 9.8,  "age_h": 18.0,   "mcap": 180_000,
         # Security (mint authority not revoked — risk)
         "mint_auth_revoked": False, "freeze_auth_revoked": True, "honeypot": False,
         # Trend (modest, decelerating)
@@ -143,7 +143,7 @@ _MOCK_TOKENS = [
     },   # fails: low liq + concentration + holders
     {
         "symbol": "SOLPEPE",  "mint": "So1pEPE9mHgKQN5vLrXzU7dBnXpMwKzL3f9sT2mRa",
-        "base_price": 0.00000312, "liq": 89_000,  "vol": 52_000,  "holders": 2400,  "top_pct": 7.1,  "age_h": 48.0,   "mcap": 230_000,
+        "base_price": 0.00000312, "liq": 89_000,  "vol": 160_000,  "holders": 2400,  "top_pct": 7.1,  "age_h": 48.0,   "mcap": 230_000,
         # Security (both revoked — clean)
         "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
         # Trend (moderate, stable)
@@ -167,7 +167,7 @@ _MOCK_TOKENS = [
     },   # fails: too old + low vol
     {
         "symbol": "WIFHAT2",  "mint": "WIFhAt2bKpRmX9nL3sU7vC1DhFgJzT4o5qP8mNkYe",
-        "base_price": 0.00000742, "liq": 310_000, "vol": 198_000, "holders": 8900,  "top_pct": 2.8,  "age_h": 72.0,   "mcap": 890_000,
+        "base_price": 0.00000742, "liq": 310_000, "vol": 950_000, "holders": 8900,  "top_pct": 2.8,  "age_h": 72.0,   "mcap": 890_000,
         # Security (clean)
         "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
         # Trend (strong sustained momentum)
@@ -264,6 +264,12 @@ async def _get_birdeye_candidates() -> list[Candidate]:
     We default holder_count=999 (passes the filter floor) and age_hours=48
     so good tokens aren't silently dropped. The LLM scorer sees these
     as unknowns and can penalise accordingly via risk_flags.
+
+    Security enrichment: after parsing trending tokens, we fetch
+    GET /defi/token_security for ALL candidates concurrently via asyncio.gather.
+    Each security fetch is independent — a failure on one does not affect others.
+    Fields that fail to populate remain None (unknown), per the defense-first
+    rule that None must never be fabricated as False ("safe").
     """
     if not config.BIRDEYE_API_KEY:
         raise RuntimeError(
@@ -306,7 +312,119 @@ async def _get_birdeye_candidates() -> list[Candidate]:
             # Skip this token — don't let one bad token kill the batch
 
     log.info("BirdEye: %d candidates parsed from %d returned", len(candidates), len(tokens_raw))
+
+    if not candidates:
+        return candidates
+
+    # Step 2: Concurrently enrich all candidates with security data.
+    # asyncio.gather with return_exceptions=True — individual failures don't kill the batch.
+    log.info("BirdEye: fetching security data for %d candidates concurrently", len(candidates))
+    security_results = await asyncio.gather(
+        *[_fetch_birdeye_security(c.mint_address, headers) for c in candidates],
+        return_exceptions=True,
+    )
+
+    enriched_count = 0
+    for candidate, sec in zip(candidates, security_results):
+        if isinstance(sec, Exception):
+            log.warning(
+                "Security fetch failed for %s (%s): %s — security fields remain None",
+                candidate.symbol, candidate.mint_address, sec,
+            )
+            continue
+        if isinstance(sec, dict):
+            candidate.mint_authority_revoked = sec.get("mint_authority_revoked")  # bool or None
+            candidate.freeze_authority_revoked = sec.get("freeze_authority_revoked")
+            candidate.is_likely_honeypot = sec.get("is_likely_honeypot")
+            candidate.mutable_metadata = sec.get("mutable_metadata")
+            candidate.transfer_fee_enable = sec.get("transfer_fee_enable")
+            candidate.source = "birdeye:security_enriched"
+            enriched_count += 1
+
+    log.info(
+        "BirdEye: security enrichment complete — %d/%d candidates enriched",
+        enriched_count, len(candidates),
+    )
     return candidates
+
+
+async def _fetch_birdeye_security(mint_address: str, headers: dict) -> dict:
+    """
+    Fetch security fields for a single token from Birdeye's /defi/token_security.
+
+    Returns a dict with the following keys (all Optional[bool]):
+        mint_authority_revoked   — None if owner_address key absent
+        freeze_authority_revoked — derived from "freezeable" boolean
+        is_likely_honeypot       — derived from "nonTransferable"
+        mutable_metadata         — from "mutableMetadata"
+        transfer_fee_enable      — from "transferFeeEnable"
+
+    On any error (network, HTTP, parse), raises so the caller (asyncio.gather
+    with return_exceptions=True) can catch and log it per-candidate.
+
+    Cost: 40 Compute Units per call on the Birdeye API.
+    Field names verified from Birdeye security data glossary 2026.
+    """
+    resp = await _get_with_retry(
+        f"{config.BIRDEYE_BASE_URL}/defi/token_security",
+        headers=headers,
+        params={"address": mint_address},
+    )
+    raw = resp.json()
+
+    # Birdeye wraps response in {"success": true, "data": {...}}
+    if not raw.get("success"):
+        raise ValueError(f"Birdeye token_security returned success=false for {mint_address}")
+
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        raise ValueError(f"Birdeye token_security missing 'data' dict for {mint_address}")
+
+    # mint_authority_revoked: ownerAddress null OR renounced=true means revoked
+    # We prefer the "renounced" boolean (convenience field) if present,
+    # falling back to ownerAddress being None.
+    def _parse_mint_authority_revoked(d: dict) -> Optional[bool]:
+        if "renounced" in d and isinstance(d["renounced"], bool):
+            return d["renounced"]  # True = authority renounced = safe
+        if "ownerAddress" in d:
+            return d["ownerAddress"] is None  # None address = revoked
+        return None  # field absent = unknown
+
+    # freeze_authority_revoked: NOT freezeable
+    def _parse_freeze_authority_revoked(d: dict) -> Optional[bool]:
+        if "freezeable" in d and isinstance(d["freezeable"], bool):
+            return not d["freezeable"]  # freezeable=False means freeze auth revoked
+        if "freezeAuthority" in d:
+            fa = d["freezeAuthority"]
+            # Null address or system address means no freeze authority
+            return fa is None or fa == "11111111111111111111111111111111"
+        return None
+
+    # is_likely_honeypot: nonTransferable=True means tokens cannot be moved
+    def _parse_honeypot(d: dict) -> Optional[bool]:
+        if "nonTransferable" in d and isinstance(d["nonTransferable"], bool):
+            return d["nonTransferable"]
+        return None
+
+    # mutableMetadata: True means creator can change name/symbol/URI
+    def _parse_mutable(d: dict) -> Optional[bool]:
+        if "mutableMetadata" in d and isinstance(d["mutableMetadata"], bool):
+            return d["mutableMetadata"]
+        return None
+
+    # transferFeeEnable: Token-2022 feature — True means hidden sell tax
+    def _parse_fee(d: dict) -> Optional[bool]:
+        if "transferFeeEnable" in d and isinstance(d["transferFeeEnable"], bool):
+            return d["transferFeeEnable"]
+        return None
+
+    return {
+        "mint_authority_revoked": _parse_mint_authority_revoked(data),
+        "freeze_authority_revoked": _parse_freeze_authority_revoked(data),
+        "is_likely_honeypot": _parse_honeypot(data),
+        "mutable_metadata": _parse_mutable(data),
+        "transfer_fee_enable": _parse_fee(data),
+    }
 
 
 def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
@@ -396,16 +514,8 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
             item.get("symbol"),
         )
 
-    # Security fields — NOT available from the trending endpoint.
-    # A separate /defi/token_security call would be required.
-    # Explicitly set to None ("not checked") — never False ("checked, safe").
-    mint_authority_revoked: Optional[bool] = None
-    freeze_authority_revoked: Optional[bool] = None
-    is_likely_honeypot: Optional[bool] = None
-    log.debug(
-        "BirdEye token %s: security fields unavailable from trending endpoint — set to None",
-        item.get("symbol"),
-    )
+    # Security fields: all None here — populated later by the concurrent
+    # _fetch_birdeye_security() call in _get_birdeye_candidates().
 
     return Candidate(
         symbol=item["symbol"],
@@ -419,9 +529,11 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
         market_cap_usd=float(market_cap),
         name=item.get("name", item["symbol"]),
         source=source_tag,
-        mint_authority_revoked=mint_authority_revoked,
-        freeze_authority_revoked=freeze_authority_revoked,
-        is_likely_honeypot=is_likely_honeypot,
+        mint_authority_revoked=None,   # populated by _fetch_birdeye_security
+        freeze_authority_revoked=None,
+        is_likely_honeypot=None,
+        mutable_metadata=None,
+        transfer_fee_enable=None,
         price_change_1h_pct=price_change_1h_pct,
         volume_1h_usd=volume_1h_usd,
         volume_6h_usd=volume_6h_usd,

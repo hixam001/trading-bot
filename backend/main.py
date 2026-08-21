@@ -173,47 +173,52 @@ async def _run_single_tick(tick_num: int) -> None:
             name=f"reflect_{closed_trade.trade_id[:8]}",
         )
 
-    # ── 3. Deterministic filter ──────────────────────────────────────────────
+    # ── 3. Deterministic filter ──────────────────────────────────────────
     t_filter = time.monotonic()
-    passed_candidates = []
-    filtered_events: list[FeedEvent] = []
+    hard_fail_events: list[FeedEvent] = []
+    # (candidate, soft_flags) pairs that survive to LLM scoring
+    candidates_for_llm: list[tuple] = []
 
     for c in candidates:
-        passed, flags = deterministic_filter.apply_filters(c)
-        if not passed:
-            filtered_events.append(FeedEvent(
+        hard_fail, hard_fail_reason, soft_flags = deterministic_filter.apply_filters(c)
+        if hard_fail:
+            # Tier 1: instant rejection — no LLM call, precise single reason
+            hard_fail_events.append(FeedEvent(
                 symbol=c.symbol,
                 mint_address=c.mint_address,
                 candidate_snapshot=c.to_dict(),
                 verdict="fail",
-                risk_flags=flags,
-                thesis=f"Pre-filter rejection: {'; '.join(flags)}",
+                risk_flags=[hard_fail_reason],
+                thesis=f"Hard-filter rejection: {hard_fail_reason}",
             ))
         else:
-            passed_candidates.append(c)
+            # Tier 2: soft-flagged or clean — proceed to LLM with flags attached
+            candidates_for_llm.append((c, soft_flags))
 
     log.info(
-        "Filter: %d/%d passed in %.2fs",
-        len(passed_candidates),
+        "Filter: %d hard-fail, %d to LLM (%d with soft flags) from %d in %.2fs",
+        len(hard_fail_events),
+        len(candidates_for_llm),
+        sum(1 for _, sf in candidates_for_llm if sf),
         len(candidates),
         time.monotonic() - t_filter,
     )
 
-    # Persist filter-rejection events (FR-3: log both pass and fail)
-    if filtered_events:
+    # Persist hard-fail events (FR-3: log every decision including hard rejections)
+    if hard_fail_events:
         async with db.get_db() as conn:
-            for event in filtered_events:
+            for event in hard_fail_events:
                 event.id = await db.insert_feed_event(conn, event)
-
-    # ── 4. LLM scoring (serial — GPU is the bottleneck) ─────────────────────
+    
+    # ── 4. LLM scoring (serial — GPU is the bottleneck) ──────────────────────
     t_score = time.monotonic()
     kb_context = knowledge_base.get_context()
     score_events: list[FeedEvent] = []
-    new_positions_to_open: list[tuple] = []  # (candidate, verdict)
+    new_positions_to_open: list[tuple] = []  # (candidate, verdict, event)
 
-    for candidate in passed_candidates[:config.MAX_CANDIDATES_PER_TICK]:
+    for candidate, soft_flags in candidates_for_llm[:config.MAX_CANDIDATES_PER_TICK]:
         try:
-            verdict = await llm_scorer.score_candidate(candidate, kb_context)
+            verdict = await llm_scorer.score_candidate(candidate, kb_context, soft_flags=soft_flags)
         except Exception as exc:
             log.error("LLM scoring failed for %s: %s", candidate.symbol, exc, exc_info=True)
             continue
@@ -226,10 +231,14 @@ async def _run_single_tick(tick_num: int) -> None:
                 mint_address=candidate.mint_address,
                 candidate_snapshot=candidate.to_dict(),
                 verdict="fail",
-                risk_flags=["llm_error"],
+                risk_flags=soft_flags + ["llm_error"],
                 thesis="LLM scoring failed — candidate skipped (fail closed).",
             ))
             continue
+
+        # Merge deterministic soft_flags with LLM's own risk_flags so the feed
+        # event always shows the complete set of known risks (FR-3).
+        merged_flags = soft_flags + [f for f in verdict.risk_flags if f not in soft_flags]
 
         event = FeedEvent(
             symbol=candidate.symbol,
@@ -237,7 +246,7 @@ async def _run_single_tick(tick_num: int) -> None:
             candidate_snapshot=candidate.to_dict(),
             verdict=verdict.verdict,
             confidence=verdict.confidence,
-            risk_flags=verdict.risk_flags,
+            risk_flags=merged_flags,
             entry_condition=verdict.entry_condition,
             invalidation_condition=verdict.invalidation_condition,
             thesis=verdict.thesis,
@@ -250,7 +259,7 @@ async def _run_single_tick(tick_num: int) -> None:
 
     log.info(
         "LLM: %d scored in %.2fs | %d pass, %d fail",
-        len(passed_candidates),
+        len(candidates_for_llm),
         time.monotonic() - t_score,
         len(new_positions_to_open),
         len(score_events),
