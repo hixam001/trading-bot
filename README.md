@@ -39,7 +39,7 @@ trading-bot/
 
 ```bash
 cp .env.example .env
-# Edit .env — add BIRDEYE_API_KEY if using birdeye backend
+# Edit .env — set BIRDEYE_API_KEY, DATA_BACKEND=birdeye
 ```
 
 ### 2. Backend
@@ -47,14 +47,32 @@ cp .env.example .env
 ```bash
 cd backend
 python3 -m venv .venv
+pip install -r requirements.txt  # or: .venv/bin/pip install -r requirements.txt
+```
+
+**bash / zsh:**
+```bash
 source .venv/bin/activate
-pip install -r requirements.txt
-
-# Start the FastAPI server (reads/writes SQLite)
 uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-
-# In a second terminal — start the tick loop
+# (second terminal)
 python main.py
+```
+
+**Fish shell:**
+```fish
+source .venv/bin/activate.fish
+uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+# (second terminal)
+python main.py
+```
+
+**Or skip activation entirely (works in any shell):**
+```bash
+# Terminal 1 — API
+.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+# Terminal 2 — Tick loop
+.venv/bin/python main.py
 ```
 
 ### 3. Frontend
@@ -69,7 +87,7 @@ npm run dev   # → http://localhost:5173
 
 ```bash
 cd backend
-pytest tests/ -v
+.venv/bin/pytest tests/ -v
 ```
 
 ## Data backends

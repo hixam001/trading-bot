@@ -53,6 +53,8 @@ OLLAMA_TAGS_ENDPOINT: str = f"{OLLAMA_URL}/api/tags"
 # ---------------------------------------------------------------------------
 DATA_BACKEND: str = os.getenv("DATA_BACKEND", "mock")  # mock | birdeye | coinstats
 BIRDEYE_API_KEY: str = os.getenv("BIRDEYE_API_KEY", "")
+COINSTATS_API_KEY: str = os.getenv("COINSTATS_API_KEY", "")
+JUPITER_API_KEY: str = os.getenv("JUPITER_API_KEY", "")
 BIRDEYE_BASE_URL: str = "https://public-api.birdeye.so"
 JUPITER_QUOTE_URL: str = "https://quote-api.jup.ag/v6/quote"
 

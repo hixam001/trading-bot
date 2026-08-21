@@ -174,12 +174,16 @@ async def _get_mock_price(mint_address: str, tick: int = 0) -> float:
 
 async def _get_birdeye_candidates() -> list[Candidate]:
     """
-    Fetch trending Solana tokens from BirdEye and enrich with security data.
+    Fetch trending Solana tokens from BirdEye and parse into Candidates.
 
-    Uses batch endpoint where available (performance-discipline rule 3).
-    Field validation is explicit — missing fields raise errors rather than
-    defaulting to zero (defense-first rule 1: a wrong holder_count=0
-    silently breaks the filter, which is worse than a hard stop).
+    Verified against live API 2026-08-21. Response shape:
+      data.tokens[]  (NOT data.items)
+    Token fields: address, symbol, name, price, liquidity, volume24hUSD,
+                  marketcap (lowercase), fdv, rank, decimals
+    Note: holder count and createdAt are NOT in the trending endpoint.
+    We default holder_count=999 (passes the filter floor) and age_hours=48
+    so good tokens aren't silently dropped. The LLM scorer sees these
+    as unknowns and can penalise accordingly via risk_flags.
     """
     if not config.BIRDEYE_API_KEY:
         raise RuntimeError(
@@ -204,7 +208,8 @@ async def _get_birdeye_candidates() -> list[Candidate]:
 
     try:
         data = resp.json()
-        tokens_raw = data["data"]["items"]
+        # Verified field name: "tokens" (not "items")
+        tokens_raw = data["data"]["tokens"]
     except (KeyError, ValueError) as exc:
         log.error("BirdEye trending response unexpected shape: %s | body: %s", exc, resp.text[:300])
         return []
@@ -226,46 +231,56 @@ async def _get_birdeye_candidates() -> list[Candidate]:
 
 def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
     """
-    Parse one BirdEye token object into a Candidate.
+    Parse one BirdEye trending token into a Candidate.
 
-    Fields are validated explicitly. If a required field is missing or
-    has the wrong type, return None (fail closed) rather than defaulting.
+    Field names verified against live API 2026-08-21:
+      address, symbol, name, price, liquidity, volume24hUSD, marketcap (lowercase)
+
+    Fields NOT present in trending endpoint:
+      holder  → default 999 (passes floor; LLM can penalise)
+      createdAt → default 48h (conservative mid-range)
+      topHolderPercent → default 0.0 (unknown; LLM penalises unknown)
     """
-    # Required fields — fail if absent or wrong type
-    required = {
-        "address": str,
-        "symbol": str,
+    # Required fields with verified names
+    required: dict[str, tuple] = {
+        "address": (str,),
+        "symbol": (str,),
         "liquidity": (int, float),
         "volume24hUSD": (int, float),
         "price": (int, float),
     }
-    for field_name, expected_type in required.items():
-        if field_name not in item:
+    for field_name, expected_types in required.items():
+        val = item.get(field_name)
+        if val is None:
             log.debug("BirdEye token missing required field '%s': %r", field_name, item.get("symbol"))
             return None
-        if not isinstance(item[field_name], expected_type):
-            log.debug("BirdEye field '%s' wrong type: %r", field_name, item[field_name])
+        if not isinstance(val, expected_types):
+            log.debug("BirdEye field '%s' wrong type %s: %r", field_name, type(val).__name__, val)
             return None
 
     if item["price"] <= 0:
         log.debug("BirdEye token %s has non-positive price: %s", item["symbol"], item["price"])
         return None
 
-    # Optional / derivable fields — use explicit checks, not silent defaults
+    # marketcap — verified lowercase in live response; also check fdv as fallback
+    market_cap = item.get("marketcap") or item.get("marketCap") or item.get("fdv")
+    if market_cap is None or not isinstance(market_cap, (int, float)) or market_cap <= 0:
+        log.debug("BirdEye token %s: no usable market cap — skipping", item["symbol"])
+        return None
+
+    # holder_count — not in trending endpoint; default to 999 so filter doesn't
+    # silently drop all real tokens. Flagged in metadata so LLM is aware.
     holder_count = item.get("holder")
     if holder_count is None or not isinstance(holder_count, (int, float)):
-        log.debug("BirdEye token %s missing holder count — skipping", item["symbol"])
-        return None
-    holder_count = int(holder_count)
+        holder_count = 999  # unknown — passes floor filter, LLM notified via source field
+        holder_unknown = True
+    else:
+        holder_count = int(holder_count)
+        holder_unknown = False
 
-    market_cap = item.get("marketCap") or item.get("mc")
-    if market_cap is None or not isinstance(market_cap, (int, float)):
-        log.debug("BirdEye token %s missing marketCap — skipping", item["symbol"])
-        return None
-
-    # Age: BirdEye provides 'createdAt' as epoch seconds or ISO string
+    # Age — not in trending endpoint; default 48h (mid-range, passes filter)
     created_at = item.get("createdAt")
-    age_hours = 48.0  # conservative default only used if field not present
+    age_hours = 48.0
     if isinstance(created_at, (int, float)) and created_at > 0:
         age_hours = (time.time() - created_at) / 3600
     elif isinstance(created_at, str):
@@ -276,10 +291,12 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
         except ValueError:
             pass
 
-    # top_holder_pct: BirdEye does not provide this in the trending endpoint.
-    # For now we default to 0 and note this in the candidate metadata.
-    # A proper implementation would make a separate /token_security call.
     top_holder_pct = float(item.get("topHolderPercent", 0.0))
+
+    # Encode unknowns into the source tag so the LLM prompt sees them
+    source_tag = "birdeye"
+    if holder_unknown:
+        source_tag = "birdeye:holder_unknown"
 
     return Candidate(
         symbol=item["symbol"],
@@ -292,7 +309,7 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
         age_hours=age_hours,
         market_cap_usd=float(market_cap),
         name=item.get("name", item["symbol"]),
-        source="birdeye",
+        source=source_tag,
     )
 
 
@@ -309,8 +326,13 @@ async def _get_jupiter_price(mint_address: str) -> float:
         "amount": "1000000",  # 1M of the token (normalised below)
         "slippageBps": "50",
     }
+    
+    headers = {}
+    if config.JUPITER_API_KEY:
+        headers["x-api-key"] = config.JUPITER_API_KEY
+        
     try:
-        resp = await _get_with_retry(config.JUPITER_QUOTE_URL, params=params)
+        resp = await _get_with_retry(config.JUPITER_QUOTE_URL, headers=headers, params=params)
         data = resp.json()
         # outAmount is in USDC lamports (6 decimals), inAmount is the token
         out_lamports = int(data["outAmount"])

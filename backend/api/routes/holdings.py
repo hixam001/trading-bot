@@ -2,9 +2,13 @@
 api/routes/holdings.py — GET /api/holdings
 
 Returns current open positions with live unrealized P&L.
+Price fetches are capped at PRICE_FETCH_TIMEOUT_S — if the price API is
+unreachable or slow, holdings still load immediately with null P&L rather
+than blocking the whole request for 30+ seconds.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 
 import data_ingestion
@@ -14,6 +18,10 @@ from fastapi import APIRouter
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+# Hard cap per-position price fetch: never let one slow DNS/network call
+# block the whole holdings response. P&L shows as null instead.
+PRICE_FETCH_TIMEOUT_S = 3.0
 
 
 @router.get("/holdings")
@@ -29,8 +37,7 @@ async def get_holdings():
         open_trades = await db.get_open_trades(conn)
         cash = await db.get_cash_balance(conn)
 
-    holdings = []
-    for trade in open_trades:
+    async def fetch_price(trade):
         holding: dict = {
             "trade_id": trade.trade_id,
             "symbol": trade.symbol,
@@ -46,17 +53,24 @@ async def get_holdings():
             "unrealized_pnl_pct": None,
         }
         try:
-            current_price = await data_ingestion.get_current_price(trade.mint_address)
+            current_price = await asyncio.wait_for(
+                data_ingestion.get_current_price(trade.mint_address),
+                timeout=PRICE_FETCH_TIMEOUT_S,
+            )
             pnl_usd, pnl_pct = engine.compute_unrealized_pnl(trade, current_price)
             holding["current_price_usd"] = current_price
             holding["unrealized_pnl_usd"] = round(pnl_usd, 4)
             holding["unrealized_pnl_pct"] = round(pnl_pct, 2)
+        except asyncio.TimeoutError:
+            log.warning("Price fetch timed out for %s (>%.0fs) — showing null P&L",
+                        trade.symbol, PRICE_FETCH_TIMEOUT_S)
         except data_ingestion.PriceUnavailableError as exc:
             log.warning("Price unavailable for %s: %s", trade.symbol, exc)
         except ValueError as exc:
             log.error("P&L computation error for trade %s: %s", trade.trade_id, exc)
+        return holding
 
-        holdings.append(holding)
+    holdings = await asyncio.gather(*(fetch_price(t) for t in open_trades))
 
     return {
         "holdings": holdings,
