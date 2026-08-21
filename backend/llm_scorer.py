@@ -169,9 +169,9 @@ your decision, not just the presence of any one flag.
 - Price: ${candidate.price_usd:.8f}
 - Liquidity: ${candidate.liquidity_usd:,.0f}
 - Volume 24h: ${candidate.volume_24h_usd:,.0f}
-- Holder count: {candidate.holder_count:,}
-- Top single holder: {candidate.top_holder_pct:.1f}%
-- Token age: {candidate.age_hours:.1f} hours
+- Holder count: {candidate.holder_count if candidate.holder_count is not None else "unknown (not retrieved)"}
+- Top single holder: {f"{candidate.top_holder_pct:.1f}%" if candidate.top_holder_pct is not None else "unknown (not retrieved)"}
+- Token age: {f"{candidate.age_hours:.1f} hours" if candidate.age_hours is not None else "unknown (not retrieved)"}
 - Market cap: ${candidate.market_cap_usd:,.0f}
 
 ## Security Checks

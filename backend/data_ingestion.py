@@ -316,34 +316,68 @@ async def _get_birdeye_candidates() -> list[Candidate]:
     if not candidates:
         return candidates
 
-    # Step 2: Concurrently enrich all candidates with security data.
-    # asyncio.gather with return_exceptions=True — individual failures don't kill the batch.
-    log.info("BirdEye: fetching security data for %d candidates concurrently", len(candidates))
-    security_results = await asyncio.gather(
+    n = len(candidates)
+    # Step 2: Concurrently fetch all enrichment data for all candidates.
+    # Three enrichments run in parallel per candidate, all candidates in parallel.
+    # asyncio.gather with return_exceptions=True — a failure in one per-candidate
+    # enrichment doesn't kill any other enrichment or any other candidate.
+    log.info("BirdEye: fetching security + overview + top-holder for %d candidates concurrently", n)
+    all_results = await asyncio.gather(
+        # Slice 0:n   — security (mint auth, freeze, honeypot, mutable, fee)
         *[_fetch_birdeye_security(c.mint_address, headers) for c in candidates],
+        # Slice n:2n  — overview (holder count, creation age)
+        *[_fetch_birdeye_token_overview(c.mint_address, headers) for c in candidates],
+        # Slice 2n:3n — top holder (top_holder_pct)
+        *[_fetch_birdeye_top_holder_pct(c.mint_address, headers) for c in candidates],
         return_exceptions=True,
     )
+    security_results = all_results[0:n]
+    overview_results = all_results[n:2 * n]
+    top_holder_results = all_results[2 * n:3 * n]
 
-    enriched_count = 0
-    for candidate, sec in zip(candidates, security_results):
+    sec_ok = ov_ok = th_ok = 0
+    for i, candidate in enumerate(candidates):
+        # ─ Security ─
+        sec = security_results[i]
         if isinstance(sec, Exception):
-            log.warning(
-                "Security fetch failed for %s (%s): %s — security fields remain None",
-                candidate.symbol, candidate.mint_address, sec,
-            )
-            continue
-        if isinstance(sec, dict):
-            candidate.mint_authority_revoked = sec.get("mint_authority_revoked")  # bool or None
+            log.warning("Security fetch failed for %s: %s — fields remain None", candidate.symbol, sec)
+        elif isinstance(sec, dict):
+            candidate.mint_authority_revoked = sec.get("mint_authority_revoked")
             candidate.freeze_authority_revoked = sec.get("freeze_authority_revoked")
             candidate.is_likely_honeypot = sec.get("is_likely_honeypot")
             candidate.mutable_metadata = sec.get("mutable_metadata")
             candidate.transfer_fee_enable = sec.get("transfer_fee_enable")
-            candidate.source = "birdeye:security_enriched"
-            enriched_count += 1
+            sec_ok += 1
+
+        # ─ Overview (holder count + age) ─
+        ov = overview_results[i]
+        if isinstance(ov, Exception):
+            log.warning("Overview fetch failed for %s: %s — holder_count/age_hours remain None", candidate.symbol, ov)
+        elif isinstance(ov, dict):
+            if ov.get("holder_count") is not None:
+                candidate.holder_count = ov["holder_count"]
+            if ov.get("age_hours") is not None:
+                candidate.age_hours = ov["age_hours"]
+            ov_ok += 1
+
+        # ─ Top holder ─
+        th = top_holder_results[i]
+        if isinstance(th, Exception):
+            log.warning("Top-holder fetch failed for %s: %s — top_holder_pct remains None", candidate.symbol, th)
+        elif isinstance(th, dict) and th.get("top_holder_pct") is not None:
+            candidate.top_holder_pct = th["top_holder_pct"]
+            th_ok += 1
+
+        # Tag source with enrichment coverage
+        enriched = []
+        if isinstance(security_results[i], dict): enriched.append("sec")
+        if isinstance(overview_results[i], dict): enriched.append("ov")
+        if isinstance(top_holder_results[i], dict): enriched.append("th")
+        candidate.source = f"birdeye:{'+'.join(enriched)}" if enriched else "birdeye"
 
     log.info(
-        "BirdEye: security enrichment complete — %d/%d candidates enriched",
-        enriched_count, len(candidates),
+        "BirdEye enrichment: security=%d/%d  overview=%d/%d  top-holder=%d/%d",
+        sec_ok, n, ov_ok, n, th_ok, n,
     )
     return candidates
 
@@ -427,17 +461,130 @@ async def _fetch_birdeye_security(mint_address: str, headers: dict) -> dict:
     }
 
 
+async def _fetch_birdeye_token_overview(mint_address: str, headers: dict) -> dict:
+    """
+    Fetch holder_count and age_hours for a single token from Birdeye's
+    /defi/token_overview endpoint.
+
+    Returns dict with:
+        holder_count  — Optional[int], None if field absent or unparseable
+        age_hours     — Optional[float], None if creation time unavailable
+
+    Field names: "holder" (holder count), "createdAt" (unix timestamp seconds).
+    Response wrapped in {"success": bool, "data": {...}}.
+
+    On any error, raises — caller catches per return_exceptions=True pattern.
+    Cost: ~10 Compute Units per call.
+    """
+    resp = await _get_with_retry(
+        f"{config.BIRDEYE_BASE_URL}/defi/token_overview",
+        headers=headers,
+        params={"address": mint_address},
+    )
+    raw = resp.json()
+
+    if not raw.get("success"):
+        raise ValueError(f"Birdeye token_overview returned success=false for {mint_address}")
+
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        raise ValueError(f"Birdeye token_overview missing 'data' dict for {mint_address}")
+
+    # holder count — try multiple known field names (API evolves)
+    holder_count: Optional[int] = None
+    for key in ("holder", "numberHolders", "holderCount", "holders"):
+        val = data.get(key)
+        if isinstance(val, (int, float)) and val >= 0:
+            holder_count = int(val)
+            break
+
+    # creation age — convert unix timestamp to hours since now
+    age_hours: Optional[float] = None
+    created_at = data.get("createdAt") or data.get("creationTime") or data.get("createdUnixTime")
+    if isinstance(created_at, (int, float)) and created_at > 0:
+        age_hours = (time.time() - created_at) / 3600
+    elif isinstance(created_at, str):
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            age_hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+        except ValueError:
+            pass
+
+    return {"holder_count": holder_count, "age_hours": age_hours}
+
+
+async def _fetch_birdeye_top_holder_pct(mint_address: str, headers: dict) -> dict:
+    """
+    Fetch the top-single-holder percentage via Birdeye's /defi/v3/token/holder
+    endpoint (sorted by amount descending, limit=1).
+
+    Returns dict with:
+        top_holder_pct — Optional[float], percentage of supply held by top wallet.
+                          None if data unavailable or total supply unknown.
+
+    Computation: top_holder.ui_amount / token_overview.supply * 100.
+    We use the "percentage" field if Birdeye returns it pre-computed, otherwise
+    compute from ui_amount and the total supply in the overview response.
+
+    On any error, raises — caller catches per return_exceptions=True pattern.
+    Cost: ~10 Compute Units per call.
+    """
+    resp = await _get_with_retry(
+        f"{config.BIRDEYE_BASE_URL}/defi/v3/token/holder",
+        headers=headers,
+        params={"address": mint_address, "limit": 1, "offset": 0},
+    )
+    raw = resp.json()
+
+    if not raw.get("success"):
+        raise ValueError(f"Birdeye token/holder returned success=false for {mint_address}")
+
+    data = raw.get("data")
+    if not isinstance(data, dict):
+        raise ValueError(f"Birdeye token/holder missing 'data' dict for {mint_address}")
+
+    items = data.get("items") or data.get("holders") or []
+    if not items or not isinstance(items, list):
+        return {"top_holder_pct": None}
+
+    top = items[0]
+    if not isinstance(top, dict):
+        return {"top_holder_pct": None}
+
+    # Case 1: Birdeye returns a pre-computed percentage field
+    for pct_key in ("percentage", "percent", "sharePercent", "ownershipPercent"):
+        val = top.get(pct_key)
+        if isinstance(val, (int, float)) and 0 <= val <= 100:
+            return {"top_holder_pct": float(val)}
+
+    # Case 2: compute from ui_amount + total supply in the data wrapper
+    ui_amount = top.get("uiAmount") or top.get("ui_amount") or top.get("amount")
+    total_supply = data.get("totalSupply") or data.get("total_supply")
+    if (
+        isinstance(ui_amount, (int, float))
+        and isinstance(total_supply, (int, float))
+        and total_supply > 0
+    ):
+        pct = (float(ui_amount) / float(total_supply)) * 100
+        return {"top_holder_pct": min(pct, 100.0)}  # clamp to 100
+
+    return {"top_holder_pct": None}
+
+
 def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
     """
-    Parse one BirdEye trending token into a Candidate.
+    Parse one BirdEye trending token into a Candidate (without enrichment).
 
     Field names verified against live API 2026-08-21:
       address, symbol, name, price, liquidity, volume24hUSD, marketcap (lowercase)
 
-    Fields NOT present in trending endpoint:
-      holder  → default 999 (passes floor; LLM can penalise)
-      createdAt → default 48h (conservative mid-range)
-      topHolderPercent → default 0.0 (unknown; LLM penalises unknown)
+    holder_count, age_hours, top_holder_pct: all set to None here. They are
+    populated by the concurrent enrichment calls (_fetch_birdeye_token_overview,
+    _fetch_birdeye_top_holder_pct) that run after all tokens are parsed.
+    If the trending response happens to include them (it sometimes does),
+    they are captured as a bonus and the enrichment call will overwrite with
+    a verified value if it succeeds.
     """
     # Required fields with verified names
     required: dict[str, tuple] = {
@@ -466,36 +613,6 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
         log.debug("BirdEye token %s: no usable market cap — skipping", item["symbol"])
         return None
 
-    # holder_count — not in trending endpoint; default to 999 so filter doesn't
-    # silently drop all real tokens. Flagged in metadata so LLM is aware.
-    holder_count = item.get("holder")
-    if holder_count is None or not isinstance(holder_count, (int, float)):
-        holder_count = 999  # unknown — passes floor filter, LLM notified via source field
-        holder_unknown = True
-    else:
-        holder_count = int(holder_count)
-        holder_unknown = False
-
-    # Age — not in trending endpoint; default 48h (mid-range, passes filter)
-    created_at = item.get("createdAt")
-    age_hours = 48.0
-    if isinstance(created_at, (int, float)) and created_at > 0:
-        age_hours = (time.time() - created_at) / 3600
-    elif isinstance(created_at, str):
-        try:
-            from datetime import datetime, timezone
-            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
-            age_hours = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
-        except ValueError:
-            pass
-
-    top_holder_pct = float(item.get("topHolderPercent", 0.0))
-
-    # Encode unknowns into the source tag so the LLM prompt sees them
-    source_tag = "birdeye"
-    if holder_unknown:
-        source_tag = "birdeye:holder_unknown"
-
     # Trend fields — map from Birdeye trending endpoint's verified field names.
     # These are present in the trending response; extract with None fallback.
     def _opt_float(val) -> Optional[float]:
@@ -514,8 +631,27 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
             item.get("symbol"),
         )
 
-    # Security fields: all None here — populated later by the concurrent
-    # _fetch_birdeye_security() call in _get_birdeye_candidates().
+    # Bonus: if trending response includes holder/age/topHolder, capture them
+    # now. The enrichment calls may overwrite with a more reliable value.
+    holder_raw = item.get("holder")
+    holder_count_init: Optional[int] = int(holder_raw) if isinstance(holder_raw, (int, float)) else None
+
+    created_at = item.get("createdAt")
+    age_hours_init: Optional[float] = None
+    if isinstance(created_at, (int, float)) and created_at > 0:
+        age_hours_init = (time.time() - created_at) / 3600
+    elif isinstance(created_at, str):
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+            age_hours_init = (datetime.now(timezone.utc) - dt).total_seconds() / 3600
+        except ValueError:
+            pass
+
+    top_pct_raw = item.get("topHolderPercent")
+    top_holder_pct_init: Optional[float] = float(top_pct_raw) if isinstance(top_pct_raw, (int, float)) else None
+
+    # All security fields None here — populated by _fetch_birdeye_security
 
     return Candidate(
         symbol=item["symbol"],
@@ -523,13 +659,13 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
         price_usd=float(item["price"]),
         liquidity_usd=float(item["liquidity"]),
         volume_24h_usd=float(item["volume24hUSD"]),
-        holder_count=holder_count,
-        top_holder_pct=top_holder_pct,
-        age_hours=age_hours,
+        holder_count=holder_count_init,        # None if not in trending; enrichment fills it
+        top_holder_pct=top_holder_pct_init,    # None if not in trending; enrichment fills it
+        age_hours=age_hours_init,              # None if not in trending; enrichment fills it
         market_cap_usd=float(market_cap),
         name=item.get("name", item["symbol"]),
-        source=source_tag,
-        mint_authority_revoked=None,   # populated by _fetch_birdeye_security
+        source="birdeye",                      # enrichment loop updates this with coverage tag
+        mint_authority_revoked=None,           # populated by _fetch_birdeye_security
         freeze_authority_revoked=None,
         is_likely_honeypot=None,
         mutable_metadata=None,

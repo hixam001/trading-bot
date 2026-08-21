@@ -47,16 +47,21 @@ class Candidate:
 
     Trend fields (P2-5): default None when the backend doesn't return them.
     None tells the LLM these values are unavailable, not zero.
+
+    Holder/age/concentration fields: Optional — None when the backend cannot
+    provide a verified value. Birdeye's trending endpoint omits these;
+    they are filled by separate enrichment calls. None is NEVER used as a
+    sentinel to bypass a filter; the filter explicitly skips None fields.
     """
     symbol: str
     mint_address: str
     price_usd: float
     liquidity_usd: float
     volume_24h_usd: float
-    holder_count: int
-    top_holder_pct: float       # percentage held by the single largest holder
-    age_hours: float
-    market_cap_usd: float
+    holder_count: Optional[int] = None         # None = not retrieved yet
+    top_holder_pct: Optional[float] = None     # % held by single largest holder; None = unknown
+    age_hours: Optional[float] = None          # hours since token creation; None = unknown
+    market_cap_usd: float = 0.0
     # Optional metadata (used for logging / display only, not filter logic)
     name: str = ""
     description: str = ""

@@ -118,28 +118,31 @@ def apply_filters(candidate: Candidate) -> FilterResult:
     # ── Holder concentration ─────────────────────────────────────────────────
     # Per memecoin_evaluation_notes.md §2: bundling/concentration is a stacking
     # signal, not an individually disqualifying fact.
-    if candidate.top_holder_pct >= config.MAX_TOP_HOLDER_PCT:
+    # None = top_holder_pct was not retrieved from the API — skip this check.
+    if candidate.top_holder_pct is not None and candidate.top_holder_pct >= config.MAX_TOP_HOLDER_PCT:
         soft_flags.append(
             f"high_holder_concentration: top holder owns "
             f"{candidate.top_holder_pct:.1f}% >= {config.MAX_TOP_HOLDER_PCT:.1f}% limit"
         )
 
     # ── Holder count ─────────────────────────────────────────────────────────
-    if candidate.holder_count < config.MIN_HOLDER_COUNT:
+    # None = holder_count was not retrieved from the API — skip this check.
+    if candidate.holder_count is not None and candidate.holder_count < config.MIN_HOLDER_COUNT:
         soft_flags.append(
             f"low_holder_count: {candidate.holder_count} < "
             f"{config.MIN_HOLDER_COUNT} minimum"
         )
 
     # ── Token age — too new ───────────────────────────────────────────────────
-    if candidate.age_hours < config.MIN_AGE_HOURS:
+    # None = age was not retrieved from the API — skip both age checks.
+    if candidate.age_hours is not None and candidate.age_hours < config.MIN_AGE_HOURS:
         soft_flags.append(
             f"too_new: {candidate.age_hours:.2f}h old < "
             f"{config.MIN_AGE_HOURS}h minimum"
         )
 
     # ── Token age — too old ───────────────────────────────────────────────────
-    if candidate.age_hours > config.MAX_AGE_HOURS:
+    if candidate.age_hours is not None and candidate.age_hours > config.MAX_AGE_HOURS:
         soft_flags.append(
             f"too_old: {candidate.age_hours:.1f}h old > "
             f"{config.MAX_AGE_HOURS}h maximum"
