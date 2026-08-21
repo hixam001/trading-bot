@@ -113,6 +113,30 @@ async def check_ollama_health() -> dict:
 # ---------------------------------------------------------------------------
 
 def _build_scoring_prompt(candidate: Candidate, kb_context: str) -> str:
+    # Format security fields — None means "not checked" (different from False = "checked, safe")
+    def _fmt_bool_or_unknown(val: Optional[bool], true_label: str, false_label: str) -> str:
+        if val is None:
+            return "unknown (not checked)"
+        return true_label if val else false_label
+
+    sec_mint = _fmt_bool_or_unknown(
+        candidate.mint_authority_revoked, "YES (revoked — safe)", "NO (not revoked — risk)"
+    )
+    sec_freeze = _fmt_bool_or_unknown(
+        candidate.freeze_authority_revoked, "YES (revoked — safe)", "NO (not revoked — risk)"
+    )
+    sec_honeypot = _fmt_bool_or_unknown(
+        candidate.is_likely_honeypot, "YES (honeypot suspected — reject)", "NO (not flagged)"
+    )
+
+    # Format trend fields — None means "not available from this backend"
+    def _fmt_float_or_na(val: Optional[float], fmt: str = ".2f") -> str:
+        return format(val, fmt) if val is not None else "n/a"
+
+    trend_1h_pct  = _fmt_float_or_na(candidate.price_change_1h_pct, "+.1f")
+    trend_vol_1h  = f"${candidate.volume_1h_usd:,.0f}" if candidate.volume_1h_usd is not None else "n/a"
+    trend_vol_6h  = f"${candidate.volume_6h_usd:,.0f}" if candidate.volume_6h_usd is not None else "n/a"
+
     return f"""You are a Solana memecoin paper-trading analyst. Evaluate the candidate token below for a simulated trade entry.
 
 ## Background Knowledge
@@ -129,6 +153,16 @@ def _build_scoring_prompt(candidate: Candidate, kb_context: str) -> str:
 - Token age: {candidate.age_hours:.1f} hours
 - Market cap: ${candidate.market_cap_usd:,.0f}
 
+## Security Checks
+- Mint authority revoked: {sec_mint}
+- Freeze authority revoked: {sec_freeze}
+- Likely honeypot: {sec_honeypot}
+
+## Trend / Momentum (last 1h and 6h)
+- Price change 1h: {trend_1h_pct}%
+- Volume 1h: {trend_vol_1h}
+- Volume 6h: {trend_vol_6h}
+
 ## Instructions
 Respond ONLY with a single valid JSON object — no preamble, no explanation, no markdown fences.
 The JSON must contain exactly these fields:
@@ -141,6 +175,11 @@ The JSON must contain exactly these fields:
   "entry_condition": "specific price/volume trigger for entry (required if verdict=pass, empty string if fail)",
   "invalidation_condition": "what would prove this thesis wrong"
 }}
+
+## Hard Rules (violations make your response invalid)
+1. SECURITY CLAIMS: Only mention mint authority, freeze authority, or honeypot status in your thesis or risk_flags if the corresponding field above is NOT 'unknown (not checked)'. If a security field is unknown, write 'security status unknown' rather than speculating. Never invent a security claim not supported by the data above.
+2. TREND GROUNDING: Your thesis MUST reference at least one specific number from the Trend/Momentum section above (price change %, volume 1h, or volume 6h). A thesis that contains no specific numbers from the data will be rejected. Do not write a thesis that could apply equally to any token.
+3. NO BOILERPLATE: Do not reuse generic phrases. Every thesis must be unique to this specific token's numbers.
 """
 
 

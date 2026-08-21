@@ -307,10 +307,13 @@ async def open_position(
         is_open=True,
     )
 
-    # Deduct cash and persist — both in same logical operation
+    # Insert trade first, then deduct cash (defense-first rule 7).
+    # A crash after insert but before cash-deduct leaves a detectable
+    # inconsistency (trade record with no cash deduction) rather than the
+    # silent loss of cash with no matching trade record from the old ordering.
+    await db.insert_trade(conn, trade)
     new_cash = cash - cost_basis
     await db.update_cash_balance(conn, new_cash)
-    await db.insert_trade(conn, trade)
 
     log.info(
         "OPENED %s: size=$%.2f, qty=%.4f @ $%.8f | cash remaining: $%.2f",
@@ -332,11 +335,16 @@ async def close_position(
     """
     Close a simulated position and update the portfolio cash balance.
 
-    The trade record is updated atomically. Cash is credited before the
-    trade is marked closed — if anything fails between these two writes,
-    the trade remains open in the DB (recoverable state, defense-first rule 7).
+    The DB close write happens FIRST. If it returns rowcount=0, the trade
+    was already closed (race condition, restart, or duplicate call from the
+    exit-check loop) — we re-fetch the persisted trade and return it without
+    crediting cash a second time (defense-first rule 7: idempotent, no
+    double-credit on retry).
 
-    Returns the updated Trade object with P&L fields populated.
+    If rowcount=1 (genuine close), proceeds to credit cash and populate the
+    trade's P&L fields.
+
+    Returns the closed Trade object with P&L fields populated.
     """
     if not trade.is_open:
         raise ValueError(f"Trade {trade.trade_id} is already closed.")
@@ -346,17 +354,10 @@ async def close_position(
 
     realized_pnl_usd, realized_pnl_pct = compute_realized_pnl(trade, exit_price)
 
-    # Compute proceeds returned to cash
-    proceeds = trade.position_size_usd + realized_pnl_usd
-
-    # Credit cash first
-    current_cash = await db.get_cash_balance(conn)
-    new_cash = current_cash + proceeds
-    await db.update_cash_balance(conn, new_cash)
-
-    # Then mark trade as closed
     closed_at = datetime.now(timezone.utc).isoformat()
-    await db.close_trade_in_db(
+
+    # Attempt the close write FIRST — idempotent via WHERE is_open=1
+    rows_affected = await db.close_trade_in_db(
         conn,
         trade_id=trade.trade_id,
         closed_at=closed_at,
@@ -365,6 +366,29 @@ async def close_position(
         realized_pnl_usd=realized_pnl_usd,
         realized_pnl_pct=realized_pnl_pct,
     )
+
+    if rows_affected == 0:
+        # Trade was already closed (race/retry). Re-fetch the persisted
+        # record and return it — do NOT credit cash again.
+        log.warning(
+            "close_position: trade %s (%s) was already closed — skipping cash credit "
+            "(rows_affected=0, likely a race or restart replay)",
+            trade.trade_id,
+            trade.symbol,
+        )
+        already_closed = await db.get_trade_by_id(conn, trade.trade_id)
+        if already_closed is not None:
+            return already_closed
+        # Extremely unlikely: trade not found at all. Surface as error.
+        raise RuntimeError(
+            f"close_position: rows_affected=0 but trade {trade.trade_id} not found in DB"
+        )
+
+    # rows_affected == 1: genuine close. Credit cash now.
+    proceeds = trade.position_size_usd + realized_pnl_usd
+    current_cash = await db.get_cash_balance(conn)
+    new_cash = current_cash + proceeds
+    await db.update_cash_balance(conn, new_cash)
 
     log.info(
         "CLOSED %s [%s]: pnl=$%+.4f (%+.1f%%) | cash: $%.2f -> $%.2f",

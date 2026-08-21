@@ -277,12 +277,19 @@ async def close_trade_in_db(
     exit_reason: str,
     realized_pnl_usd: float,
     realized_pnl_pct: float,
-) -> None:
+) -> int:
     """
-    Atomically close an open trade. The WHERE clause includes is_open=1
-    to prevent double-closing (idempotency, defense-first rule 7).
+    Atomically close an open trade.
+
+    The WHERE clause includes is_open=1 so the UPDATE is a no-op if the trade
+    was already closed (race condition, retry, or duplicate call).
+
+    Returns:
+        cursor.rowcount — 1 if the trade was genuinely closed, 0 if it was
+        already closed. Callers MUST check this value before crediting cash
+        (defense-first rule 7: idempotent writes).
     """
-    await conn.execute(
+    cursor = await conn.execute(
         """
         UPDATE trades
         SET closed_at          = ?,
@@ -303,6 +310,7 @@ async def close_trade_in_db(
         ),
     )
     await conn.commit()
+    return cursor.rowcount  # 1 = genuine close, 0 = already closed (no-op)
 
 
 async def update_trade_reflection(

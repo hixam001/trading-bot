@@ -97,11 +97,18 @@ MIN_AGE_HOURS: int = 1              # must be at least 1h old
 MAX_AGE_HOURS: int = 168            # must be less than 7 days old
 MIN_VOLUME_24H_USD: float = 5_000.0
 MIN_MARKET_CAP_USD: float = 50_000.0
+# Trend-based filter (P2-5): if 1h volume is below this fraction of 6h volume,
+# the token's momentum has collapsed — only fires when both fields are non-None.
+# 3% is a conservative floor (proportional share = ~16.7%; 3% catches only clear collapses).
+MIN_VOLUME_1H_TO_6H_RATIO: float = 0.03
 
 # ---------------------------------------------------------------------------
 # Knowledge base prompt budget (performance-discipline rule 8)
 # ---------------------------------------------------------------------------
-KB_MAX_CONTEXT_CHARS: int = 2_000   # hard cap on context injected per prompt
+# Raised to 5000 now that digests are compact summaries rather than raw file dumps.
+# Verified: digest-based context stays well within this budget even with 10+ files.
+# If truncation still fires, it now drops whole documents rather than cutting mid-sentence.
+KB_MAX_CONTEXT_CHARS: int = 5_000
 
 # ---------------------------------------------------------------------------
 # Promotion gate thresholds (read-only assessment — never auto-activates anything)

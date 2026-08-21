@@ -113,18 +113,90 @@ async def _get_with_retry(
 # MOCK BACKEND
 # ---------------------------------------------------------------------------
 
-# Fixed pool of synthetic tokens — deterministic per symbol so tests reproduce
+# Fixed pool of synthetic tokens — deterministic per symbol so tests reproduce.
+# Security and trend fields are intentionally varied so the LLM produces
+# genuinely different theses per candidate (P2-4/5 anti-boilerplate goal).
 _MOCK_TOKENS = [
-    {"symbol": "BONK2",   "mint": "Bon2K9GQmXfzrqLvQ8PtHH1mnXpkHkFMwGJzEzmZNKM", "base_price": 0.0000234,  "liq": 145_000, "vol": 87_000,  "holders": 3200,  "top_pct": 4.2,  "age_h": 36.0,   "mcap": 420_000},
-    {"symbol": "MOONCAT",  "mint": "MooNjH3vBcYE8mBn3E9bM5GhqK2vUrXjL4d7fKwD1",  "base_price": 0.00000087, "liq": 62_000,  "vol": 31_000,  "holders": 1100,  "top_pct": 9.8,  "age_h": 18.0,   "mcap": 180_000},
-    {"symbol": "RUGME",    "mint": "RuGmE1xbfZKWyqvPsTLJdFXcXpH8nDqU9sK2v3mYz",  "base_price": 0.000001,   "liq": 3_500,   "vol": 1_200,   "holders": 45,    "top_pct": 52.0, "age_h": 2.0,    "mcap": 10_000},   # fails: low liq + concentration + holders
-    {"symbol": "SOLPEPE",  "mint": "So1pEPE9mHgKQN5vLrXzU7dBnXpMwKzL3f9sT2mRa",  "base_price": 0.00000312, "liq": 89_000,  "vol": 52_000,  "holders": 2400,  "top_pct": 7.1,  "age_h": 48.0,   "mcap": 230_000},
-    {"symbol": "FRESHRUG", "mint": "FrEsHRuGxbqM3vNpKzL1wD9TfHnJsU4y8gP5oC2mX",  "base_price": 0.000000055,"liq": 28_000,  "vol": 14_000,  "holders": 320,   "top_pct": 18.5, "age_h": 0.3,    "mcap": 75_000},   # fails: too new
-    {"symbol": "ANCIENT",  "mint": "AncIeNtToKnXbqV7mKpL3uW9FhMsDJzT4n5oG2yRe",  "base_price": 0.000000001,"liq": 12_000,  "vol": 1_800,   "holders": 890,   "top_pct": 5.3,  "age_h": 500.0,  "mcap": 30_000},   # fails: too old + low vol
-    {"symbol": "WIFHAT2",  "mint": "WIFhAt2bKpRmX9nL3sU7vC1DhFgJzT4o5qP8mNkYe",  "base_price": 0.00000742, "liq": 310_000, "vol": 198_000, "holders": 8900,  "top_pct": 2.8,  "age_h": 72.0,   "mcap": 890_000},
-    {"symbol": "PUMPIT",   "mint": "PuMpItxKrL3sV8bN2uF9qH5mDwJzT6o4gC1yRaXe",  "base_price": 0.00000045, "liq": 18_000,  "vol": 92_000,  "holders": 560,   "top_pct": 12.3, "age_h": 8.0,    "mcap": 55_000},
-    {"symbol": "GMESOLANA","mint": "GmESoLanAxbV7qP3rK9mL1sU4nF8hDzT2o6gC5yJe",  "base_price": 0.00000912, "liq": 480_000, "vol": 310_000, "holders": 12000, "top_pct": 1.9,  "age_h": 96.0,   "mcap": 1_200_000},
-    {"symbol": "LOWVOL",   "mint": "LoWVo1xTkqM3sP7nKzL2uF8hDwJzT4o5gC9yRaXe",  "base_price": 0.00000123, "liq": 22_000,  "vol": 1_100,   "holders": 450,   "top_pct": 8.7,  "age_h": 24.0,   "mcap": 65_000},   # fails: low vol
+    {
+        "symbol": "BONK2",   "mint": "Bon2K9GQmXfzrqLvQ8PtHH1mnXpkHkFMwGJzEzmZNKM",
+        "base_price": 0.0000234,  "liq": 145_000, "vol": 87_000,  "holders": 3200,  "top_pct": 4.2,  "age_h": 36.0,   "mcap": 420_000,
+        # Security (verified revocations)
+        "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (strong upward momentum)
+        "price_1h_pct": 8.3, "vol_1h": 12_400, "vol_6h": 54_000,
+    },
+    {
+        "symbol": "MOONCAT",  "mint": "MooNjH3vBcYE8mBn3E9bM5GhqK2vUrXjL4d7fKwD1",
+        "base_price": 0.00000087, "liq": 62_000,  "vol": 31_000,  "holders": 1100,  "top_pct": 9.8,  "age_h": 18.0,   "mcap": 180_000,
+        # Security (mint authority not revoked — risk)
+        "mint_auth_revoked": False, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (modest, decelerating)
+        "price_1h_pct": 1.2, "vol_1h": 3_800, "vol_6h": 18_000,
+    },
+    {
+        "symbol": "RUGME",    "mint": "RuGmE1xbfZKWyqvPsTLJdFXcXpH8nDqU9sK2v3mYz",
+        "base_price": 0.000001,   "liq": 3_500,   "vol": 1_200,   "holders": 45,    "top_pct": 52.0, "age_h": 2.0,    "mcap": 10_000,
+        # Security (honeypot suspected, neither revoked)
+        "mint_auth_revoked": False, "freeze_auth_revoked": False, "honeypot": True,
+        # Trend (very low volume)
+        "price_1h_pct": -3.1, "vol_1h": 80, "vol_6h": 500,
+    },   # fails: low liq + concentration + holders
+    {
+        "symbol": "SOLPEPE",  "mint": "So1pEPE9mHgKQN5vLrXzU7dBnXpMwKzL3f9sT2mRa",
+        "base_price": 0.00000312, "liq": 89_000,  "vol": 52_000,  "holders": 2400,  "top_pct": 7.1,  "age_h": 48.0,   "mcap": 230_000,
+        # Security (both revoked — clean)
+        "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (moderate, stable)
+        "price_1h_pct": 3.7, "vol_1h": 7_200, "vol_6h": 32_000,
+    },
+    {
+        "symbol": "FRESHRUG", "mint": "FrEsHRuGxbqM3vNpKzL1wD9TfHnJsU4y8gP5oC2mX",
+        "base_price": 0.000000055,"liq": 28_000,  "vol": 14_000,  "holders": 320,   "top_pct": 18.5, "age_h": 0.3,    "mcap": 75_000,
+        # Security (unknown — not checked)
+        "mint_auth_revoked": None, "freeze_auth_revoked": None, "honeypot": None,
+        # Trend (brief spike)
+        "price_1h_pct": 22.0, "vol_1h": 9_100, "vol_6h": 11_000,
+    },   # fails: too new
+    {
+        "symbol": "ANCIENT",  "mint": "AncIeNtToKnXbqV7mKpL3uW9FhMsDJzT4n5oG2yRe",
+        "base_price": 0.000000001,"liq": 12_000,  "vol": 1_800,   "holders": 890,   "top_pct": 5.3,  "age_h": 500.0,  "mcap": 30_000,
+        # Security (both revoked, but dying token)
+        "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (declining volume — dying signal)
+        "price_1h_pct": -8.4, "vol_1h": 90, "vol_6h": 900,
+    },   # fails: too old + low vol
+    {
+        "symbol": "WIFHAT2",  "mint": "WIFhAt2bKpRmX9nL3sU7vC1DhFgJzT4o5qP8mNkYe",
+        "base_price": 0.00000742, "liq": 310_000, "vol": 198_000, "holders": 8900,  "top_pct": 2.8,  "age_h": 72.0,   "mcap": 890_000,
+        # Security (clean)
+        "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (strong sustained momentum)
+        "price_1h_pct": 5.1, "vol_1h": 38_000, "vol_6h": 145_000,
+    },
+    {
+        "symbol": "PUMPIT",   "mint": "PuMpItxKrL3sV8bN2uF9qH5mDwJzT6o4gC1yRaXe",
+        "base_price": 0.00000045, "liq": 18_000,  "vol": 92_000,  "holders": 560,   "top_pct": 12.3, "age_h": 8.0,    "mcap": 55_000,
+        # Security (mint not revoked)
+        "mint_auth_revoked": False, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (very high volume vs liquidity — pump signal)
+        "price_1h_pct": 41.0, "vol_1h": 28_000, "vol_6h": 72_000,
+    },
+    {
+        "symbol": "GMESOLANA","mint": "GmESoLanAxbV7qP3rK9mL1sU4nF8hDzT2o6gC5yJe",
+        "base_price": 0.00000912, "liq": 480_000, "vol": 310_000, "holders": 12000, "top_pct": 1.9,  "age_h": 96.0,   "mcap": 1_200_000,
+        # Security (clean, high-cap)
+        "mint_auth_revoked": True, "freeze_auth_revoked": True, "honeypot": False,
+        # Trend (large and steady)
+        "price_1h_pct": 0.8, "vol_1h": 52_000, "vol_6h": 198_000,
+    },
+    {
+        "symbol": "LOWVOL",   "mint": "LoWVo1xTkqM3sP7nKzL2uF8hDwJzT4o5gC9yRaXe",
+        "base_price": 0.00000123, "liq": 22_000,  "vol": 1_100,   "holders": 450,   "top_pct": 8.7,  "age_h": 24.0,   "mcap": 65_000,
+        # Security (unknown)
+        "mint_auth_revoked": None, "freeze_auth_revoked": None, "honeypot": None,
+        # Trend (flat, very low)
+        "price_1h_pct": -0.2, "vol_1h": 45, "vol_6h": 320,
+    },   # fails: low vol
 ]
 
 
@@ -140,7 +212,7 @@ def _mock_price_with_drift(base_price: float, mint: str, tick: int = 0) -> float
 
 
 async def _get_mock_candidates(tick: int = 0) -> list[Candidate]:
-    """Return all mock candidates with simulated price drift."""
+    """Return all mock candidates with simulated price drift and synthetic new fields."""
     candidates = []
     for tok in _MOCK_TOKENS:
         price = _mock_price_with_drift(tok["base_price"], tok["mint"], tick)
@@ -156,6 +228,14 @@ async def _get_mock_candidates(tick: int = 0) -> list[Candidate]:
             market_cap_usd=float(tok["mcap"]),
             name=tok["symbol"],
             source="mock",
+            # Security fields (P2-4) — None means unknown for this token
+            mint_authority_revoked=tok.get("mint_auth_revoked"),
+            freeze_authority_revoked=tok.get("freeze_auth_revoked"),
+            is_likely_honeypot=tok.get("honeypot"),
+            # Trend fields (P2-5) — add small tick-based noise to simulate live data
+            price_change_1h_pct=tok.get("price_1h_pct"),
+            volume_1h_usd=float(tok["vol_1h"]) if tok.get("vol_1h") is not None else None,
+            volume_6h_usd=float(tok["vol_6h"]) if tok.get("vol_6h") is not None else None,
         ))
     return candidates
 
@@ -298,6 +378,35 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
     if holder_unknown:
         source_tag = "birdeye:holder_unknown"
 
+    # Trend fields — map from Birdeye trending endpoint's verified field names.
+    # These are present in the trending response; extract with None fallback.
+    def _opt_float(val) -> Optional[float]:
+        """Return float if val is a valid number, None otherwise."""
+        if val is None or not isinstance(val, (int, float)):
+            return None
+        return float(val)
+
+    price_change_1h_pct = _opt_float(item.get("priceChange1hPercent"))
+    volume_1h_usd = _opt_float(item.get("volume1hUSD") or item.get("v1hUSD"))
+    volume_6h_usd = _opt_float(item.get("volume6hUSD") or item.get("v6hUSD"))
+
+    if price_change_1h_pct is None and volume_1h_usd is None:
+        log.debug(
+            "BirdEye token %s: no 1h trend data in response (priceChange1hPercent/volume1hUSD absent)",
+            item.get("symbol"),
+        )
+
+    # Security fields — NOT available from the trending endpoint.
+    # A separate /defi/token_security call would be required.
+    # Explicitly set to None ("not checked") — never False ("checked, safe").
+    mint_authority_revoked: Optional[bool] = None
+    freeze_authority_revoked: Optional[bool] = None
+    is_likely_honeypot: Optional[bool] = None
+    log.debug(
+        "BirdEye token %s: security fields unavailable from trending endpoint — set to None",
+        item.get("symbol"),
+    )
+
     return Candidate(
         symbol=item["symbol"],
         mint_address=item["address"],
@@ -310,6 +419,12 @@ def _parse_birdeye_token(item: dict) -> Optional[Candidate]:
         market_cap_usd=float(market_cap),
         name=item.get("name", item["symbol"]),
         source=source_tag,
+        mint_authority_revoked=mint_authority_revoked,
+        freeze_authority_revoked=freeze_authority_revoked,
+        is_likely_honeypot=is_likely_honeypot,
+        price_change_1h_pct=price_change_1h_pct,
+        volume_1h_usd=volume_1h_usd,
+        volume_6h_usd=volume_6h_usd,
     )
 
 

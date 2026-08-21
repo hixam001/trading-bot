@@ -85,6 +85,24 @@ def apply_filters(candidate: Candidate) -> tuple[bool, list[str]]:
     if candidate.price_usd <= 0:
         flags.append(f"invalid_price: {candidate.price_usd} (must be > 0)")
 
+    # ── Dying volume (P2-5) ───────────────────────────────────────────────────
+    # Only fires when both trend fields are present (None = data unavailable, skip check).
+    # Rejects candidates where 1h volume has collapsed to < 3% of 6h volume,
+    # indicating the pump has stalled. A proportional share would be ~16.7%
+    # (1/6 of 6h), so 3% is a generous floor — only catches clear collapses.
+    if (
+        candidate.volume_1h_usd is not None
+        and candidate.volume_6h_usd is not None
+        and candidate.volume_6h_usd > 0
+    ):
+        vol_ratio = candidate.volume_1h_usd / candidate.volume_6h_usd
+        if vol_ratio < config.MIN_VOLUME_1H_TO_6H_RATIO:
+            flags.append(
+                f"dying_volume: 1h vol ${candidate.volume_1h_usd:,.0f} is only "
+                f"{vol_ratio:.1%} of 6h vol ${candidate.volume_6h_usd:,.0f} "
+                f"(< {config.MIN_VOLUME_1H_TO_6H_RATIO:.0%} threshold \u2014 momentum collapsing)"
+            )
+
     passed = len(flags) == 0
 
     if not passed:

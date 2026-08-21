@@ -40,6 +40,13 @@ class Candidate:
     All numeric fields are strictly typed. Any ingestion backend that cannot
     provide a value for a required field must raise an error rather than
     substituting a default (defense-first rule 1).
+
+    Security fields (P2-4): default None, NOT False.
+    None means "not checked" — False would imply "checked and safe," which
+    is its own fabricated claim if the check was never run.
+
+    Trend fields (P2-5): default None when the backend doesn't return them.
+    None tells the LLM these values are unavailable, not zero.
     """
     symbol: str
     mint_address: str
@@ -56,6 +63,18 @@ class Candidate:
     website: str = ""
     twitter: str = ""
     source: str = "mock"        # which backend produced this candidate
+    # Security fields (P2-4) — None = not checked, not "safe"
+    # Birdeye /defi/token_security can populate these; trending endpoint cannot.
+    # Mock backend provides synthetic values for testing the prompt behavior.
+    mint_authority_revoked: Optional[bool] = None
+    freeze_authority_revoked: Optional[bool] = None
+    is_likely_honeypot: Optional[bool] = None
+    # Trend / momentum fields (P2-5) — None = not available from this backend
+    # Birdeye trending endpoint returns priceChange1hPercent, volume1hUSD, volume6hUSD.
+    # Mock backend provides synthetic values.
+    price_change_1h_pct: Optional[float] = None   # % price change in last 1h
+    volume_1h_usd: Optional[float] = None         # USD volume in last 1h
+    volume_6h_usd: Optional[float] = None         # USD volume in last 6h
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,6 +92,14 @@ class Candidate:
             "website": self.website,
             "twitter": self.twitter,
             "source": self.source,
+            # Security fields
+            "mint_authority_revoked": self.mint_authority_revoked,
+            "freeze_authority_revoked": self.freeze_authority_revoked,
+            "is_likely_honeypot": self.is_likely_honeypot,
+            # Trend fields
+            "price_change_1h_pct": self.price_change_1h_pct,
+            "volume_1h_usd": self.volume_1h_usd,
+            "volume_6h_usd": self.volume_6h_usd,
         }
 
 
