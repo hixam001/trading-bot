@@ -69,6 +69,14 @@ operator-facing settings only. Safety-critical constants stay hardcoded in
 
 Bulk-ingest knowledge: .
 
+## Handoff & memory
+
+- **`handoff.md`** — complete handoff: current state, decision log, bugs
+  fixed, invariants checklist, next steps. Read this first.
+- **`memory-bank/`** — structured context for future sessions:
+  `projectbrief`, `productContext`, `systemPatterns`, `techContext`,
+  `activeContext` (current focus), `progress`, `decisionLog`.
+
 ## Calibration
 
 ## Knowledge base
