@@ -1,71 +1,40 @@
-// src/components/SystemStatus.tsx — FR-30: Ollama health + data backend indicator
+import type { SystemStatusResponse } from '../types'
 
-import { useApi } from "../hooks/useApi";
-import type { SystemStatus } from "../types";
-
-export function SystemStatusBar() {
-  const { data, error } = useApi<SystemStatus>("/api/system-status", 15_000);
-
-  const ollama = data?.ollama;
-  const backend = data?.data_backend ?? "…";
-
+/** System status (I8): Ollama connectivity + provider call budgets. */
+export default function SystemStatus({ status }: { status: SystemStatusResponse }) {
   return (
-    <div className="flex items-center gap-4 text-xs font-mono">
-      {/* Ollama status */}
-      <div className="flex items-center gap-1.5">
-        <span
-          className={`status-dot ${
-            !data
-              ? "warn"
-              : ollama?.ollama_reachable && ollama?.model_loaded
-              ? "online"
-              : "offline"
-          }`}
-        />
-        <span className="text-text-muted">
-          {!data
-            ? "LLM checking…"
-            : ollama?.ollama_reachable && ollama?.model_loaded
-            ? `${ollama.model_name}`
-            : ollama?.ollama_reachable
-            ? "Model not loaded"
-            : "LLM offline"}
+    <div className="panel text-xs space-y-1">
+      <div className="panel-title">system status</div>
+      <div className="flex justify-between">
+        <span className="text-term-dim">backend</span>
+        <span>{status.data_backend}</span>
+      </div>
+      <div className="flex justify-between">
+        <span className="text-term-dim">ollama</span>
+        <span className={status.ollama_reachable ? 'text-term-green' : 'text-term-amber'}>
+          {status.ollama_reachable ? `reachable (${status.model})` : 'unreachable'}
         </span>
       </div>
-
-      {/* Data backend badge */}
-      <div className="flex items-center gap-1.5">
-        <span
-          className="px-1.5 py-0.5 rounded text-xs uppercase font-semibold tracking-wider"
-          style={{
-            background:
-              backend === "mock"
-                ? "hsl(217,50%,16%)"
-                : backend === "birdeye"
-                ? "hsl(142,40%,12%)"
-                : "hsl(38,40%,12%)",
-            color:
-              backend === "mock"
-                ? "hsl(217,91%,70%)"
-                : backend === "birdeye"
-                ? "hsl(142,71%,60%)"
-                : "hsl(38,95%,70%)",
-            border: `1px solid ${
-              backend === "mock"
-                ? "hsl(217,50%,25%)"
-                : backend === "birdeye"
-                ? "hsl(142,40%,22%)"
-                : "hsl(38,60%,22%)"
-            }`,
-          }}
-        >
-          {backend}
-        </span>
+      <div className="flex justify-between">
+        <span className="text-term-dim">narration mode</span>
+        <span>{status.narration_mode}</span>
       </div>
-
-      {error && (
-        <span className="text-loss-text text-xs">API unreachable</span>
+      <div className="flex justify-between">
+        <span className="text-term-dim">tick interval</span>
+        <span>{status.tick_interval_seconds}s</span>
+      </div>
+      <div className="pt-1 text-term-dim">provider calls today:</div>
+      {status.provider_calls_today.length === 0 && (
+        <div className="text-term-dim">(mock backend makes no external calls)</div>
       )}
+      {status.provider_calls_today.map((p) => (
+        <div key={p.provider} className="flex justify-between">
+          <span>{p.provider}</span>
+          <span>
+            {p.call_count} calls · {p.error_count} err · {p.rate_limit_429_count}×429
+          </span>
+        </div>
+      ))}
     </div>
-  );
+  )
 }

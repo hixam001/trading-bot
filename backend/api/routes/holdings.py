@@ -1,79 +1,57 @@
 """
-api/routes/holdings.py — GET /api/holdings
-
-Returns current open positions with live unrealized P&L.
-Price fetches are capped at PRICE_FETCH_TIMEOUT_S — if the price API is
-unreachable or slow, holdings still load immediately with null P&L rather
-than blocking the whole request for 30+ seconds.
+api/routes/holdings.py — GET /api/holdings: open positions with live price
+and unrealized P&L computed per request.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 
-import data_ingestion
-import paper_trading_engine as engine
+from fastapi import APIRouter, Request
+
 from api import db
-from fastapi import APIRouter
+from paper_trading_engine import compute_unrealized_pnl
 
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-# Hard cap per-position price fetch: never let one slow DNS/network call
-# block the whole holdings response. P&L shows as null instead.
-PRICE_FETCH_TIMEOUT_S = 3.0
 
-
-@router.get("/holdings")
-async def get_holdings():
-    """
-    FR-7: Current open positions with live unrealized P&L.
-
-    For each open position, fetches the current price and computes
-    unrealized P&L. Price fetch failures are handled gracefully —
-    the position is still returned but with pnl_usd/pnl_pct = null.
-    """
+@router.get("/api/holdings")
+async def get_holdings(request: Request):
+    provider = request.app.state.provider
     async with db.get_db() as conn:
-        open_trades = await db.get_open_trades(conn)
+        trades = await db.get_open_trades(conn)
         cash = await db.get_cash_balance(conn)
 
-    async def fetch_price(trade):
-        holding: dict = {
-            "trade_id": trade.trade_id,
-            "symbol": trade.symbol,
-            "mint_address": trade.mint_address,
-            "opened_at": trade.opened_at,
-            "entry_price_usd": trade.entry_price_usd,
-            "position_size_usd": trade.position_size_usd,
-            "quantity": trade.quantity,
-            "invalidation_condition": trade.invalidation_condition,
-            "thesis": trade.verdict_snapshot.get("thesis", ""),
-            "current_price_usd": None,
-            "unrealized_pnl_usd": None,
-            "unrealized_pnl_pct": None,
-        }
+    holdings = []
+    for t in trades:
         try:
-            current_price = await asyncio.wait_for(
-                data_ingestion.get_current_price(trade.mint_address),
-                timeout=PRICE_FETCH_TIMEOUT_S,
-            )
-            pnl_usd, pnl_pct = engine.compute_unrealized_pnl(trade, current_price)
-            holding["current_price_usd"] = current_price
-            holding["unrealized_pnl_usd"] = round(pnl_usd, 4)
-            holding["unrealized_pnl_pct"] = round(pnl_pct, 2)
-        except asyncio.TimeoutError:
-            log.warning("Price fetch timed out for %s (>%.0fs) — showing null P&L",
-                        trade.symbol, PRICE_FETCH_TIMEOUT_S)
-        except data_ingestion.PriceUnavailableError as exc:
-            log.warning("Price unavailable for %s: %s", trade.symbol, exc)
-        except ValueError as exc:
-            log.error("P&L computation error for trade %s: %s", trade.trade_id, exc)
-        return holding
-
-    holdings = await asyncio.gather(*(fetch_price(t) for t in open_trades))
-
-    return {
-        "holdings": holdings,
-        "open_count": len(holdings),
-        "cash_balance_usd": round(cash, 4),
-    }
+            # Decimals from the entry snapshot are REQUIRED for a correct
+            # execution-price quote (wrong decimals fabricate prices).
+            decimals = (t.candidate_snapshot or {}).get("decimals")
+            price = await provider.get_current_price(t.mint_address, decimals)
+        except Exception as exc:
+            log.warning("holdings: price unavailable for %s: %s", t.symbol, exc)
+            price = None
+        if price is not None:
+            try:
+                pnl_usd, pnl_pct = compute_unrealized_pnl(t, price)
+            except ValueError:
+                pnl_usd = pnl_pct = None
+        else:
+            pnl_usd = pnl_pct = None
+        holdings.append({
+            "trade_id": t.trade_id,
+            "symbol": t.symbol,
+            "mint_address": t.mint_address,
+            "opened_at": t.opened_at,
+            "entry_price_usd": t.entry_price_usd,
+            "position_size_usd": t.position_size_usd,
+            "quantity": t.quantity,
+            "thesis": t.thesis,
+            "current_price_usd": price,
+            "unrealized_pnl_usd": round(pnl_usd, 4) if pnl_usd is not None else None,
+            "unrealized_pnl_pct": round(pnl_pct, 2) if pnl_pct is not None else None,
+        })
+    return {"cash_usd": cash, "open_positions": holdings,
+            "count": len(holdings),
+            "paper_trading_only": True}

@@ -1,75 +1,29 @@
-// src/hooks/useWebSocket.ts — WebSocket hook for live feed events
+import { useEffect, useRef, useState } from 'react'
+import type { FeedEventRow } from '../types'
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { FeedEvent } from "../types";
-
-interface UseWebSocketResult {
-  events: FeedEvent[];
-  connected: boolean;
-  error: string | null;
-  clearEvents: () => void;
-}
-
-const WS_URL = `ws://${window.location.host}/ws/feed`;
-const MAX_EVENTS = 200; // keep last 200 in memory
-
-export function useWebSocket(): UseWebSocketResult {
-  const [events, setEvents] = useState<FeedEvent[]>([]);
-  const [connected, setConnected] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) return;
-
-    try {
-      const ws = new WebSocket(WS_URL);
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        setConnected(true);
-        setError(null);
-      };
-
-      ws.onmessage = (evt) => {
-        try {
-          const msg = JSON.parse(evt.data);
-          if (msg.type === "feed_event" && msg.data) {
-            setEvents((prev) => {
-              const updated = [msg.data as FeedEvent, ...prev];
-              return updated.slice(0, MAX_EVENTS);
-            });
-          }
-        } catch {
-          // Ignore malformed messages
-        }
-      };
-
-      ws.onerror = () => {
-        setError("WebSocket error");
-      };
-
-      ws.onclose = () => {
-        setConnected(false);
-        // Auto-reconnect with backoff
-        reconnectTimer.current = setTimeout(connect, 3000);
-      };
-    } catch (e) {
-      setError("Failed to connect");
-      reconnectTimer.current = setTimeout(connect, 5000);
-    }
-  }, []);
+/** WebSocket hook for /ws/feed live push (I1). */
+export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } {
+  const [events, setEvents] = useState<FeedEventRow[]>([])
+  const [connected, setConnected] = useState(false)
+  const wsRef = useRef<WebSocket | null>(null)
 
   useEffect(() => {
-    connect();
-    return () => {
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-    };
-  }, [connect]);
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
+    const ws = new WebSocket(`${proto}://${location.host}/ws/feed`)
+    wsRef.current = ws
+    ws.onopen = () => setConnected(true)
+    ws.onclose = () => setConnected(false)
+    ws.onerror = () => setConnected(false)
+    ws.onmessage = (m) => {
+      try {
+        const ev = JSON.parse(m.data) as FeedEventRow
+        setEvents((prev) => [ev, ...prev].slice(0, 200))
+      } catch {
+        /* ignore malformed frame */
+      }
+    }
+    return () => ws.close()
+  }, [])
 
-  const clearEvents = useCallback(() => setEvents([]), []);
-
-  return { events, connected, error, clearEvents };
+  return { events, connected }
 }

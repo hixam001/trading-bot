@@ -1,166 +1,116 @@
 """
-api/main.py — FastAPI application entry point.
+api/main.py — FastAPI app (H1–H5).
 
-Runs the REST API and WebSocket server. The tick loop runs as a SEPARATE
-process (python main.py) and communicates via shared SQLite. This process
-only reads data (except for the /api/ingest endpoint which writes to the
-knowledge_base/ directory, not the DB).
+ENTIRELY READ-ONLY with respect to trading decisions and safety flags:
+every endpoint reports state; none can open, close, or modify a trade, or
+change PAPER_TRADING_ONLY. The only POST is knowledge-base ingestion, which
+touches no trade state.
 
-Startup: initialises DB schema (idempotent), starts WS broadcaster background task,
-         schedules daily learning loop analysis.
-
-CORS is configured for the local frontend dev server. In production (serving
-the built frontend from the same origin), CORS is not needed — adjust as required.
+The tick loop normally runs as a separate process (`python main.py`) sharing
+the SQLite store; set TICK_LOOP_IN_PROCESS=1 to also run it inside this app
+(convenient for local demo/e2e).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
-import sys
-from contextlib import asynccontextmanager
+import os
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 import config
-from api import db
 from api.routes import (
     feed,
     holdings,
     journal,
-    knowledge_base_route,
-    promotion_gate_route,
+    knowledge_base,
+    market_regime,
+    promotion_gate,
     stats,
     system_status,
 )
-from api.websocket import broadcaster
+from api.websocket import FeedBroadcaster, websocket_endpoint
+from data_providers import build_provider
+from llm.narrator import Narrator
 
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
+log = logging.getLogger(__name__)
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("api.log", encoding="utf-8"),
-    ],
-)
-log = logging.getLogger("api")
+broadcaster = FeedBroadcaster()
 
 
-# ---------------------------------------------------------------------------
-# Lifespan (startup / shutdown)
-# ---------------------------------------------------------------------------
-
-@asynccontextmanager
+@contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
-    # ── Startup ──────────────────────────────────────────────────────────────
-    log.info("API starting up | backend=%s | paper_only=%s", config.DATA_BACKEND, config.PAPER_TRADING_ONLY)
-
-    # Initialise DB (idempotent)
+    from api import db
     await db.init_db()
-
-    # Start WS broadcaster background task
-    broadcaster_task = asyncio.create_task(
-        broadcaster.poll_and_broadcast(),
-        name="ws_broadcaster",
-    )
-
-    # Daily learning loop via APScheduler
-    scheduler = AsyncIOScheduler()
-    try:
-        from learning_loop import run_daily_analysis
-        scheduler.add_job(run_daily_analysis, "cron", hour=0, minute=5, id="daily_analysis")
-        scheduler.start()
-        log.info("APScheduler: daily analysis scheduled at 00:05")
-    except Exception as exc:
-        log.warning("Could not schedule daily analysis: %s", exc)
-
-    log.info("API ready at http://%s:%d", config.API_HOST, config.API_PORT)
-
-    yield  # ← application runs here
-
-    # ── Shutdown ─────────────────────────────────────────────────────────────
-    log.info("API shutting down")
-    broadcaster_task.cancel()
-    try:
-        await broadcaster_task
-    except asyncio.CancelledError:
-        pass
-    try:
-        scheduler.shutdown(wait=False)
-    except Exception:
-        pass
+    app.state.provider = build_provider()
+    app.state.narrator = Narrator()
+    broadcaster.start()
+    tick_task: asyncio.Task | None = None
+    if os.getenv("TICK_LOOP_IN_PROCESS", "0") == "1":
+        import main as tick_loop
+        log.info("starting in-process tick loop (TICK_LOOP_IN_PROCESS=1)")
+        tick_task = asyncio.create_task(tick_loop.main())
+    yield
+    if tick_task is not None:
+        tick_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await tick_task
+    await app.state.narrator.aclose()
+    await broadcaster.stop()
 
 
-# ---------------------------------------------------------------------------
-# FastAPI app
-# ---------------------------------------------------------------------------
-
-app = FastAPI(
-    title="Trading Bot API",
-    description="AI-assisted Solana memecoin paper-trading system. PAPER TRADING ONLY — no real funds.",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-# CORS — allow the Vite dev server and any built frontend
+app = FastAPI(title="trading-bot", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[config.FRONTEND_ORIGIN, "http://localhost:5173", "http://localhost:4173"],
-    allow_credentials=False,
-    allow_methods=["GET", "POST"],
+    allow_origins=[config.FRONTEND_ORIGIN],
+    allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------------------------
-# REST routes
-# ---------------------------------------------------------------------------
+for module in (feed, holdings, journal, stats, market_regime,
+               promotion_gate, knowledge_base, system_status):
+    app.include_router(module.router)
 
-api_router = APIRouter(prefix="/api")
-api_router.include_router(feed.router)
-api_router.include_router(holdings.router)
-api_router.include_router(journal.router)
-api_router.include_router(stats.router)
-api_router.include_router(knowledge_base_route.router)
-api_router.include_router(promotion_gate_route.router)
-api_router.include_router(system_status.router)
-
-app.include_router(api_router)
-
-
-# ---------------------------------------------------------------------------
-# WebSocket endpoint (FR-13)
-# ---------------------------------------------------------------------------
 
 @app.websocket("/ws/feed")
-async def websocket_feed(ws: WebSocket):
-    """
-    WebSocket endpoint for real-time feed events.
-    The client receives JSON messages of the form:
-      { "type": "feed_event", "data": { ...FeedEvent fields... } }
-    """
-    await broadcaster.connect(ws)
-    try:
-        # Keep connection alive — client sends nothing, we push to it
-        while True:
-            try:
-                await ws.receive_text()  # absorbs any pings/control frames
-            except WebSocketDisconnect:
-                break
-    finally:
-        broadcaster.disconnect(ws)
+async def ws_feed(ws: WebSocket):
+    await websocket_endpoint(ws, broadcaster)
 
 
 # ---------------------------------------------------------------------------
-# Health check
+# Optional: serve the built React dashboard from this same origin/port, so a
+# single process (and a single click) exposes the whole application.
 # ---------------------------------------------------------------------------
+FRONTEND_DIST = config.BASE_DIR.parent / "frontend" / "dist"
 
-@app.get("/health")
-async def health():
-    return {"status": "ok", "paper_trading_only": config.PAPER_TRADING_ONLY}
+
+@app.get("/")
+async def root():
+    # When the built frontend exists it is served by the SPA catch-all below;
+    # this JSON root only shows when no frontend build is present.
+    if not FRONTEND_DIST.exists():
+        return {
+            "service": "trading-bot",
+            "paper_trading_only": True,
+            "note": "Read-only research API. No endpoint can open, close, or "
+                    "modify a trade.",
+        }
+    return FileResponse(FRONTEND_DIST / "index.html")
+
+
+if FRONTEND_DIST.exists():
+    assets_dir = FRONTEND_DIST / "assets"
+    if assets_dir.exists():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def spa_fallback(full_path: str):
+        candidate = FRONTEND_DIST / full_path
+        # Serve real files (favicon etc.); everything else gets the SPA shell.
+        if full_path and ".." not in full_path and candidate.is_file():
+            return FileResponse(candidate)
+        return FileResponse(FRONTEND_DIST / "index.html")

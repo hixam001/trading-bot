@@ -1,137 +1,121 @@
-// src/types/index.ts — shared TypeScript types matching API response shapes
+// Shared API response types (mirror of the backend models).
 
-export interface FeedEvent {
-  id: number | null;
-  ts: string;
-  symbol: string;
-  mint_address: string;
-  candidate_snapshot: CandidateSnapshot;
-  verdict: "pass" | "fail";
-  confidence: number | null;
-  risk_flags: string[];
-  entry_condition: string | null;
-  invalidation_condition: string | null;
-  thesis: string | null;
-  led_to_trade_id: string | null;
+export interface RuleResultRow {
+  rule_id: string
+  passed: boolean
+  detail: string
+  value: number | string | boolean | null
 }
 
-export interface CandidateSnapshot {
-  symbol: string;
-  mint_address: string;
-  price_usd: number;
-  liquidity_usd: number;
-  volume_24h_usd: number;
-  holder_count: number;
-  top_holder_pct: number;
-  age_hours: number;
-  market_cap_usd: number;
-  source?: string;
+export interface FeedEventRow {
+  id: number
+  ts: string
+  symbol: string
+  mint_address: string
+  candidate_snapshot: Record<string, unknown>
+  verdict: 'pass' | 'fail'
+  thesis: string
+  rule_breakdown: RuleResultRow[]
+  failed_rule_ids: string[]
+  regime_ok: boolean
+  grounding_flags: string[]
+  narration_source: string
+  led_to_trade_id: string | null
 }
 
-export interface Holding {
-  trade_id: string;
-  symbol: string;
-  mint_address: string;
-  opened_at: string;
-  entry_price_usd: number;
-  position_size_usd: number;
-  quantity: number;
-  invalidation_condition: string;
-  thesis: string;
-  current_price_usd: number | null;
-  unrealized_pnl_usd: number | null;
-  unrealized_pnl_pct: number | null;
+export interface HoldingRow {
+  trade_id: string
+  symbol: string
+  mint_address: string
+  opened_at: string
+  entry_price_usd: number
+  position_size_usd: number
+  quantity: number
+  thesis: string
+  current_price_usd: number | null
+  unrealized_pnl_usd: number | null
+  unrealized_pnl_pct: number | null
 }
 
-export interface JournalEntry {
-  trade_id: string;
-  symbol: string;
-  mint_address: string;
-  opened_at: string;
-  closed_at: string | null;
-  entry_price_usd: number;
-  exit_price_usd: number | null;
-  position_size_usd: number;
-  realized_pnl_usd: number | null;
-  realized_pnl_pct: number | null;
-  exit_reason: string | null;
-  thesis: string;
-  entry_condition: string;
-  invalidation_condition: string;
-  confidence: number | null;
-  risk_flags: string[];
-  reflection_text: string | null;
-  candidate_snapshot: CandidateSnapshot;
-}
-
-export interface EquityPoint {
-  timestamp: string;
-  equity_usd: number;
-  pct_return: number;
+export interface TradeRow {
+  trade_id: string
+  symbol: string
+  mint_address: string
+  opened_at: string
+  entry_price_usd: number
+  position_size_usd: number
+  quantity: number
+  thesis: string
+  closed_at: string | null
+  exit_price_usd: number | null
+  exit_reason: string | null
+  realized_pnl_usd: number | null
+  realized_pnl_pct: number | null
+  is_open: boolean
+  reflection_text: string | null
 }
 
 export interface StatsResponse {
-  cash_balance_usd: number;
-  total_realized_pnl_usd: number;
-  open_positions: number;
-  total_closed_trades: number;
-  win_count: number;
-  loss_count: number;
-  win_rate: number | null;
-  profit_factor: number | null;
-  max_drawdown_pct: number;
-  avg_pnl_usd: number | null;
-  avg_win_usd: number | null;
-  avg_loss_usd: number | null;
-  equity_curve: EquityPoint[];
-  initial_cash_usd: number;
+  initial_cash_usd: number
+  cash_usd: number
+  equity_usd: number
+  open_positions: number
+  closed_trades: number
+  win_rate: number | null
+  profit_factor: number | null
+  max_drawdown_pct: number
+  total_pnl_usd: number
+  equity_curve: { closed_at: string; equity_usd: number }[]
+  paper_trading_only: boolean
 }
 
-export interface LearningWindow {
-  days_elapsed: number;
-  days_target: number;
-  trades_closed: number;
-  trades_target: number;
-  window_started: boolean;
-  window_complete: boolean;
+export interface RegimeRow {
+  computed_at: string
+  candidate_count: number
+  pct_candidates_green_1h: number
+  median_volume_1h_usd: number
+  avg_buy_sell_ratio: number
+  regime_ok: boolean
+  regime_detail: string
 }
 
-export interface PromotionCriterion {
-  name: string;
-  passed: boolean;
-  actual: number | null;
-  required: number;
-  detail: string;
+export interface Criterion {
+  name: string
+  passed: boolean
+  actual: number | null
+  required: number
+  detail: string
 }
 
-export interface PromotionGate {
-  all_criteria_met: boolean;
-  criteria: PromotionCriterion[];
-  summary: string;
-  note: string;
+export interface PromotionGateResponse {
+  all_criteria_met: boolean
+  criteria: Criterion[]
+  summary: string
+  note: string
 }
 
-export interface KnowledgeBase {
-  static_knowledge: string;
-  ingested_files: { filename: string; size_bytes: number; chars: number }[];
+export interface SystemStatusResponse {
+  paper_trading_only: boolean
+  data_backend: string
+  ollama_reachable: boolean
+  model: string
+  narration_mode: string
+  provider_calls_today: {
+    provider: string
+    day: string
+    call_count: number
+    error_count: number
+    rate_limit_429_count: number
+    last_call_at: string | null
+  }[]
+  tick_interval_seconds: number
+}
+
+export interface KnowledgeBaseResponse {
+  static_knowledge: string
+  ingested: { filename: string; digest: string; ingested_at: string }[]
   dynamic_stats: {
-    total_closed: number;
-    win_rate_overall: number | null;
-    win_rate_by_liquidity_bucket: Record<string, { trades: number; win_rate: number | null }>;
-    win_rate_by_age_bucket: Record<string, { trades: number; win_rate: number | null }>;
-  };
-}
-
-export interface SystemStatus {
-  paper_trading_only: boolean;
-  data_backend: string;
-  ollama: {
-    ollama_reachable: boolean;
-    model_name: string;
-    model_loaded: boolean;
-    available_models: string[];
-    ollama_url: string;
-    error?: string;
-  };
-  config: Record<string, unknown>;
+    by_liquidity_bucket: Record<string, { wins: number; trades: number; win_rate: number | null }>
+    by_age_bucket: Record<string, { wins: number; trades: number; win_rate: number | null }>
+  }
 }

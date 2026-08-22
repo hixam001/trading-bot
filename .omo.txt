@@ -1,0 +1,8 @@
+<frozen site>:101: RuntimeWarning: Unexpected value in sys.prefix, expected /home/hixam/trading-bot/.venv, got /home/hixam/trading-bot/backend/../.venv
+<frozen site>:101: RuntimeWarning: Unexpected value in sys.exec_prefix, expected /home/hixam/trading-bot/.venv, got /home/hixam/trading-bot/backend/../.venv
+published: 0cd102c7962951650140e42690226e8ea773a2597583ba56b45d054a7b0a67ea
+computed : 0cd102c7962951650140e42690226e8ea773a2597583ba56b45d054a7b0a67ea
+MATCH    : True
+published2: 21fcce8677beff02d7688c214d57bd957eaad9fb9601901901bdb358ae765d8fbb
+computed2 : 21fcce8677beff02d7688c214d57bd957eaad9fb960190d1bdb358ae765d8fbb
+MATCH2    : False

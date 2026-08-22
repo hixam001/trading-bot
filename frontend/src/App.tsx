@@ -1,118 +1,103 @@
-// src/App.tsx — Main application layout
+import { useState } from 'react'
+import PaperTradingBanner from './components/PaperTradingBanner'
+import LiveFeed from './components/LiveFeed'
+import Holdings from './components/Holdings'
+import TradeJournal from './components/TradeJournal'
+import StatsDashboard from './components/StatsDashboard'
+import MarketRegimePanel from './components/MarketRegimePanel'
+import PromotionGate from './components/PromotionGate'
+import KnowledgeBase from './components/KnowledgeBase'
+import SystemStatus from './components/SystemStatus'
+import { useApi } from './hooks/useApi'
+import { useFeedSocket } from './hooks/useWebSocket'
+import type {
+  HoldingRow,
+  StatsResponse,
+  TradeRow,
+} from './types'
 
-import { useState } from "react";
-import { PaperTradingBanner } from "./components/PaperTradingBanner";
-import { SystemStatusBar } from "./components/SystemStatus";
-import { LiveFeed } from "./components/LiveFeed";
-import { Holdings } from "./components/Holdings";
-import { TradeJournal } from "./components/TradeJournal";
-import { StatsDashboard } from "./components/StatsDashboard";
-import { PromotionGatePanel } from "./components/PromotionGate";
-import { KnowledgeBasePanel } from "./components/KnowledgeBase";
-
-type Tab = "feed" | "holdings" | "journal" | "stats" | "gate" | "kb";
-
-const TABS: { id: Tab; label: string; icon: string }[] = [
-  { id: "feed", label: "Live Feed", icon: "◎" },
-  { id: "holdings", label: "Holdings", icon: "◈" },
-  { id: "journal", label: "Journal", icon: "◧" },
-  { id: "stats", label: "Stats", icon: "◉" },
-  { id: "gate", label: "Gate", icon: "◬" },
-  { id: "kb", label: "Knowledge", icon: "◫" },
-];
+const TABS = ['feed', 'journal', 'knowledge', 'gate'] as const
+type Tab = (typeof TABS)[number]
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<Tab>("feed");
+  const [tab, setTab] = useState<Tab>('feed')
+
+  // Live feed via WebSocket; slower panels poll.
+  const { events, connected } = useFeedSocket()
+  const holdings = useApi<{ cash_usd: number; open_positions: HoldingRow[] }>(
+    '/api/holdings', 5000)
+  const stats = useApi<StatsResponse>('/api/stats', 10000)
+  const journal = useApi<{ total: number; trades: TradeRow[] }>('/api/journal', 15000)
+  const regimes = useApi<{ regimes: Parameters<typeof MarketRegimePanel>[0]['regimes'] }>(
+    '/api/market-regime?limit=30', 15000)
+  const gate = useApi<Parameters<typeof PromotionGate>[0]['data']>('/api/promotion-gate', 30000)
+  const kb = useApi<Parameters<typeof KnowledgeBase>[0]['kb']>('/api/knowledge-base', 60000)
+  const status = useApi<Parameters<typeof SystemStatus>[0]['status']>('/api/system-status', 15000)
+
+  const offline =
+    stats.error && holdings.error ? (
+      <div className="panel border-term-red text-term-red text-xs m-2">
+        API unreachable ({stats.error}) — panels will recover automatically when
+        the backend comes back. Not a crash; retrying in the background.
+      </div>
+    ) : null
 
   return (
-    <div className="min-h-screen bg-bg font-sans">
-      {/* FR-22: Persistent paper trading banner — always at top */}
+    <div className="min-h-screen flex flex-col">
       <PaperTradingBanner />
-
-      {/* Main layout — offset by banner height */}
-      <div className="pt-9 flex flex-col h-screen">
-        {/* ── Top nav bar ───────────────────────────────────────────────── */}
-        <header
-          className="glass border-b border-border px-4 py-2.5 flex items-center justify-between shrink-0"
-        >
-          {/* Brand */}
-          <div className="flex items-center gap-3">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center font-mono font-bold text-sm"
-              style={{
-                background: "linear-gradient(135deg, hsl(142,50%,20%), hsl(142,30%,12%))",
-                border: "1px solid hsl(142,40%,25%)",
-                boxShadow: "0 0 12px hsl(142,50%,15%)",
-              }}
-            >
-              <span className="text-gradient-green">AI</span>
-            </div>
-            <div>
-              <h1 className="text-sm font-semibold text-text-primary leading-none">
-                Trading Bot
-              </h1>
-              <p className="text-xs text-text-muted leading-none mt-0.5">
-                Solana Memecoin Research
-              </p>
-            </div>
-          </div>
-
-          {/* System status */}
-          <SystemStatusBar />
-        </header>
-
-        {/* ── Tab bar ───────────────────────────────────────────────────── */}
-        <nav
-          className="glass border-b border-border px-4 py-1.5 flex items-center gap-1 shrink-0 overflow-x-auto no-scrollbar"
-        >
-          {TABS.map((tab) => (
+      <div className="flex items-center gap-4 px-4 py-2 border-b border-term-border">
+        <span className="font-bold text-term-blue">trading-bot</span>
+        <nav className="flex gap-1 text-xs">
+          {TABS.map((t) => (
             <button
-              key={tab.id}
-              id={`tab-${tab.id}`}
-              onClick={() => setActiveTab(tab.id)}
-              className={`tab-btn flex items-center gap-1.5 whitespace-nowrap ${
-                activeTab === tab.id ? "active" : ""
-              }`}
+              key={t}
+              className={`px-3 py-1 rounded ${tab === t ? 'bg-term-panel border border-term-border text-term-blue' : 'text-term-dim hover:text-term-text'}`}
+              onClick={() => setTab(t)}
             >
-              <span className="opacity-60">{tab.icon}</span>
-              {tab.label}
+              {t}
             </button>
           ))}
         </nav>
-
-        {/* ── Content area ──────────────────────────────────────────────── */}
-        <main className="flex-1 overflow-y-auto p-4">
-          <div className="max-w-7xl mx-auto">
-            {activeTab === "feed" && (
-              <div className="h-[calc(100vh-10rem)]">
-                <LiveFeed />
-              </div>
-            )}
-
-            {activeTab === "holdings" && (
-              <div className="h-[calc(100vh-10rem)]">
-                <Holdings />
-              </div>
-            )}
-
-            {activeTab === "journal" && (
-              <div className="h-[calc(100vh-10rem)]">
-                <TradeJournal />
-              </div>
-            )}
-
-            {activeTab === "stats" && <StatsDashboard />}
-
-            {activeTab === "gate" && (
-              <div className="max-w-2xl mx-auto">
-                <PromotionGatePanel />
-              </div>
-            )}
-
-            {activeTab === "kb" && <KnowledgeBasePanel />}
-          </div>
-        </main>
       </div>
+
+      {offline}
+
+      <main className="p-3 grid grid-cols-1 xl:grid-cols-3 gap-3">
+        <div className="xl:col-span-2 space-y-3 min-w-0">
+          {stats.data && <StatsDashboard stats={stats.data} />}
+
+          {tab === 'feed' && (
+            <>
+              {holdings.data && (
+                <Holdings
+                  holdings={holdings.data.open_positions}
+                  cash={holdings.data.cash_usd}
+                />
+              )}
+              <LiveFeed events={events} connected={connected} />
+            </>
+          )}
+
+          {tab === 'journal' && journal.data && (
+            <TradeJournal trades={journal.data.trades} total={journal.data.total} />
+          )}
+
+          {tab === 'knowledge' && kb.data && <KnowledgeBase kb={kb.data} />}
+
+          {tab === 'gate' && gate.data && <PromotionGate data={gate.data} />}
+        </div>
+
+        <div className="space-y-3">
+          {regimes.data && <MarketRegimePanel regimes={regimes.data.regimes} />}
+          {status.data && <SystemStatus status={status.data} />}
+          {holdings.data && (
+            <Holdings
+              holdings={holdings.data.open_positions}
+              cash={holdings.data.cash_usd}
+            />
+          )}
+        </div>
+      </main>
     </div>
-  );
+  )
 }

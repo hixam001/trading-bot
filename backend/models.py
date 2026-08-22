@@ -1,11 +1,15 @@
 """
 models.py — Core domain dataclasses for trading-bot.
 
-These are plain Python dataclasses. SQLite persistence is handled entirely
-by api/db.py. No file I/O happens here — models are pure data containers.
+Plain Python dataclasses; SQLite persistence lives entirely in api/db.py.
+No file I/O happens here.
 
-PAPER TRADING ONLY: no model, field, or method in this file has anything to
-do with real fund movement. The Trade class represents simulated positions.
+None semantics (non-negotiable): a field a data source did not actually
+return is None. None means UNKNOWN — it is never coerced to False/0, which
+would fabricate a safety claim ("checked and fine") that was never made.
+
+PAPER TRADING ONLY: nothing in this file moves real funds. Trade represents
+a simulated position exclusively.
 """
 from __future__ import annotations
 
@@ -15,138 +19,125 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def _now_iso() -> str:
-    """Return current UTC time as ISO-8601 string."""
     return datetime.now(timezone.utc).isoformat()
 
 
-def _new_trade_id() -> str:
-    return str(uuid.uuid4())
+def _new_id(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex[:12]}"
 
 
 # ---------------------------------------------------------------------------
-# Candidate — a token presented for evaluation
+# Candidate — a token presented to the gate for evaluation (B13)
 # ---------------------------------------------------------------------------
 
 @dataclass
 class Candidate:
     """
-    A token candidate fetched from the data ingestion layer.
+    A memecoin candidate assembled from one or more providers.
 
-    All numeric fields are strictly typed. Any ingestion backend that cannot
-    provide a value for a required field must raise an error rather than
-    substituting a default (defense-first rule 1).
+    Numeric fields the gate rules depend on (volume_1h_usd, buys_1h,
+    sells_1h, price_change_1h_pct) are Optional: None = provider did not
+    return them. Rules treat missing values explicitly as unevaluable and
+    fail closed (skip the candidate) rather than guessing.
 
-    Security fields (P2-4): default None, NOT False.
-    None means "not checked" — False would imply "checked and safe," which
-    is its own fabricated claim if the check was never run.
-
-    Trend fields (P2-5): default None when the backend doesn't return them.
-    None tells the LLM these values are unavailable, not zero.
-
-    Holder/age/concentration fields: Optional — None when the backend cannot
-    provide a verified value. Birdeye's trending endpoint omits these;
-    they are filled by separate enrichment calls. None is NEVER used as a
-    sentinel to bypass a filter; the filter explicitly skips None fields.
+    Security fields default None (= not checked), never False (= checked
+    and safe).
     """
     symbol: str
     mint_address: str
     price_usd: float
     liquidity_usd: float
     volume_24h_usd: float
-    holder_count: Optional[int] = None         # None = not retrieved yet
-    top_holder_pct: Optional[float] = None     # % held by single largest holder; None = unknown
-    age_hours: Optional[float] = None          # hours since token creation; None = unknown
-    market_cap_usd: float = 0.0
-    # Optional metadata (used for logging / display only, not filter logic)
-    name: str = ""
-    description: str = ""
-    website: str = ""
-    twitter: str = ""
-    source: str = "mock"        # which backend produced this candidate
-    # Security fields (P2-4) — None = not checked, not "safe"
-    # Birdeye /defi/token_security can populate these; trending endpoint cannot.
-    # Mock backend provides synthetic values for testing the prompt behavior.
+    market_cap_usd: float
+    volume_1h_usd: Optional[float] = None
+    buys_1h: Optional[int] = None
+    sells_1h: Optional[int] = None
+    price_change_1h_pct: Optional[float] = None   # percent, e.g. -12.5
+    age_hours: Optional[float] = None
+    holder_count: Optional[int] = None
+    top_holder_pct: Optional[float] = None
+    # Token mint decimals — REQUIRED for correct execution-price quoting
+    # (a wrong decimals value scales prices by 10^(9-decimals)). None = unknown.
+    decimals: Optional[int] = None
+    # Public presence channels — None = unknown, True = present
+    has_twitter: Optional[bool] = None
+    has_telegram: Optional[bool] = None
+    has_website: Optional[bool] = None
+    # Security fields (Birdeye token_security) — None = not checked
     mint_authority_revoked: Optional[bool] = None
     freeze_authority_revoked: Optional[bool] = None
     is_likely_honeypot: Optional[bool] = None
-    # Additional security signals from Birdeye token_security endpoint:
-    #   mutable_metadata — True means name/symbol/URI can be changed post-launch
-    #                       (classic rug setup: launch legit, swap to scam metadata)
-    #   transfer_fee_enable — True means Token-2022 sell tax is active (hidden cost)
     mutable_metadata: Optional[bool] = None
     transfer_fee_enable: Optional[bool] = None
-    # Trend / momentum fields (P2-5) — None = not available from this backend
-    # Birdeye trending endpoint returns priceChange1hPercent, volume1hUSD, volume6hUSD.
-    # Mock backend provides synthetic values.
-    price_change_1h_pct: Optional[float] = None   # % price change in last 1h
-    volume_1h_usd: Optional[float] = None         # USD volume in last 1h
-    volume_6h_usd: Optional[float] = None         # USD volume in last 6h
+    name: str = ""
+    source: str = "mock"   # which provider stack produced this candidate
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "symbol": self.symbol,
+            "name": self.name,
             "mint_address": self.mint_address,
             "price_usd": self.price_usd,
             "liquidity_usd": self.liquidity_usd,
             "volume_24h_usd": self.volume_24h_usd,
-            "holder_count": self.holder_count,
-            "top_holder_pct": self.top_holder_pct,
+            "volume_1h_usd": self.volume_1h_usd,
+            "buys_1h": self.buys_1h,
+            "sells_1h": self.sells_1h,
+            "price_change_1h_pct": self.price_change_1h_pct,
             "age_hours": self.age_hours,
             "market_cap_usd": self.market_cap_usd,
-            "name": self.name,
-            "description": self.description,
-            "website": self.website,
-            "twitter": self.twitter,
-            "source": self.source,
-            # Security fields
+            "holder_count": self.holder_count,
+            "decimals": self.decimals,
+            "top_holder_pct": self.top_holder_pct,
+            "has_twitter": self.has_twitter,
+            "has_telegram": self.has_telegram,
+            "has_website": self.has_website,
             "mint_authority_revoked": self.mint_authority_revoked,
             "freeze_authority_revoked": self.freeze_authority_revoked,
             "is_likely_honeypot": self.is_likely_honeypot,
             "mutable_metadata": self.mutable_metadata,
             "transfer_fee_enable": self.transfer_fee_enable,
-            # Trend fields
-            "price_change_1h_pct": self.price_change_1h_pct,
-            "volume_1h_usd": self.volume_1h_usd,
-            "volume_6h_usd": self.volume_6h_usd,
+            "source": self.source,
         }
 
 
+@dataclass(frozen=True)
+class SecurityInfo:
+    """Security check results. None ALWAYS means unknown — never False."""
+    mint_authority_revoked: Optional[bool] = None
+    freeze_authority_revoked: Optional[bool] = None
+    is_likely_honeypot: Optional[bool] = None
+
+
 # ---------------------------------------------------------------------------
-# Verdict — LLM scoring result for one candidate
+# Rule engine contracts (§2.1)
 # ---------------------------------------------------------------------------
 
-@dataclass
-class Verdict:
-    """
-    The LLM's verdict on a candidate token.
+@dataclass(frozen=True)
+class RuleResult:
+    rule_id: str                                # stable snake_case identifier
+    passed: bool
+    detail: str                                 # human-readable, includes real numbers
+    value: float | int | bool | None = None     # raw underlying value for logging/calibration
 
-    All fields are validated by llm_scorer before this object is created.
-    A Verdict is never created from raw LLM output without passing through
-    explicit schema/type/range validation (defense-first rule 1).
-    """
+
+@dataclass(frozen=True)
+class GateDecision:
     candidate: Candidate
-    verdict: str                    # "pass" | "fail"  (validated)
-    confidence: float               # 0.0 – 1.0        (validated)
-    risk_flags: list[str]           # free-form flag strings from the LLM
-    thesis: str
-    entry_condition: str
-    invalidation_condition: str
-    # Raw LLM response preserved for auditability
-    raw_llm_response: Optional[str] = None
+    rules: list[RuleResult]
+    all_passed: bool
+    failed_rule_ids: list[str]
 
     def to_dict(self) -> dict[str, Any]:
         return {
-            "verdict": self.verdict,
-            "confidence": self.confidence,
-            "risk_flags": self.risk_flags,
-            "thesis": self.thesis,
-            "entry_condition": self.entry_condition,
-            "invalidation_condition": self.invalidation_condition,
+            "candidate": self.candidate.to_dict(),
+            "rules": [
+                {"rule_id": r.rule_id, "passed": r.passed, "detail": r.detail, "value": r.value}
+                for r in self.rules
+            ],
+            "all_passed": self.all_passed,
+            "failed_rule_ids": self.failed_rule_ids,
         }
 
 
@@ -156,58 +147,65 @@ class Verdict:
 
 @dataclass
 class Trade:
-    """
-    A simulated paper-trading position. Never represents real fund movement.
-
-    created via paper_trading_engine.open_position() only.
-    P&L fields are populated by paper_trading_engine.close_position() only.
-    """
-    trade_id: str = field(default_factory=_new_trade_id)
+    trade_id: str = field(default_factory=lambda: _new_id("trade"))
     symbol: str = ""
     mint_address: str = ""
     opened_at: str = field(default_factory=_now_iso)
     entry_price_usd: float = 0.0
-    position_size_usd: float = 0.0     # USD deployed (post-slippage, post-fee)
-    quantity: float = 0.0              # tokens acquired
+    position_size_usd: float = 0.0     # USD deployed (post-slippage, post-fee); grows on scale-in
+    quantity: float = 0.0              # tokens held; grows on scale-in
     candidate_snapshot: dict = field(default_factory=dict)
-    verdict_snapshot: dict = field(default_factory=dict)
-    invalidation_condition: str = ""
+    thesis: str = ""
     # Populated on close
     closed_at: Optional[str] = None
     exit_price_usd: Optional[float] = None
-    exit_reason: Optional[str] = None         # "take_profit" | "stop_loss" | "timeout" | "manual"
+    exit_reason: Optional[str] = None  # take_profit | stop_loss | timeout
     realized_pnl_usd: Optional[float] = None
     realized_pnl_pct: Optional[float] = None
     is_open: bool = True
-    # FR-26: per-trade reflection text from LLM (populated async after close)
+    # Populated asynchronously after close (D5/D6) — never blocks the tick loop
     reflection_text: Optional[str] = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "trade_id": self.trade_id,
+            "symbol": self.symbol,
+            "mint_address": self.mint_address,
+            "opened_at": self.opened_at,
+            "entry_price_usd": self.entry_price_usd,
+            "position_size_usd": self.position_size_usd,
+            "quantity": self.quantity,
+            "candidate_snapshot": self.candidate_snapshot,
+            "thesis": self.thesis,
+            "closed_at": self.closed_at,
+            "exit_price_usd": self.exit_price_usd,
+            "exit_reason": self.exit_reason,
+            "realized_pnl_usd": self.realized_pnl_usd,
+            "realized_pnl_pct": self.realized_pnl_pct,
+            "is_open": self.is_open,
+            "reflection_text": self.reflection_text,
+        }
 
 
 # ---------------------------------------------------------------------------
-# FeedEvent — every decision the tick loop makes (pass OR fail)
+# FeedEvent — every gate decision logged, pass OR fail (§2.4)
 # ---------------------------------------------------------------------------
 
 @dataclass
 class FeedEvent:
-    """
-    A single decision event logged by the tick loop.
-
-    Both pass and fail decisions produce FeedEvents (FR-3). This is what
-    the live feed panel displays — not just successful entries.
-    """
     ts: str = field(default_factory=_now_iso)
     symbol: str = ""
     mint_address: str = ""
     candidate_snapshot: dict = field(default_factory=dict)
-    verdict: str = "fail"              # "pass" | "fail"
-    confidence: Optional[float] = None
-    risk_flags: list[str] = field(default_factory=list)
-    entry_condition: Optional[str] = None
-    invalidation_condition: Optional[str] = None
-    thesis: Optional[str] = None
+    verdict: str = "fail"                      # "pass" | "fail"
+    thesis: str = ""
+    rule_breakdown: list[dict] = field(default_factory=list)   # full RuleResults, always complete
+    failed_rule_ids: list[str] = field(default_factory=list)
+    regime_ok: bool = False
+    grounding_flags: list[str] = field(default_factory=list)   # ungrounded-term flags (D2) — flagged, never dropped
+    narration_source: str = ""                 # "ollama:<model>" | "template" | ""
     led_to_trade_id: Optional[str] = None
-    # Set after DB insert
-    id: Optional[int] = None
+    id: Optional[int] = None                   # set after DB insert
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -217,22 +215,45 @@ class FeedEvent:
             "mint_address": self.mint_address,
             "candidate_snapshot": self.candidate_snapshot,
             "verdict": self.verdict,
-            "confidence": self.confidence,
-            "risk_flags": self.risk_flags,
-            "entry_condition": self.entry_condition,
-            "invalidation_condition": self.invalidation_condition,
             "thesis": self.thesis,
+            "rule_breakdown": self.rule_breakdown,
+            "failed_rule_ids": self.failed_rule_ids,
+            "regime_ok": self.regime_ok,
+            "grounding_flags": self.grounding_flags,
+            "narration_source": self.narration_source,
             "led_to_trade_id": self.led_to_trade_id,
         }
 
 
 # ---------------------------------------------------------------------------
-# DailyStats — aggregate stats for one calendar day
+# PortfolioState — what the rules evaluate against (§2.1 RuleFn signature)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PortfolioState:
+    cash_usd: float
+    open_positions: list[Trade] = field(default_factory=list)
+
+    def held_usd_in_mint(self, mint_address: str) -> float:
+        return sum(
+            t.position_size_usd for t in self.open_positions
+            if t.mint_address == mint_address
+        )
+
+    def get_open_trade_for_mint(self, mint_address: str) -> Optional[Trade]:
+        return next(
+            (t for t in self.open_positions if t.mint_address == mint_address),
+            None,
+        )
+
+
+# ---------------------------------------------------------------------------
+# DailyStats — aggregate stats for one calendar day (learning loop G1/G2)
 # ---------------------------------------------------------------------------
 
 @dataclass
 class DailyStats:
-    date: str                           # YYYY-MM-DD
+    date: str                                   # YYYY-MM-DD UTC
     open_positions: int = 0
     closed_trades: int = 0
-    recommendations: dict = field(default_factory=dict)
+    stats_json: dict = field(default_factory=dict)  # win rate, PF, DD, pnl, rejection breakdown

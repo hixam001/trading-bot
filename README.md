@@ -1,121 +1,91 @@
-# Trading Bot
+# trading-bot — local AI-assisted paper-trading research system
 
-AI-assisted Solana memecoin **paper-trading** research system.
+A deterministic, paper-trading research bot for Solana memecoins. **Decisions
+are made by pure, testable code; the LLM only explains decisions that have
+already been made.** No real funds, no wallet signing, no real transactions —
+`config.PAPER_TRADING_ONLY = True` is hardcoded and asserted at runtime inside
+every position-opening function.
 
-> ⚠️ **PAPER TRADING ONLY. No real funds. No wallet signing. No real transactions.**
+Full specification lives in `docs/`: start at `00_BLUEPRINT.md`, then
+`01_ARCHITECTURE.md`. Build status per requirement is tracked in
+`docs/02_FEATURE_LIST.md`.
 
-## Project layout
+## Run (one click)
 
-```
-trading-bot/
-├── backend/          ← Python backend (FastAPI API + tick loop)
-│   ├── config.py
-│   ├── models.py
-│   ├── deterministic_filter.py
-│   ├── knowledge_base.py
-│   ├── llm_scorer.py
-│   ├── data_ingestion.py
-│   ├── paper_trading_engine.py
-│   ├── main.py          ← tick loop (run separately)
-│   ├── learning_loop.py
-│   ├── promotion_gate.py
-│   ├── requirements.txt
-│   ├── api/
-│   │   ├── main.py      ← FastAPI app (uvicorn entry point)
-│   │   ├── db.py
-│   │   ├── websocket.py
-│   │   └── routes/
-│   ├── knowledge_base/
-│   │   ├── static_knowledge.md
-│   │   └── ingested/    ← operator-supplied files (gitignored)
-│   └── tests/
-├── frontend/         ← React + Vite + Tailwind v3 dashboard
-└── .env              ← secrets (gitignored)
-```
-
-## Quick start
-
-### 1. Copy env and fill in API keys
+Double-click **Trading Bot (Paper)** in your application launcher, or run:
 
 ```bash
-cp .env.example .env
-# Edit .env — set BIRDEYE_API_KEY, DATA_BACKEND=birdeye
+./start.sh
 ```
 
-### 2. Backend
+That single entry point: builds the dashboard, starts `ollama serve` if it
+isn't already up (reusing it if it is), starts the backend + tick loop on
+port 8000 serving both API and dashboard, waits for health, and opens
+http://localhost:8000 in your browser. Re-running it is safe — running parts
+are reused.
+
+Stop everything with `./stop.sh` (a pre-existing ollama is left alone).
+Logs land in `logs/`. To get the launcher icon:
 
 ```bash
-cd backend
-python3 -m venv .venv
-pip install -r requirements.txt  # or: .venv/bin/pip install -r requirements.txt
+cp trading-bot.desktop ~/.local/share/applications/
+update-desktop-database ~/.local/share/applications/ 2>/dev/null || true
 ```
 
-**bash / zsh:**
-```bash
-source .venv/bin/activate
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-# (second terminal)
-python main.py
-```
-
-**Fish shell:**
-```fish
-source .venv/bin/activate.fish
-uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-# (second terminal)
-python main.py
-```
-
-**Or skip activation entirely (works in any shell):**
-```bash
-# Terminal 1 — API
-.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
-
-# Terminal 2 — Tick loop
-.venv/bin/python main.py
-```
-
-### 3. Frontend
+## Run manually (development)
 
 ```bash
-cd frontend
-npm install
-npm run dev   # → http://localhost:5173
+# Backend + tick loop (serves the last built frontend at / too):
+cd backend && TICK_LOOP_IN_PROCESS=1 ../.venv/bin/python -m uvicorn api.main:app --port 8000
+
+# Frontend dev server with hot reload (proxies /api and /ws to :8000):
+cd frontend && npm install && npm run dev    # http://localhost:5173
+
+# Tests:
+cd backend && ../.venv/bin/python -m pytest tests/ -q
 ```
 
-### 4. Run tests
+Environment lives in `/.env` at the repo root (see `/.env.example`); it holds
+operator-facing settings only. Safety-critical constants stay hardcoded in
+`backend/config.py`.
+
+## Layout
+
+- `backend/` — all Python: rule engine, trading engine, providers, LLM
+  layer, knowledge base, API, tests. Run everything from inside `backend/`.
+  - `rule_engine/` — the 10 deterministic rules, `evaluate_gate()` (no
+    short-circuiting), `compute_market_regime()` (once per tick).
+  - `paper_trading_engine.py` — atomic, idempotent open/close/scale-in
+    (§5.1: conditional state write first; rowcount decides whether cash moves).
+  - `data_providers/` — mock (default), Birdeye + Dexscreener + Jupiter live
+    stack behind one protocol; bounded retry, 429 backoff, daily call counters.
+  - `llm/` — narrator (verdict pre-decided), groundedness validation,
+    post-close reflections.
+  - `knowledge_base/` — static knowledge, digest-at-ingest, budgeted context.
+  - `api/` — FastAPI read endpoints + WS feed broadcaster.
+- `frontend/` — React/Vite/Tailwind dashboard.
+- `promotion_gate.py` (in `backend/`) — READ-ONLY readiness report; never
+  triggers anything.
+
+Bulk-ingest knowledge: .
+
+## Calibration
+
+## Knowledge base
+
+Bulk-ingest operator notes (digested for prompts):
 
 ```bash
-cd backend
-.venv/bin/pytest tests/ -v
+cd backend && ../.venv/bin/python scripts/ingest_directory.py <directory>
 ```
 
-## Data backends
+Calibration reference: `docs/06_REFERENCE_COMPARISON.md` compares our rules
+and proof mechanism against omotrades.com.
 
-Set `DATA_BACKEND` in `.env`:
+## Provenance note
 
-| Value | Description |
-|-------|-------------|
-| `mock` | Synthetic data, no API key needed (default) |
-| `birdeye` | Real Solana data via BirdEye API |
-| `coinstats` | **Not implemented** — intentional stub |
-
-## Key configuration (`backend/config.py`)
-
-| Setting | Default | Note |
-|---------|---------|------|
-| `PAPER_TRADING_ONLY` | `True` | Hardcoded — not env-configurable |
-| `INITIAL_CASH_USD` | `$1,000` | Starting paper balance |
-| `POSITION_SIZE_PCT` | `10%` | Per-trade allocation |
-| `TAKE_PROFIT_PCT` | `+50%` | Exit threshold |
-| `STOP_LOSS_PCT` | `-20%` | Stop threshold |
-| `MAX_HOLD_HOURS` | `72h` | Force-close after this |
-
-## LLM
-
-Requires [Ollama](https://ollama.ai) running locally with `qwen3:8b` pulled:
-
-```bash
-ollama pull qwen3:8b
-ollama serve
-```
+Portions of this design (the rule-engine-as-decision-maker pattern, the
+market-regime gate concept) were informed by studying a comparable live
+public system's decision audit log. The implementation here is this
+project's own, built for its own goals and constraints (local hardware,
+paper trading, a 10-day calibration window).

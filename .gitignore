@@ -1,72 +1,21 @@
-# ─── Secrets & environment ────────────────────────────────────────────────────
-.env
-.env.*
-!.env.example
-
-# ─── PRD + skills — internal docs, never tracked ──────────────────────────────
-PRD.md
-.agents/
-
-# ─── Python ───────────────────────────────────────────────────────────────────
+# Python
 __pycache__/
 *.py[cod]
-*.pyo
-*.pyd
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
-*.so
-venv/
 .venv/
-env/
-ENV/
-pip-log.txt
-pip-delete-this-directory.txt
 .pytest_cache/
-.mypy_cache/
-.ruff_cache/
-htmlcov/
-.coverage
-coverage.xml
-*.cover
 
-# ─── SQLite database (runtime data) ──────────────────────────────────────────
+# Local state
 *.db
-*.db-journal
 *.db-wal
 *.db-shm
+.env
 
-# ─── Logs ─────────────────────────────────────────────────────────────────────
-*.log
-logs/
-
-# ─── Frontend ─────────────────────────────────────────────────────────────────
-frontend/node_modules/
+# Frontend
+node_modules/
 frontend/dist/
-frontend/.vite/
-frontend/.turbo/
+*.tsbuildinfo
 
-# ─── Backend venv (inside backend/) ──────────────────────────────────────────
-backend/.venv/
 
-# ─── Ingested knowledge (operator data, not tracked) ─────────────────────────
-backend/knowledge_base/ingested/*
-!backend/knowledge_base/ingested/.gitkeep
-
-# ─── OS artefacts ─────────────────────────────────────────────────────────────
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-Thumbs.db
-desktop.ini
-
-# ─── IDE / editor ─────────────────────────────────────────────────────────────
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
+# One-click launcher state
+.run/
+logs/

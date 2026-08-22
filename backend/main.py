@@ -1,374 +1,189 @@
 """
-main.py — Async tick loop for trading-bot.
+main.py — the async tick loop.
 
-This is the standalone entry point for the trading engine process.
-Run as: python main.py
+Per tick (§3.2 order matters):
+  1. Fetch the candidate batch from the selected provider stack.
+  2. Compute MarketRegime ONCE from the full batch and log it once
+     (market_regime table) — never once per candidate.
+  3. Evaluate + act per candidate via decide_and_act(); narrate EVERY
+     decision (pass or fail) and persist it as a feed event with the FULL
+     rule breakdown.
+  4. Check fixed numeric exit conditions against every open position;
+     close via the atomic engine; schedule fire-and-forget reflections.
 
-The tick loop runs independently from the FastAPI server. Both processes
-share the SQLite database (WAL mode enables concurrent reads while the tick
-loop writes). The API reads data; the tick loop writes data.
-
-Per-tick behavior:
-  1. Fetch candidates from the configured data backend.
-  2. Apply deterministic pre-filters.
-  3. Score passing candidates with the local LLM (concurrent where applicable).
-  4. For verdict=pass: open a simulated position if criteria met.
-  5. Check open positions for exit conditions (take-profit, stop-loss, timeout).
-  6. Persist feed events for every decision (pass AND fail).
-  7. Fire-and-forget reflection task for any positions just closed (FR-26/27).
-
-Error isolation (FR-1):
-  - Individual candidate failures (LLM errors, price lookup failures) are
-    caught and logged. They do not kill the tick loop.
-  - Tick-level errors (DB failure, data fetch failure) are caught and logged.
-    The loop sleeps and tries again on the next tick.
-
-Performance notes:
-  - LLM calls for independent candidates could be concurrent, but the local
-    Qwen3-8B model on a single GPU is the bottleneck — true concurrency would
-    just queue behind the GPU anyway. We score serially to avoid OOM risk and
-    keep timing measurements clean. If hardware changes, this is the place to
-    add asyncio.gather().
-  - Tick timing is logged so the actual critical path is measurable
-    (performance-discipline rule 7).
+The LLM is never in the decision path here — only narration of decisions
+already made by the rule engine and exits already flagged by numeric checks.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import signal
-import sys
 import time
 from datetime import datetime, timezone
-from typing import Optional
 
 import config
-import data_ingestion
-import deterministic_filter
-import knowledge_base
-import llm_scorer
-import paper_trading_engine as engine
 from api import db
-from models import FeedEvent, Trade
-
-# ---------------------------------------------------------------------------
-# Logging
-# ---------------------------------------------------------------------------
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%dT%H:%M:%S",
-    handlers=[
-        logging.StreamHandler(sys.stdout),
-        logging.FileHandler("trading_bot.log", encoding="utf-8"),
-    ],
+from data_providers import build_provider
+from llm.narrator import Narrator, generate_reflection
+from models import FeedEvent
+from paper_trading_engine import (
+    check_exit_conditions,
+    close_position,
+    decide_and_act,
+    load_portfolio_state,
 )
-log = logging.getLogger("tick_loop")
+from rule_engine.regime import compute_market_regime
+
+log = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Per-trade reflection (FR-26/27): fire-and-forget async task
-# ---------------------------------------------------------------------------
-
-async def _reflect_on_trade(trade: Trade) -> None:
-    """
-    Generate and persist a post-trade reflection. Called via
-    asyncio.create_task() — never awaited by the tick loop.
-
-    Failures are logged but do not affect the trade record (FR-27).
-    """
-    log.info("Reflection task started for trade %s (%s)", trade.trade_id, trade.symbol)
-    try:
-        reflection = await llm_scorer.generate_reflection(trade)
-        if reflection:
-            async with db.get_db() as conn:
-                await db.update_trade_reflection(conn, trade.trade_id, reflection)
-            log.info(
-                "Reflection saved for trade %s: %.80s...",
-                trade.trade_id,
-                reflection.replace("\n", " "),
-            )
-        else:
-            log.info("No reflection generated for trade %s", trade.trade_id)
-    except Exception as exc:
-        log.warning("Reflection failed for trade %s: %s", trade.trade_id, exc)
-    finally:
-        # Update knowledge base similar-trade index so next scoring
-        # benefits from this outcome (FR-26b)
-        try:
-            knowledge_base.reload_knowledge()
-        except Exception:
-            pass
+def setup_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
 
 
-# ---------------------------------------------------------------------------
-# Main tick logic
-# ---------------------------------------------------------------------------
+def _rule_summary(gate) -> str:
+    return "; ".join(f"{r.rule_id}:{'PASS' if r.passed else 'FAIL'}" for r in gate.rules)
 
-async def _run_single_tick(tick_num: int) -> None:
-    """
-    Execute one complete tick cycle.
 
-    All exceptions from individual candidates are caught here and logged.
-    The tick itself may raise, which the caller (run_loop) catches and
-    logs at the tick level.
-    """
-    t_tick_start = time.monotonic()
-    log.info("=== Tick #%d ===", tick_num)
+async def run_tick(provider, narrator: Narrator) -> dict:
+    t0 = time.monotonic()
+    candidates = await provider.get_candidates(config.MAX_CANDIDATES_PER_TICK)
 
-    # ── 1. Fetch candidates ──────────────────────────────────────────────────
-    t_fetch = time.monotonic()
-    try:
-        candidates = await data_ingestion.get_candidates()
-    except Exception as exc:
-        log.error("Tick #%d: data fetch failed: %s", tick_num, exc)
-        return
-    log.info("Fetch: %d candidates in %.2fs", len(candidates), time.monotonic() - t_fetch)
+    # Regime computed ONCE per tick from the full batch (C2), logged ONCE.
+    regime = compute_market_regime(candidates)
 
-    if not candidates:
-        log.info("Tick #%d: no candidates returned — sleeping", tick_num)
-        return
-
-    # ── 2. Check open positions for exit conditions ──────────────────────────
-    t_exit = time.monotonic()
+    opened = closed = 0
     async with db.get_db() as conn:
-        open_trades = await db.get_open_trades(conn)
-
-    newly_closed: list[Trade] = []
-    if open_trades:
-        async with db.get_db() as conn:
-            for trade in open_trades:
-                try:
-                    current_price = await data_ingestion.get_current_price(trade.mint_address)
-                    exit_result = engine.check_exit_conditions(trade, current_price)
-                    if exit_result is not None:
-                        exit_reason, exit_price = exit_result
-                        closed_trade = await engine.close_position(
-                            conn, trade, exit_price, exit_reason
-                        )
-                        newly_closed.append(closed_trade)
-                except data_ingestion.PriceUnavailableError as exc:
-                    log.warning(
-                        "Cannot get price for open position %s (%s): %s — skipping exit check",
-                        trade.symbol, trade.trade_id, exc,
-                    )
-                except Exception as exc:
-                    log.error(
-                        "Unexpected error checking exit for trade %s: %s",
-                        trade.trade_id, exc, exc_info=True,
-                    )
-
-        log.info(
-            "Exit check: %d open, %d closed in %.2fs",
-            len(open_trades) - len(newly_closed),
-            len(newly_closed),
-            time.monotonic() - t_exit,
+        await db.insert_market_regime(
+            conn,
+            computed_at=regime.computed_at,
+            candidate_count=len(candidates),
+            pct_green=regime.pct_candidates_green_1h,
+            median_vol=regime.median_volume_1h_usd,
+            avg_ratio=regime.avg_buy_sell_ratio,
+            regime_ok=regime.regime_ok,
+            detail=regime.regime_detail,
         )
+        log.info("tick regime: %s (%s)", "OK" if regime.regime_ok else "BAD",
+                 regime.regime_detail)
 
-    # Fire-and-forget reflection tasks (FR-26/27) — tick loop does NOT await
-    for closed_trade in newly_closed:
-        asyncio.create_task(
-            _reflect_on_trade(closed_trade),
-            name=f"reflect_{closed_trade.trade_id[:8]}",
-        )
+        for c in candidates:
+            portfolio = await load_portfolio_state(conn)
+            gate = await decide_and_act(c, portfolio, regime, conn)
+            narration = await narrator.narrate(gate)
 
-    # ── 3. Deterministic filter ──────────────────────────────────────────
-    t_filter = time.monotonic()
-    hard_fail_events: list[FeedEvent] = []
-    # (candidate, soft_flags) pairs that survive to LLM scoring
-    candidates_for_llm: list[tuple] = []
-
-    for c in candidates:
-        hard_fail, hard_fail_reason, soft_flags = deterministic_filter.apply_filters(c)
-        if hard_fail:
-            # Tier 1: instant rejection — no LLM call, precise single reason
-            hard_fail_events.append(FeedEvent(
+            event = FeedEvent(
                 symbol=c.symbol,
                 mint_address=c.mint_address,
                 candidate_snapshot=c.to_dict(),
-                verdict="fail",
-                risk_flags=[hard_fail_reason],
-                thesis=f"Hard-filter rejection: {hard_fail_reason}",
-            ))
-        else:
-            # Tier 2: soft-flagged or clean — proceed to LLM with flags attached
-            candidates_for_llm.append((c, soft_flags))
-
-    log.info(
-        "Filter: %d hard-fail, %d to LLM (%d with soft flags) from %d in %.2fs",
-        len(hard_fail_events),
-        len(candidates_for_llm),
-        sum(1 for _, sf in candidates_for_llm if sf),
-        len(candidates),
-        time.monotonic() - t_filter,
-    )
-
-    # Persist hard-fail events (FR-3: log every decision including hard rejections)
-    if hard_fail_events:
-        async with db.get_db() as conn:
-            for event in hard_fail_events:
-                event.id = await db.insert_feed_event(conn, event)
-    
-    # ── 4. LLM scoring (serial — GPU is the bottleneck) ──────────────────────
-    t_score = time.monotonic()
-    kb_context = knowledge_base.get_context()
-    score_events: list[FeedEvent] = []
-    new_positions_to_open: list[tuple] = []  # (candidate, verdict, event)
-
-    for candidate, soft_flags in candidates_for_llm[:config.MAX_CANDIDATES_PER_TICK]:
-        try:
-            verdict = await llm_scorer.score_candidate(candidate, kb_context, soft_flags=soft_flags)
-        except Exception as exc:
-            log.error("LLM scoring failed for %s: %s", candidate.symbol, exc, exc_info=True)
-            continue
-
-        if verdict is None:
-            # LLM failed — fail closed, skip this candidate
-            log.warning("Null verdict for %s — skipping (fail closed)", candidate.symbol)
-            score_events.append(FeedEvent(
-                symbol=candidate.symbol,
-                mint_address=candidate.mint_address,
-                candidate_snapshot=candidate.to_dict(),
-                verdict="fail",
-                risk_flags=soft_flags + ["llm_error"],
-                thesis="LLM scoring failed — candidate skipped (fail closed).",
-            ))
-            continue
-
-        # Merge deterministic soft_flags with LLM's own risk_flags so the feed
-        # event always shows the complete set of known risks (FR-3).
-        merged_flags = soft_flags + [f for f in verdict.risk_flags if f not in soft_flags]
-
-        event = FeedEvent(
-            symbol=candidate.symbol,
-            mint_address=candidate.mint_address,
-            candidate_snapshot=candidate.to_dict(),
-            verdict=verdict.verdict,
-            confidence=verdict.confidence,
-            risk_flags=merged_flags,
-            entry_condition=verdict.entry_condition,
-            invalidation_condition=verdict.invalidation_condition,
-            thesis=verdict.thesis,
-        )
-
-        if verdict.verdict == "pass":
-            new_positions_to_open.append((candidate, verdict, event))
-        else:
-            score_events.append(event)
-
-    log.info(
-        "LLM: %d scored in %.2fs | %d pass, %d fail",
-        len(candidates_for_llm),
-        time.monotonic() - t_score,
-        len(new_positions_to_open),
-        len(score_events),
-    )
-
-    # ── 5. Open new positions ────────────────────────────────────────────────
-    async with db.get_db() as conn:
-        for candidate, verdict, event in new_positions_to_open:
-            try:
-                trade = await engine.open_position(conn, candidate, verdict)
-                if trade is not None:
-                    event.led_to_trade_id = trade.trade_id
-                    score_events.append(event)
-                else:
-                    # open_position returned None (max positions, no cash, etc.)
-                    event.verdict = "fail"
-                    event.risk_flags = event.risk_flags + ["position_not_opened"]
-                    event.thesis += " [Position not opened: max positions or insufficient cash]"
-                    score_events.append(event)
-            except Exception as exc:
-                log.error(
-                    "Failed to open position for %s: %s",
-                    candidate.symbol, exc, exc_info=True,
-                )
-                event.verdict = "fail"
-                event.risk_flags = event.risk_flags + ["open_position_error"]
-                score_events.append(event)
-
-    # Persist all LLM-scored feed events
-    if score_events:
-        async with db.get_db() as conn:
-            for event in score_events:
-                event.id = await db.insert_feed_event(conn, event)
-
-    total_time = time.monotonic() - t_tick_start
-    log.info("=== Tick #%d done in %.2fs ===", tick_num, total_time)
-
-
-# ---------------------------------------------------------------------------
-# Loop runner
-# ---------------------------------------------------------------------------
-
-async def run_loop() -> None:
-    """
-    Main async tick loop. Runs indefinitely until interrupted.
-    Per-tick errors are caught and logged; the loop always continues.
-    """
-    log.info(
-        "Tick loop starting | backend=%s | model=%s | interval=%ds | paper_only=%s",
-        config.DATA_BACKEND,
-        config.MODEL_NAME,
-        config.TICK_INTERVAL_SECONDS,
-        config.PAPER_TRADING_ONLY,
-    )
-
-    # Initialise database
-    await db.init_db()
-    log.info("Database ready")
-
-    tick_num = 0
-    while True:
-        tick_num += 1
-        try:
-            await _run_single_tick(tick_num)
-        except asyncio.CancelledError:
-            log.info("Tick loop cancelled — shutting down")
-            break
-        except Exception as exc:
-            log.error(
-                "Tick #%d unhandled error (loop continues): %s",
-                tick_num, exc, exc_info=True,
+                verdict="pass" if gate.all_passed else "fail",
+                thesis=narration.thesis,
+                rule_breakdown=[
+                    {"rule_id": r.rule_id, "passed": r.passed,
+                     "detail": r.detail, "value": r.value}
+                    for r in gate.rules
+                ],
+                failed_rule_ids=gate.failed_rule_ids,
+                regime_ok=regime.regime_ok,
+                grounding_flags=narration.grounding_flags,
+                narration_source=narration.source,
             )
 
-        try:
+            if gate.all_passed:
+                trade = await db.get_open_trade_for_mint(conn, c.mint_address)
+                if trade is not None:
+                    event.led_to_trade_id = trade.trade_id
+                    if not trade.thesis:
+                        await conn.execute(
+                            "UPDATE trades SET thesis = ? WHERE trade_id = ? AND is_open = 1",
+                            (narration.thesis, trade.trade_id),
+                        )
+                        await conn.commit()
+                    opened += 1
+
+            event.id = await db.insert_feed_event(conn, event)
+
+        # --- exits: fixed numeric conditions only (§5.2) --------------------
+        for trade in await db.get_open_trades(conn):
+            try:
+                # Decimals from the entry snapshot are REQUIRED for a correct
+                # execution-price quote (wrong decimals fabricate prices).
+                decimals = (trade.candidate_snapshot or {}).get("decimals")
+                price = await provider.get_current_price(trade.mint_address, decimals)
+            except Exception as exc:
+                log.warning("price unavailable for %s — skipping exit check: %s",
+                            trade.symbol, exc)
+                continue
+            reason = check_exit_conditions(trade, price)
+            if reason is None:
+                continue
+            result = await close_position(conn, trade, price, reason)
+            if result.applied:
+                closed += 1
+                rule_summary = _rule_summary_text(trade)
+                # Fire-and-forget reflection (D5): never blocks the loop.
+                asyncio.create_task(_store_reflection(trade.trade_id, rule_summary))
+
+    elapsed_ms = (time.monotonic() - t0) * 1000.0   # K4 latency instrumentation
+    log.info("tick done in %.0f ms: %d candidates, %d entries/scale-ins, %d closes",
+             elapsed_ms, len(candidates), opened, closed)
+    return {"candidates": len(candidates), "opened": opened,
+            "closed": closed, "elapsed_ms": elapsed_ms}
+
+
+def _rule_summary_text(trade) -> str:
+    snap = trade.candidate_snapshot or {}
+    return f"entry at ${trade.entry_price_usd:.8f} ({snap.get('source', 'unknown')} data)"
+
+
+async def _store_reflection(trade_id: str, rule_summary: str) -> None:
+    from models import Trade
+    try:
+        async with db.get_db() as conn:
+            trade = await db.get_trade_by_id(conn, trade_id)
+            if trade is None or trade.is_open:
+                return
+            text = await generate_reflection(trade, rule_summary)
+            await db.update_reflection(conn, trade_id, text)
+    except Exception:
+        log.warning("reflection for %s failed (non-fatal)", trade_id, exc_info=True)
+
+
+async def main() -> None:
+    setup_logging()
+    log.info("trading-bot starting | PAPER_TRADING_ONLY=%s | backend=%s",
+             config.PAPER_TRADING_ONLY, config.DATA_BACKEND)
+    assert config.PAPER_TRADING_ONLY is True
+    await db.init_db()
+    provider = build_provider()
+    narrator = Narrator()
+    last_learning_date: str | None = None
+
+    try:
+        while True:
+            try:
+                await run_tick(provider, narrator)
+            except Exception:
+                log.exception("tick failed — continuing next interval (fail-closed)")
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if last_learning_date != today:
+                try:
+                    from learning_loop import run_daily_learning
+                    await run_daily_learning()
+                    last_learning_date = today
+                except Exception:
+                    log.exception("daily learning failed (non-fatal)")
             await asyncio.sleep(config.TICK_INTERVAL_SECONDS)
-        except asyncio.CancelledError:
-            log.info("Tick sleep cancelled — shutting down")
-            break
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
-def _handle_shutdown(loop: asyncio.AbstractEventLoop) -> None:
-    log.info("Shutdown signal received")
-    for task in asyncio.all_tasks(loop):
-        task.cancel()
+    except KeyboardInterrupt:
+        log.info("shutting down")
+    finally:
+        await narrator.aclose()
 
 
 if __name__ == "__main__":
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
+    asyncio.run(main())
 
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        try:
-            loop.add_signal_handler(sig, _handle_shutdown, loop)
-        except NotImplementedError:
-            pass  # Windows doesn't support add_signal_handler
-
-    try:
-        loop.run_until_complete(run_loop())
-    except (KeyboardInterrupt, asyncio.CancelledError):
-        log.info("Tick loop stopped.")
-    finally:
-        pending = asyncio.all_tasks(loop)
-        if pending:
-            loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-        loop.run_until_complete(llm_scorer.close_client())
-        loop.run_until_complete(data_ingestion.close_http_client())
-        loop.close()
-        log.info("Clean shutdown complete.")

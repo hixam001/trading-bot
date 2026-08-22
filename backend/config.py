@@ -1,15 +1,14 @@
 """
 config.py — Central configuration for trading-bot.
 
-Risk-critical constants (PAPER_TRADING_ONLY, SLIPPAGE_PCT, FEE_PCT) are
-hardcoded here, not environment-variable-configurable, so they cannot be
-accidentally overridden via a .env file or environment injection.
+Safety-critical constants are HARDCODED here, never environment-variable-
+configurable, so they cannot be overridden via .env or environment injection:
+  - PAPER_TRADING_ONLY  (the authoritative paper-trading safety gate)
+  - SLIPPAGE_PCT / FEE_PCT  (part of the simulated execution model; changing
+    them mid-session would corrupt the track record)
 
-All operator-facing settings (API keys, model URL, backend selection) are
-loaded from .env via python-dotenv.
-
-Per defense-first rule: config values that feed into money math or trade
-state are explicit constants, not .get()-with-defaults on untrusted input.
+Operator-facing settings (API keys, model URL, backend selection) load from
+.env via python-dotenv.
 """
 from __future__ import annotations
 
@@ -21,9 +20,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
-# SAFETY FLAG — HARDCODED, NEVER READ FROM ENV OR CHANGED BY CODE
-# This is the authoritative paper-trading safety gate. Do not move it to an
-# environment variable. It must be edited in this file, by a human, manually.
+# SAFETY FLAG — HARDCODED, NEVER READ FROM ENV, NEVER CHANGED BY CODE.
+# Edited only by a human, manually, in this file. Every position-opening
+# function asserts this at runtime as well (belt-and-suspenders, E7).
 # ---------------------------------------------------------------------------
 PAPER_TRADING_ONLY: bool = True
 
@@ -38,96 +37,128 @@ INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 
 # ---------------------------------------------------------------------------
 # Ollama / LLM — local only, no cloud fallback
-# The model and URL encode empirical hardware benchmarking results:
-# Qwen3-8B at ~23.6 tok/s on the target 6GB VRAM GPU with 100% valid JSON.
-# Do not swap these defaults to a hosted model.
+# Qwen3-8B: empirically ~23.6 tok/s on the target 6GB VRAM GPU with 100%
+# valid structured output. The LLM is the pipeline bottleneck; nothing here
+# may add avoidable serial I/O on top of it.
 # ---------------------------------------------------------------------------
 OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen3:8b")
 OLLAMA_TIMEOUT_SECONDS: float = 120.0
 OLLAMA_GENERATE_ENDPOINT: str = f"{OLLAMA_URL}/api/generate"
 OLLAMA_TAGS_ENDPOINT: str = f"{OLLAMA_URL}/api/tags"
+# In mock data mode the narrator uses a deterministic template backend so the
+# full pipeline runs without Ollama; live mode uses Ollama when reachable.
+NARRATOR_FALLBACK_TO_TEMPLATE: bool = True
 
 # ---------------------------------------------------------------------------
-# Data ingestion backend
+# Data providers (A9): single selection point for the whole app
+#   "mock" -> data_providers.mock.MockProvider
+#   "live" -> combined Birdeye + Dexscreener + Jupiter stack
+# Swapping providers touches no other module.
 # ---------------------------------------------------------------------------
-DATA_BACKEND: str = os.getenv("DATA_BACKEND", "mock")  # mock | birdeye | coinstats
+DATA_BACKEND: str = os.getenv("DATA_BACKEND", "mock").strip().lower()
+# --- Provider API keys ------------------------------------------------------
+# Birdeye requires a key even on the free tier (sent as X-API-KEY).
 BIRDEYE_API_KEY: str = os.getenv("BIRDEYE_API_KEY", "")
-COINSTATS_API_KEY: str = os.getenv("COINSTATS_API_KEY", "")
+# Dexscreener's basic pair/search endpoints are currently keyless; this field
+# exists so a future paid tier needs zero code changes (sent as Authorization
+# bearer when set).
+DEXSCREENER_API_KEY: str = os.getenv("DEXSCREENER_API_KEY", "")
+# Jupiter quote API v6 is currently keyless; a Jupiter Pro key is sent as
+# x-api-key when set.
 JUPITER_API_KEY: str = os.getenv("JUPITER_API_KEY", "")
-BIRDEYE_BASE_URL: str = "https://public-api.birdeye.so"
-JUPITER_QUOTE_URL: str = "https://quote-api.jup.ag/v6/quote"
 
-# HTTP client timeouts for external APIs (defense-first rule 8)
+BIRDEYE_BASE_URL: str = "https://public-api.birdeye.so"
+DEXSCREENER_BASE_URL: str = "https://api.dexscreener.com"
+JUPITER_QUOTE_URL: str = "https://lite-api.jup.ag/swap/v1/quote"
+USDC_MINT: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+SOL_MINT: str = "So11111111111111111111111111111111111111112"
+
+# HTTP client behavior for external APIs (defense-first rule 8): every call
+# has a defined timeout and bounded retry with backoff; 429 gets its own,
+# longer backoff and a distinct log event + counter.
 EXTERNAL_API_TIMEOUT_SECONDS: float = 15.0
+
+# ---------------------------------------------------------------------------
+# Paper trading parameters (simulated execution model)
+# ---------------------------------------------------------------------------
+INITIAL_CASH_USD: float = float(os.getenv("INITIAL_CASH_USD", "1000.0"))
+INTENDED_POSITION_SIZE_USD: float = 100.0   # fixed per-entry size the cash_available rule checks against
+
+# These are NOT env-configurable — part of the simulated execution model.
+SLIPPAGE_PCT: float = 0.02    # 2% simulated entry/exit slippage
+FEE_PCT: float = 0.01         # 1% simulated DEX fee each way
+
+# Exit conditions (§5.2) — checked each tick against every open position, in order
+TAKE_PROFIT_PCT: float = 0.50    # close if unrealized gain >= +50%
+STOP_LOSS_PCT: float = 0.20      # close if unrealized loss >= -20%
+MAX_HOLD_HOURS: int = 72         # force-close after 72 hours
+
+# ---------------------------------------------------------------------------
+# Rule engine thresholds (§2.3). All in USD / percent as labelled.
+# ---------------------------------------------------------------------------
+MIN_LIQUIDITY_USD: float = 10_000.0     # liquidity_floor
+MIN_VOLUME_1H_USD: float = 5_000.0      # volume_alive
+NEWBORN_AGE_HOURS: float = 2.0          # not_newborn_fade: joint condition —
+NEWBORN_FADE_PCT: float = 30.0          #   young AND down >= this % in 1h fails it
+MAX_EXPOSURE_PER_MINT_USD: float = 150.0  # exposure_cap (gates entries AND scale-ins)
+MIN_VOLUME_MCAP_RATIO: float = 0.80     # volume_mcap_ratio_ok
+
+# ---------------------------------------------------------------------------
+# Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.
+# To be tuned from real paper-trading data during the 10-day window
+# (03_GANTT_CHART.md calibration section). Do not treat these as validated.
+# Intuition per spec: reject regime if an unusually high fraction of the whole
+# candidate universe is simultaneously green (broad-pump smell) or if median
+# volume across the universe is suspiciously thin (dead tape).
+# ---------------------------------------------------------------------------
+REGIME_MIN_PCT_GREEN: float = 0.15
+REGIME_MAX_PCT_GREEN: float = 0.85
+REGIME_MIN_MEDIAN_VOLUME_USD: float = 20_000.0
+
+# ---------------------------------------------------------------------------
+# Knowledge base prompt budget (performance-discipline rule 8)
+# ---------------------------------------------------------------------------
+KB_MAX_CONTEXT_CHARS: int = 5_000
+
+# ---------------------------------------------------------------------------
+# Promotion gate thresholds — read-only assessment, never auto-activates anything
+# ---------------------------------------------------------------------------
+PROMOTION_MIN_TRADES: int = 40
+LEARNING_WINDOW_DAYS: int = 10
+PROMOTION_MIN_WIN_RATE: float = 0.55
+PROMOTION_MIN_PROFIT_FACTOR: float = 1.5
+PROMOTION_MAX_DRAWDOWN_PCT: float = 20.0
+
+# ---------------------------------------------------------------------------
+# API server
+# ---------------------------------------------------------------------------
+API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
+API_PORT: int = int(os.getenv("API_PORT", "8000"))
+FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+WS_POLL_INTERVAL_SECONDS: float = 2.0
+
+
+def assert_paper_trading_only() -> None:
+    """
+    Runtime assertion called INSIDE every position-opening/state-changing
+    trading function (E7). Belt-and-suspenders: even if a caller upstream
+    forgot to check, the engine itself refuses to act unless the hardcoded
+    safety flag is True.
+    """
+    if PAPER_TRADING_ONLY is not True:
+        raise RuntimeError(
+            "PAPER_TRADING_ONLY is not True — refusing to touch trade state. "
+            "This flag is hardcoded in config.py and must only be changed by "
+            "a human, manually."
+        )
+
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0
+RATE_LIMIT_EXTRA_BACKOFF_SECONDS: float = 15.0
 
 # ---------------------------------------------------------------------------
 # Tick loop
 # ---------------------------------------------------------------------------
 TICK_INTERVAL_SECONDS: int = int(os.getenv("TICK_INTERVAL_SECONDS", "60"))
 MAX_CANDIDATES_PER_TICK: int = int(os.getenv("MAX_CANDIDATES_PER_TICK", "20"))
-
-# ---------------------------------------------------------------------------
-# Paper trading parameters
-# ---------------------------------------------------------------------------
-INITIAL_CASH_USD: float = float(os.getenv("INITIAL_CASH_USD", "1000.0"))
-POSITION_SIZE_PCT: float = float(os.getenv("POSITION_SIZE_PCT", "0.10"))
-MAX_OPEN_POSITIONS: int = int(os.getenv("MAX_OPEN_POSITIONS", "5"))
-
-# These are NOT env-configurable — they are part of the simulated execution
-# model and changing them mid-session would corrupt the track record.
-SLIPPAGE_PCT: float = 0.02   # 2% simulated entry/exit slippage
-FEE_PCT: float = 0.01         # 1% simulated DEX fee each way
-
-# Exit thresholds
-TAKE_PROFIT_PCT: float = 0.50   # close if unrealized gain >= +50%
-STOP_LOSS_PCT: float = 0.20     # close if unrealized loss >= -20%
-MAX_HOLD_HOURS: int = 72         # force-close after 72 hours
-
-# ---------------------------------------------------------------------------
-# Deterministic pre-filter thresholds
-# All in USD or percentages as labelled.
-# ---------------------------------------------------------------------------
-MIN_LIQUIDITY_USD: float = 10_000.0
-MAX_TOP_HOLDER_PCT: float = 20.0    # top single holder must own < this %
-MIN_HOLDER_COUNT: int = 200
-MIN_AGE_HOURS: int = 1              # must be at least 1h old
-MAX_AGE_HOURS: int = 168            # must be less than 7 days old
-MIN_VOLUME_24H_USD: float = 5_000.0
-MIN_MARKET_CAP_USD: float = 50_000.0
-# Volume-to-market-cap ratio (per memecoin_evaluation_notes.md section 3):
-# 24h volume below ~80% of market cap is a manipulation/bundling signal.
-# Only fires when market_cap_usd > 0 (guards against division by zero).
-MIN_VOLUME_TO_MCAP_RATIO: float = float(os.getenv("MIN_VOLUME_TO_MCAP_RATIO", "0.80"))
-# Trend-based filter (P2-5): if 1h volume is below this fraction of 6h volume,
-# the token's momentum has collapsed — only fires when both fields are non-None.
-# 3% is a conservative floor (proportional share = ~16.7%; 3% catches only clear collapses).
-MIN_VOLUME_1H_TO_6H_RATIO: float = 0.03
-
-# ---------------------------------------------------------------------------
-# Knowledge base prompt budget (performance-discipline rule 8)
-# ---------------------------------------------------------------------------
-# Raised to 5000 now that digests are compact summaries rather than raw file dumps.
-# Verified: digest-based context stays well within this budget even with 10+ files.
-# If truncation still fires, it now drops whole documents rather than cutting mid-sentence.
-KB_MAX_CONTEXT_CHARS: int = 5_000
-
-# ---------------------------------------------------------------------------
-# Promotion gate thresholds (read-only assessment — never auto-activates anything)
-# ---------------------------------------------------------------------------
-PROMOTION_MIN_TRADES: int = 40
-PROMOTION_MIN_WIN_RATE: float = 0.55
-PROMOTION_MIN_PROFIT_FACTOR: float = 1.5
-PROMOTION_MAX_DRAWDOWN_PCT: float = 20.0
-LEARNING_WINDOW_DAYS: int = 10
-
-# ---------------------------------------------------------------------------
-# API server
-# ---------------------------------------------------------------------------
-API_HOST: str = os.getenv("API_HOST", "0.0.0.0")
-API_PORT: int = int(os.getenv("API_PORT", "8000"))
-FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
-# How often the API's WS broadcaster polls SQLite for new feed events (seconds)
-WS_POLL_INTERVAL_SECONDS: float = 2.0

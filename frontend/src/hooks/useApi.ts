@@ -1,56 +1,33 @@
-// src/hooks/useApi.ts — generic polling hook for REST endpoints
+import { useCallback, useEffect, useState } from 'react'
 
-import { useEffect, useRef, useState } from "react";
+/**
+ * Polling fetch hook (I10: graceful degraded state — an unreachable API
+ * renders an explicit offline banner, not a blank crash).
+ */
+export function useApi<T>(url: string, intervalMs?: number) {
+  const [data, setData] = useState<T | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-interface UseApiResult<T> {
-  data: T | null;
-  loading: boolean;
-  error: string | null;
-  refresh: () => void;
-}
-
-export function useApi<T>(
-  url: string,
-  intervalMs?: number
-): UseApiResult<T> {
-  const [data, setData] = useState<T | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const isMounted = useRef(true);
-
-  const fetchData = async () => {
+  const refresh = useCallback(async () => {
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
-      if (isMounted.current) {
-        setData(json);
-        setError(null);
-      }
+      const r = await fetch(url)
+      if (!r.ok) throw new Error(`HTTP ${r.status}`)
+      setData((await r.json()) as T)
+      setError(null)
     } catch (e) {
-      if (isMounted.current) {
-        setError(e instanceof Error ? e.message : "Request failed");
-      }
+      setError(e instanceof Error ? e.message : String(e))
     } finally {
-      if (isMounted.current) setLoading(false);
+      setLoading(false)
     }
-  };
+  }, [url])
 
   useEffect(() => {
-    isMounted.current = true;
-    setLoading(true);
-    fetchData();
+    refresh()
+    if (!intervalMs) return
+    const id = setInterval(refresh, intervalMs)
+    return () => clearInterval(id)
+  }, [refresh, intervalMs])
 
-    let timer: ReturnType<typeof setInterval> | null = null;
-    if (intervalMs) {
-      timer = setInterval(fetchData, intervalMs);
-    }
-
-    return () => {
-      isMounted.current = false;
-      if (timer) clearInterval(timer);
-    };
-  }, [url, intervalMs]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  return { data, loading, error, refresh: fetchData };
+  return { data, error, loading, refresh }
 }
