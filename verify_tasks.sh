@@ -103,4 +103,19 @@ print("  RULE: if prompt_eval_count > ~700, raise OLLAMA_NUM_CTX to 2048.")
 EOF
 
 echo ""
+echo "== 7. live_execution offline tests (Task C)"
+"$PY" -m pytest "$ROOT/live_execution/tests" -q 2>&1 | tail -2
+if ! "$PY" -c "import solders" 2>/dev/null; then
+  echo "  NOTE: 'solders' not installed — signing path untested."
+  echo "  Install when going real: $PY -m pip install solders"
+fi
+
+echo ""
+echo "== 8. Isolation: backend must never import live_execution"
+grep -rn "live_execution" "$ROOT/backend" --include="*.py" \
+  && echo "  FAIL: backend imports live_execution!" \
+  || echo "  OK: backend/ has zero references to live_execution"
+
+echo ""
 echo "VERIFY DONE"
+

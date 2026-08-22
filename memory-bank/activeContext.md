@@ -28,12 +28,16 @@ descoping. Do NOT create a swap-signing module from scratch in this repo.
 - config.OLLAMA_NUM_CTX=1024 (+rationale); narrator sends num_ctx
 - main() finally closes provider AND narrator (B.2 fixed)
 - tests/test_discovery_isolation.py + tests/test_narration_reuse.py added
+- Task C IMPLEMENTED: live_execution/ package (config, jupiter_executor w/
+  lite-api + decimals fail-closed refusals + local signing via solders +
+  RPC send/confirm; CLI entry), offline tests added. VERIFY pending shell.
 
 ## Verification checklist (run verify_tasks.sh)
 pytest all-pass · mock shows trending/new_listing/both · no rule references
 discovery_source · reuse thresholds sanity · num_ctx grep · provider-close
 grep · ollama prompt_eval_count measurement (raise num_ctx to 2048 only if
-measured >700)
+measured >700) · live_execution offline tests · backend↮live_execution
+isolation grep. Needs `pip install solders` in .venv for signing later.
 
 ## Watch-outs
 - websockets lib needed by new_listings (ships with uvicorn[standard] ✓)
