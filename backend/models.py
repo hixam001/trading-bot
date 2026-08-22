@@ -72,6 +72,10 @@ class Candidate:
     transfer_fee_enable: Optional[bool] = None
     name: str = ""
     source: str = "mock"   # which provider stack produced this candidate
+    # Discovery provenance ONLY — observability field. The rule engine never
+    # reads or branches on this. "trending" | "new_listing" | "both" |
+    # "unknown" (explicit unknown; never silently defaulted to trending).
+    discovery_source: str = "unknown"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -98,6 +102,7 @@ class Candidate:
             "is_likely_honeypot": self.is_likely_honeypot,
             "mutable_metadata": self.mutable_metadata,
             "transfer_fee_enable": self.transfer_fee_enable,
+            "discovery_source": self.discovery_source,
             "source": self.source,
         }
 

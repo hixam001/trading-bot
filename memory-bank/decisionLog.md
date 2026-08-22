@@ -18,3 +18,7 @@ Append-only. Newest last. Full rationale lives in handoff.md §5 and docs/.
 | 12 | 2026-08-22 | start.sh/stop.sh/.desktop launcher; ollama started only if absent; stop never kills pre-existing ollama | User-requested single-click startup |
 | 13 | 2026-08-22 | omotrades comparison doc; commit-reveal verified byte-for-byte; proof stays unbuilt | Validates architecture divergence (agent layer closed) and appendix accuracy |
 | 14 | 2026-08-22 | Corrupted DB wiped after decimals-bug closes ($481k fake cash) | Day-1 test data; honest reset for calibration |
+| 15 | 2026-08-22 | Dual-lens discovery: Birdeye SUBSCRIBE_TOKEN_NEW_LISTING websocket (buffered, session auto-disable) merged with trending; Candidate.discovery_source observability-only; rules never read it | Docs confirm no REST new-listing param exists; WS is Birdeye's sanctioned mechanism; decision coupling explicitly forbidden (Task A) |
+| 16 | 2026-08-22 | Thesis reuse: reuse prior narration iff verdict+failed-set identical AND liq/vol ≤5%+$250, mcap ≤5%, txns ≤10%+25, chg ≤3pp, within 3 ticks; source marked "reused" | Cuts duplicate Ollama load + feed noise on unchanged rejections; rule engine still re-evaluates every tick |
+| 17 | 2026-08-22 | OLLAMA_NUM_CTX=1024 explicit in generate options; provider.aclose() added to main() shutdown | KV-cache RAM scales with num_ctx not prompt length; prompt analytically <700 tok; verify via prompt_eval_count. Shutdown gap: provider never closed |
+

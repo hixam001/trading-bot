@@ -98,6 +98,9 @@ class MockProvider:
             # Varied mint decimals for field parity (6-decimal pump tokens,
             # 9-decimal standards) — exercises decimals-aware price quoting.
             cand.decimals = (6, 9, 6, 8, 6, 9, 6, 8)[i % 8]
+            # Varied discovery provenance so downstream display of
+            # discovery_source is exercised in mock mode too.
+            cand.discovery_source = ("trending", "new_listing", "both")[i % 3]
             out.append(cand)
             self._anchors[mint] = a["price_usd"]
         # One candidate per batch carries unknown security fields so the

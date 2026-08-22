@@ -58,6 +58,7 @@ def _parse_candidate(raw: dict[str, Any]) -> Optional[Candidate]:
         market_cap_usd=mc if mc is not None else 0.0,
         # Mint decimals — required for correct execution-price quoting.
         decimals=require_type(raw.get("decimals"), int, "decimals", "birdeye"),
+        discovery_source="trending",
         source="birdeye",
     )
 

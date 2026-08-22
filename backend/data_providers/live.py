@@ -17,23 +17,65 @@ from data_providers.base import ProviderError
 from data_providers.birdeye import BirdeyeProvider
 from data_providers.dexscreener import DexscreenerProvider
 from data_providers.jupiter import JupiterProvider
+from data_providers.new_listings import NewListingFeed
 from models import Candidate, SecurityInfo
 
 log = logging.getLogger(__name__)
 
 
 class LiveProviderStack:
-    """Implements MarketDataProvider over Birdeye + Dexscreener + Jupiter."""
+    """Implements MarketDataProvider over Birdeye + Dexscreener + Jupiter,
+    with a dual-lens discovery merge: trending (hot now) + new listings
+    (SUBSCRIBE_TOKEN_NEW_LISTING websocket, degrade-gracefully)."""
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client or httpx.AsyncClient()
         self.birdeye = BirdeyeProvider(self._client)
         self.dexscreener = DexscreenerProvider(self._client)
         self.jupiter = JupiterProvider(self._client)
+        self.new_listings = NewListingFeed()
+        self.new_listings.start()
 
     async def get_candidates(self, limit: int) -> list[Candidate]:
-        candidates = await self.birdeye.get_candidates(limit)
-        await self.dexscreener.enrich_candidates(candidates)
+        # Lens 1: trending. Lens 2: buffered new-listing events drained
+        # concurrently (Task A: asyncio.gather, matching existing pattern).
+        trending, fresh_events = await asyncio.gather(
+            self.birdeye.get_candidates(limit),
+            asyncio.to_thread(self.new_listings.drain, max(limit // 2, 1)),
+        )
+
+        fresh: list[Candidate] = []
+        for ev in fresh_events:
+            fresh.append(Candidate(
+                symbol=ev.get("symbol", "?"),
+                name=ev.get("name", ""),
+                mint_address=ev["mint_address"],
+                price_usd=0.0,                    # placeholder; Dexscreener fills it
+                liquidity_usd=ev.get("liquidity_usd"),
+                volume_24h_usd=0.0,
+                market_cap_usd=0.0,
+                decimals=ev.get("decimals"),
+                discovery_source="new_listing",
+                source="birdeye:new_listing",
+            ))
+
+        # Merge by mint; a mint in both lenses in the same tick is "both".
+        by_mint: dict[str, Candidate] = {}
+        for c in trending:
+            by_mint[c.mint_address] = c
+        for c in fresh:
+            existing = by_mint.get(c.mint_address)
+            if existing is None:
+                by_mint[c.mint_address] = c
+            else:
+                existing.discovery_source = "both"
+                # Keep the fresher Dexscreener-side numbers from whichever
+                # entry has them; trending entry already carries v24h/mcap.
+                if c.decimals is not None and existing.decimals is None:
+                    existing.decimals = c.decimals
+
+        merged = list(by_mint.values())[:limit]
+        await self.dexscreener.enrich_candidates(merged)
 
         # Security enrichment concurrently; failure leaves None (= unknown).
         async def _secure(c: Candidate) -> None:
@@ -45,9 +87,13 @@ class LiveProviderStack:
             except ProviderError:
                 pass   # already logged upstream; fields stay unknown
 
-        await asyncio.gather(*(_secure(c) for c in candidates))
-        log.info("Live stack: %d candidates enriched", len(candidates))
-        return candidates
+        await asyncio.gather(*(_secure(c) for c in merged))
+        log.info("Live stack: %d candidates enriched (trending=%d new_listing=%d)",
+                 len(merged),
+                 sum(1 for c in merged if "trending" in c.discovery_source or
+                     c.discovery_source == "both"),
+                 sum(1 for c in merged if "new_listing" in c.discovery_source))
+        return merged
 
     async def get_current_price(self, mint_address: str,
                                 decimals: Optional[int] = None) -> float:
@@ -62,6 +108,7 @@ class LiveProviderStack:
         return await self.birdeye.get_security_info(mint_address)
 
     async def aclose(self) -> None:
+        await self.new_listings.stop()
         await self._client.aclose()
 
 

@@ -24,7 +24,8 @@ from datetime import datetime, timezone
 import config
 from api import db
 from data_providers import build_provider
-from llm.narrator import Narrator, generate_reflection
+from llm.narrator import NarrationResult, Narrator, generate_reflection
+from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
 from models import FeedEvent
 from paper_trading_engine import (
     check_exit_conditions,
@@ -49,14 +50,21 @@ def _rule_summary(gate) -> str:
     return "; ".join(f"{r.rule_id}:{'PASS' if r.passed else 'FAIL'}" for r in gate.rules)
 
 
-async def run_tick(provider, narrator: Narrator) -> dict:
+async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> dict:
+    """
+    state: optional dict persisted ACROSS ticks by the caller (main()):
+      {"tick": int, "theses": {mint: {...}}} — enables short-term thesis
+      reuse (Task A.5). A fresh empty state means no reuse (tests).
+    """
     t0 = time.monotonic()
     candidates = await provider.get_candidates(config.MAX_CANDIDATES_PER_TICK)
+    if state is not None:
+        state["tick"] = state.get("tick", 0) + 1
 
     # Regime computed ONCE per tick from the full batch (C2), logged ONCE.
     regime = compute_market_regime(candidates)
 
-    opened = closed = 0
+    opened = closed = reused = 0
     async with db.get_db() as conn:
         await db.insert_market_regime(
             conn,
@@ -74,7 +82,22 @@ async def run_tick(provider, narrator: Narrator) -> dict:
         for c in candidates:
             portfolio = await load_portfolio_state(conn)
             gate = await decide_and_act(c, portfolio, regime, conn)
-            narration = await narrator.narrate(gate)
+
+            # --- Task A.5: reuse prior thesis if stats are unchanged ------
+            narration = None
+            if state is not None:
+                prior = (state.get("theses") or {}).get(c.mint_address)
+                within_window = (
+                    prior is not None
+                    and state["tick"] - prior["tick"] <= REUSE_TICK_WINDOW
+                )
+                if within_window and reused_if_stable(
+                        prior["decision"], gate.all_passed,
+                        gate.failed_rule_ids, stats_signature(c)):
+                    narration = NarrationResult(prior["thesis"], "reused", [])
+                    reused += 1
+            if narration is None:
+                narration = await narrator.narrate(gate)
 
             event = FeedEvent(
                 symbol=c.symbol,
@@ -105,6 +128,14 @@ async def run_tick(provider, narrator: Narrator) -> dict:
                         await conn.commit()
                     opened += 1
 
+            if state is not None:
+                state.setdefault("theses", {})[c.mint_address] = {
+                    "tick": state["tick"],
+                    "decision": {"all_passed": gate.all_passed,
+                                 "failed_rule_ids": list(gate.failed_rule_ids)},
+                    "thesis": narration.thesis,
+                }
+
             event.id = await db.insert_feed_event(conn, event)
 
         # --- exits: fixed numeric conditions only (§5.2) --------------------
@@ -129,8 +160,9 @@ async def run_tick(provider, narrator: Narrator) -> dict:
                 asyncio.create_task(_store_reflection(trade.trade_id, rule_summary))
 
     elapsed_ms = (time.monotonic() - t0) * 1000.0   # K4 latency instrumentation
-    log.info("tick done in %.0f ms: %d candidates, %d entries/scale-ins, %d closes",
-             elapsed_ms, len(candidates), opened, closed)
+    log.info("tick done in %.0f ms: %d candidates, %d entries/scale-ins, "
+             "%d closes, %d theses reused",
+             elapsed_ms, len(candidates), opened, closed, reused)
     return {"candidates": len(candidates), "opened": opened,
             "closed": closed, "elapsed_ms": elapsed_ms}
 
@@ -161,12 +193,15 @@ async def main() -> None:
     await db.init_db()
     provider = build_provider()
     narrator = Narrator()
+    # Cross-tick state: tick counter + per-mint thesis reuse cache (Task A.5).
+    # REUSE_TICK_WINDOW bounds how old a reused thesis may be.
+    state: dict = {"tick": 0, "theses": {}}
     last_learning_date: str | None = None
 
     try:
         while True:
             try:
-                await run_tick(provider, narrator)
+                await run_tick(provider, narrator, state)
             except Exception:
                 log.exception("tick failed — continuing next interval (fail-closed)")
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -181,6 +216,13 @@ async def main() -> None:
     except KeyboardInterrupt:
         log.info("shutting down")
     finally:
+        close_provider = getattr(provider, "aclose", None)
+        if close_provider is not None:
+            # LiveProviderStack closes the WS feed + shared HTTP client.
+            try:
+                await close_provider()
+            except Exception:
+                log.warning("provider shutdown raised (non-fatal)", exc_info=True)
         await narrator.aclose()
 
 

@@ -46,6 +46,15 @@ MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen3:8b")
 OLLAMA_TIMEOUT_SECONDS: float = 120.0
 OLLAMA_GENERATE_ENDPOINT: str = f"{OLLAMA_URL}/api/generate"
 OLLAMA_TAGS_ENDPOINT: str = f"{OLLAMA_URL}/api/tags"
+# Ollama context window for /api/generate calls (num_ctx). KV-cache RAM scales
+# with this value, NOT with prompt length; Ollama's default (4096) is ~4x
+# larger than needed here: a narration prompt is fixed instruction text
+# (~200 tokens) plus ten rule lines (~20 tokens each) — analytically <700
+# tokens worst case. 1024 leaves ~1.5x headroom over that bound while
+# cutting narrator KV memory roughly 4x vs the default. VERIFY against
+# response.prompt_eval_count on first live narration; raise to 2048 only if
+# the measured count exceeds ~700.
+OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "1024"))
 # In mock data mode the narrator uses a deterministic template backend so the
 # full pipeline runs without Ollama; live mode uses Ollama when reachable.
 NARRATOR_FALLBACK_TO_TEMPLATE: bool = True
