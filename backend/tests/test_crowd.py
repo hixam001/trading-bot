@@ -38,7 +38,6 @@ def fresh_state(monkeypatch):
     """Reset module globals + caches so tests never see each other's data."""
     monkeypatch.setattr(crowd, "_sessions", {})
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
-    monkeypatch.setattr(crowd, "_pump_cache", crowd._TtlCache(60))
     monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
 
 
@@ -146,26 +145,6 @@ async def test_fomo_http_500_fails_soft(monkeypatch):
     assert await crowd.fetch_fomo_theses(MINT) is None
 
 
-# --- pump.fun feed ---------------------------------------------------------------------
-
-async def test_pump_comments_accept_list_and_dict_bodies(monkeypatch):
-    install_fake_http(monkeypatch, get=FakeResponse(200, [
-        {"user": "a", "text": "x"}, {"user": "b", "text": "y"}]))
-    got = await crowd.fetch_pump_comments(MINT)
-    assert len(got) == 2 and got[0]["who"] == "a"
-
-    other = "OtherMint22222222222222222222222222222222222"
-    install_fake_http(monkeypatch, get=FakeResponse(200, {"items": [
-        {"user": "c", "text": "z"}]}))
-    got2 = await crowd.fetch_pump_comments(other)
-    assert len(got2) == 1 and got2[0]["who"] == "c"
-
-
-async def test_pump_comments_fail_soft_on_error(monkeypatch):
-    install_fake_http(monkeypatch, get=FakeResponse(404, {}))
-    assert await crowd.fetch_pump_comments(MINT) is None
-
-
 # --- transport: direct -> firecrawl stealth fallback --------------------------
 
 async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
@@ -206,68 +185,23 @@ async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
     assert calls == {"direct": 1, "firecrawl": 1}
 
 
-def test_pump_app_requires_refresh_token(monkeypatch):
-    # Hermetic: the operator's real .env may have this set.
-    monkeypatch.setattr(config, "PUMPFUN_PRIVY_REFRESH_TOKEN", "")
-    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "")
-    assert crowd.pump_app() is None
+# --- enrichment: fomo board is the sole real source (pump deferred) -----------
 
-    monkeypatch.setattr(config, "PUMPFUN_PRIVY_REFRESH_TOKEN", "tok")
-    # Empty/unset app id falls back to pump.fun's own public id:
-    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "")
-    app = crowd.pump_app()
-    assert app is not None and app.app_id == crowd._PUMPFUN_APP_ID_DEFAULT
-    assert app.origin == "pump.fun"
-
-    # A custom override is honored (and its origin derives accordingly):
-    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "app-123")
-    app2 = crowd.pump_app()
-    assert app2 is not None and app2.app_id == "app-123"
-    assert app2.origin == "fomo.family"
-
-
-# --- enrichment priority: fomo > pumpfun > proxy -----------------------------------------
-
-async def test_enrich_prefers_fomo_board(monkeypatch):
+async def test_enrich_uses_fomo_board(monkeypatch):
     async def fomo_ok(mint):
         return [{"who": "w", "text": "t"}] * 3        # 3 theses -> heat 44
 
-    pump_called = []
-
-    async def pump_spy(mint):
-        pump_called.append(mint)
-        return None
-
     monkeypatch.setattr(crowd, "fetch_fomo_theses", fomo_ok)
-    monkeypatch.setattr(crowd, "fetch_pump_comments", pump_spy)
 
     c = make_candidate()
     await crowd.enrich_crowd_heat([c])
     assert c.fomo_heat == 44 and c.crowd_heat_source == "fomo"
-    assert pump_called == []                          # never consulted
-
-
-async def test_enrich_falls_back_to_pumpfun(monkeypatch):
-    async def fomo_down(mint):
-        return None
-
-    async def pump_one(mint):
-        return [{"who": "a", "text": "b"}]
-
-    monkeypatch.setattr(crowd, "fetch_fomo_theses", fomo_down)
-    monkeypatch.setattr(crowd, "fetch_pump_comments", pump_one)
-
-    c = make_candidate()
-    await crowd.enrich_crowd_heat([c])
-    # 1 comment -> heat 28 (< band MIN 36): a real feed still wins over proxy.
-    assert c.fomo_heat == 28 and c.crowd_heat_source == "pumpfun"
 
 
 async def test_enrich_no_feed_leaves_proxy_intact(monkeypatch):
-    async def both_down(mint):
+    async def fomo_down(mint):
         return None
-    monkeypatch.setattr(crowd, "fetch_fomo_theses", both_down)
-    monkeypatch.setattr(crowd, "fetch_pump_comments", both_down)
+    monkeypatch.setattr(crowd, "fetch_fomo_theses", fomo_down)
 
     c = make_candidate()
     await crowd.enrich_crowd_heat([c])

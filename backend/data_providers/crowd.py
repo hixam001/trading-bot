@@ -1,25 +1,24 @@
 """
 data_providers/crowd.py — REAL crowd conviction for crowd_heat.
 
-Two sources, tried in order per mint, both FAIL-SOFT (an unavailable feed
+Source: the fomo.fun board — omotrades' exact source
+(`prod-api.fomo.family/feed/token/thesis`). FAIL-SOFT: an unavailable feed
 just degrades crowd_heat to the presence proxy; it can never block an exit
-or stall the loop):
+or stall the loop.
 
-1. fomo.fun board  — omotrades' exact source. `prod-api.fomo.family` sits
-   behind Cloudflare AND firewalls datacenter/residential IPs (verified live
-   2026-08-23: a valid bearer still gets a 403 JS challenge on direct calls).
-   Reads therefore go DIRECT first and automatically fall back to a FIRECRAWL
-   stealth-proxy scrape when challenged — omotrades' own architecture ("fomo
-   family's API firewalls datacenter IPs, so direct fetches from the worker
-   403"). Needs FOMO_PRIVY_REFRESH_TOKEN (Privy session) + FIRECRAWL_API_KEY.
+The API sits behind Cloudflare AND firewalls datacenter/residential IPs
+(verified live 2026-08-23: a valid bearer still gets a 403 JS challenge on
+direct calls). Reads therefore go DIRECT first and automatically fall back
+to a FIRECRAWL stealth-proxy scrape when challenged — omotrades' own
+architecture ("fomo family's API firewalls datacenter IPs, so direct
+fetches from the worker 403"). Needs FOMO_PRIVY_REFRESH_TOKEN (Privy
+session) + FIRECRAWL_API_KEY.
 
-2. pump.fun comments — secondary, same transport. The legacy frontend-api
-   host is dead (HTTP 530, verified 2026-08-23). PUMPFUN_COMMENTS_URL_TEMPLATE
-   points at whatever route the current web app uses; pump.fun also uses
-   Privy auth, so PUMPFUN_PRIVY_REFRESH_TOKEN / PUMPFUN_PRIVY_APP_ID are
-   supported the same way (bearer attached when present).
+Heat formula is omo's own: heat = clamp(20 + 8 x thesis_count, 0, 100).
 
-Heat formula is omo's own: heat = clamp(20 + 8 x conviction_items, 0, 100).
+(pump.fun comments were evaluated as a secondary source and DEFERRED —
+their legacy API host is dead and the current one 503s even via stealth
+proxy; see docs/FOMO_INTEGRATION.md.)
 """
 from __future__ import annotations
 
@@ -65,7 +64,6 @@ class _TtlCache:
 
 
 _fomo_cache = _TtlCache(config.FOMO_CACHE_TTL_SECONDS)
-_pump_cache = _TtlCache(config.PUMPFUN_CACHE_TTL_SECONDS)
 
 
 def heat_from_count(count: int) -> int:
@@ -80,7 +78,7 @@ def _looks_like_challenge(raw: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Generic Privy session minting (fomo.family AND pump.fun both use Privy)
+# Privy session minting (fomo.family)
 # ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
@@ -90,14 +88,7 @@ class _PrivyApp:
 
     @property
     def origin(self) -> str:
-        return ("pump.fun"
-                if self.app_id == _PUMPFUN_APP_ID_DEFAULT
-                else "fomo.family")
-
-
-# pump.fun's own Privy app id, extracted from their bundle
-# (privy.pump.fun/recovery?recovery_app_id=...). Public identifier.
-_PUMPFUN_APP_ID_DEFAULT = "cm1p2gzot03fzqty5xzgjgthq"
+        return "fomo.family"
 
 
 _sessions: dict[str, tuple[str, float]] = {}      # app_id -> (jwt, exp_ms)
@@ -172,15 +163,6 @@ def fomo_app() -> Optional[_PrivyApp]:
     if not config.FOMO_PRIVY_REFRESH_TOKEN:
         return None
     return _PrivyApp(config.PRIVY_APP_ID, config.FOMO_PRIVY_REFRESH_TOKEN)
-
-
-def pump_app() -> Optional[_PrivyApp]:
-    """Pump.fun Privy session — only when the operator configured one."""
-    if not config.PUMPFUN_PRIVY_REFRESH_TOKEN:
-        return None
-    # An EMPTY env line must fall back to pump's own app id, never fomo's.
-    app_id = (config.PUMPFUN_PRIVY_APP_ID or "").strip() or _PUMPFUN_APP_ID_DEFAULT
-    return _PrivyApp(app_id, config.PUMPFUN_PRIVY_REFRESH_TOKEN)
 
 
 # ---------------------------------------------------------------------------
@@ -306,56 +288,15 @@ async def fetch_fomo_theses(mint: str) -> Optional[list[dict]]:
     return theses
 
 
-async def fetch_pump_comments(mint: str) -> Optional[list[dict]]:
-    """
-    Comments on `mint` from the configured pump.fun route, or None when
-    unreachable/misconfigured. Bearer attached when a pump Privy session is
-    configured. Cached per mint for PUMPFUN_CACHE_TTL_SECONDS.
-    """
-    cached = _pump_cache.get(mint)
-    if cached is not None:
-        return cached
-
-    headers: dict = {}
-    app = pump_app()
-    if app is not None:
-        token = await _access_token(app)
-        if token:
-            headers["authorization"] = f"Bearer {token}"
-
-    url = config.PUMPFUN_COMMENTS_URL_TEMPLATE.format(mint=mint)
-    body = await _get_json_via(url, headers)
-    if body is None:
-        return None
-    # Error bodies ({"statusCode": 404, ...}) must read as failure, not as
-    # an empty comment list.
-    if isinstance(body, dict) and "statusCode" in body:
-        log.info("pumpfun: origin error body for %s", mint[:8])
-        return None
-    items = body if isinstance(body, list) else (body.get("items") or [])
-    comments = [{"who": str(c.get("user", "")), "text": str(c.get("text", ""))}
-                for c in items if isinstance(c, dict)]
-    _pump_cache.put(mint, comments)
-    return comments
-
-
 # ---------------------------------------------------------------------------
 # Enrichment entry point — called once per tick in the READ stage
 # ---------------------------------------------------------------------------
 
 async def _heat_for_mint(mint: str) -> tuple[Optional[int], str]:
-    """(heat, source) from the best available feed; (None, '') if none."""
+    """(heat, source) from the fomo board; (None, '') if the feed is down."""
     theses = await fetch_fomo_theses(mint)
     if theses is not None:
         return heat_from_count(len(theses)), "fomo"
-    comments = await fetch_pump_comments(mint)
-    if comments is not None:
-        # Comments are weaker conviction than board theses with positions on
-        # them; cap their contribution so pump chatter alone can't reach the
-        # top of the band.
-        capped = min(len(comments), 10)
-        return min(100, config.CROWD_HEAT_BASE
-                   + config.CROWD_HEAT_PER_SIGNAL * capped), "pumpfun"
     return None, ""
 
 

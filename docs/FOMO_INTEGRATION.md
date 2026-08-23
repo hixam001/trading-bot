@@ -25,15 +25,21 @@ Their gate refuses when heat is outside its act band — observed refusals at
 heat 20–24 ("fomo reading inside the range i act in" fails), action around
 25+. The band bounds are operator-tuned, not sacred.
 
-## 2. Where we stand today — OPTIONS 1 & 2 IMPLEMENTED
+## 2. Where we stand today — OPTION 1 (FOMO BOARD) IMPLEMENTED & LIVE-VALIDATED
 
-`backend/data_providers/crowd.py` implements both real sources with fail-soft
-degradation, wired into `main.run_tick`'s read stage
+`backend/data_providers/crowd.py` implements the fomo.fun board source with
+fail-soft degradation, wired into `main.run_tick`'s read stage
 (`crowd.enrich_crowd_heat(candidates)` fills `candidate.fomo_heat` +
 `candidate.crowd_heat_source`; `compute_crowd_heat()` prefers that value and
-falls back to the presence proxy when no feed answered). The rule detail is
-source-tagged in the journal: `heat 44 [fomo] ...` / `heat 28 [pumpfun]` /
+falls back to the presence proxy when the feed didn't answer). The rule
+detail is source-tagged in the journal: `heat 100 [fomo] ...` /
 `heat 36 [proxy]`.
+
+**Live validation (2026-08-23, operator keys):** direct reads are
+Cloudflare-challenged even with a valid bearer; the Firecrawl stealth
+fallback returned REAL board data — e.g. mint F8hVFDi8…: **40 theses →
+heat 100 [fomo]**, with author positions (@LegendPxiin holding $476,
+@themaxxr $743) and thesis texts (nested at `item.comment.comment`).
 
 Setup:
 1. **FOMO board**: log into fomo.family once, DevTools → Application →
@@ -41,21 +47,19 @@ Setup:
    `FOMO_PRIVY_REFRESH_TOKEN=...`. The bot exchanges it for a ~1h access
    token automatically (single-flight, cached) and reads
    `prod-api.fomo.family/feed/token/thesis?tokenAddress=<mint>...`.
-2. **pump.fun comments**: the legacy `frontend-api.pump.fun` host is DEAD
-   (HTTP 530, verified 2026-08-23); `advanced-api-v2.pump.fun` responds but
-   its comment route wasn't discoverable by probing. Open any pump.fun coin
-   page, find the comments XHR, and set
-   `PUMPFUN_COMMENTS_URL_TEMPLATE=https://<host>/<route>/{mint}?...` in
-   `.env` — no code change needed.
+   NOTE: Privy ROTATES refresh tokens on each use — if logs show
+   privy[...]401, re-extract a fresh one after a re-login.
+2. **FIRECRAWL_API_KEY** in `.env` (firecrawl.dev) — required for the
+   stealth-scrape fallback. API host is firecrawl.DEV (the old .app host
+   is TLS-dead).
 
-Both feeds are optional: empty token / unreachable feed ⇒ proxy heat, tagged
-`[proxy]` in the journal.
+Feed is optional: unreachable ⇒ proxy heat, tagged `[proxy]`.
+(pump.fun comments: evaluated and DEFERRED — see Option B below.)
 
 `backend/rule_engine/rules.py::compute_crowd_heat()` implements the **same
-20 + 8×signals shape** using named presence channels (twitter / telegram /
-website) as the conviction proxy, and `config.CROWD_HEAT_MIN/MAX` is the act
-band. The rule, the band, and the grounding vocabulary are all live — only
-the *data source* is a proxy.
+20 + 8×items formula**; when no feed answered it uses named presence
+channels (twitter / telegram / website) as the conviction proxy, and
+`config.CROWD_HEAT_MIN/MAX` is the act band.
 
 ## 3. Implementation options, in order of fidelity
 
@@ -98,12 +102,14 @@ Caveats: internal endpoints change without notice; check fomo.fun's terms
 before scraping; cache aggressively (60s+) and never let a FOMO outage stall
 the exit loop (it can't — exits never touch this feed).
 
-### Option B — pump.fun social signal (public-ish)
+### Option B — pump.fun comments — DEFERRED
 
-pump.fun's frontend API (`frontend-api.pump.fun`) exposes coin comments.
-Comment count/velocity over the last hour is a similar crowd-conviction
-proxy with better availability. Same wiring shape as Option A, different
-URL + parser, heat formula unchanged.
+Evaluated and shelved on 2026-08-23: the legacy `frontend-api.pump.fun` host
+is dead (HTTP 530), `advanced-api-v2.pump.fun/replies/...` 404s, the moved
+`frontend-api-v2.pump.fun/replies/coins/{mint}` route exists but 503s even
+through Firecrawl stealth. If pump's backend stabilizes, re-add a small
+client in this package (the TTL-cache + fail-soft transport in crowd.py is
+reusable as-is) and extend `_heat_for_mint()` with a second branch.
 
 ### Option C — Dexscreener boosts (already reachable)
 

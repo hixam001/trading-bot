@@ -172,23 +172,10 @@ PRIVY_APP_ID: str = "cm6h485o300n3zj9yl6vpedq7"     # fomo.family's public app i
 FOMO_NETWORK_ID: int = 1399811149                   # solana mainnet
 FOMO_THESIS_LIMIT: int = 40
 FOMO_CACHE_TTL_SECONDS: float = 60.0
-# Option 2 — pump.fun comments. The old frontend-api host is dead (HTTP 530,
-# verified 2026-08-23); advanced-api-v2 responds but its comment route was not
-# discoverable by probing. Point this template at whatever route the pump.fun
-# web app uses (DevTools -> Network on any coin page) and it works unchanged.
-PUMPFUN_COMMENTS_URL_TEMPLATE: str = os.getenv(
-    "PUMPFUN_COMMENTS_URL_TEMPLATE",
-    "https://frontend-api-v2.pump.fun/replies/coins/{mint}?limit=20&offset=0",
-)
-PUMPFUN_CACHE_TTL_SECONDS: float = 60.0
-# pump.fun's own Privy app (different app id from fomo.family). The refresh
-# token lives in a logged-in pump.fun browser session: DevTools -> Application
-# -> Local Storage -> https://pump.fun -> key "privy:refresh_token".
-PUMPFUN_PRIVY_REFRESH_TOKEN: str = os.getenv("PUMPFUN_PRIVY_REFRESH_TOKEN", "")
-PUMPFUN_PRIVY_APP_ID: str = os.getenv(
-    "PUMPFUN_PRIVY_APP_ID", "cm1p2gzot03fzqty5xzgjgthq"  # pump.fun's public id
-)
-# Firecrawl stealth proxy — required fallback for both feeds because
+# (pump.fun comments were evaluated as a secondary source and DEFERRED —
+# their API host is dead/503s even via stealth proxy; docs/FOMO_INTEGRATION.md)
+
+# Firecrawl stealth proxy — required fallback for the fomo board because
 # prod-api.fomo.family 403-challenges direct reads (verified live).
 # NOTE: the API lives at firecrawl.DEV now; the old .app host is TLS-dead
 # (verified 2026-08-23).
