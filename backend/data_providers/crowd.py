@@ -26,6 +26,7 @@ import asyncio
 import base64
 import json
 import logging
+import re
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -75,6 +76,23 @@ def heat_from_count(count: int) -> int:
 def _looks_like_challenge(raw: str) -> bool:
     head = raw.lstrip()[:200].lower()
     return raw.lstrip().startswith("<!doctype html") or "just a moment" in head
+
+
+def _is_substantive(text: str) -> bool:
+    """
+    Junk-thesis filter (omo parity): raw invite links, single emojis and
+    empty noise are not conviction and must not feed crowd_heat.
+    """
+    t = text.strip()
+    if len(t) < 3:
+        return False
+    stripped = re.sub(r"https?://\S+", "", t)
+    stripped = re.sub(r"[^a-z0-9]", "", stripped, flags=re.I)
+    if len(stripped) < 3:
+        return False
+    if re.search(r"discord\.gg|t\.me/|join:", t, flags=re.I) and len(stripped) < 40:
+        return False
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -166,8 +184,34 @@ def fomo_app() -> Optional[_PrivyApp]:
 
 
 # ---------------------------------------------------------------------------
-# Transport: DIRECT first, FIRECRAWL stealth-scrape on Cloudflare challenge
+# Transport parity with omotrades' fomo.server.ts:
+#   * full browser-like header set on prod-api reads (origin / referer /
+#     x-supported-chains are what Cloudflare keys on — omitting them is what
+#     caused our earlier 403 challenges)
+#   * ONE sequential queue with a 220ms gap between every prod-api call
+#     ("four dependable reads beat six simultaneous 429s")
+#   * identical reads inside a TTL window share a response (their
+#     RESPONSE_TTL = 120s)
+#   * 429 -> single backoff, then stealth-proxy fallback
 # ---------------------------------------------------------------------------
+
+_FOMO_QUEUE_LOCK = asyncio.Lock()
+_LAST_FOMO_CALL = 0.0
+_FOMO_CALL_GAP_SECONDS = 0.22
+
+
+def _fomo_headers(token: str) -> dict:
+    return {
+        "accept": "*/*",
+        "authorization": f"Bearer {token}",
+        "origin": "https://fomo.family",
+        "referer": "https://fomo.family/",
+        "x-supported-chains": str(config.FOMO_NETWORK_ID),
+        "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                       "Chrome/151.0.0.0 Safari/537.36"),
+    }
+
 
 async def _direct_get(url: str, headers: dict) -> Optional[dict]:
     """Plain GET. Returns parsed JSON, or None on any failure/challenge."""
@@ -175,9 +219,6 @@ async def _direct_get(url: str, headers: dict) -> Optional[dict]:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.get(url, headers={
                 "accept": "application/json",
-                "user-agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                               "AppleWebKit/537.36 (KHTML, like Gecko) "
-                               "Chrome/126.0.0.0 Safari/537.36"),
                 **headers,
             })
         if resp.status_code != 200 or _looks_like_challenge(resp.text):
@@ -241,11 +282,15 @@ async def _get_json_via(url: str, headers: dict) -> Optional[dict]:
 # Feed readers
 # ---------------------------------------------------------------------------
 
-async def fetch_fomo_theses(mint: str) -> Optional[list[dict]]:
+async def fetch_fomo_theses(mint: str) -> Optional[dict]:
     """
     Theses attached to `mint` on the fomo.fun board, or None when the feed
-    is unconfigured/unreachable. Cached per mint for FOMO_CACHE_TTL_SECONDS.
-    Each item: {who, text, size_usd, unrealized_usd, realized_usd, closed}.
+    is unconfigured/unreachable. Returns {"theses": [...], "total": int}
+    where total is the board's OWN count for that token
+    (olderThesis + newerThesis + page items — omo's trick, since the page
+    is capped at 40). Cached per mint.
+    Each thesis: {who, text, size_usd, unrealized_usd, realized_usd,
+    pnl_pct, closed}.
     """
     cached = _fomo_cache.get(mint)
     if cached is not None:
@@ -263,29 +308,55 @@ async def fetch_fomo_theses(mint: str) -> Optional[list[dict]]:
         f"?tokenAddress={mint}&networkId={config.FOMO_NETWORK_ID}"
         f"&limit={config.FOMO_THESIS_LIMIT}&threshold=0"
     )
-    payload = await _get_json_via(url, {"authorization": f"Bearer {token}"})
+    # Sequential queue + 220ms gap: prod-api rate-limits bursts hard.
+    global _LAST_FOMO_CALL
+    async with _FOMO_QUEUE_LOCK:
+        wait = _LAST_FOMO_CALL + _FOMO_CALL_GAP_SECONDS - time.monotonic()
+        if wait > 0:
+            await asyncio.sleep(wait)
+        payload = await _get_json_via(url, _fomo_headers(token))
+        _LAST_FOMO_CALL = time.monotonic()
     if payload is None:
         return None
 
     items = (payload.get("responseObject") or {}).get("items") or []
+    if not items:
+        result = {"theses": [], "total": 0}
+        _fomo_cache.put(mint, result)
+        return result
+
+    # Board's own total for this token (page is capped at 40):
+    first_comment = items[0].get("comment") or {}
+    total = (int(first_comment.get("olderThesis") or 0)
+             + int(first_comment.get("newerThesis") or 0)
+             + len(items))
+
     theses: list[dict] = []
     for it in items:
         trade = it.get("authorTrade") or {}
-        # The thesis text lives NESTED: item["comment"]["comment"]
         comment = it.get("comment") or {}
+        closed = bool(trade.get("closedAt"))
+        # Percentage fields are optional in the API response — never
+        # float(None) them into a silent skip.
+        pct_raw = (trade.get("percentageRealizedPnl") if closed
+                   else trade.get("percentageUnrealizedPnl"))
         try:
-            theses.append({
+            thesis = {
                 "who": str(it.get("userHandle") or it.get("displayName") or ""),
                 "text": str(comment.get("comment") or ""),
                 "size_usd": float(trade.get("usdValue") or 0.0),
                 "unrealized_usd": float(trade.get("unrealizedPnlUsd") or 0.0),
                 "realized_usd": float(trade.get("realizedPnlUsd") or 0.0),
-                "closed": bool(trade.get("closedAt")),
-            })
+                "pnl_pct": float(pct_raw) if pct_raw is not None else 0.0,
+                "closed": closed,
+            }
+            if _is_substantive(thesis["text"]):
+                theses.append(thesis)
         except (TypeError, ValueError):
             continue
-    _fomo_cache.put(mint, theses)
-    return theses
+    result = {"theses": theses, "total": total}
+    _fomo_cache.put(mint, result)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +365,9 @@ async def fetch_fomo_theses(mint: str) -> Optional[list[dict]]:
 
 async def _heat_for_mint(mint: str) -> tuple[Optional[int], str]:
     """(heat, source) from the fomo board; (None, '') if the feed is down."""
-    theses = await fetch_fomo_theses(mint)
-    if theses is not None:
-        return heat_from_count(len(theses)), "fomo"
+    data = await fetch_fomo_theses(mint)
+    if data is not None:
+        return heat_from_count(data["total"]), "fomo"
     return None, ""
 
 

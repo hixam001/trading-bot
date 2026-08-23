@@ -115,27 +115,42 @@ async def test_fomo_parses_response_object_items(monkeypatch):
     install_fake_http(
         monkeypatch,
         get=FakeResponse(200, {"responseObject": {"items": [
-            {"userHandle": "whale", "text": "floor holds",
+            {"userHandle": "whale", "ticker": "WHALE",
+             "comment": {"comment": "floor holds", "numLikes": 3,
+                         "olderThesis": 0, "newerThesis": 0},
              "authorTrade": {"usdValue": 12000.0, "unrealizedPnlUsd": 3400.0,
+                             "percentageUnrealizedPnl": 39.5,
                              "realizedPnlUsd": 0.0, "closedAt": None}},
-            {"displayName": "anon", "text": "gm",
+            {"displayName": "anon", "ticker": "WHALE",
+             "comment": {"comment": "gm"},
              "authorTrade": {"usdValue": 5.0, "realizedPnlUsd": -2.0,
                              "closedAt": "2026-08-20"}},
         ]}}),
         post=FakeResponse(200, {"token": "x.y.z"}),
     )
-    theses = await crowd.fetch_fomo_theses(MINT)
-    assert theses is not None and len(theses) == 2
-    assert theses[0]["who"] == "whale"
-    assert theses[0]["size_usd"] == 12_000.0
-    assert theses[0]["unrealized_usd"] == 3_400.0
-    assert theses[1]["closed"] is True
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data is not None
+    # "gm" is junk (<3 chars) -> dropped by _is_substantive:
+    assert len(data["theses"]) == 1 and data["theses"][0]["who"] == "whale"
+    assert data["total"] == 2          # older+newer+page = 0+0+2
+    t = data["theses"][0]
+    assert t["who"] == "whale"
+    assert t["size_usd"] == 12_000.0
+    assert t["unrealized_usd"] == 3_400.0
+    assert t["pnl_pct"] == pytest.approx(39.5)
 
     # Cached second call: no new HTTP GET.
     calls_before = len(FakeClient.get_calls)
     again = await crowd.fetch_fomo_theses(MINT)
-    assert again == theses
+    assert again == data
     assert len(FakeClient.get_calls) == calls_before
+
+
+def test_substantive_filter_drops_junk():
+    assert crowd._is_substantive("trust the bot")            # real thesis
+    assert not crowd._is_substantive("🚀")                    # emoji only
+    assert not crowd._is_substantive("join https://discord.gg/abc")  # invite
+    assert crowd._is_substantive("https://x.com/a but also real analysis here")
 
 
 async def test_fomo_http_500_fails_soft(monkeypatch):
@@ -156,7 +171,8 @@ async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
     challenge = FakeResponse(
         403, text="<!DOCTYPE html><html class='no-js'>Just a moment...</html>")
     payload = {"responseObject": {"items": [
-        {"userHandle": "whale", "text": "floor holds",
+        {"userHandle": "whale", "ticker": "WHALE",
+         "comment": {"comment": "floor holds"},
          "authorTrade": {"usdValue": 9000.0, "unrealizedPnlUsd": 1200.0}}]}}
 
     calls = {"direct": 0, "firecrawl": 0}
@@ -179,9 +195,9 @@ async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
 
     monkeypatch.setattr(crowd.httpx, "AsyncClient", RoutedClient)
 
-    theses = await crowd.fetch_fomo_theses(MINT)
-    assert theses is not None and len(theses) == 1
-    assert theses[0]["size_usd"] == 9_000.0
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data is not None and len(data["theses"]) == 1
+    assert data["theses"][0]["size_usd"] == 9_000.0
     assert calls == {"direct": 1, "firecrawl": 1}
 
 
@@ -189,7 +205,7 @@ async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
 
 async def test_enrich_uses_fomo_board(monkeypatch):
     async def fomo_ok(mint):
-        return [{"who": "w", "text": "t"}] * 3        # 3 theses -> heat 44
+        return {"theses": [{"who": "w", "text": "t"}] * 3, "total": 3}
 
     monkeypatch.setattr(crowd, "fetch_fomo_theses", fomo_ok)
 
