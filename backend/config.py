@@ -20,6 +20,21 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ---------------------------------------------------------------------------
+# Blocklist — manual + auto (see blocklist.py). Auto-blocks after N
+# consecutive stop-outs on the same mint (the DONT pattern killer).
+# ---------------------------------------------------------------------------
+BLOCKLIST_STATE_FILE: str = os.getenv(
+    "BLOCKLIST_STATE_FILE", str(Path(__file__).parent / "blocklist_state.json")
+)
+AUTO_BLOCK_CONSECUTIVE_STOPS: int = 2
+# Conviction ticket sizing + daily deploy cap.
+SIZING_MODE: str = "fixed"                 # "fixed" | "conviction"
+TICKET_CASH_FRACTION: float = 0.15         # base = cash * 0.15
+TICKET_MAX_USD: float = 150.0              # hard per-trade ceiling
+MIN_TICKET_USD: float = 25.0               # below this, don't bother
+DAILY_DEPLOY_CAP_USD: float = 300.0        # max new deployments / UTC day
+
+# ---------------------------------------------------------------------------
 # SAFETY FLAG — HARDCODED, NEVER READ FROM ENV, NEVER CHANGED BY CODE.
 # Edited only by a human, manually, in this file. Every position-opening
 # function asserts this at runtime as well (belt-and-suspenders, E7).

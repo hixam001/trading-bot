@@ -81,19 +81,43 @@ def compute_realized_pnl(trade: Trade, exit_price: float) -> tuple[float, float]
     return pnl_usd, pnl_pct
 
 
-def compute_position_size(price_usd: float) -> tuple[float, float]:
+def compute_position_size(price_usd: float,
+                          size_usd: Optional[float] = None) -> tuple[float, float]:
     """
-    Entry sizing: fixed intended USD size, adjusted for simulated entry
-    costs. Returns (position_size_usd, quantity) where
+    Entry sizing: fixed intended USD size unless overridden by a
+    conviction-sized ticket, adjusted for simulated entry costs.
+    Returns (position_size_usd, quantity) where
       cost_basis = size * (1 + FEE) * (1 + SLIPPAGE)  [what the buyer pays]
       quantity   = size / price
     Raises ValueError on non-positive price.
     """
     if price_usd <= 0:
         raise ValueError(f"price_usd must be > 0, got {price_usd!r}")
-    size = config.INTENDED_POSITION_SIZE_USD
+    size = float(size_usd) if size_usd is not None \
+        else config.INTENDED_POSITION_SIZE_USD
+    if size <= 0:
+        raise ValueError(f"size must be > 0, got {size!r}")
     quantity = size / price_usd
     return size, quantity
+
+
+def compute_ticket(cash_usd: float, heat: Optional[int]) -> float:
+    """
+    Conviction ticket sizing (omotrades parity, capped hard):
+
+        base       = min(cash * TICKET_CASH_FRACTION, TICKET_MAX_USD)
+        conviction = min(1, heat/100 + 0.3)      (heat None -> 50 neutral)
+        ticket     = base * conviction
+
+    SIZING_MODE="fixed" returns INTENDED_POSITION_SIZE_USD unchanged (kept
+    for calibration comparability until conviction mode is switched on).
+    """
+    if config.SIZING_MODE == "fixed":
+        return float(config.INTENDED_POSITION_SIZE_USD)
+    heat_val = config.CROWD_HEAT_MIN + 14 if heat is None else heat  # ~50 neutral
+    conviction = min(1.0, max(0.0, heat_val / 100.0 + 0.3))
+    base = min(cash_usd * config.TICKET_CASH_FRACTION, config.TICKET_MAX_USD)
+    return max(config.MIN_TICKET_USD, round(base * conviction))
 
 
 def compute_entry_cost(size_usd: float) -> float:
@@ -127,14 +151,16 @@ async def open_position(
     conn: aiosqlite.Connection,
     candidate: Candidate,
     gate: GateDecision,
+    ticket_usd: Optional[float] = None,
 ) -> OpenResult:
-    """Open a new simulated position. Idempotent per mint (§5.1)."""
+    """Open a new simulated position. Idempotent per mint (§5.1).
+    ticket_usd: conviction-sized ticket from run_tick; None = fixed size."""
     config.assert_paper_trading_only()
 
     price = candidate.price_usd
     if price <= 0:
         return OpenResult(False, None, "invalid_price")
-    size, quantity = compute_position_size(price)
+    size, quantity = compute_position_size(price, ticket_usd)
     cost_basis = compute_entry_cost(size)
 
     trade = Trade(
@@ -457,6 +483,22 @@ async def scan_and_execute_exits(
                 actions += 1
                 log.info("EXIT %s [%s] %s",
                          trade.symbol, gated.rule_id, gated.detail)
+                # Auto-block on consecutive stop-outs (the DONT pattern killer).
+                if gated.rule_id == "exit_stop_loss":
+                    from blocklist import block_mint as _block, \
+                        should_autoblock as _should
+                    reasons = await db.get_recent_closed_reasons(
+                        conn, trade.mint_address,
+                        limit=config.AUTO_BLOCK_CONSECUTIVE_STOPS)
+                    if _should(reasons):
+                        _block(trade.mint_address,
+                               f"{len(reasons)} consecutive stop-outs",
+                               kind="auto")
+                        log.warning(
+                            "AUTO-BLOCK %s (%s): %s — mint will no longer "
+                            "be considered for entry", trade.symbol,
+                            trade.mint_address[:12],
+                            "; ".join(reasons))
                 if on_close is not None:
                     try:
                         await on_close(result.trade)

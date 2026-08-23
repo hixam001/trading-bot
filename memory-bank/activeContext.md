@@ -46,6 +46,19 @@ board theses → heat 100 [fomo] with author positions parsed.
 NOTE: privy refresh tokens ROTATE on use — if logs show privy[...]401,
 re-extract fresh from a fomo.family re-login (dedicated browser profile).
 
+### Churn guards + sizing + seal (this batch)
+- blocklist.py: manual + AUTO blocks (2 consecutive stop-outs on a mint →
+  auto-block, enforced in run_tick BEFORE think — saves qwen/scraper credits
+  too). Corrupt state file quarantined, never fatal.
+- compute_ticket conviction sizing (SIZING_MODE fixed|conviction, default
+  fixed for calibration comparability; conviction = min(1, heat/100+0.3),
+  base min(cash×15%, $150), floor $25) + DAILY_DEPLOY_CAP_USD=$300 with
+  journal-tagged refusals ([daily deploy cap reached]).
+- decision_commits table (omo 'seal' parity): every decision sealed with
+  sha256(nonce|canonical payload) BEFORE acting; plaintext payload stored
+  for recomputation. Wired into run_tick; unique hash index.
+- open_position/compute_position_size accept conviction-sized tickets.
+
 ## REMAINING phases (each its own commit)
 2. Loop reorder manage-first + decision_commits seal/reveal audit table
 3. ✅ THINK STAGE DONE (llm/thinker.py): qwen3 pre-trade {thesis,

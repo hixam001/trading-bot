@@ -37,8 +37,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # 136 tests, <1s
-.venv/bin/python -m pytest -q                           # 184 incl. live_execution
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # 145 tests, ~1s
+.venv/bin/python -m pytest -q                           # 193 incl. live_execution
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the

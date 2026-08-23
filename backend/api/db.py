@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Optional
@@ -117,6 +118,25 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     closed_trades           INTEGER NOT NULL DEFAULT 0,
     stats_json              TEXT    NOT NULL DEFAULT '{}'
 );
+
+-- Decision commits (omo 'seal' parity): sha256(nonce|canonical payload) of
+-- every candidate decision, written BEFORE the trade acts on it. The
+-- plaintext payload is stored alongside so anyone can recompute the hash.
+CREATE TABLE IF NOT EXISTS decision_commits (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT    NOT NULL,
+    tick_ts         TEXT    NOT NULL,
+    symbol          TEXT    NOT NULL,
+    mint_address    TEXT    NOT NULL,
+    verdict         TEXT    NOT NULL,   -- think verdict: buy | pass
+    entry_allowed   INTEGER NOT NULL,   -- 1 = both layers agreed
+    nonce           TEXT    NOT NULL,
+    payload_json    TEXT    NOT NULL,   -- canonical reveal payload
+    payload_hash    TEXT    NOT NULL UNIQUE
+);
+
+CREATE INDEX IF NOT EXISTS idx_decision_commits_created
+    ON decision_commits(created_at);
 
 -- Singleton portfolio row; id is always 1 (CHECK-enforced).
 CREATE TABLE IF NOT EXISTS portfolio_state (
@@ -386,6 +406,68 @@ async def count_closes_since(
     ) as cur:
         row = await cur.fetchone()
     return int(row["n"]) if row else 0
+
+
+async def get_recent_closed_reasons(
+    conn: aiosqlite.Connection, mint_address: str, limit: int = 2
+) -> list[str]:
+    """Newest-first exit reasons for a mint (auto-block consecutive check)."""
+    async with conn.execute(
+        """
+        SELECT exit_reason FROM trades
+        WHERE mint_address = ? AND closed_at IS NOT NULL
+        ORDER BY closed_at DESC LIMIT ?
+        """,
+        (mint_address, limit),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [r["exit_reason"] for r in rows if r["exit_reason"]]
+
+
+async def deployed_today(
+    conn: aiosqlite.Connection, now_utc: Optional[datetime] = None
+) -> float:
+    """Sum of cost basis deployed today (UTC) — daily deploy cap input."""
+    now = now_utc or datetime.now(timezone.utc)
+    day_start = now.replace(hour=0, minute=0, second=0,
+                            microsecond=0).isoformat()
+    async with conn.execute(
+        "SELECT COALESCE(SUM(position_size_usd), 0) AS s "
+        "FROM trades WHERE opened_at >= ?",
+        (day_start,),
+    ) as cur:
+        row = await cur.fetchone()
+    return float(row["s"] or 0.0)
+
+
+# ---------------------------------------------------------------------------
+# Decision commits — tamper-evident local audit trail (omo 'seal' parity)
+# ---------------------------------------------------------------------------
+
+async def insert_decision_commit(
+    conn: aiosqlite.Connection,
+    created_at: str,
+    tick_ts: str,
+    symbol: str,
+    mint_address: str,
+    verdict: str,
+    entry_allowed: bool,
+    nonce: str,
+    payload_json: str,
+    payload_hash: str,
+) -> int:
+    cursor = await conn.execute(
+        """
+        INSERT OR IGNORE INTO decision_commits (
+            created_at, tick_ts, symbol, mint_address, verdict,
+            entry_allowed, nonce, payload_json, payload_hash
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (created_at, tick_ts, symbol, mint_address, verdict,
+         int(entry_allowed), nonce, payload_json, payload_hash),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
 
 
 async def get_trade_by_id(conn: aiosqlite.Connection, trade_id: str) -> Optional[Trade]:

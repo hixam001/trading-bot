@@ -17,18 +17,23 @@ already made by the rule engine and exits already flagged by numeric checks.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 import time
+import uuid
 from datetime import datetime, timezone
 
 import config
 from api import db
+from blocklist import filter_candidates
 from data_providers import build_provider
 from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
-from llm.thinker import Thinker, ThinkResult, template_think
+from llm.thinker import Thinker
 from models import FeedEvent
 from paper_trading_engine import (
+    compute_ticket,
     load_portfolio_state,
     open_position,
     scan_and_execute_exits,
@@ -67,7 +72,13 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
     if state is not None:
         state["tick"] = state.get("tick", 0) + 1
 
-    # --- READ stage: crowd conviction (fomo.fun board / pump.fun comments).
+    # --- BLOCKLIST: manual + auto-blocked mints never reach think/enrichment
+    # (saves qwen + stealth-scrape credits, and is the DONT churn killer).
+    candidates, blocked_now = filter_candidates(candidates)
+    for sym, reason in blocked_now:
+        log.info("BLOCKED %s skipped: %s", sym, reason)
+
+    # --- READ stage: crowd conviction (fomo.fun board).
     # Live feeds ONLY in live mode — mock runs stay hermetic and fast (a real
     # feed answering for mock mints once flipped every verdict to fail).
     # Fail-soft: a dead feed leaves the presence proxy in place.
@@ -109,10 +120,23 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
             entry_allowed = gate.all_passed and think.wants_entry
             vetoed_by_model = gate.all_passed and not think.wants_entry
 
+            # --- SIZING + daily deploy cap -----------------------------------
+            ticket = compute_ticket(portfolio.cash_usd, c.fomo_heat)
+            deployed = await db.deployed_today(conn)
+            refusal_reasons: list[str] = []
+            if ticket < config.MIN_TICKET_USD:
+                refusal_reasons.append("[ticket below minimum]")
+            if deployed + ticket > config.DAILY_DEPLOY_CAP_USD:
+                refusal_reasons.append("[daily deploy cap reached]")
+            if entry_allowed and refusal_reasons:
+                entry_allowed = False
+
             full_thesis = think.thesis + (
                 f" | invalidates if: {think.invalidation}"
                 if think.invalidation else ""
             )
+            if refusal_reasons:
+                full_thesis += " " + " ".join(refusal_reasons)
 
             # --- reuse prior thesis if stats AND verdict are unchanged ------
             reused_now = False
@@ -151,11 +175,35 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                 narration_source=think.source,
             )
 
+            # --- SEAL (omo parity): tamper-evident audit commit BEFORE any
+            # action. sha256(nonce|canonical payload) stored with plaintext.
+            now_iso = datetime.now(timezone.utc).isoformat()
+            nonce = uuid.uuid4().hex
+            commit_payload = {
+                "tick_ts": now_iso,
+                "symbol": c.symbol,
+                "mint": c.mint_address,
+                "think_verdict": think.verdict,
+                "think_source": think.source,
+                "entry_allowed": entry_allowed,
+                "failed_rule_ids": list(gate.failed_rule_ids),
+                "stats": stats_signature(c),
+                "invalidation": think.invalidation,
+            }
+            canonical = json.dumps(commit_payload, sort_keys=True,
+                                   separators=(",", ":"))
+            payload_hash = hashlib.sha256(
+                (nonce + "|" + canonical).encode()).hexdigest()
+            await db.insert_decision_commit(
+                conn, now_iso, now_iso, c.symbol, c.mint_address,
+                think.verdict, entry_allowed, nonce, canonical, payload_hash)
+
             # --- EXECUTE: open only when both layers agree ------------------
-            if entry_allowed:
+            if entry_allowed and not refusal_reasons:
                 existing = await db.get_open_trade_for_mint(conn, c.mint_address)
                 if existing is None:
-                    result = await open_position(conn, c, gate)
+                    result = await open_position(conn, c, gate,
+                                                 ticket_usd=ticket)
                     if result.applied:
                         trade_text = full_thesis
                         await conn.execute(
@@ -165,6 +213,9 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                         await conn.commit()
                         event.led_to_trade_id = result.trade.trade_id
                         opened += 1
+            elif refusal_reasons and entry_allowed:
+                log.info("ENTRY REFUSED %s: %s", c.symbol,
+                         " ".join(refusal_reasons))
 
             if state is not None:
                 state.setdefault("theses", {})[c.mint_address] = {
