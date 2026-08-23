@@ -38,6 +38,40 @@ import config
 
 log = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Log redaction: ZenRows/ScrapeOps/ScrapingBee carry their API key as a URL
+# query parameter, and httpx logs full request URLs at INFO — the raw key
+# would otherwise land in logs/backend.log. Attach a filter that masks it.
+# Installed on both the httpx logger and root so it works under uvicorn
+# (where main.setup_logging() never runs) and standalone alike. Idempotent.
+# ---------------------------------------------------------------------------
+_BS = chr(92)
+_KEY_RE = re.compile("(?i)((?:api_?key)=)[^&" + _BS + "s]+")
+
+
+class _ApiKeyRedactor(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        try:
+            msg = record.getMessage()
+            redacted = _KEY_RE.sub(_BS + "1<REDACTED>", msg)
+            if redacted != msg:
+                record.msg = redacted
+                record.args = None
+        except Exception:  # never break logging
+            pass
+        return True
+
+
+def _install_key_redactor() -> None:
+    for logger_name in ("httpx", ""):
+        lg = logging.getLogger(logger_name)
+        if not any(isinstance(f, _ApiKeyRedactor) for f in lg.filters):
+            lg.addFilter(_ApiKeyRedactor())
+
+
+_install_key_redactor()
+
 _TIMEOUT = httpx.Timeout(15.0)
 _FIRECRAWL_TIMEOUT = httpx.Timeout(45.0)
 

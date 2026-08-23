@@ -147,7 +147,21 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
   Firecrawl stays the primary fallback (forwards headers). New keys add
   credit-failover breadth.
 
-## Watch-outs
+### Ops incident + log redaction (this batch)
+- Backend found DOWN (graceful shutdown ~16:22; a 20:16 start.sh attempt
+  stalled at the `ollama list` check and never launched uvicorn).
+  Restarted manually; verified ticks fetching again.
+- Found ZenRows API key leaking into logs/backend.log in plaintext (httpx
+  logs full URLs; key rides as query param). Fixed with _ApiKeyRedactor
+  logging.Filter installed at crowd.py import on httpx+root loggers
+  (idempotent). NOTE: main.setup_logging() never runs under uvicorn — that
+  was why an earlier attempt (filter inside setup_logging) silently no-op'd.
+- Restart race lesson: killing uvicorn then rebinding :8000 after only 3s
+  fails (old instance still shutting down) -> new instance dies, stale one
+  keeps serving. Always wait for the port to free before relaunching.
+- Verified live: raw key occurrences since restart = 0; apikey=<REDACTED>
+  present; 145 tests pass.
+
 ## Watch-outs
 
 
