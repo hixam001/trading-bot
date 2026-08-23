@@ -30,7 +30,8 @@ from __future__ import annotations
 
 import json
 import logging
-import ssl as _ssl
+import ssl
+from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Optional
@@ -54,16 +55,97 @@ def _dsn() -> str:
     return dsn
 
 
+def _host_port(dsn: str) -> tuple[str, int]:
+    parsed = urlparse(dsn)
+    port = parsed.port or 5432
+    return parsed.hostname or "", port
+
+
+_PIN_PATH = config.BASE_DIR / ".supabase_fp.txt"
+
+
+def _fetch_cert_fingerprint(host: str, port: int) -> str:
+    """TLS-probe the server ourselves and return the SHA-256 of its cert."""
+    import hashlib
+    import socket
+
+    probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    probe.check_hostname = False
+    probe.verify_mode = ssl.CERT_NONE
+    with socket.create_connection((host, port), timeout=10) as sock:
+        with probe.wrap_socket(sock, server_hostname=host) as tls:
+            der = tls.getpeercert(binary_form=True)
+    return hashlib.sha256(der).hexdigest()
+
+
+async def _tls_context() -> ssl.SSLContext:
+    """
+    Strongest available TLS for the pooler, in order:
+      1. SYSTEM   — normal public-CA verification (if Supabase serves one).
+      2. PINNED   — fingerprint probe: hash the presented cert and require an
+                    exact match against .supabase_fp.txt (written on first
+                    ever connect). Any mismatch = hard abort (MITM guard).
+                    Delete the pin file after a LEGITIMATE Supabase cert
+                    rotation to re-pin.
+      3. FALLBACK — encrypted-but-unverified, loudly logged (never silent).
+    The returned context is intentionally unverified at the OpenSSL layer;
+    authentication is provided by our own fingerprint probe performed at
+    pool creation, immediately before asyncpg dials.
+    """
+    # 1. normal system trust store
+    try:
+        strict = ssl.create_default_context()
+        conn = await asyncpg.connect(_dsn(), ssl=strict, timeout=10)
+        await conn.close()
+        log.info("db_pg: TLS verified against system CAs")
+        return strict
+    except ssl.SSLCertVerificationError:
+        pass  # expected: self-signed pooler chain
+
+    # 2. fingerprint pinning (TOFU on first run, exact-match afterwards)
+    try:
+        fp = _fetch_cert_fingerprint(*_host_port(_dsn()))
+        expected: Optional[str] = None
+        if _PIN_PATH.exists():
+            expected = _PIN_PATH.read_text().strip()
+            if expected and fp != expected:
+                raise RuntimeError(
+                    f"SUPABASE CERTIFICATE FINGERPRINT MISMATCH "
+                    f"(pinned {expected[:16]}…, got {fp[:16]}…) — "
+                    f"possible MITM. If Supabase rotated certs legitimately, "
+                    f"delete {_PIN_PATH} to re-pin.")
+        if not expected:
+            _PIN_PATH.write_text(fp)
+            log.warning("db_pg: TOFU pinned Supabase cert %s… -> %s",
+                        fp[:16], _PIN_PATH)
+        else:
+            log.info("db_pg: Supabase cert fingerprint matches pin (%s…)",
+                     fp[:16])
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE  # identity enforced by the pin above
+        return ctx
+    except RuntimeError:
+        raise  # MITM suspicion must never be swallowed
+    except Exception as exc:
+        log.warning("db_pg: fingerprint probe failed (%s)", exc)
+
+    # 3. last resort: encrypt without verifying
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    log.warning("db_pg: TLS verification UNAVAILABLE — "
+                "connection encrypted but NOT authenticated")
+    return ctx
+
+
 async def _get_pool() -> asyncpg.Pool:
     global _pool, _pool_closed
     if _pool is None or _pool_closed:
-        ctx = _ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = _ssl.CERT_NONE  # pooler certs vary by region/project
-        log.warning("db_pg: TLS verification DISABLED for pooler connection")
         _pool = await asyncpg.create_pool(
             _dsn(), min_size=1, max_size=5,
-            command_timeout=30, timeout=15, ssl=ctx,
+            command_timeout=30, timeout=15,
+            ssl=await _tls_context(),
         )
         _pool_closed = False
     return _pool

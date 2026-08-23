@@ -11,6 +11,7 @@ __pycache__/
 *.db-shm
 .env
 .fomo_privy.json
+.supabase_fp.txt
 blocklist_state.json
 live_execution/state/
 wallet-keypair.json

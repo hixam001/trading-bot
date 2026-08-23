@@ -108,7 +108,21 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - NOTE: timestamps read back as "2026-08-23 12:00:01+00" (Postgres style,
   space separator) — fromisoformat parses it fine on py3.11+.
 
+### Supabase TLS hardening + live app boot (this batch)
+- Pooler serves a SELF-SIGNED chain — strict system-CA verify impossible;
+  leaf-as-CA pinning also rejected (no keyUsage ext).
+- Implemented SHA-256 FINGERPRINT PINNING in db_pg._tls_context():
+  1) try system CAs; 2) probe cert, compare hash vs backend/.supabase_fp.txt
+  (TOFU on first run, exact-match after; MISMATCH = hard abort w/ re-pin
+  instructions); 3) loud unverified fallback. Pin file is gitignored.
+- Live boot test: uvicorn started with PG active -> lifespan init_db OK,
+  /api/stats /api/system-status /api/holdings /api/feed all serving
+  Supabase data (fresh $1000 book). Server killed after test.
+- 145 tests still pass; smoke re-ran clean twice on pinned path.
+
 ## Watch-outs
+
+
 - ⚠ TERMINAL: login shell is FISH — no `$?`, no heredocs; `bash -c` quoting
   breaks silently. Write bash scripts to files; read outputs from /tmp files.
 - pytest canonical: cd backend && ../.venv/bin/python -m pytest tests/ -q
