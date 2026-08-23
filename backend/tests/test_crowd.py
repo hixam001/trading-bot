@@ -36,16 +36,24 @@ def make_candidate(**overrides) -> Candidate:
 @pytest.fixture(autouse=True)
 def fresh_state(monkeypatch):
     """Reset module globals + caches so tests never see each other's data."""
-    monkeypatch.setattr(crowd, "_token", None)
-    monkeypatch.setattr(crowd, "_token_expires_at", 0.0)
+    monkeypatch.setattr(crowd, "_sessions", {})
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
     monkeypatch.setattr(crowd, "_pump_cache", crowd._TtlCache(60))
+    monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
 
 
 class FakeResponse:
-    def __init__(self, status_code: int = 200, payload=None):
+    def __init__(self, status_code: int = 200, payload=None, text: str = ""):
         self.status_code = status_code
         self._payload = payload if payload is not None else {}
+        self._text = text
+        import json as _json
+        if not self._text and self._payload:
+            self._text = _json.dumps(self._payload)
+
+    @property
+    def text(self) -> str:
+        return self._text
 
     def json(self):
         return self._payload
@@ -156,6 +164,59 @@ async def test_pump_comments_accept_list_and_dict_bodies(monkeypatch):
 async def test_pump_comments_fail_soft_on_error(monkeypatch):
     install_fake_http(monkeypatch, get=FakeResponse(404, {}))
     assert await crowd.fetch_pump_comments(MINT) is None
+
+
+# --- transport: direct -> firecrawl stealth fallback --------------------------
+
+async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
+    """Direct GET returns the Cloudflare challenge page; Firecrawl stealth
+    scrape returns the JSON. The parsed result must be identical."""
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "fc-key")
+
+    challenge = FakeResponse(
+        403, text="<!DOCTYPE html><html class='no-js'>Just a moment...</html>")
+    payload = {"responseObject": {"items": [
+        {"userHandle": "whale", "text": "floor holds",
+         "authorTrade": {"usdValue": 9000.0, "unrealizedPnlUsd": 1200.0}}]}}
+
+    calls = {"direct": 0, "firecrawl": 0}
+
+    class RoutedClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            if url.startswith(config.FOMO_API_BASE):
+                calls["direct"] += 1
+                return challenge
+            return FakeResponse(200, {})
+
+        async def post(self, url, **kw):
+            if "firecrawl" in url:
+                calls["firecrawl"] += 1
+                return FakeResponse(200, {"data": {
+                    "rawHtml": __import__("json").dumps(payload),
+                    "metadata": {"statusCode": 200}}})
+            # privy session mint
+            return FakeResponse(200, {"token": "x.y.z"})
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RoutedClient)
+
+    theses = await crowd.fetch_fomo_theses(MINT)
+    assert theses is not None and len(theses) == 1
+    assert theses[0]["size_usd"] == 9_000.0
+    assert calls == {"direct": 1, "firecrawl": 1}
+
+
+def test_pump_app_requires_refresh_token():
+    assert crowd.pump_app() is None
+    monkey_token = config.PUMPFUN_PRIVY_REFRESH_TOKEN
+    try:
+        config.PUMPFUN_PRIVY_REFRESH_TOKEN = "tok"
+        config.PUMPFUN_PRIVY_APP_ID = "app-123"
+        app = crowd.pump_app()
+        assert app is not None and app.app_id == "app-123"
+        assert app.origin == "pump.fun"
+    finally:
+        config.PUMPFUN_PRIVY_REFRESH_TOKEN = monkey_token
 
 
 # --- enrichment priority: fomo > pumpfun > proxy -----------------------------------------

@@ -181,6 +181,15 @@ PUMPFUN_COMMENTS_URL_TEMPLATE: str = os.getenv(
     "https://advanced-api-v2.pump.fun/replies/coins/{mint}?limit=20&offset=0",
 )
 PUMPFUN_CACHE_TTL_SECONDS: float = 60.0
+# pump.fun's own Privy app (different app id from fomo.family). The refresh
+# token comes from a logged-in pump.fun browser session; the app id is in
+# DevTools -> Network -> any auth.privy.io request -> "privy-app-id" header.
+PUMPFUN_PRIVY_REFRESH_TOKEN: str = os.getenv("PUMPFUN_PRIVY_REFRESH_TOKEN", "")
+PUMPFUN_PRIVY_APP_ID: str = os.getenv("PUMPFUN_PRIVY_APP_ID", "")
+# Firecrawl stealth proxy — required fallback for both feeds because
+# prod-api.fomo.family 403-challenges direct reads (verified live).
+FIRECRAWL_API_KEY: str = os.getenv("FIRECRAWL_API_KEY", "")
+FIRECRAWL_SCRAPE_URL: str = "https://api.firecrawl.app/v1/scrape"
 
 # ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.
