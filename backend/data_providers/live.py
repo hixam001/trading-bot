@@ -23,10 +23,13 @@ from models import Candidate, SecurityInfo
 log = logging.getLogger(__name__)
 
 
+from data_providers.discovery import KeywordScanner
+
+
 class LiveProviderStack:
     """Implements MarketDataProvider over Birdeye + Dexscreener + Jupiter,
-    with a dual-lens discovery merge: trending (hot now) + new listings
-    (SUBSCRIBE_TOKEN_NEW_LISTING websocket, degrade-gracefully)."""
+    with a triple-lens discovery merge: trending (hot now) + new listings
+    (websocket) + rotating keyword scanner (fresh market slices)."""
 
     def __init__(self, client: httpx.AsyncClient | None = None) -> None:
         self._client = client or httpx.AsyncClient()
@@ -35,13 +38,14 @@ class LiveProviderStack:
         self.jupiter = JupiterProvider(self._client)
         self.new_listings = NewListingFeed()
         self.new_listings.start()
+        self.keyword_scanner = KeywordScanner(self._client)
 
     async def get_candidates(self, limit: int) -> list[Candidate]:
-        # Lens 1: trending. Lens 2: buffered new-listing events drained
-        # concurrently (Task A: asyncio.gather, matching existing pattern).
-        trending, fresh_events = await asyncio.gather(
+        # Three lenses, fetched concurrently:
+        trending, fresh_events, keyword_cands = await asyncio.gather(
             self.birdeye.get_candidates(limit),
             asyncio.to_thread(self.new_listings.drain, max(limit // 2, 1)),
+            self.keyword_scanner.scan(),
         )
 
         fresh: list[Candidate] = []
@@ -59,7 +63,8 @@ class LiveProviderStack:
                 source="birdeye:new_listing",
             ))
 
-        # Merge by mint; a mint in both lenses in the same tick is "both".
+        # Merge by mint across all three lenses; a mint in multiple lenses
+        # in the same tick gets "both"/"all" provenance.
         by_mint: dict[str, Candidate] = {}
         for c in trending:
             by_mint[c.mint_address] = c
@@ -69,10 +74,21 @@ class LiveProviderStack:
                 by_mint[c.mint_address] = c
             else:
                 existing.discovery_source = "both"
-                # Keep the fresher Dexscreener-side numbers from whichever
-                # entry has them; trending entry already carries v24h/mcap.
                 if c.decimals is not None and existing.decimals is None:
                     existing.decimals = c.decimals
+        for c in keyword_cands:
+            existing = by_mint.get(c.mint_address)
+            if existing is None:
+                by_mint[c.mint_address] = c
+            else:
+                # Enrich the trending/new_listing entry with keyword-sourced
+                # numbers (keyword scanner has richer 1h data).
+                if c.volume_1h_usd is not None:
+                    existing.volume_1h_usd = c.volume_1h_usd
+                if c.buys_1h is not None:
+                    existing.buys_1h = c.buys_1h
+                if c.sells_1h is not None:
+                    existing.sells_1h = c.sells_1h
 
         merged = list(by_mint.values())[:limit]
         await self.dexscreener.enrich_candidates(merged)

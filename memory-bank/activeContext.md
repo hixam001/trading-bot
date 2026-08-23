@@ -59,7 +59,16 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
   for recomputation. Wired into run_tick; unique hash index.
 - open_position/compute_position_size accept conviction-sized tickets.
 
-## REMAINING phases (each its own commit)
+### Discovery rotation (this batch)
+- data_providers/discovery.py: KeywordScanner — rotating DexScreener
+  keyword pool (~45 queries, 5/tick), fake-chart filter (vol/liq > 50x),
+  dedup by mint keeping highest-liq pair. Wired as third lens in
+  LiveProviderStack.get_candidates() alongside trending + new_listings.
+  Keyword candidates carry richer 1h flow data that enriches trending hits.
+- Fixes "keeps revolving around same tokens": every tick sees a different
+  market slice without repeating within a rotation window.
+
+
 2. Loop reorder manage-first + decision_commits seal/reveal audit table
 3. ✅ THINK STAGE DONE (llm/thinker.py): qwen3 pre-trade {thesis,
    invalidation, verdict}; entry requires verdict==buy AND all rules pass;
