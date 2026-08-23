@@ -2,10 +2,12 @@
 data_providers/jupiter.py — Jupiter quote API (A5): live execution-quality
 price for open positions (reflects real swap pricing, not a display price).
 
-Price derivation: quote 1 token (10^9 raw units, 9-decimals assumption) into
-USDC (6 decimals); price_usd = usdc_out / 1.0. Decimals are read from the
-quote response where available; unknown decimals fail closed rather than
-misprice the position.
+Price derivation: quote EXACTLY ONE token's worth of raw units into USDC
+(6 decimals); price_usd = usdc_out / 1.0. The raw-unit amount is computed
+per-mint via raw_units_for_one_token(decimals) — decimals come from the
+candidate snapshot and are NEVER assumed. Unknown decimals fail closed
+(refuse to quote) rather than misprice the position: assuming 9 decimals for
+every mint once fabricated 1000× prices on 6-decimal tokens.
 """
 from __future__ import annotations
 

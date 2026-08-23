@@ -14,7 +14,9 @@ memory-bank/ · handoff.md · start.sh / stop.sh / trading-bot.desktop ·
 
 ## Commands
 - One click: ./start.sh | ./stop.sh
-- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (80, <1s)
+- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (94, <1s)
+- All suites from repo root: .venv/bin/python -m pytest -q  (142 = 94 backend
+  + 48 live_execution; root pytest.ini sets asyncio_mode=auto)
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
 - KB ingest: cd backend && ../.venv/bin/python scripts/ingest_directory.py <dir>
 

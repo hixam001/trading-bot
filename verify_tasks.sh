@@ -104,7 +104,7 @@ EOF
 
 echo ""
 echo "== 7. live_execution offline tests (Task C)"
-"$PY" -m pytest "$ROOT/live_execution/tests" -q 2>&1 | tail -2
+(cd "$ROOT" && "$PY" -m pytest live_execution/tests -q 2>&1 | tail -2)
 if ! "$PY" -c "import solders" 2>/dev/null; then
   echo "  NOTE: 'solders' not installed — signing path untested."
   echo "  Install when going real: $PY -m pip install solders"

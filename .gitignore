@@ -9,6 +9,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 .env
+live_execution/state/
 
 # Frontend
 node_modules/

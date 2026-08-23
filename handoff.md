@@ -19,10 +19,16 @@ A local LLM (qwen3:8b via Ollama) **narrates decisions already made** — it
 never decides, scores, or overrides anything. Everything is logged to SQLite
 and visible in a React dashboard served by the backend itself.
 
-**Non-negotiable:** paper trading only. No wallet, no transaction
-construction anywhere. `PAPER_TRADING_ONLY = True` is hardcoded in
-`backend/config.py` and runtime-asserted inside every position-opening
-function. If a task ever seems to require real execution — stop and flag it.
+**Non-negotiable:** the paper-trading pipeline (`backend/`) is paper only —
+no wallet, no transaction construction anywhere there.
+`PAPER_TRADING_ONLY = True` is hardcoded in `backend/config.py` and
+runtime-asserted inside every position-opening function. The separate
+`live_execution/` package at the repo ROOT (never imported by backend/) is
+the only real-execution code; it ships DISARMED — hardcoded
+`LIVE_TRADING_ENABLED = False`, mandatory manual confirmation, kill switch,
+daily-loss breaker — and must never be armed without a human editing its
+config.py and testing the full flow on Solana devnet first. If a task ever
+seems to require real execution inside backend/ — stop and flag it.
 
 ## 2. How to run / stop / test
 
@@ -31,7 +37,8 @@ function. If a task ever seems to require real execution — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # 80 tests, <1s
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # 94 tests, <1s
+.venv/bin/python -m pytest -q                           # 142 incl. live_execution
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -55,6 +62,7 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # 80 tests, <1s
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
+| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Ships DISARMED: hardcoded LIVE_TRADING_ENABLED=False, REQUIRE_MANUAL_CONFIRMATION=True, kill switch + daily-loss breaker, confirmation queue w/ fail-closed expiry, idempotency ledger, caps. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Zero live-network test coverage — devnet + throwaway keypair REQUIRED before any mainnet use |
 | `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats, regime, gate, KB, status) |
 | `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, omotrades comparison, project report |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
