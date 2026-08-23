@@ -206,17 +206,16 @@ async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
     assert calls == {"direct": 1, "firecrawl": 1}
 
 
-def test_pump_app_requires_refresh_token():
+def test_pump_app_requires_refresh_token(monkeypatch):
+    # Hermetic: the operator's real .env may have this set.
+    monkeypatch.setattr(config, "PUMPFUN_PRIVY_REFRESH_TOKEN", "")
+    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "")
     assert crowd.pump_app() is None
-    monkey_token = config.PUMPFUN_PRIVY_REFRESH_TOKEN
-    try:
-        config.PUMPFUN_PRIVY_REFRESH_TOKEN = "tok"
-        config.PUMPFUN_PRIVY_APP_ID = "app-123"
-        app = crowd.pump_app()
-        assert app is not None and app.app_id == "app-123"
-        assert app.origin == "pump.fun"
-    finally:
-        config.PUMPFUN_PRIVY_REFRESH_TOKEN = monkey_token
+    monkeypatch.setattr(config, "PUMPFUN_PRIVY_REFRESH_TOKEN", "tok")
+    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "app-123")
+    app = crowd.pump_app()
+    assert app is not None and app.app_id == "app-123"
+    assert app.origin == "pump.fun"
 
 
 # --- enrichment priority: fomo > pumpfun > proxy -----------------------------------------

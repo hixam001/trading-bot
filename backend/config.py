@@ -182,10 +182,12 @@ PUMPFUN_COMMENTS_URL_TEMPLATE: str = os.getenv(
 )
 PUMPFUN_CACHE_TTL_SECONDS: float = 60.0
 # pump.fun's own Privy app (different app id from fomo.family). The refresh
-# token comes from a logged-in pump.fun browser session; the app id is in
-# DevTools -> Network -> any auth.privy.io request -> "privy-app-id" header.
+# token lives in a logged-in pump.fun browser session: DevTools -> Application
+# -> Local Storage -> https://pump.fun -> key "privy:refresh_token".
 PUMPFUN_PRIVY_REFRESH_TOKEN: str = os.getenv("PUMPFUN_PRIVY_REFRESH_TOKEN", "")
-PUMPFUN_PRIVY_APP_ID: str = os.getenv("PUMPFUN_PRIVY_APP_ID", "")
+PUMPFUN_PRIVY_APP_ID: str = os.getenv(
+    "PUMPFUN_PRIVY_APP_ID", "cm1p2gzot03fzqty5xzgjgthq"  # pump.fun's public id
+)
 # Firecrawl stealth proxy — required fallback for both feeds because
 # prod-api.fomo.family 403-challenges direct reads (verified live).
 FIRECRAWL_API_KEY: str = os.getenv("FIRECRAWL_API_KEY", "")
