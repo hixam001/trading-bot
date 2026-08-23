@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import sys
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Optional
@@ -694,6 +695,28 @@ async def upsert_daily_stats(conn: aiosqlite.Connection, stats: DailyStats) -> N
          json.dumps(stats.stats_json)),
     )
     await conn.commit()
+
+
+# ===========================================================================
+# Backend selection — when Supabase is configured (USE_SUPABASE_DB=1 +
+# SUPABASE_DB_URL), the Postgres implementation in api/db_pg.py overrides
+# every public repository function above; the surface is identical.
+#
+# Under pytest we FORCE SQLite regardless of .env: the test suite owns its
+# own tmp-file databases and must never touch the live remote book.
+# ===========================================================================
+if config.USE_SUPABASE_DB and config.SUPABASE_DB_URL and "pytest" not in sys.modules:
+    from api import db_pg as _pg_backend
+
+    globals().update({
+        _name: getattr(_pg_backend, _name)
+        for _name in dir(_pg_backend)
+        if not _name.startswith("_") and callable(getattr(_pg_backend, _name))
+    })
+    log.info("DB backend: Supabase Postgres")
+else:
+    log.info("DB backend: local SQLite at %s", config.DB_PATH)
+
 
 
 

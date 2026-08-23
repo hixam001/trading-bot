@@ -86,6 +86,28 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - Stops realized −40.2% avg vs −20% config: fixed by fast scan loop
 - Winners existed: 4 TPs avg +59.6% — old +50% TP capped them; ladder fixed
 
+### Supabase runtime swap (this batch)
+- .env fully configured by operator (USE_SUPABASE_DB=1, all keys set);
+  migration 001_init.sql verified applied (schema_migrations row present).
+- backend/api/db_pg.py: full asyncpg Postgres backend, identical public
+  surface to db.py (all 30 repo functions). Key translations:
+  $n params, BOOLEAN, rowcount from execute() status string, RETURNING id,
+  ON CONFLICT DO NOTHING, TIMESTAMPTZ via ::text read-back (ISO strings
+  preserved for consumers), _ts() converts ISO str -> datetime for writes
+  (asyncpg rejects str for timestamptz).
+- db.py: backend selection at module bottom — PG overrides via
+  globals().update() when USE_SUPABASE_DB=1 + SUPABASE_DB_URL set;
+  pytest guard ("pytest" not in sys.modules) FORCES SQLite in tests.
+- requirements.txt += asyncpg>=0.30 (0.31.0 installed).
+- LIVE SMOKE vs real Supabase PASSED: feed-event JSONB roundtrip, atomic
+  open (dup refused), high-water, trim, cash guard (refuse+apply+restore),
+  idempotent close, deployed_today, cooldown lookups, regime, provider
+  counters, decision-commit seal dedupe, kb, daily stats. Cleanup removed
+  its own rows.
+- 145 backend tests still pass (SQLite); app imports with PG active.
+- NOTE: timestamps read back as "2026-08-23 12:00:01+00" (Postgres style,
+  space separator) — fromisoformat parses it fine on py3.11+.
+
 ## Watch-outs
 - ⚠ TERMINAL: login shell is FISH — no `$?`, no heredocs; `bash -c` quoting
   breaks silently. Write bash scripts to files; read outputs from /tmp files.
