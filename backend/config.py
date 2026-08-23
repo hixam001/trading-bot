@@ -166,6 +166,13 @@ CROWD_HEAT_MAX: int = 100
 # session (DevTools -> Application -> Local Storage -> privy-token / refresh
 # token). Exchanged for a ~1h access token automatically.
 FOMO_PRIVY_REFRESH_TOKEN: str = os.getenv("FOMO_PRIVY_REFRESH_TOKEN", "")
+# Gitignored sidecar where the bot persists Privy's ROTATED refresh token
+# after each session mint — makes the auth chain self-sustaining across
+# restarts. The .env value acts only as the one-time bootstrap.
+FOMO_PRIVY_STATE_FILE: str = os.getenv(
+    "FOMO_PRIVY_STATE_FILE",
+    str(Path(__file__).parent.parent / ".fomo_privy.json"),
+)
 FOMO_API_BASE: str = "https://prod-api.fomo.family"
 PRIVY_SESSIONS_URL: str = "https://auth.privy.io/api/v1/sessions"
 PRIVY_APP_ID: str = "cm6h485o300n3zj9yl6vpedq7"     # fomo.family's public app id

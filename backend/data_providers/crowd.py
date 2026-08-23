@@ -26,6 +26,7 @@ import asyncio
 import base64
 import json
 import logging
+import os
 import re
 import time
 from dataclasses import dataclass
@@ -39,6 +40,19 @@ log = logging.getLogger(__name__)
 
 _TIMEOUT = httpx.Timeout(15.0)
 _FIRECRAWL_TIMEOUT = httpx.Timeout(45.0)
+
+# ---------------------------------------------------------------------------
+# Refresh-token rotation persistence
+#
+# Privy ROTATES the refresh token on session mint: the response carries a
+# fresh one and the previously stored value may stop working. To make the
+# bot self-sustaining we persist every rotated token to a gitignored state
+# file; on the next mint the PERSISTED token wins over the stale .env copy.
+# Setup stays one-time: paste the initial token in .env, let the bot own the
+# chain from there. Best practice: extract it from a DEDICATED browser
+# profile whose fomo.family tab you never re-login with (the browser and the
+# bot then hold independent chains that don't invalidate each other).
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +127,42 @@ _sessions: dict[str, tuple[str, float]] = {}      # app_id -> (jwt, exp_ms)
 _locks: dict[str, asyncio.Lock] = {}
 
 
+def _state_file() -> str:
+    """Gitignored sidecar holding the LATEST rotated refresh token."""
+    return str(config.FOMO_PRIVY_STATE_FILE)
+
+
+def _load_persisted_refresh() -> str:
+    """
+    Newest-known refresh token: the state file if present (it tracks
+    rotations), else the bootstrap value from .env. Corrupt file degrades
+    to the .env bootstrap rather than hard-failing.
+    """
+    try:
+        with open(_state_file()) as fh:
+            value = str(json.load(fh).get("refresh_token") or "")
+            if value:
+                return value
+    except FileNotFoundError:
+        pass
+    except (ValueError, OSError):
+        log.warning("fomo: state file unreadable — falling back to .env token")
+    return config.FOMO_PRIVY_REFRESH_TOKEN
+
+
+def _persist_refresh(value: str) -> None:
+    try:
+        tmp = _state_file() + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump({"refresh_token": value}, fh)
+        os.replace(tmp, _state_file())
+        log.info("fomo: rotated refresh token persisted")
+    except OSError as exc:
+        # Non-fatal: the in-memory chain keeps working this process lifetime;
+        # a restart will need a manual re-extract.
+        log.error("fomo: could not persist rotated refresh token: %s", exc)
+
+
 def _lock_for(app_id: str) -> asyncio.Lock:
     if app_id not in _locks:
         _locks[app_id] = asyncio.Lock()
@@ -131,9 +181,14 @@ def _jwt_exp_ms(jwt: str) -> float:
 
 
 async def _mint_privy_session(app: _PrivyApp) -> Optional[str]:
-    """Exchange the operator's long-lived refresh token for an access JWT."""
-    if not app.refresh_token:
+    """Exchange the newest refresh token for an access JWT. When Privy
+    rotates the refresh token in the response, persist it so the chain is
+    self-sustaining across restarts."""
+    refresh = _load_persisted_refresh()
+    if not app.refresh_token and not refresh:
         return None
+    if not refresh:
+        refresh = app.refresh_token
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
             resp = await client.post(
@@ -145,15 +200,22 @@ async def _mint_privy_session(app: _PrivyApp) -> Optional[str]:
                     "origin": f"https://{app.origin}",
                     "referer": f"https://{app.origin}/",
                 },
-                json={"refresh_token": app.refresh_token},
+                json={"refresh_token": refresh},
             )
         if resp.status_code != 200:
-            log.warning("privy[%s]: session refresh failed HTTP %s",
+            log.warning("privy[%s]: session refresh failed HTTP %s — "
+                        "re-extract a fresh token from a re-login",
                         app.origin, resp.status_code)
             return None
-        token = resp.json().get("token")
+        body = resp.json()
+        token = body.get("token")
         if not token:
             return None
+        # Capture rotation: Privy may hand back a NEW refresh token that
+        # invalidates ours. Persist it or the next mint 401s.
+        rotated = body.get("refresh_token")
+        if rotated and rotated != refresh:
+            _persist_refresh(str(rotated))
         exp_ms = _jwt_exp_ms(token) or (time.time() * 1000.0 + 45 * 60_000)
         _sessions[app.app_id] = (token, exp_ms)
         minutes = max(0, int((exp_ms - time.time() * 1000.0) / 60_000))

@@ -10,6 +10,7 @@ rule consuming real feed heat with a tagged detail.
 """
 from __future__ import annotations
 
+import json
 import pytest
 
 import config
@@ -160,7 +161,64 @@ async def test_fomo_http_500_fails_soft(monkeypatch):
     assert await crowd.fetch_fomo_theses(MINT) is None
 
 
-# --- transport: direct -> firecrawl stealth fallback --------------------------
+# --- refresh-token rotation persistence --------------------------------------
+
+async def test_mint_persists_rotated_refresh_token(monkeypatch, tmp_path):
+    """Privy rotates the token on mint — the new one must be persisted so
+    the chain survives restarts."""
+    state_file = tmp_path / "fomo_state.json"
+    monkeypatch.setattr(config, "FOMO_PRIVY_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "bootstrap-tok")
+
+    captured = []
+
+    class RotatingClient(FakeClient):
+        async def post(self, url, **kw):
+            body = kw.get("body") or kw.get("json") or {}
+            captured.append(body.get("refresh_token"))
+            return FakeResponse(200, {"token": "x.y.z",
+                                      "refresh_token": "rotated-tok"})
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RotatingClient)
+    monkeypatch.setattr(crowd, "_sessions", {})
+
+    app = crowd._PrivyApp(config.PRIVY_APP_ID, "ignored-uses-state")
+    assert await crowd._mint_privy_session(app) is not None
+    # First mint used the .env bootstrap...
+    assert captured == ["bootstrap-tok"]
+    persisted = json.loads(state_file.read_text())["refresh_token"]
+    assert persisted == "rotated-tok"
+
+
+async def test_second_mint_uses_rotated_token(monkeypatch, tmp_path):
+    state_file = tmp_path / "fomo_state.json"
+    monkeypatch.setattr(config, "FOMO_PRIVY_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "bootstrap-tok")
+    json.dump({"refresh_token": "persisted-tok"}, open(state_file, "w"))
+
+    captured = []
+
+    class RecordingClient(FakeClient):
+        async def post(self, url, **kw):
+            body = kw.get("body") or kw.get("json") or {}
+            captured.append(body.get("refresh_token"))
+            return FakeResponse(200, {"token": "j.w.t"})
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RecordingClient)
+    monkeypatch.setattr(crowd, "_sessions", {})
+
+    await crowd._mint_privy_session(
+        crowd._PrivyApp(config.PRIVY_APP_ID, "whatever"))
+    assert captured == ["persisted-tok"]   # state file beats stale .env
+
+
+def test_corrupt_state_file_falls_back_to_env(monkeypatch, tmp_path):
+    state_file = tmp_path / "fomo_state.json"
+    state_file.write_text("corrupt{")
+    monkeypatch.setattr(config, "FOMO_PRIVY_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "env-tok")
+
+    assert crowd._load_persisted_refresh() == "env-tok"
 
 async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
     """Direct GET returns the Cloudflare challenge page; Firecrawl stealth

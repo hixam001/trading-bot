@@ -9,6 +9,7 @@ __pycache__/
 *.db-wal
 *.db-shm
 .env
+.fomo_privy.json
 live_execution/state/
 
 # Frontend
