@@ -178,7 +178,7 @@ FOMO_CACHE_TTL_SECONDS: float = 60.0
 # web app uses (DevTools -> Network on any coin page) and it works unchanged.
 PUMPFUN_COMMENTS_URL_TEMPLATE: str = os.getenv(
     "PUMPFUN_COMMENTS_URL_TEMPLATE",
-    "https://advanced-api-v2.pump.fun/replies/coins/{mint}?limit=20&offset=0",
+    "https://frontend-api-v2.pump.fun/replies/coins/{mint}?limit=20&offset=0",
 )
 PUMPFUN_CACHE_TTL_SECONDS: float = 60.0
 # pump.fun's own Privy app (different app id from fomo.family). The refresh
@@ -190,8 +190,12 @@ PUMPFUN_PRIVY_APP_ID: str = os.getenv(
 )
 # Firecrawl stealth proxy — required fallback for both feeds because
 # prod-api.fomo.family 403-challenges direct reads (verified live).
+# NOTE: the API lives at firecrawl.DEV now; the old .app host is TLS-dead
+# (verified 2026-08-23).
 FIRECRAWL_API_KEY: str = os.getenv("FIRECRAWL_API_KEY", "")
-FIRECRAWL_SCRAPE_URL: str = "https://api.firecrawl.app/v1/scrape"
+FIRECRAWL_SCRAPE_URL: str = os.getenv(
+    "FIRECRAWL_SCRAPE_URL", "https://api.firecrawl.dev/v1/scrape"
+)
 
 # ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.

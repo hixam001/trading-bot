@@ -61,13 +61,16 @@ async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> d
         state["tick"] = state.get("tick", 0) + 1
 
     # --- READ stage: crowd conviction (fomo.fun board / pump.fun comments).
+    # Live feeds ONLY in live mode — mock runs stay hermetic and fast (a real
+    # feed answering for mock mints once flipped every verdict to fail).
     # Fail-soft: a dead feed leaves the presence proxy in place.
-    try:
-        from data_providers.crowd import enrich_crowd_heat
-        await enrich_crowd_heat(candidates)
-    except Exception:
-        log.warning("crowd enrichment failed — proxy heat in use (fail-soft)",
-                    exc_info=True)
+    if config.DATA_BACKEND == "live":
+        try:
+            from data_providers.crowd import enrich_crowd_heat
+            await enrich_crowd_heat(candidates)
+        except Exception:
+            log.warning("crowd enrichment failed — proxy heat in use (fail-soft)",
+                        exc_info=True)
 
     # Regime computed ONCE per tick from the full batch (C2), logged ONCE.
     regime = compute_market_regime(candidates)

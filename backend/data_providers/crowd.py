@@ -91,8 +91,13 @@ class _PrivyApp:
     @property
     def origin(self) -> str:
         return ("pump.fun"
-                if self.app_id == config.PUMPFUN_PRIVY_APP_ID
+                if self.app_id == _PUMPFUN_APP_ID_DEFAULT
                 else "fomo.family")
+
+
+# pump.fun's own Privy app id, extracted from their bundle
+# (privy.pump.fun/recovery?recovery_app_id=...). Public identifier.
+_PUMPFUN_APP_ID_DEFAULT = "cm1p2gzot03fzqty5xzgjgthq"
 
 
 _sessions: dict[str, tuple[str, float]] = {}      # app_id -> (jwt, exp_ms)
@@ -173,10 +178,9 @@ def pump_app() -> Optional[_PrivyApp]:
     """Pump.fun Privy session — only when the operator configured one."""
     if not config.PUMPFUN_PRIVY_REFRESH_TOKEN:
         return None
-    return _PrivyApp(
-        config.PUMPFUN_PRIVY_APP_ID or config.PRIVY_APP_ID,
-        config.PUMPFUN_PRIVY_REFRESH_TOKEN,
-    )
+    # An EMPTY env line must fall back to pump's own app id, never fomo's.
+    app_id = (config.PUMPFUN_PRIVY_APP_ID or "").strip() or _PUMPFUN_APP_ID_DEFAULT
+    return _PrivyApp(app_id, config.PUMPFUN_PRIVY_REFRESH_TOKEN)
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +234,10 @@ async def _firecrawl_get_json(url: str, headers: dict) -> Optional[dict]:
         data = resp.json().get("data") or {}
         raw = data.get("rawHtml") or data.get("markdown") or ""
         status = (data.get("metadata") or {}).get("statusCode")
+        if status is not None and int(status) >= 400:
+            # The proxy reached the origin but the origin rejected the read.
+            log.warning("firecrawl: origin status %s for %s", status, url[:60])
+            return None
         if not raw or _looks_like_challenge(raw):
             log.warning("firecrawl: blocked at origin (status=%s)", status)
             return None
@@ -281,10 +289,12 @@ async def fetch_fomo_theses(mint: str) -> Optional[list[dict]]:
     theses: list[dict] = []
     for it in items:
         trade = it.get("authorTrade") or {}
+        # The thesis text lives NESTED: item["comment"]["comment"]
+        comment = it.get("comment") or {}
         try:
             theses.append({
                 "who": str(it.get("userHandle") or it.get("displayName") or ""),
-                "text": str(it.get("text") or ""),
+                "text": str(comment.get("comment") or ""),
                 "size_usd": float(trade.get("usdValue") or 0.0),
                 "unrealized_usd": float(trade.get("unrealizedPnlUsd") or 0.0),
                 "realized_usd": float(trade.get("realizedPnlUsd") or 0.0),
@@ -316,6 +326,11 @@ async def fetch_pump_comments(mint: str) -> Optional[list[dict]]:
     url = config.PUMPFUN_COMMENTS_URL_TEMPLATE.format(mint=mint)
     body = await _get_json_via(url, headers)
     if body is None:
+        return None
+    # Error bodies ({"statusCode": 404, ...}) must read as failure, not as
+    # an empty comment list.
+    if isinstance(body, dict) and "statusCode" in body:
+        log.info("pumpfun: origin error body for %s", mint[:8])
         return None
     items = body if isinstance(body, list) else (body.get("items") or [])
     comments = [{"who": str(c.get("user", "")), "text": str(c.get("text", ""))}

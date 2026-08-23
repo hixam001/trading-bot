@@ -211,11 +211,19 @@ def test_pump_app_requires_refresh_token(monkeypatch):
     monkeypatch.setattr(config, "PUMPFUN_PRIVY_REFRESH_TOKEN", "")
     monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "")
     assert crowd.pump_app() is None
+
     monkeypatch.setattr(config, "PUMPFUN_PRIVY_REFRESH_TOKEN", "tok")
-    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "app-123")
+    # Empty/unset app id falls back to pump.fun's own public id:
+    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "")
     app = crowd.pump_app()
-    assert app is not None and app.app_id == "app-123"
+    assert app is not None and app.app_id == crowd._PUMPFUN_APP_ID_DEFAULT
     assert app.origin == "pump.fun"
+
+    # A custom override is honored (and its origin derives accordingly):
+    monkeypatch.setattr(config, "PUMPFUN_PRIVY_APP_ID", "app-123")
+    app2 = crowd.pump_app()
+    assert app2 is not None and app2.app_id == "app-123"
+    assert app2.origin == "fomo.family"
 
 
 # --- enrichment priority: fomo > pumpfun > proxy -----------------------------------------
