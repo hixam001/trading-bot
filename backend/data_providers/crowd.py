@@ -291,13 +291,40 @@ async def _direct_get(url: str, headers: dict) -> Optional[dict]:
         return None
 
 
-async def _firecrawl_get_json(url: str, headers: dict) -> Optional[dict]:
-    """
-    Same GET through Firecrawl's stealth proxy (omo's own fallback path).
-    Returns parsed JSON or None. Requires FIRECRAWL_API_KEY.
-    """
-    if not config.FIRECRAWL_API_KEY:
+_BENCHED_UNTIL: dict[str, float] = {}             # scraper -> monotonic ts
+
+
+def _bench(name: str) -> None:
+    """Stop using an exhausted/broken provider for STEALTH_BENCH_SECONDS."""
+    _BENCHED_UNTIL[name] = time.monotonic() + config.STEALTH_BENCH_SECONDS
+    log.warning("stealth scraper %s benched %.0f min", name,
+                config.STEALTH_BENCH_SECONDS / 60.0)
+
+
+def _is_benched(name: str) -> bool:
+    return _BENCHED_UNTIL.get(name, 0.0) > time.monotonic()
+
+
+def _json_from_body(text: str) -> Optional[dict]:
+    """Parse a scrape body into JSON, rejecting HTML challenges and
+    provider-level error envelopes."""
+    if not text or _looks_like_challenge(text):
         return None
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return None
+    if isinstance(data, dict) and "statusCode" in data:
+        return None
+    return data
+
+
+async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
+    """
+    omotrades' own fallback: POST api.firecrawl.dev/v1/scrape with
+    proxy:"stealth" — this one FORWARDS our auth headers, which matters
+    because prod-api requires the Privy bearer even through a proxy.
+    """
     body = {
         "url": url,
         "formats": ["rawHtml"],
@@ -305,39 +332,121 @@ async def _firecrawl_get_json(url: str, headers: dict) -> Optional[dict]:
         "proxy": "stealth",
         "headers": {"accept": "application/json", **headers},
     }
+    async with httpx.AsyncClient(timeout=_FIRECRAWL_TIMEOUT) as client:
+        resp = await client.post(
+            config.FIRECRAWL_SCRAPE_URL,
+            headers={"authorization": f"Bearer {config.FIRECRAWL_API_KEY}",
+                     "content-type": "application/json"},
+            json=body,
+        )
+    if resp.status_code in (402, 429):
+        _bench("firecrawl")               # out of credits / throttled
+        return None
+    if resp.status_code != 200:
+        log.warning("firecrawl: scrape HTTP %s", resp.status_code)
+        return None
+    data = resp.json().get("data") or {}
+    raw = data.get("rawHtml") or data.get("markdown") or ""
+    status = (data.get("metadata") or {}).get("statusCode")
+    if status is not None and int(status) >= 400:
+        log.warning("firecrawl: origin status %s for %s", status, url[:60])
+        return None
+    return _json_from_body(raw)
+
+
+async def _scrape_get_template(name: str, template: str,
+                               api_key: str, url: str) -> Optional[dict]:
+    """
+    Shared adapter for GET-return-body stealth services. LIMITATION (honest):
+    these forward their OWN headers, not ours — so an endpoint requiring the
+    Privy bearer may still refuse. They shine for keyless routes and as
+    credit-failover breadth.
+    """
+    from urllib.parse import quote
+    target = quote(url, safe="")
+    get_url = template.format(api_key=api_key, url=target)
     try:
         async with httpx.AsyncClient(timeout=_FIRECRAWL_TIMEOUT) as client:
-            resp = await client.post(
-                config.FIRECRAWL_SCRAPE_URL,
-                headers={"authorization": f"Bearer {config.FIRECRAWL_API_KEY}",
-                         "content-type": "application/json"},
-                json=body,
-            )
-        if resp.status_code != 200:
-            log.warning("firecrawl: scrape HTTP %s", resp.status_code)
-            return None
-        data = resp.json().get("data") or {}
-        raw = data.get("rawHtml") or data.get("markdown") or ""
-        status = (data.get("metadata") or {}).get("statusCode")
-        if status is not None and int(status) >= 400:
-            # The proxy reached the origin but the origin rejected the read.
-            log.warning("firecrawl: origin status %s for %s", status, url[:60])
-            return None
-        if not raw or _looks_like_challenge(raw):
-            log.warning("firecrawl: blocked at origin (status=%s)", status)
-            return None
-        return json.loads(raw)
+            resp = await client.get(get_url, headers={"accept": "*/*"})
     except Exception as exc:
-        log.warning("firecrawl: scrape error: %s", exc)
+        log.warning("%s: scrape error: %s", name, exc)
         return None
+    if resp.status_code in (402, 429):
+        _bench(name)
+        return None
+    if resp.status_code != 200:
+        log.warning("%s: scrape HTTP %s", name, resp.status_code)
+        return None
+    return _json_from_body(resp.text)
+
+
+async def _scrape_scrapingbee(url: str, headers: dict) -> Optional[dict]:
+    return await _scrape_get_template(
+        "scrapingbee",
+        "https://app.scrapingbee.com/api/v1/?api_key={api_key}&url={url}"
+        "&stealth_proxy=true",
+        config.SCRAPINGBEE_API_KEY, url)
+
+
+async def _scrape_scrapingdog(url: str, headers: dict) -> Optional[dict]:
+    return await _scrape_get_template(
+        "scrapingdog",
+        "https://api.scrapingdog.com/scrape?api_key={api_key}&url={url}"
+        "&dynamic=false",
+        config.SCRAPINGDOG_API_KEY, url)
+
+
+async def _scrape_zenrows(url: str, headers: dict) -> Optional[dict]:
+    return await _scrape_get_template(
+        "zenrows",
+        "https://api.zenrows.com/v1/?apikey={api_key}&url={url}"
+        "&js_render=true",
+        config.ZENROWS_API_KEY, url)
+
+
+async def _scrape_scrapeops(url: str, headers: dict) -> Optional[dict]:
+    return await _scrape_get_template(
+        "scrapeops",
+        "https://proxy.scrapeops.io/v1/?api_key={api_key}&url={url}",
+        config.SCRAPEOPS_API_KEY, url)
+
+
+def _configured_scrapers() -> list[tuple[str, Any]]:
+    """Preference-ordered stealth scrapers with keys configured."""
+    chain: list[tuple[str, Any]] = []
+    if config.FIRECRAWL_API_KEY:
+        chain.append(("firecrawl", _scrape_firecrawl))
+    if config.SCRAPINGBEE_API_KEY:
+        chain.append(("scrapingbee", _scrape_scrapingbee))
+    if config.SCRAPINGDOG_API_KEY:
+        chain.append(("scrapingdog", _scrape_scrapingdog))
+    if config.ZENROWS_API_KEY:
+        chain.append(("zenrows", _scrape_zenrows))
+    if config.SCRAPEOPS_API_KEY:
+        chain.append(("scrapeops", _scrape_scrapeops))
+    return chain
 
 
 async def _get_json_via(url: str, headers: dict) -> Optional[dict]:
-    """DIRECT first; Firecrawl stealth proxy when challenged/blocked."""
+    """
+    DIRECT first (free; works whenever Cloudflare waves the IP through),
+    then the stealth-scrape failover chain in preference order. Returns
+    parsed JSON or None — callers degrade gracefully either way.
+    """
     direct = await _direct_get(url, headers)
     if direct is not None:
         return direct
-    return await _firecrawl_get_json(url, headers)
+    scrapers = _configured_scrapers()
+    if not scrapers:
+        log.warning("no stealth scrapers configured — feed unavailable")
+        return None
+    for name, fn in scrapers:
+        if _is_benched(name):
+            continue
+        body = await fn(url, headers)
+        if body is not None:
+            return body
+    return None
 
 
 # ---------------------------------------------------------------------------

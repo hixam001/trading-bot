@@ -190,6 +190,15 @@ FIRECRAWL_API_KEY: str = os.getenv("FIRECRAWL_API_KEY", "")
 FIRECRAWL_SCRAPE_URL: str = os.getenv(
     "FIRECRAWL_SCRAPE_URL", "https://api.firecrawl.dev/v1/scrape"
 )
+# Additional stealth-scrape providers — OPTIONAL failover chain. When the
+# preferred provider runs out of credits (or errors), the next CONFIGURED
+# one takes over automatically; an exhausted provider is benched so we stop
+# burning calls on it. All are GET-return-body services (simplest contract).
+SCRAPINGBEE_API_KEY: str = os.getenv("SCRAPINGBEE_API_KEY", "")
+SCRAPINGDOG_API_KEY: str = os.getenv("SCRAPINGDOG_API_KEY", "")
+ZENROWS_API_KEY: str = os.getenv("ZENROWS_API_KEY", "")
+SCRAPEOPS_API_KEY: str = os.getenv("SCRAPEOPS_API_KEY", "")
+STEALTH_BENCH_SECONDS: float = float(os.getenv("STEALTH_BENCH_SECONDS", "1800"))
 
 # ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.

@@ -259,6 +259,59 @@ async def test_fomo_falls_back_to_firecrawl_on_challenge(monkeypatch):
     assert calls == {"direct": 1, "firecrawl": 1}
 
 
+async def test_quota_exhausted_firecrawl_fails_over(monkeypatch):
+    """Firecrawl reports out-of-credits (402) -> benched -> next configured
+    stealth scraper takes over automatically."""
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "fc-key")
+    monkeypatch.setattr(config, "SCRAPINGBEE_API_KEY", "sb-key")
+
+    payload = {"responseObject": {"items": [
+        {"userHandle": "whale", "ticker": "WHALE",
+         "comment": {"comment": "floor holds"},
+         "authorTrade": {"usdValue": 9000.0,
+                         "unrealizedPnlUsd": 1200.0}}]}}
+
+    calls = []
+
+    class RoutedClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            if url.startswith(config.FOMO_API_BASE):
+                # Direct read is Cloudflare-challenged, as live-verified.
+                return FakeResponse(
+                    403, text="<!DOCTYPE html>Just a moment...</html>")
+            if "app.scrapingbee.com" in url:
+                calls.append("scrapingbee")
+                import json as _json
+                return FakeResponse(200, text=_json.dumps(payload))
+            return FakeResponse(200, {})
+
+        async def post(self, url, **kw):
+            if "firecrawl" in url:
+                calls.append("firecrawl")
+                return FakeResponse(402, text="out of credits")
+            return FakeResponse(200, {"token": "t"})
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RoutedClient)
+
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data is not None and len(data["theses"]) == 1
+    assert calls == ["firecrawl", "scrapingbee"]     # failover happened
+    assert crowd._is_benched("firecrawl")            # and stayed failed-over
+
+
+def test_benched_scraper_is_skipped(monkeypatch):
+    crowd._bench("firecrawl")
+
+    def _fail(name):
+        raise AssertionError(f"benched scraper {name} was called")
+
+    chain = [("firecrawl", lambda u, h: (_fail("firecrawl"), None)[1]),
+             ("zenrows", lambda u, h: {"ok": True})]
+    enabled = [(n, fn) for n, fn in chain if not crowd._is_benched(n)]
+    assert [n for n, _ in enabled] == ["zenrows"]
+
+
 # --- enrichment: fomo board is the sole real source (pump deferred) -----------
 
 async def test_enrich_uses_fomo_board(monkeypatch):
