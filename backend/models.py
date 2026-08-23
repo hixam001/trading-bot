@@ -72,6 +72,11 @@ class Candidate:
     transfer_fee_enable: Optional[bool] = None
     name: str = ""
     source: str = "mock"   # which provider stack produced this candidate
+    # Crowd conviction (crowd_heat): REAL heat from the fomo.fun board /
+    # pump.fun comments when a feed answered, filled during the read stage.
+    # None = no feed answered -> the rule falls back to the presence proxy.
+    fomo_heat: Optional[int] = None
+    crowd_heat_source: str = ""            # "fomo" | "pumpfun" | "" (= proxy)
     # Discovery provenance ONLY — observability field. The rule engine never
     # reads or branches on this. "trending" | "new_listing" | "both" |
     # "unknown" (explicit unknown; never silently defaulted to trending).
@@ -82,6 +87,8 @@ class Candidate:
             "symbol": self.symbol,
             "name": self.name,
             "mint_address": self.mint_address,
+            "fomo_heat": self.fomo_heat,
+            "crowd_heat_source": self.crowd_heat_source,
             "price_usd": self.price_usd,
             "liquidity_usd": self.liquidity_usd,
             "volume_24h_usd": self.volume_24h_usd,

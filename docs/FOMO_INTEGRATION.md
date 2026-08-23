@@ -25,7 +25,31 @@ Their gate refuses when heat is outside its act band — observed refusals at
 heat 20–24 ("fomo reading inside the range i act in" fails), action around
 25+. The band bounds are operator-tuned, not sacred.
 
-## 2. Where we stand today
+## 2. Where we stand today — OPTIONS 1 & 2 IMPLEMENTED
+
+`backend/data_providers/crowd.py` implements both real sources with fail-soft
+degradation, wired into `main.run_tick`'s read stage
+(`crowd.enrich_crowd_heat(candidates)` fills `candidate.fomo_heat` +
+`candidate.crowd_heat_source`; `compute_crowd_heat()` prefers that value and
+falls back to the presence proxy when no feed answered). The rule detail is
+source-tagged in the journal: `heat 44 [fomo] ...` / `heat 28 [pumpfun]` /
+`heat 36 [proxy]`.
+
+Setup:
+1. **FOMO board**: log into fomo.family once, DevTools → Application →
+   Local Storage → copy your Privy refresh token → put it in `.env` as
+   `FOMO_PRIVY_REFRESH_TOKEN=...`. The bot exchanges it for a ~1h access
+   token automatically (single-flight, cached) and reads
+   `prod-api.fomo.family/feed/token/thesis?tokenAddress=<mint>...`.
+2. **pump.fun comments**: the legacy `frontend-api.pump.fun` host is DEAD
+   (HTTP 530, verified 2026-08-23); `advanced-api-v2.pump.fun` responds but
+   its comment route wasn't discoverable by probing. Open any pump.fun coin
+   page, find the comments XHR, and set
+   `PUMPFUN_COMMENTS_URL_TEMPLATE=https://<host>/<route>/{mint}?...` in
+   `.env` — no code change needed.
+
+Both feeds are optional: empty token / unreachable feed ⇒ proxy heat, tagged
+`[proxy]` in the journal.
 
 `backend/rule_engine/rules.py::compute_crowd_heat()` implements the **same
 20 + 8×signals shape** using named presence channels (twitter / telegram /

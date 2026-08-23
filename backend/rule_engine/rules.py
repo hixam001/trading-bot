@@ -130,12 +130,17 @@ def cash_available(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
 
 def compute_crowd_heat(c: Candidate) -> int:
     """
-    0-100 conviction index. omotrades computes theirs from WRITTEN THESES on
-    the FOMO board (heat = 20 + 8 x thesis count). Until that feed is wired
-    (docs/FOMO_INTEGRATION.md), this documented proxy counts named presence
-    channels: twitter / telegram / website, +8 each, base 20.
-    Swapping in the real feed means replacing THIS function's body only.
+    0-100 conviction index, omotrades' formula: heat = 20 + 8 x conviction
+    items, clamped 0-100.
+
+    Source priority (filled during the read stage by crowd.enrich_crowd_heat):
+      1. c.fomo_heat — REAL heat from the fomo.fun board (theses with the
+         authors' live positions behind them) or pump.fun comments
+      2. presence-channel proxy (twitter/telegram/website) — documented
+         fallback when no feed answered (see docs/FOMO_INTEGRATION.md)
     """
+    if c.fomo_heat is not None:
+        return int(c.fomo_heat)
     signals = sum(1 for v in (c.has_twitter, c.has_telegram, c.has_website) if v)
     return min(100, config.CROWD_HEAT_BASE
                + config.CROWD_HEAT_PER_SIGNAL * signals)
@@ -143,13 +148,17 @@ def compute_crowd_heat(c: Candidate) -> int:
 
 def crowd_heat(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     heat = compute_crowd_heat(c)
+    source = (c.crowd_heat_source or "proxy").strip() or "proxy"
     ok = config.CROWD_HEAT_MIN <= heat <= config.CROWD_HEAT_MAX
     if ok:
-        detail = f"heat {heat} inside act band [{config.CROWD_HEAT_MIN}, {config.CROWD_HEAT_MAX}]"
+        detail = (f"heat {heat} [{source}] inside act band "
+                  f"[{config.CROWD_HEAT_MIN}, {config.CROWD_HEAT_MAX}]")
     elif heat < config.CROWD_HEAT_MIN:
-        detail = f"heat {heat} below act band [{config.CROWD_HEAT_MIN}, {config.CROWD_HEAT_MAX}] — no crowd conviction yet"
+        detail = (f"heat {heat} [{source}] below act band "
+                  f"[{config.CROWD_HEAT_MIN}, {config.CROWD_HEAT_MAX}] — "
+                  f"no crowd conviction yet")
     else:
-        detail = f"heat {heat} above act band — hype peak"
+        detail = f"heat {heat} [{source}] above act band — hype peak"
     return RuleResult("crowd_heat", ok, detail, value=heat)
 
 

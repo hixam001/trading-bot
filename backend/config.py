@@ -157,6 +157,32 @@ CROWD_HEAT_MIN: int = 36                # needs >= 2 of {twitter, telegram, site
 CROWD_HEAT_MAX: int = 100
 
 # ---------------------------------------------------------------------------
+# Crowd feeds (crowd_heat real sources — see data_providers/crowd.py and
+# docs/FOMO_INTEGRATION.md). Both fail SOFT: an unavailable feed degrades
+# crowd_heat to the presence proxy; it never blocks anything else.
+# ---------------------------------------------------------------------------
+# Option 1 — fomo.fun board (omotrades' exact source). Requires the operator's
+# Privy refresh token, extracted ONCE from a logged-in fomo.family browser
+# session (DevTools -> Application -> Local Storage -> privy-token / refresh
+# token). Exchanged for a ~1h access token automatically.
+FOMO_PRIVY_REFRESH_TOKEN: str = os.getenv("FOMO_PRIVY_REFRESH_TOKEN", "")
+FOMO_API_BASE: str = "https://prod-api.fomo.family"
+PRIVY_SESSIONS_URL: str = "https://auth.privy.io/api/v1/sessions"
+PRIVY_APP_ID: str = "cm6h485o300n3zj9yl6vpedq7"     # fomo.family's public app id
+FOMO_NETWORK_ID: int = 1399811149                   # solana mainnet
+FOMO_THESIS_LIMIT: int = 40
+FOMO_CACHE_TTL_SECONDS: float = 60.0
+# Option 2 — pump.fun comments. The old frontend-api host is dead (HTTP 530,
+# verified 2026-08-23); advanced-api-v2 responds but its comment route was not
+# discoverable by probing. Point this template at whatever route the pump.fun
+# web app uses (DevTools -> Network on any coin page) and it works unchanged.
+PUMPFUN_COMMENTS_URL_TEMPLATE: str = os.getenv(
+    "PUMPFUN_COMMENTS_URL_TEMPLATE",
+    "https://advanced-api-v2.pump.fun/replies/coins/{mint}?limit=20&offset=0",
+)
+PUMPFUN_CACHE_TTL_SECONDS: float = 60.0
+
+# ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.
 # To be tuned from real paper-trading data during the 10-day window
 # (03_GANTT_CHART.md calibration section). Do not treat these as validated.
