@@ -46,6 +46,17 @@ PAPER_TRADING_ONLY: bool = True
 # ---------------------------------------------------------------------------
 BASE_DIR: Path = Path(__file__).parent
 DB_PATH: Path = BASE_DIR / os.getenv("DB_PATH", "trading_bot.db")
+
+# ---------------------------------------------------------------------------
+# Supabase (Postgres) — optional remote DB backend. Empty USE_SUPABASE_DB
+# keeps the local SQLite book. The service-role key bypasses RLS; it must
+# live only in .env on the server, never in the repo or frontend.
+# ---------------------------------------------------------------------------
+USE_SUPABASE_DB: bool = os.getenv("USE_SUPABASE_DB", "") == "1"
+SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
+SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
+SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "")
 KNOWLEDGE_BASE_DIR: Path = BASE_DIR / "knowledge_base"
 STATIC_KNOWLEDGE_FILE: Path = KNOWLEDGE_BASE_DIR / "static_knowledge.md"
 INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"

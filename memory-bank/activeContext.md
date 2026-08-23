@@ -95,3 +95,17 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - .env.example documents ALL env fields incl. crowd-feed keys; user has
   FOMO_PRIVY_REFRESH_TOKEN + FIRECRAWL_API_KEY filled
 
+
+### Security audit + Supabase prep (this batch)
+- Secret scans CLEAN: no hardcoded keys in tracked code, no JWT/key-prefix
+  material, .env/keypair never committed in git history.
+- Deleted stale files: verify_tasks.sh (one-shot verifier), trading-bot.desktop
+  (referenced a nonexistent path).
+- Fixed .env.example duplicated section 6c; added section 8 SUPABASE
+  (USE_SUPABASE_DB, SUPABASE_URL, SERVICE_ROLE_KEY, ANON_KEY, DB_URL).
+- config.py: Supabase fields added (default OFF — SQLite stays authoritative
+  until USE_SUPABASE_DB=1 and db layer is swapped).
+- migrations/supabase/001_init.sql: full Postgres schema (9 tables, JSONB,
+  TIMESTAMPTZ, one-open-position-per-mint exclusion constraint, RLS locked).
+- .gitignore += *.db-journal, wallet-keypair.json.
+
