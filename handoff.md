@@ -37,8 +37,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # 94 tests, <1s
-.venv/bin/python -m pytest -q                           # 142 incl. live_execution
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # 136 tests, <1s
+.venv/bin/python -m pytest -q                           # 184 incl. live_execution
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -53,7 +53,8 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # 94 tests, <1s
 |---|---|
 | `backend/config.py` | ALL thresholds + safety flag + provider keys via env |
 | `backend/models.py` | Candidate (incl. `decimals`), Trade, FeedEvent, RuleResult, GateDecision, PortfolioState |
-| `backend/rule_engine/` | `rules.py` (10 pure rules), `gate.py` (no-short-circuit AND), `regime.py` |
+| `backend/rule_engine/` | `rules.py` (11 omo-parity entry rules), `exits.py` (omo exit engine: stop/trail/liquidity-break/invalidation/stale/TP-ladder + sell risk gate), `gate.py` (no-short-circuit AND), `regime.py`, `liveness.py` (not_on_break) |
+| `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens, Firecrawl stealth fallback, junk filter) → feeds crowd_heat |
 | `backend/paper_trading_engine.py` | money math + atomic open/close/scale_in + exits + decide_and_act |
 | `backend/api/db.py` | schema + repository; atomic conditional writes return rowcounts |
 | `backend/api/main.py` | FastAPI app; serves built frontend; TICK_LOOP_IN_PROCESS env runs tick loop in-process |

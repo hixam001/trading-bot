@@ -18,11 +18,14 @@
 - [x] Read-only promotion gate, 5 criteria (G4–G6)
 - [x] Full API surface + WS feed broadcaster (H1–H5)
 - [x] Dashboard panels incl. persistent safety banner (I1–I10; build passes)
-- [x] Tests J1–J5 → **94 passing** in backend (+14 from Tasks A/B)
+- [x] Tests J1–J5 → **136 passing** in backend
 - [x] One-click launcher verified start/stop/restart
 - [x] omotrades comparison + commit-reveal verification (docs/06)
 - [x] Task C: live_execution/ seven-file safety model at repo root,
-      offline-tested (**48 passing**; 142 combined via root pytest.ini)
+      offline-tested (**48 passing**; 182 combined via root pytest.ini)
+- [x] omo-mimicry rebuild in progress: exit engine + fast scan loop,
+      entry gate = omo rules verbatim, old logic purged, crowd conviction
+      feed (fomo.fun board) live-validated → **backend 136 / combined 184**
 
 ## Deliberately not built (per spec sequencing)
 - E8/E9 partial scaling + rolling history (post-calibration)
