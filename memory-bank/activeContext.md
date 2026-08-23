@@ -120,7 +120,22 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
   Supabase data (fresh $1000 book). Server killed after test.
 - 145 tests still pass; smoke re-ran clean twice on pinned path.
 
-### Stealth-scrape provider validation (this batch)
+### Caveat RESOLVED: header forwarding via stealth providers (this batch)
+- ScrapeOps email confirmed by operator; keep_headers=true VERIFIED
+  forwarding our Privy bearer -> REAL board data through prod-api
+  Cloudflare (BONK theses parsed, board-total correct).
+- ZenRows custom_headers=true forwards bearer too; REQUIRED premium_proxy
+  for prod-api (standard proxies RESP001 vs its Cloudflare). Costs ~10-25
+  credits/request — flagged in code comment.
+- ScrapingBee CANNOT carry Authorization: their platform consumes that
+  header as their own API key ("Invalid api key" pre-origin). Stays
+  keyless-routes/credit-breadth only. Unresolvable.
+- BUGFIX _json_from_body: rejected ANY body containing statusCode key,
+  but prod-api includes statusCode:200 in SUCCESS envelopes -> scrape
+  path silently discarded valid board data. Now rejects only >=400.
+- Verified live: scrapeops + zenrows(premium) both return real theses;
+  firecrawl/scrapingbee unaffected; 145 tests pass.
+
 - Tested via production adapters against JSON echo targets:
   firecrawl PASS (~2s), scrapingbee PASS stealth_proxy=true (~3s),
   zenrows KEY VALID but flaky: REQS001=domain blocklist (ipify/github),

@@ -307,15 +307,18 @@ def _is_benched(name: str) -> bool:
 
 def _json_from_body(text: str) -> Optional[dict]:
     """Parse a scrape body into JSON, rejecting HTML challenges and
-    provider-level error envelopes."""
+    provider-level error envelopes. NOTE: prod-api includes statusCode:200
+    in SUCCESS envelopes too, so only >=400 counts as an error here."""
     if not text or _looks_like_challenge(text):
         return None
     try:
         data = json.loads(text)
     except ValueError:
         return None
-    if isinstance(data, dict) and "statusCode" in data:
-        return None
+    if isinstance(data, dict):
+        sc = data.get("statusCode")
+        if isinstance(sc, int) and sc >= 400:
+            return None
     return data
 
 
@@ -355,19 +358,22 @@ async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
 
 
 async def _scrape_get_template(name: str, template: str,
-                               api_key: str, url: str) -> Optional[dict]:
+                               api_key: str, url: str,
+                               fwd_headers: Optional[dict] = None) -> Optional[dict]:
     """
-    Shared adapter for GET-return-body stealth services. LIMITATION (honest):
-    these forward their OWN headers, not ours — so an endpoint requiring the
-    Privy bearer may still refuse. They shine for keyless routes and as
-    credit-failover breadth.
+    Shared adapter for GET-return-body stealth services. When the provider
+    supports header passthrough (keep_headers / custom_headers), pass
+    `fwd_headers` — they are attached to the request to the provider and the
+    provider forwards them to the origin (each verified live via httpbin
+    echo). This is what lets ZenRows/ScrapeOps carry the Privy bearer.
     """
     from urllib.parse import quote
     target = quote(url, safe="")
     get_url = template.format(api_key=api_key, url=target)
+    req_headers = {"accept": "*/*", **(fwd_headers or {})}
     try:
         async with httpx.AsyncClient(timeout=_FIRECRAWL_TIMEOUT) as client:
-            resp = await client.get(get_url, headers={"accept": "*/*"})
+            resp = await client.get(get_url, headers=req_headers)
     except Exception as exc:
         log.warning("%s: scrape error: %s", name, exc)
         return None
@@ -381,6 +387,12 @@ async def _scrape_get_template(name: str, template: str,
 
 
 async def _scrape_scrapingbee(url: str, headers: dict) -> Optional[dict]:
+    """
+    ScrapingBee CANNOT forward our Privy bearer: their platform consumes the
+    Authorization header as their own API key (verified live — request dies
+    with "Invalid api key" before reaching the origin). This provider stays
+    useful for keyless routes and credit-failover breadth only.
+    """
     return await _scrape_get_template(
         "scrapingbee",
         "https://app.scrapingbee.com/api/v1/?api_key={api_key}&url={url}"
@@ -397,18 +409,30 @@ async def _scrape_scrapingdog(url: str, headers: dict) -> Optional[dict]:
 
 
 async def _scrape_zenrows(url: str, headers: dict) -> Optional[dict]:
+    """
+    custom_headers=true forwards our caller headers (incl. the Privy
+    bearer) to the origin. Zenrows refuses to let us override browser-
+    fingerprint headers (user-agent etc.) — it manages those itself — so
+    drop them before sending.
+    """
+    fwd = {k: v for k, v in headers.items() if k.lower() != "user-agent"}
+    # premium_proxy is REQUIRED for prod-api.fomo.family (RESP001 otherwise:
+    # standard proxies can't pass its Cloudflare). Costs ~10-25 credits per
+    # request instead of 1 — remove if you want the cheap tier back.
     return await _scrape_get_template(
         "zenrows",
         "https://api.zenrows.com/v1/?apikey={api_key}&url={url}"
-        "&js_render=true",
-        config.ZENROWS_API_KEY, url)
+        "&js_render=true&custom_headers=true&premium_proxy=true",
+        config.ZENROWS_API_KEY, url, fwd_headers=fwd or None)
 
 
 async def _scrape_scrapeops(url: str, headers: dict) -> Optional[dict]:
+    """keep_headers=true forwards our caller headers (incl. Privy bearer)."""
     return await _scrape_get_template(
         "scrapeops",
-        "https://proxy.scrapeops.io/v1/?api_key={api_key}&url={url}",
-        config.SCRAPEOPS_API_KEY, url)
+        "https://proxy.scrapeops.io/v1/?api_key={api_key}&url={url}"
+        "&keep_headers=true",
+        config.SCRAPEOPS_API_KEY, url, fwd_headers=dict(headers))
 
 
 def _configured_scrapers() -> list[tuple[str, Any]]:
