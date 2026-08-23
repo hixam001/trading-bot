@@ -75,6 +75,12 @@ for module in (feed, holdings, journal, stats, market_regime,
                promotion_gate, knowledge_base, system_status):
     app.include_router(module.router)
 
+try:
+    from api.routes.proof import router as proof_router
+    app.include_router(proof_router)
+except ImportError:
+    pass  # proof endpoints optional; decision_commits table may not exist yet
+
 
 @app.websocket("/ws/feed")
 async def ws_feed(ws: WebSocket):
