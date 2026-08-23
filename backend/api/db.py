@@ -314,33 +314,6 @@ async def close_trade_row(
     return max(cursor.rowcount, 0)
 
 
-async def add_to_position_row(
-    conn: aiosqlite.Connection,
-    trade_id: str,
-    size_add_usd: float,
-    qty_add: float,
-    max_exposure_usd: float,
-) -> int:
-    """
-    ATOMIC SCALE-IN (§5.1). Adds to an open position only if the result
-    stays within the exposure cap — enforced atomically inside the UPDATE's
-    WHERE clause, not checked-then-written. rowcount 0 means: already closed,
-    or cap would be exceeded (caller re-reads state to distinguish).
-    """
-    cursor = await conn.execute(
-        """
-        UPDATE trades
-        SET position_size_usd = position_size_usd + ?,
-            quantity = quantity + ?
-        WHERE trade_id = ? AND is_open = 1
-          AND position_size_usd + ? <= ?
-        """,
-        (size_add_usd, qty_add, trade_id, size_add_usd, max_exposure_usd),
-    )
-    await conn.commit()
-    return max(cursor.rowcount, 0)
-
-
 async def trim_position_row(
     conn: aiosqlite.Connection,
     trade_id: str,

@@ -61,7 +61,7 @@ def _archetypes() -> list[dict]:
              volume_1h_usd=27_000.0, buys_1h=280, sells_1h=240,
              price_change_1h_pct=9.0, age_hours=26.0, has_twitter=True,
              is_likely_honeypot=True, mint_authority_revoked=True),
-        # Fails volume_mcap_ratio_ok (thin 24h vol vs cap)
+        # Fails crowd_heat (no presence signals -> heat below act band)
         dict(symbol="BUNDLE", price_usd=0.0018, liquidity_usd=55_000.0,
              volume_24h_usd=9_000.0, market_cap_usd=300_000.0,
              volume_1h_usd=21_000.0, buys_1h=150, sells_1h=140,

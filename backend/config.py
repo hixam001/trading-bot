@@ -98,10 +98,10 @@ INTENDED_POSITION_SIZE_USD: float = 100.0   # fixed per-entry size the cash_avai
 SLIPPAGE_PCT: float = 0.02    # 2% simulated entry/exit slippage
 FEE_PCT: float = 0.01         # 1% simulated DEX fee each way
 
-# Exit conditions (§5.2) — checked each tick against every open position, in order
-TAKE_PROFIT_PCT: float = 0.50    # close if unrealized gain >= +50%
+# Exit conditions — now owned by the omotrades-model exit engine below
+# (the old +50% take-profit and 72h force-close were replaced by
+# EXIT_TP_LADDER + EXIT_STALE_* in that block).
 STOP_LOSS_PCT: float = 0.20      # close if unrealized loss >= -20%
-# (the old 72h force-close was replaced by exit_stale_thesis — omotrades model)
 
 # ---------------------------------------------------------------------------
 # Exit engine (§5.2 rebuilt on the omotrades model — PROCESS.md §5).
@@ -141,12 +141,20 @@ EXIT_SCAN_INTERVAL_SECONDS: float = 15.0
 # ---------------------------------------------------------------------------
 # Rule engine thresholds (§2.3). All in USD / percent as labelled.
 # ---------------------------------------------------------------------------
-MIN_LIQUIDITY_USD: float = 10_000.0     # liquidity_floor
-MIN_VOLUME_1H_USD: float = 5_000.0      # volume_alive
-NEWBORN_AGE_HOURS: float = 2.0          # not_newborn_fade: joint condition —
-NEWBORN_FADE_PCT: float = 30.0          #   young AND down >= this % in 1h fails it
-MAX_EXPOSURE_PER_MINT_USD: float = 150.0  # exposure_cap (gates entries AND scale-ins)
-MIN_VOLUME_MCAP_RATIO: float = 0.80     # volume_mcap_ratio_ok
+MIN_LIQUIDITY_USD: float = 15_000.0     # liquidity_floor (omotrades parity)
+MIN_VOLUME_1H_USD: float = 8_000.0      # volume_alive (omotrades parity)
+NEWBORN_AGE_HOURS: float = 24.0         # not_newborn_fade: joint condition —
+NEWBORN_FADE_PCT: float = 15.0          #   young AND down >= this % in 1h fails it
+# crowd_heat: 0-100 conviction index. omotrades computes theirs from written
+# theses on the FOMO board (heat = 20 + 8 x theses). Until a FOMO feed is
+# wired (see docs/FOMO_INTEGRATION.md), we use the documented proxy:
+# heat = CROWD_HEAT_BASE + CROWD_HEAT_PER_SIGNAL x named-presence signals.
+# The act band is what gates: below MIN the crowd isn't there yet; above MAX
+# it's already a hype peak (omo refuses both extremes).
+CROWD_HEAT_BASE: int = 20
+CROWD_HEAT_PER_SIGNAL: int = 8
+CROWD_HEAT_MIN: int = 36                # needs >= 2 of {twitter, telegram, site}
+CROWD_HEAT_MAX: int = 100
 
 # ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.

@@ -16,6 +16,7 @@ from api import db
 from data_providers.mock import MockProvider
 from llm.narrator import Narrator
 from main import run_tick
+from rule_engine.rules import ACTIVE_RULES
 
 
 @pytest.fixture
@@ -55,7 +56,7 @@ async def test_full_tick_cycle(env):
     assert regimes == 1
     # Feed has both verdicts; EVERY event carries the FULL rule breakdown.
     assert pass_events and fail_events
-    assert all(len(e["rule_breakdown"]) == 10 for e in events)
+    assert all(len(e["rule_breakdown"]) == len(ACTIVE_RULES) for e in events)
     assert all(e["thesis"] for e in events)
     assert any(e["led_to_trade_id"] for e in pass_events)
     assert len(open_trades) >= 1

@@ -6,12 +6,16 @@ never constructs, signs, or broadcasts any real transaction; there is no
 wallet interaction of any kind in this file, under any framing.
 
 Every state-changing function (open_position, close_position,
-scale_into_position):
+trim_position):
   1. asserts config.PAPER_TRADING_ONLY at runtime (E7, belt-and-suspenders),
   2. performs the conditional state write FIRST (§5.1) and reads the
      affected row count,
   3. treats rowcount == 0 as "already happened" — logs and touches NOTHING,
   4. only after rowcount == 1 is confirmed, adjusts cash (guarded).
+
+The old scale-in path was REMOVED in the omotrades-model rebuild: the
+`already_held` gate rule forbids any size on a held name ("one position per
+name"), so pyramiding into a ticket is structurally impossible.
 """
 from __future__ import annotations
 
@@ -113,13 +117,6 @@ class CloseResult:
     applied: bool
     trade: Optional[Trade]
     reason: str   # "closed" | "already_closed" | "cash_refused"
-
-
-@dataclass
-class ScaleResult:
-    applied: bool
-    trade: Optional[Trade]
-    reason: str   # "scaled" | "position_closed" | "exposure_cap" | "cash_refused"
 
 
 # ---------------------------------------------------------------------------
@@ -234,53 +231,6 @@ async def close_position(
     return CloseResult(True, trade, "closed")
 
 
-async def scale_into_position(
-    conn: aiosqlite.Connection,
-    existing: Trade,
-    candidate: Candidate,
-) -> ScaleResult:
-    """
-    Add to an existing open position (§5.1). The exposure cap is enforced
-    atomically inside the UPDATE's WHERE clause. A repeat that would breach
-    the cap, or that targets an already-closed position, affects zero rows.
-    """
-    config.assert_paper_trading_only()
-
-    price = candidate.price_usd
-    if price <= 0:
-        return ScaleResult(False, existing, "invalid_price")
-    size, quantity = compute_position_size(price)
-    cost_basis = compute_entry_cost(size)
-
-    # 1. Conditional scale-in write FIRST (cap enforced atomically).
-    rows = await db.add_to_position_row(
-        conn, existing.trade_id, size, quantity, config.MAX_EXPOSURE_PER_MINT_USD
-    )
-    if rows == 0:
-        current = await db.get_trade_by_id(conn, existing.trade_id)
-        if current is None or not current.is_open:
-            log.warning("scale_into_position: %s no longer open — no-op", existing.trade_id)
-            return ScaleResult(False, current, "position_closed")
-        log.info(
-            "scale_into_position: %s at exposure cap ($%.2f) — no-op, cash NOT debited",
-            candidate.symbol, current.position_size_usd,
-        )
-        return ScaleResult(False, current, "exposure_cap")
-
-    # 2. Confirmed. Debit cash.
-    moved = await db.adjust_cash(conn, -cost_basis)
-    if moved == 0:
-        log.error("scale_into_position: cash refused for %s — investigate", existing.trade_id)
-        return ScaleResult(False, await db.get_trade_by_id(conn, existing.trade_id), "cash_refused")
-
-    updated = await db.get_trade_by_id(conn, existing.trade_id)
-    log.info(
-        "SCALED INTO %s: +$%.2f -> total $%.2f exposure",
-        candidate.symbol, size, updated.position_size_usd if updated else -1,
-    )
-    return ScaleResult(True, updated, "scaled")
-
-
 # ---------------------------------------------------------------------------
 # Exit conditions (§5.2) and unified entry point (§5 / E4)
 # ---------------------------------------------------------------------------
@@ -299,12 +249,6 @@ def check_exit_conditions(trade: Trade, current_price: float) -> Optional[str]:
     return decision.rule_id or None
 
 
-def _unrealized_fraction(trade: Trade, current_price: float) -> tuple[float, float]:
-    """(pnl_usd, pnl as a FRACTION of cost basis). Raises on invalid input."""
-    pnl_usd, pnl_pct = compute_unrealized_pnl(trade, current_price)
-    return pnl_usd, pnl_pct / 100.0
-
-
 async def load_portfolio_state(conn: aiosqlite.Connection) -> PortfolioState:
     cash = await db.get_cash_balance(conn)
     positions = await db.get_open_trades(conn)
@@ -318,8 +262,10 @@ async def decide_and_act(
     conn: aiosqlite.Connection,
 ) -> GateDecision:
     """
-    Unified entry point (§5): evaluate the gate; on pass, route to
-    open_position (no existing position) or scale_into_position (existing).
+    Unified entry point (§5, omotrades model): evaluate the gate; on pass
+    with NO existing position, open. The `already_held` rule already fails
+    any held name, so this branch is belt-and-suspenders — a pass against a
+    held mint is logged loudly instead of silently pyramiding.
     The gate decision is ALWAYS returned so the caller logs it either way.
     """
     gate = evaluate_gate(candidate, portfolio, regime, ACTIVE_RULES)
@@ -329,7 +275,11 @@ async def decide_and_act(
         if existing is None:
             await open_position(conn, candidate, gate)
         else:
-            await scale_into_position(conn, existing, candidate)
+            log.warning(
+                "decide_and_act: gate passed but %s already has size on "
+                "(should be blocked by already_held) — refusing to pyramid",
+                candidate.symbol,
+            )
 
     return gate
 

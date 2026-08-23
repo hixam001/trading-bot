@@ -25,13 +25,13 @@ RULE_GROUNDING_TERMS: dict[str, tuple[str, ...]] = {
     "public_presence": ("twitter", "telegram", "website", "social", "presence"),
     "market_regime_ok": ("regime", "market state", "broad", "universe"),
     "cash_available": ("cash", "capital", "funds"),
-    "exposure_cap": ("exposure", "position cap", "scale-in", "scale in", "adding to"),
+    "crowd_heat": ("crowd", "fomo", "heat", "conviction", "hype", "attention"),
+    "already_held": ("already held", "size on", "position in", "held"),
+    "not_on_break": ("break", "awake", "paused", "liveness"),
     "security_clear": (
         "honeypot", "mint authority", "freeze authority", "rug",
         "authority revoked", "mint revok", "freeze revok",
     ),
-    "volume_mcap_ratio_ok": ("vol/mcap", "volume-to-market-cap", "ratio of volume",
-                             "24h vol / mcap", "bundling"),
 }
 
 _WORD_RE = re.compile(r"[a-z][a-z\-/ ]{2,}")

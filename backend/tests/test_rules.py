@@ -32,14 +32,14 @@ def make_candidate(**overrides) -> Candidate:
         symbol="TEST",
         mint_address="Mint1111111111111111111111111111111111111",
         price_usd=0.001,
-        liquidity_usd=50_000.0,        # >= MIN_LIQUIDITY_USD (10k)  -> pass
+        liquidity_usd=50_000.0,        # >= MIN_LIQUIDITY_USD (15k) -> pass
         volume_24h_usd=100_000.0,
-        market_cap_usd=100_000.0,      # vol/mcap = 1.0 >= 0.80       -> pass
-        volume_1h_usd=20_000.0,        # >= MIN_VOLUME_1H_USD (5k)    -> pass
+        market_cap_usd=100_000.0,
+        volume_1h_usd=20_000.0,        # >= MIN_VOLUME_1H_USD (8k)    -> pass
         buys_1h=300, sells_1h=200,     # buys > sells                 -> pass
         price_change_1h_pct=5.0,
-        age_hours=24.0,                # not (young AND fading)       -> pass
-        has_twitter=True, has_telegram=None, has_website=None,  # one -> pass
+        age_hours=48.0,                # not (<24h AND fading)        -> pass
+        has_twitter=True, has_telegram=True, has_website=None,  # heat 36 >= band
         mint_authority_revoked=True,
         freeze_authority_revoked=True,
         is_likely_honeypot=False,
@@ -112,8 +112,9 @@ def test_buy_pressure_none_fails_closed():
 # --- not_newborn_fade: joint condition (B5) --------------------------------
 
 def test_not_newborn_fade_pass_old_and_fading():
+    # 30h old: outside the omotrades 24h newborn window even while dumping.
     r = rules_mod.not_newborn_fade(
-        make_candidate(age_hours=10.0, price_change_1h_pct=-50.0), make_portfolio(), REGIME)
+        make_candidate(age_hours=30.0, price_change_1h_pct=-50.0), make_portfolio(), REGIME)
     assert r.passed
 
 
@@ -187,28 +188,71 @@ def test_cash_available_fail():
     assert not r.passed
 
 
-# --- exposure_cap: entry AND scale-in cases (B9) -----------------------------
+# --- already_held (omotrades parity: strictly ONE position per name) ----------
 
-def test_exposure_cap_pass_first_entry_zero_held():
-    r = rules_mod.exposure_cap(make_candidate(), make_portfolio(), REGIME)
-    assert r.passed and "first entry" in r.detail
-
-
-def test_exposure_cap_pass_scale_in_below_cap():
-    pos = Trade(mint_address=MINT, position_size_usd=50.0)
-    r = rules_mod.exposure_cap(make_candidate(), make_portfolio(positions=[pos]), REGIME)
-    assert r.passed and "scale-in" in r.detail
+def test_already_held_pass_no_size():
+    r = rules_mod.already_held(make_candidate(), make_portfolio(), REGIME)
+    assert r.passed and r.detail == "no size on"
 
 
-def test_exposure_cap_fail_at_or_above_cap():
-    pos = Trade(mint_address=MINT, position_size_usd=config.MAX_EXPOSURE_PER_MINT_USD)
-    assert not rules_mod.exposure_cap(make_candidate(), make_portfolio(positions=[pos]), REGIME).passed
+def test_already_held_fails_with_any_size_on_same_mint():
+    pos = Trade(mint_address=MINT, position_size_usd=10.0)
+    assert not rules_mod.already_held(
+        make_candidate(), make_portfolio(positions=[pos]), REGIME).passed
 
 
-def test_exposure_cap_only_counts_same_mint():
+def test_already_held_ignores_other_mints():
     pos = Trade(mint_address="OtherMint22222222222222222222222222222222222",
                 position_size_usd=10_000.0)
-    assert rules_mod.exposure_cap(make_candidate(), make_portfolio(positions=[pos]), REGIME).passed
+    assert rules_mod.already_held(
+        make_candidate(), make_portfolio(positions=[pos]), REGIME).passed
+
+
+# --- crowd_heat (proxy source; act band from config) ---------------------------
+
+def test_crowd_heat_pass_inside_band():
+    # 2 signals -> heat 36 == CROWD_HEAT_MIN -> pass
+    r = rules_mod.crowd_heat(make_candidate(has_twitter=True, has_telegram=True),
+                             make_portfolio(), REGIME)
+    assert r.passed and r.value == 36
+
+
+def test_crowd_heat_fail_below_band():
+    r = rules_mod.crowd_heat(
+        make_candidate(has_twitter=True, has_telegram=False, has_website=False),
+        make_portfolio(), REGIME)
+    assert not r.passed and r.value == 28
+
+
+def test_crowd_heat_max_never_exceeded_by_proxy():
+    r = rules_mod.crowd_heat(
+        make_candidate(has_twitter=True, has_telegram=True, has_website=True),
+        make_portfolio(), REGIME)
+    assert r.passed and r.value == 44
+
+
+def test_compute_crowd_heat_matches_omo_formula_shape():
+    # omotrades: heat = 20 + 8 x conviction sources, clamped 0..100.
+    assert rules_mod.compute_crowd_heat(make_candidate()) == 36
+    assert rules_mod.compute_crowd_heat(
+        make_candidate(has_website=True)) == 44
+
+
+# --- not_on_break -----------------------------------------------------------------
+
+def test_not_on_break_default_awake():
+    r = rules_mod.not_on_break(make_candidate(), make_portfolio(), REGIME)
+    assert r.passed and r.detail == "awake"
+
+
+def test_not_on_break_blocks_entries_while_set():
+    from rule_engine import liveness
+    liveness.set_break(True)
+    try:
+        r = rules_mod.not_on_break(make_candidate(), make_portfolio(), REGIME)
+        assert not r.passed and "break" in r.detail
+    finally:
+        liveness.set_break(False)
 
 
 # --- security_clear: None always passes (B10) --------------------------------
@@ -235,24 +279,6 @@ def test_security_clear_fail_honeypot():
         make_candidate(is_likely_honeypot=True), make_portfolio(), REGIME).passed
 
 
-# --- volume_mcap_ratio_ok ------------------------------------------------------
-
-def test_volume_mcap_ratio_pass():
-    r = rules_mod.volume_mcap_ratio_ok(
-        make_candidate(volume_24h_usd=100_000.0, market_cap_usd=100_000.0), make_portfolio(), REGIME)
-    assert r.passed and r.value == pytest.approx(1.0)
-
-
-def test_volume_mcap_ratio_fail_thin_volume():
-    assert not rules_mod.volume_mcap_ratio_ok(
-        make_candidate(volume_24h_usd=10_000.0, market_cap_usd=100_000.0),
-        make_portfolio(), REGIME).passed
-
-
-def test_volume_mcap_ratio_unknown_mcap_passes_neutral():
-    r = rules_mod.volume_mcap_ratio_ok(make_candidate(market_cap_usd=0.0), make_portfolio(), REGIME)
-    assert r.passed and "not evaluable" in r.detail
-
 # --- Gate evaluation: no short-circuiting (B12) + full sample ---------------
 
 def test_gate_no_short_circuit_all_rules_present_on_failure():
@@ -260,27 +286,35 @@ def test_gate_no_short_circuit_all_rules_present_on_failure():
         liquidity_usd=100.0,            # fails
         volume_1h_usd=10.0,             # fails
         buys_1h=1, sells_1h=99,         # fails
-        has_twitter=False, has_telegram=False, has_website=False,  # fails
-        mint_authority_revoked=False,   # fails security_clear (rule #9)
+        has_twitter=False, has_telegram=False, has_website=False,  # presence + heat fail
+        mint_authority_revoked=False,   # fails security_clear
     )
     decision = evaluate_gate(bad, make_portfolio(cash=0.0), make_regime(ok=False), ACTIVE_RULES)
     assert not decision.all_passed
     assert len(decision.rules) == len(ACTIVE_RULES)          # every rule evaluated
     assert len({r.rule_id for r in decision.rules}) == len(ACTIVE_RULES)
     for expected in ("liquidity_floor", "volume_alive", "buy_pressure",
-                     "public_presence", "market_regime_ok", "cash_available",
-                     "security_clear"):
+                     "public_presence", "crowd_heat", "market_regime_ok",
+                     "cash_available", "security_clear"):
         assert expected in decision.failed_rule_ids
     # rules AFTER the first failure still carry real results
-    assert decision.rules[-1].rule_id == "volume_mcap_ratio_ok"
-    assert decision.rules[-1].passed is True
+    assert decision.rules[-1].rule_id == "security_clear"
 
 
 def test_gate_full_decision_sample_all_pass(capsys):
     decision = evaluate_gate(make_candidate(), make_portfolio(), make_regime(True), ACTIVE_RULES)
     assert decision.all_passed and decision.failed_rule_ids == []
-    assert len(decision.rules) == 10
+    assert len(decision.rules) == 11
     print("\n--- Sample full GateDecision (every rule shown) ---")
     for r in decision.rules:
         print(f"  {r.rule_id:24s} {'PASS' if r.passed else 'FAIL'}  {r.detail}")
+
+
+def test_gate_already_held_blocks_pyramiding():
+    """omotrades parity: any size on the name fails the gate (no scale-ins)."""
+    pos = Trade(mint_address=MINT, position_size_usd=10.0)
+    decision = evaluate_gate(make_candidate(), make_portfolio(positions=[pos]),
+                             REGIME, ACTIVE_RULES)
+    assert not decision.all_passed
+    assert "already_held" in decision.failed_rule_ids
 

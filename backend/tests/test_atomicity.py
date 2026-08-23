@@ -14,7 +14,7 @@ import pytest_asyncio
 import config
 from api import db
 from models import Candidate
-from paper_trading_engine import close_position, open_position, scale_into_position
+from paper_trading_engine import close_position, open_position
 from tests.test_rules import make_candidate
 
 
@@ -112,43 +112,9 @@ async def test_crash_simulation_state_row_written_cash_not_debited_replays_clean
 
 
 # ---------------------------------------------------------------------------
-# Scale-in atomicity
+# (Scale-in atomicity tests REMOVED: the omotrades-model rebuild deleted the
+# scale-in path — `already_held` makes pyramiding structurally impossible.)
 # ---------------------------------------------------------------------------
-
-async def test_scale_in_respects_exposure_cap_atomically(_db, monkeypatch):
-    c = _candidate()
-    monkeypatch.setattr(config, "MAX_EXPOSURE_PER_MINT_USD", 250.0)
-    await open_position(_db, c, None)
-    cash_before = await _cash(_db)
-    trade = await db.get_open_trade_for_mint(_db, c.mint_address)
-
-    # Cap 250: exposure 100 + 100 = 200 <= 250 -> applied.
-    ok = await scale_into_position(_db, trade, c)
-    assert ok.applied
-    assert ok.trade.position_size_usd == pytest.approx(200.0)
-    # Each entry debits cost basis 100*1.01*1.02 = 103.02
-    assert await db.get_cash_balance(_db) == pytest.approx(cash_before - 103.02)
-
-    # Second scale-in would take exposure to 300 > 250: refused atomically,
-    # cash untouched.
-    cash_mid = await _cash(_db)
-    refused = await scale_into_position(_db, ok.trade, c)
-    assert not refused.applied
-    assert refused.reason == "exposure_cap"
-    assert await _cash(_db) == pytest.approx(cash_mid)
-
-
-async def test_scale_in_after_close_is_noop(_db):
-    c = _candidate()
-    await open_position(_db, c, None)
-    trade = await db.get_open_trade_for_mint(_db, c.mint_address)
-    await close_position(_db, trade, exit_price=c.price_usd, exit_reason="stop_loss")
-    cash_after_close = await _cash(_db)
-
-    result = await scale_into_position(_db, trade, c)
-    assert not result.applied
-    assert result.reason == "position_closed"
-    assert await _cash(_db) == pytest.approx(cash_after_close)
 
 
 # ---------------------------------------------------------------------------

@@ -126,17 +126,56 @@ def cash_available(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
     )
 
 
-# --- exposure_cap -----------------------------------------------------------
+# --- crowd_heat (omotrades parity; proxy source until a FOMO feed lands) -----
 
-def exposure_cap(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
+def compute_crowd_heat(c: Candidate) -> int:
+    """
+    0-100 conviction index. omotrades computes theirs from WRITTEN THESES on
+    the FOMO board (heat = 20 + 8 x thesis count). Until that feed is wired
+    (docs/FOMO_INTEGRATION.md), this documented proxy counts named presence
+    channels: twitter / telegram / website, +8 each, base 20.
+    Swapping in the real feed means replacing THIS function's body only.
+    """
+    signals = sum(1 for v in (c.has_twitter, c.has_telegram, c.has_website) if v)
+    return min(100, config.CROWD_HEAT_BASE
+               + config.CROWD_HEAT_PER_SIGNAL * signals)
+
+
+def crowd_heat(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
+    heat = compute_crowd_heat(c)
+    ok = config.CROWD_HEAT_MIN <= heat <= config.CROWD_HEAT_MAX
+    if ok:
+        detail = f"heat {heat} inside act band [{config.CROWD_HEAT_MIN}, {config.CROWD_HEAT_MAX}]"
+    elif heat < config.CROWD_HEAT_MIN:
+        detail = f"heat {heat} below act band [{config.CROWD_HEAT_MIN}, {config.CROWD_HEAT_MAX}] — no crowd conviction yet"
+    else:
+        detail = f"heat {heat} above act band — hype peak"
+    return RuleResult("crowd_heat", ok, detail, value=heat)
+
+
+# --- already_held (omotrades parity: strictly ONE position per name) ---------
+
+def already_held(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     held = p.held_usd_in_mint(c.mint_address)
-    ok = held < config.MAX_EXPOSURE_PER_MINT_USD
-    kind = "scale-in" if held > 0 else "first entry"
-    return RuleResult(
-        "exposure_cap", ok,
-        f"{kind}: ${held:,.2f} held in {c.symbol} vs cap ${config.MAX_EXPOSURE_PER_MINT_USD:,.2f}",
-        value=held,
+    ok = held <= 0.0
+    detail = (
+        "no size on"
+        if ok else
+        f"already ${held:,.2f} on in {c.symbol} — one position per name, "
+        f"no pyramiding into a held ticket"
     )
+    return RuleResult("already_held", ok, detail, value=held)
+
+
+# --- not_on_break (omotrades parity: loop liveness/operator break) ------------
+
+def not_on_break(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
+    from rule_engine import liveness
+    on_break = liveness.is_on_break()
+    ok = not on_break
+    detail = "awake" if ok else "operator break active — no entries"
+    return RuleResult("not_on_break", ok, detail, value=ok)
+
 
 # --- security_clear (only asserts on KNOWN-bad values) ----------------------
 
@@ -160,30 +199,10 @@ def security_clear(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
     return RuleResult("security_clear", ok, detail, value=ok)
 
 
-# --- volume_mcap_ratio_ok ---------------------------------------------------
-
-def volume_mcap_ratio_ok(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
-    # Only evaluable with both a positive market cap and 24h volume; unknown
-    # data does not fabricate a manipulation signal.
-    if not c.market_cap_usd or not c.volume_24h_usd:
-        return RuleResult(
-            "volume_mcap_ratio_ok", True,
-            "not evaluable (market cap or 24h volume unavailable) — no signal either way",
-            value=None,
-        )
-    ratio = c.volume_24h_usd / max(c.market_cap_usd, 1.0)
-    ok = ratio >= config.MIN_VOLUME_MCAP_RATIO
-    return RuleResult(
-        "volume_mcap_ratio_ok", ok,
-        f"24h vol / mcap = {ratio:.2f} vs min {config.MIN_VOLUME_MCAP_RATIO:.2f}",
-        value=ratio,
-    )
-
-
 # ---------------------------------------------------------------------------
-# The active rule set, in evaluation order. evaluate_gate() runs ALL of them
-# unconditionally (no short-circuiting) so every rejection shows its full
-# profile in the journal.
+# The active rule set (omotrades parity + our two additions), in evaluation
+# order. evaluate_gate() runs ALL of them unconditionally (no short-circuiting)
+# so every rejection shows its full profile in the journal.
 # ---------------------------------------------------------------------------
 
 ACTIVE_RULES = [
@@ -192,10 +211,11 @@ ACTIVE_RULES = [
     buy_pressure,
     not_newborn_fade,
     public_presence,
-    market_regime_ok,
+    crowd_heat,
     cash_available,
-    exposure_cap,
+    already_held,
+    not_on_break,
+    market_regime_ok,
     security_clear,
-    volume_mcap_ratio_ok,
 ]
 
