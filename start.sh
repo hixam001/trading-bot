@@ -59,7 +59,8 @@ fi
 echo "$OLLAMA_STARTED_BY_US" >"$RUN/ollama_started_by_us"
 
 if command -v ollama >/dev/null 2>&1; then
-  if ! ollama list 2>/dev/null | grep -q "$MODEL_NAME"; then
+  # timeout guard: a wedged `ollama list` must never block the backend launch
+  if ! timeout 10 ollama list 2>/dev/null | grep -q "$MODEL_NAME"; then
     echo "[ollama] NOTE: model '$MODEL_NAME' not found locally."
     echo "[ollama]       Run 'ollama pull $MODEL_NAME' for LLM narration;"
     echo "[ollama]       until then deterministic template narration is used."
