@@ -10,6 +10,7 @@ __pycache__/
 *.db-shm
 .env
 .fomo_privy.json
+blocklist_state.json
 live_execution/state/
 
 # Frontend
