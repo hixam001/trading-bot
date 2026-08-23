@@ -83,7 +83,7 @@ async def test_full_tick_cycle(env):
 
     assert len(closed) >= 1
     t = closed[0]
-    assert t.exit_reason == "stop_loss"
+    assert t.exit_reason == "exit_stop_loss"
     assert t.realized_pnl_usd is not None and t.realized_pnl_usd < 0
     assert len(journal) >= 1
 

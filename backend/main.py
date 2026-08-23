@@ -28,10 +28,9 @@ from llm.narrator import NarrationResult, Narrator, generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
 from models import FeedEvent
 from paper_trading_engine import (
-    check_exit_conditions,
-    close_position,
     decide_and_act,
     load_portfolio_state,
+    scan_and_execute_exits,
 )
 from rule_engine.regime import compute_market_regime
 
@@ -138,26 +137,12 @@ async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> d
 
             event.id = await db.insert_feed_event(conn, event)
 
-        # --- exits: fixed numeric conditions only (§5.2) --------------------
-        for trade in await db.get_open_trades(conn):
-            try:
-                # Decimals from the entry snapshot are REQUIRED for a correct
-                # execution-price quote (wrong decimals fabricate prices).
-                decimals = (trade.candidate_snapshot or {}).get("decimals")
-                price = await provider.get_current_price(trade.mint_address, decimals)
-            except Exception as exc:
-                log.warning("price unavailable for %s — skipping exit check: %s",
-                            trade.symbol, exc)
-                continue
-            reason = check_exit_conditions(trade, price)
-            if reason is None:
-                continue
-            result = await close_position(conn, trade, price, reason)
-            if result.applied:
-                closed += 1
-                rule_summary = _rule_summary_text(trade)
-                # Fire-and-forget reflection (D5): never blocks the loop.
-                asyncio.create_task(_store_reflection(trade.trade_id, rule_summary))
+        # --- manage: omotrades-model exit engine (§5.2 rebuild) -------------
+        # Full rule set + sell risk gate; runs here AND on the dedicated fast
+        # loop (_exit_loop), because stops gap badly when checked once/minute.
+        closed += await scan_and_execute_exits(
+            provider, conn, on_close=_on_closed_trade
+        )
 
     elapsed_ms = (time.monotonic() - t0) * 1000.0   # K4 latency instrumentation
     log.info("tick done in %.0f ms: %d candidates, %d entries/scale-ins, "
@@ -170,6 +155,35 @@ async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> d
 def _rule_summary_text(trade) -> str:
     snap = trade.candidate_snapshot or {}
     return f"entry at ${trade.entry_price_usd:.8f} ({snap.get('source', 'unknown')} data)"
+
+
+async def _on_closed_trade(closed_trade) -> None:
+    """Hook for the exit scanner: schedule a fire-and-forget reflection."""
+    if closed_trade is None:
+        return
+    rule_summary = _rule_summary_text(closed_trade)
+    asyncio.create_task(_store_reflection(closed_trade.trade_id, rule_summary))
+
+
+async def _exit_loop(provider) -> None:
+    """
+    Dedicated fast exit scanner (omotrades 'manage' cadence). Memecoins move
+    faster than the 60s tick; risk checks run every EXIT_SCAN_INTERVAL_SECONDS
+    with price-only HTTP and zero LLM in the path. Failures are logged and the
+    loop continues (fail-closed: missing a scan never opens risk, it only
+    delays a reaction).
+    """
+    while True:
+        try:
+            async with db.get_db() as conn:
+                actions = await scan_and_execute_exits(
+                    provider, conn, on_close=_on_closed_trade
+                )
+            if actions:
+                log.info("exit scan: %d action(s) executed", actions)
+        except Exception:
+            log.exception("exit scan failed — continuing (fail-closed)")
+        await asyncio.sleep(config.EXIT_SCAN_INTERVAL_SECONDS)
 
 
 async def _store_reflection(trade_id: str, rule_summary: str) -> None:
@@ -197,8 +211,10 @@ async def main() -> None:
     # REUSE_TICK_WINDOW bounds how old a reused thesis may be.
     state: dict = {"tick": 0, "theses": {}}
     last_learning_date: str | None = None
+    exit_task: asyncio.Task | None = None
 
     try:
+        exit_task = asyncio.create_task(_exit_loop(provider))
         while True:
             try:
                 await run_tick(provider, narrator, state)
@@ -216,6 +232,8 @@ async def main() -> None:
     except KeyboardInterrupt:
         log.info("shutting down")
     finally:
+        if exit_task is not None:
+            exit_task.cancel()
         close_provider = getattr(provider, "aclose", None)
         if close_provider is not None:
             # LiveProviderStack closes the WS feed + shared HTTP client.

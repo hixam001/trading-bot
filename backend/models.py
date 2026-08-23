@@ -164,10 +164,14 @@ class Trade:
     # Populated on close
     closed_at: Optional[str] = None
     exit_price_usd: Optional[float] = None
-    exit_reason: Optional[str] = None  # take_profit | stop_loss | timeout
+    exit_reason: Optional[str] = None  # exit_stop_loss | exit_trail_give_back |
+    # exit_liquidity_break | exit_thesis_invalidated | exit_stale_thesis
     realized_pnl_usd: Optional[float] = None
     realized_pnl_pct: Optional[float] = None
     is_open: bool = True
+    # omotrades-style exit machinery:
+    high_water_usd: Optional[float] = None  # peak price since entry (trail memory)
+    tranches_taken: int = 0                 # how many TP-ladder trims fired
     # Populated asynchronously after close (D5/D6) — never blocks the tick loop
     reflection_text: Optional[str] = None
 

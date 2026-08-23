@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 
 import aiosqlite
@@ -287,22 +287,16 @@ async def scale_into_position(
 
 def check_exit_conditions(trade: Trade, current_price: float) -> Optional[str]:
     """
-    Fixed numeric exit conditions, checked in order. Returns an exit reason
-    or None. These are the SOLE decision-makers for exits — no LLM involved.
-    Uses compute_unrealized_pnl() so slippage/fees are included.
+    Backward-compatible single-price exit probe. Delegates to the
+    omotrades-model engine (rule_engine.exits) with price-only inputs —
+    rules needing richer market data (liquidity break, invalidation, stale
+    volume) evaluate only in scan_and_execute_exits where that data exists.
+    Returns the fired rule_id or None. These are the SOLE decision-makers
+    for exits — no LLM involved.
     """
-    pnl_usd, pnl_frac_of_cost = _unrealized_fraction(trade, current_price)
-    if pnl_frac_of_cost >= config.TAKE_PROFIT_PCT:
-        return "take_profit"
-    if pnl_frac_of_cost <= -config.STOP_LOSS_PCT:
-        return "stop_loss"
-    opened = datetime.fromisoformat(trade.opened_at)
-    held_hours = (
-        datetime.now(timezone.utc) - opened
-    ).total_seconds() / 3600.0
-    if held_hours >= config.MAX_HOLD_HOURS:
-        return "timeout"
-    return None
+    from rule_engine.exits import ExitInput, evaluate_exits
+    decision = evaluate_exits(ExitInput(trade=trade, price_usd=current_price))
+    return decision.rule_id or None
 
 
 def _unrealized_fraction(trade: Trade, current_price: float) -> tuple[float, float]:
@@ -338,5 +332,194 @@ async def decide_and_act(
             await scale_into_position(conn, existing, candidate)
 
     return gate
+
+
+# ---------------------------------------------------------------------------
+# omotrades-model exit machinery (E8/E9 + §5.2 rebuild)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class TrimResult:
+    applied: bool
+    trade: Optional[Trade]
+    reason: str   # "trimmed" | "position_closed" | "degenerate" | "cash_refused"
+
+
+async def trim_position(
+    conn: aiosqlite.Connection,
+    trade: Trade,
+    fraction: float,
+    exit_price: float,
+) -> TrimResult:
+    """
+    ATOMIC PARTIAL CLOSE — a take-profit ladder tranche (omotrades model).
+    Reduces quantity/cost basis by `fraction`, credits net proceeds, and
+    bumps the tranche counter. Same discipline as every state change here:
+    conditional row write FIRST, rowcount is the authority, cash only after.
+    """
+    config.assert_paper_trading_only()
+
+    if not 0.0 < fraction < 1.0:
+        return TrimResult(False, trade, "invalid_fraction")
+    if exit_price <= 0:
+        return TrimResult(False, trade, "invalid_price")
+
+    qty_out = trade.quantity * fraction
+    size_out = trade.position_size_usd * fraction
+
+    # 1. Conditional partial write FIRST.
+    rows = await db.trim_position_row(conn, trade.trade_id, qty_out, size_out)
+    if rows == 0:
+        persisted = await db.get_trade_by_id(conn, trade.trade_id)
+        if persisted is not None and not persisted.is_open:
+            return TrimResult(False, persisted, "position_closed")
+        log.warning(
+            "trim_position: %s degenerate trim (fraction %.2f) — no-op",
+            trade.symbol, fraction,
+        )
+        return TrimResult(False, persisted or trade, "degenerate")
+
+    # 2. Confirmed. Credit net proceeds for the trimmed slice.
+    gross = qty_out * exit_price
+    proceeds = gross * (1.0 - config.SLIPPAGE_PCT) * (1.0 - config.FEE_PCT)
+    moved = await db.adjust_cash(conn, proceeds)
+    if moved == 0:
+        log.critical(
+            "trim_position: cash credit REFUSED for %s after confirmed trim "
+            "— portfolio state inconsistent, investigate immediately",
+            trade.trade_id,
+        )
+        return TrimResult(False, await db.get_trade_by_id(conn, trade.trade_id),
+                          "cash_refused")
+
+    updated = await db.get_trade_by_id(conn, trade.trade_id)
+    realized_here = proceeds - size_out
+    log.info(
+        "TRIMMED %s [take_profit tranche %d]: %.0f%% of remaining | "
+        "slice pnl $%+.4f | proceeds $%.2f",
+        trade.symbol, updated.tranches_taken if updated else -1,
+        fraction * 100.0, realized_here, proceeds,
+    )
+    return TrimResult(True, updated, "trimmed")
+
+
+async def scan_and_execute_exits(
+    provider,
+    conn: aiosqlite.Connection,
+    now: Optional[datetime] = None,
+    on_close=None,
+) -> int:
+    """
+    The omotrades 'manage' step: re-price EVERY open position and run it
+    through the exit rule set, then the sell risk gate, then execute.
+
+    Runs on its own fast loop (config.EXIT_SCAN_INTERVAL_SECONDS) in main()
+    AND once per tick, because memecoins gap through stops between 60s
+    cycles — the DB forensics show stops realizing −40% on average when
+    checked only once a minute.
+
+    Market data: uses provider.get_exit_context(mint, decimals) when the
+    provider offers it (price + liquidity + 6h windows in one call);
+    otherwise falls back to price-only via get_current_price, in which case
+    the data-dependent rules report not-evaluable this cycle.
+
+    Returns the number of executed actions (closes + trims). `on_close`
+    (optional async callback receiving the closed Trade) lets callers hook
+    reflections without coupling this scanner to the LLM.
+    """
+    from rule_engine.exits import ExitInput, evaluate_exits, sell_risk_gate
+
+    now = now or datetime.now(timezone.utc)
+    actions = 0
+
+    for trade in await db.get_open_trades(conn):
+        try:
+            snapshot = trade.candidate_snapshot or {}
+            decimals = snapshot.get("decimals")
+            price = None
+            liquidity = chg6h = None
+            buys6h = sells6h = vol6h = None
+
+            ctx_fn = getattr(provider, "get_exit_context", None)
+            if ctx_fn is not None:
+                ctx = await ctx_fn(trade.mint_address, decimals)
+                if ctx:
+                    price = ctx.get("price_usd")
+                    liquidity = ctx.get("liquidity_usd")
+                    chg6h = ctx.get("chg6h_pct")
+                    buys6h = ctx.get("buys6h")
+                    sells6h = ctx.get("sells6h")
+                    vol6h = ctx.get("vol6h_usd")
+            if price is None:
+                price = await provider.get_current_price(
+                    trade.mint_address, decimals
+                )
+        except Exception as exc:
+            log.warning("exit scan: price unavailable for %s — skipping: %s",
+                        trade.symbol, exc)
+            continue
+        if price is None or price <= 0:
+            continue
+
+        # Trail memory: the peak includes right now.
+        hwm = max(price, trade.high_water_usd or trade.entry_price_usd)
+        await db.update_high_water(conn, trade.trade_id, hwm)
+
+        decision = evaluate_exits(ExitInput(
+            trade=trade,
+            price_usd=price,
+            high_water_usd=hwm,
+            tranches_taken=trade.tranches_taken,
+            liquidity_usd=liquidity,
+            chg6h_pct=chg6h,
+            buys6h=buys6h,
+            sells6h=sells6h,
+            vol6h_usd=vol6h,
+            now=now,
+        ))
+        if decision.action == "hold":
+            continue
+
+        # Sell risk gate inputs (rolling 24h window).
+        last_exit_iso = await db.get_last_closed_at_for_mint(
+            conn, trade.mint_address
+        )
+        last_exit_dt = (
+            datetime.fromisoformat(last_exit_iso) if last_exit_iso else None
+        )
+        since = (now - timedelta(hours=24)).isoformat()
+        closes_24h = await db.count_closes_since(conn, since)
+
+        est_value = trade.quantity * price * decision.fraction
+        gated, gate_note = sell_risk_gate(
+            decision, est_value, last_exit_dt, closes_24h, now
+        )
+        if gated.action == "hold":
+            log.info(
+                "EXIT GATE held %s [%s]: %s (%s)",
+                trade.symbol, decision.rule_id, gate_note, decision.detail,
+            )
+            continue
+
+        if gated.action == "close_full":
+            result = await close_position(conn, trade, price, gated.rule_id)
+            if result.applied:
+                actions += 1
+                log.info("EXIT %s [%s] %s",
+                         trade.symbol, gated.rule_id, gated.detail)
+                if on_close is not None:
+                    try:
+                        await on_close(result.trade)
+                    except Exception:
+                        log.warning("on_close callback failed (non-fatal)",
+                                    exc_info=True)
+        elif gated.action == "trim":
+            result = await trim_position(conn, trade, gated.fraction, price)
+            if result.applied:
+                actions += 1
+                log.info("EXIT %s [%s] %s",
+                         trade.symbol, gated.rule_id, gated.detail)
+
+    return actions
 
 

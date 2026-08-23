@@ -72,6 +72,8 @@ CREATE TABLE IF NOT EXISTS trades (
     realized_pnl_usd        REAL,
     realized_pnl_pct        REAL,
     is_open                 INTEGER NOT NULL DEFAULT 1,
+    high_water_usd          REAL,
+    tranches_taken          INTEGER NOT NULL DEFAULT 0,
     reflection_text         TEXT
 );
 
@@ -135,6 +137,17 @@ async def init_db() -> None:
     conn = await aiosqlite.connect(config.DB_PATH)
     try:
         await conn.executescript(_SCHEMA_SQL)
+        # Idempotent column migrations for DBs created before a column existed
+        # (CREATE TABLE IF NOT EXISTS never alters an existing table).
+        for stmt in (
+            "ALTER TABLE trades ADD COLUMN high_water_usd REAL",
+            "ALTER TABLE trades ADD COLUMN tranches_taken INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                await conn.execute(stmt)
+                await conn.commit()
+            except Exception:
+                pass  # column already exists
         await conn.execute(
             "INSERT OR IGNORE INTO portfolio_state (id, cash_usd, updated_at) "
             "VALUES (1, ?, ?)",
@@ -235,6 +248,8 @@ def _row_to_trade(row: aiosqlite.Row) -> Trade:
         realized_pnl_usd=float(row["realized_pnl_usd"]) if row["realized_pnl_usd"] is not None else None,
         realized_pnl_pct=float(row["realized_pnl_pct"]) if row["realized_pnl_pct"] is not None else None,
         is_open=bool(row["is_open"]),
+        high_water_usd=float(row["high_water_usd"]) if row["high_water_usd"] is not None else None,
+        tranches_taken=int(row["tranches_taken"] or 0),
         reflection_text=row["reflection_text"],
     )
 
@@ -250,9 +265,10 @@ async def try_insert_open_trade(conn: aiosqlite.Connection, trade: Trade) -> int
         """
         INSERT INTO trades (
             trade_id, symbol, mint_address, opened_at, entry_price_usd,
-            position_size_usd, quantity, candidate_snapshot, thesis, is_open
+            position_size_usd, quantity, candidate_snapshot, thesis, is_open,
+            high_water_usd
         )
-        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1
+        SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?
         WHERE NOT EXISTS (
             SELECT 1 FROM trades WHERE mint_address = ? AND is_open = 1
         )
@@ -261,6 +277,8 @@ async def try_insert_open_trade(conn: aiosqlite.Connection, trade: Trade) -> int
             trade.trade_id, trade.symbol, trade.mint_address, trade.opened_at,
             trade.entry_price_usd, trade.position_size_usd, trade.quantity,
             json.dumps(trade.candidate_snapshot), trade.thesis,
+            # Trail memory starts at the entry price itself.
+            trade.entry_price_usd,
             trade.mint_address,
         ),
     )
@@ -321,6 +339,80 @@ async def add_to_position_row(
     )
     await conn.commit()
     return max(cursor.rowcount, 0)
+
+
+async def trim_position_row(
+    conn: aiosqlite.Connection,
+    trade_id: str,
+    qty_out: float,
+    size_out_usd: float,
+) -> int:
+    """
+    ATOMIC PARTIAL CLOSE (E8/E9 — omotrades-style TP tranches). Reduces an
+    open position by the given fraction's quantity/cost basis and bumps the
+    tranche counter, only while the row is still open and would keep a
+    positive remainder. rowcount 0 = already closed or degenerate trim;
+    caller must NOT touch cash unless it is 1.
+    """
+    cursor = await conn.execute(
+        """
+        UPDATE trades
+        SET quantity = quantity - ?,
+            position_size_usd = position_size_usd - ?,
+            tranches_taken = tranches_taken + 1
+        WHERE trade_id = ? AND is_open = 1
+          AND quantity - ? > 0
+          AND position_size_usd - ? >= 0
+        """,
+        (qty_out, size_out_usd, trade_id, qty_out, size_out_usd),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
+async def update_high_water(
+    conn: aiosqlite.Connection,
+    trade_id: str,
+    high_water_usd: float,
+) -> None:
+    """Trail memory: raise the peak price seen since entry (never lower it)."""
+    await conn.execute(
+        """
+        UPDATE trades SET high_water_usd = ?
+        WHERE trade_id = ? AND is_open = 1
+          AND (high_water_usd IS NULL OR high_water_usd < ?)
+        """,
+        (high_water_usd, trade_id, high_water_usd),
+    )
+    await conn.commit()
+
+
+async def get_last_closed_at_for_mint(
+    conn: aiosqlite.Connection, mint_address: str
+) -> Optional[str]:
+    """Timestamp of this mint's most recent CLOSED position (sell cooldown)."""
+    async with conn.execute(
+        """
+        SELECT closed_at FROM trades
+        WHERE mint_address = ? AND closed_at IS NOT NULL
+        ORDER BY closed_at DESC LIMIT 1
+        """,
+        (mint_address,),
+    ) as cur:
+        row = await cur.fetchone()
+    return row["closed_at"] if row else None
+
+
+async def count_closes_since(
+    conn: aiosqlite.Connection, since_iso: str
+) -> int:
+    """Closed positions since a timestamp (rolling 24h exit ceiling)."""
+    async with conn.execute(
+        "SELECT COUNT(*) AS n FROM trades WHERE closed_at >= ?",
+        (since_iso,),
+    ) as cur:
+        row = await cur.fetchone()
+    return int(row["n"]) if row else 0
 
 
 async def get_trade_by_id(conn: aiosqlite.Connection, trade_id: str) -> Optional[Trade]:

@@ -103,34 +103,26 @@ def test_sizing_invalid_price_raises():
         compute_position_size(0.0)
 
 
-# --- check_exit_conditions (E6, in order: TP, SL, timeout) --------------------
-
-def test_exit_take_profit():
-    trade = make_trade()
-    # +60% net gain -> take_profit (threshold 50%)
-    price = trade.entry_price_usd * 1.62
-    assert check_exit_conditions(trade, price) == "take_profit"
-
+# --- check_exit_conditions (E6 — omotrades-model engine, price-only probe) ---
 
 def test_exit_stop_loss():
     trade = make_trade()
     price = trade.entry_price_usd * 0.75   # ~-26% net
-    assert check_exit_conditions(trade, price) == "stop_loss"
+    assert check_exit_conditions(trade, price) == "exit_stop_loss"
+
+
+def test_exit_below_first_tranche_holds():
+    """+60% net is BELOW the first ladder tranche (+100%): the old +50%
+    take-profit is gone — winners now run on the trail + ladder (omotrades
+    model). The single-price probe must hold here."""
+    trade = make_trade()
+    price = trade.entry_price_usd * 1.62   # ~+60% net
+    assert check_exit_conditions(trade, price) is None
 
 
 def test_exit_no_condition_holds():
-    trade = make_trade(opened_at=None) if False else make_trade()
+    trade = make_trade()
     from datetime import datetime, timezone
     trade.opened_at = datetime.now(timezone.utc).isoformat()  # fresh position
     mid = trade.entry_price_usd * 1.10     # ~+7% net — inside both bands
     assert check_exit_conditions(trade, mid) is None
-
-
-def test_exit_order_take_profit_wins_over_timeout():
-    from datetime import datetime, timezone, timedelta
-    trade = make_trade()
-    trade.opened_at = (
-        datetime.now(timezone.utc) - timedelta(hours=config.MAX_HOLD_HOURS + 1)
-    ).isoformat()
-    price = trade.entry_price_usd * 1.62   # TP and timeout both true -> TP first
-    assert check_exit_conditions(trade, price) == "take_profit"

@@ -101,7 +101,42 @@ FEE_PCT: float = 0.01         # 1% simulated DEX fee each way
 # Exit conditions (§5.2) — checked each tick against every open position, in order
 TAKE_PROFIT_PCT: float = 0.50    # close if unrealized gain >= +50%
 STOP_LOSS_PCT: float = 0.20      # close if unrealized loss >= -20%
-MAX_HOLD_HOURS: int = 72         # force-close after 72 hours
+# (the old 72h force-close was replaced by exit_stale_thesis — omotrades model)
+
+# ---------------------------------------------------------------------------
+# Exit engine (§5.2 rebuilt on the omotrades model — PROCESS.md §5).
+# Risk-off rules close FULLY and outrank profit taking; only take-profit
+# tranches are partial. All values hardcoded (non-env-configurable).
+# ---------------------------------------------------------------------------
+# Trailing give-back: once the position has been up TRAIL_ACTIVATION_PCT or
+# better, close fully when it has given back TRAIL_GIVE_BACK_PP percentage
+# points from its high-water mark ("up 50%+ then give back 40 points").
+EXIT_TRAIL_ACTIVATION_PCT: float = 0.50
+EXIT_TRAIL_GIVE_BACK_PP: float = 40.0
+# Liquidity break: pool can no longer return the size cleanly -> full exit
+# regardless of P&L. Evaluated only when liquidity data is available.
+EXIT_LIQUIDITY_FLOOR_USD: float = 8_000.0
+# Thesis invalidated: deep multi-hour dump WITH sellers leading decisively.
+EXIT_INVALIDATION_CHG6H_PCT: float = -25.0
+EXIT_INVALIDATION_SELL_MULT: float = 1.4
+# Stale thesis: held this long, going nowhere, tape drying up -> close.
+EXIT_STALE_DAYS: float = 14.0
+EXIT_STALE_BAND_PCT: float = 0.10
+EXIT_STALE_VOL6H_USD: float = 5_000.0
+# Take-profit ladder: (net gain fraction, fraction of remaining position).
+# Risk-off always beats these; what survives the ladder rides the trail.
+EXIT_TP_LADDER: tuple[tuple[float, float], ...] = (
+    (1.00, 0.33),   # +100% -> trim 33% of remaining
+    (3.00, 0.33),   # +300% -> trim 33% of remaining
+    (9.00, 0.50),   # +900% -> trim half of what's left
+)
+# Sell risk gate (narrow on purpose — a refused sell leaves risk on).
+SELL_MIN_CLIP_USD: float = 25.0        # trims smaller than this are skipped
+SELL_COOLDOWN_MINUTES: float = 30.0    # per mint between gated sells
+MAX_EXITS_PER_24H: int = 8             # rolling window, gated sells only
+# Dedicated fast exit scanner: memecoins gap through stops between 60s ticks,
+# so risk checks run on their own cheap loop (price-only HTTP, zero LLM).
+EXIT_SCAN_INTERVAL_SECONDS: float = 15.0
 
 # ---------------------------------------------------------------------------
 # Rule engine thresholds (§2.3). All in USD / percent as labelled.
