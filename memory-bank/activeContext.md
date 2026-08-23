@@ -120,6 +120,19 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
   Supabase data (fresh $1000 book). Server killed after test.
 - 145 tests still pass; smoke re-ran clean twice on pinned path.
 
+### Stealth-scrape provider validation (this batch)
+- Tested via production adapters against JSON echo targets:
+  firecrawl PASS (~2s), scrapingbee PASS stealth_proxy=true (~3s),
+  zenrows KEY VALID but flaky: REQS001=domain blocklist (ipify/github),
+  RESP001=target-fetch-fail retryable; js_render slow (30s+ timeouts).
+  scrapeops BLOCKED operator-side: email confirmation required at
+  scrapeops.io/app/proxy. scrapingdog SKIPPED (site down, per operator).
+- Reminder (documented limitation): GET-template providers do NOT forward
+  our Privy bearer -> prod-api.fomo.family may 401 them regardless;
+  Firecrawl stays the primary fallback (forwards headers). New keys add
+  credit-failover breadth.
+
+## Watch-outs
 ## Watch-outs
 
 
