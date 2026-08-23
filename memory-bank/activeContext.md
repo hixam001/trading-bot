@@ -1,43 +1,51 @@
 # Active Context — trading-bot
 
-**As of 2026-08-23 (post Task C completion).** Full detail:
-`handoff.md` (root). Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+**As of 2026-08-23 (omo-mimicry rebuild UNDERWAY).** Repo:
+`/home/hixam/Downloads/Projects/trading-bot/`.
 
-## Current focus
-Tasks A (dual-lens discovery + thesis reuse), B (num_ctx + provider shutdown)
-and C (live_execution safety model) are IMPLEMENTED AND VERIFIED:
-backend suite 94/94 · live_execution 48/48 · combined root run 142/142 ·
-verify_tasks.sh green end-to-end (§6 needs ollama running; skips cleanly).
+## Current focus: rebuilding the bot on omotrades' logic (7-phase plan)
+Motivation: DB forensics showed the book lost −60% ($1,000 → $113 cash):
+25 closed trades, 16% win rate, stops realizing −40% avg on a −20% config,
+and DONT re-entered 15×/stopped out 15× for −$709. Full comparison +
+forensics delivered this session; plan approved by user ("full mimicry"
+of omo's think→gate intersection).
 
-## Task C — DONE (rebuilt to full spec this session)
-The prior partial commit (8d73171) was superseded: live_execution/ now has
-the complete seven-file safety model — config (hardcoded LIVE_TRADING_ENABLED
-=False / REQUIRE_MANUAL_CONFIRMATION=True), models+ledger (idempotency,
-exposure, realized P&L), wallet (lazy solders), kill_switch (manual +
-automatic daily-loss breaker at -$75 realized), confirmation_queue
-(fail-closed expiry checked at propose/approve/consume), jupiter_executor
-(kill→flags→caps→idempotency→decimals→breaker→confirm→quote→sign→send),
-scripts/confirm_trade.py operator CLI (list/approve/deny/kill/resume).
-Swap endpoint POST lite-api.jup.ag/swap/v1/swap VERIFIED LIVE 2026-08-23
-(422 deserialization naming quoteResponse; bogus sibling route 404; GET 405).
-Quote URL/mint imported from backend/config.py — single source of truth.
-Unit math imported from data_providers.jupiter (identity-tested). The stale
-"9-decimals assumption" docstring in data_providers/jupiter.py is FIXED.
+## DONE — Phase 1 (commit 81b9898): exit engine + fast scan loop
+rule_engine/exits.py: 6-rule engine ported from omo PROCESS.md §5
+(stop −20%, trail 50%-activation/40pp give-back vs persisted HWM,
+liquidity break <$8k, invalidation −25%&1.4×sells, stale 14d,
+TP ladder +100/300/900 trims 33/33/50%) + sell risk gate ($25 clip,
+30-min/mint cooldown, ≤8 exits/24h; RISK-OFF BYPASSES gate — documented
+deviation). E8/E9 partial closes via trim_position (atomic).
+main(): dedicated 15s price-only exit loop alongside tick. DB migration:
+trades.high_water_usd + trades.tranches_taken. Tests: backend 119/119,
+combined root 167/167.
 
-## Before ANY mainnet use (hard requirement)
-Zero live-network coverage: run the FULL flow on Solana devnet with a
-throwaway keypair first (propose → approve → execute → on-chain confirm).
-Install solders when going real: .venv/bin/python -m pip install solders.
+## REMAINING phases (each its own commit)
+2. Loop reorder manage-first + decision_commits seal/reveal table
+3. Think stage: qwen3 pre-trade {thesis, invalidation, verdict};
+   trade requires verdict==buy AND all rules pass; Ollama-down ⇒
+   model_unavailable refusal (fail-closed); template thinker for tests
+4. Entry rules verbatim: liq ≥$15k, vol ≥$8k, newborn 24h/−15%,
+   strict already_held (NO scale-ins), not_on_break liveness,
+   crowd_heat proxy (20+8×signals)
+5. Discovery: rotating DexScreener keyword pool (~45 queries), fake-chart
+   filter, boost flags, blocklist module (auto-grow on 2 consecutive stops)
+6. Conviction sizing min(cash×15%, cap)×conviction + daily notional cap
+7. Local proof.json/verify.json/exits.json endpoints + replay harness
+   (backtest new pipeline over historical snapshots incl. DONT corpus)
+
+## Key evidence to remember
+- DONT: 15 entries, 15 stop-outs, −$708.92; holds ~25s; re-entry every tick
+- Stops realized −40.2% avg (config said −20%): fixed by fast scan loop
+- Winners exist: 4 TPs avg +59.6% in 3.7h — old +50% TP capped them;
+  ladder lets winners run now
 
 ## Watch-outs
-- websockets lib needed by new_listings (ships with uvicorn[standard] ✓)
-- New-listing WS may require a Birdeye plan with BDS feeds; free key →
-  lens auto-disables, trending-only continues (by design)
-- ⚠ TERMINAL: login shell is FISH — wrap multi-command bash in a script file;
-  `bash -c '...'` quoting breaks silently. Run scripts, read outputs from files.
-- ⚠ pytest from repo ROOT previously failed 19 async tests (asyncio config
-  lives in backend/pytest.ini); fixed by adding a root pytest.ini with
-  asyncio_mode=auto. Both invocation styles now pass.
-- live_execution/state/ is gitignored runtime state (confirmations, ledger,
-  kill switch). Never commit it.
+- ⚠ TERMINAL: login shell is FISH — no `$?`, no heredocs, `bash -c` quoting
+  breaks silently. Write scripts to files or run simple commands.
+- pytest canonical: cd backend && ../.venv/bin/python -m pytest tests/ -q
+- live_execution/state/ gitignored; isolation grep must stay clean
+- Old +50% TAKE_PROFIT_PCT still in config but unused by the new engine
+  (ladder replaced it) — remove during calibration cleanup
 
