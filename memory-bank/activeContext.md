@@ -48,11 +48,13 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 
 ## REMAINING phases (each its own commit)
 2. Loop reorder manage-first + decision_commits seal/reveal audit table
-3. Think stage: qwen3 pre-trade {thesis, invalidation, verdict}; trade
-   requires verdict==buy AND all rules pass; Ollama-down ⇒ fail-closed
-   model_unavailable refusal; template thinker for hermetic tests
-4. Discovery rotation: DexScreener keyword-pool scanner (~45 queries),
-   fake-chart filter, boost flags
+3. ✅ THINK STAGE DONE (llm/thinker.py): qwen3 pre-trade {thesis,
+   invalidation, verdict}; entry requires verdict==buy AND all rules pass;
+   Ollama-down/unparsable ⇒ deterministic template w/ 'degraded' tag;
+   mock mode always template (hermetic). LIVE-VALIDATED: full tick ran with
+   real Birdeye candidates — CYBERLEEK passed all rules but was MODEL-VETOED;
+   DONT refused by both layers; cash untouched. Thinker ~10s/candidate
+   (20 candidates ≈ 3min/tick — consider MAX_CANDIDATES_PER_TICK tuning).
 5. Conviction sizing min(cash×15%, cap)×conviction + daily notional cap
 6. Local proof.json/exits.json endpoints + replay harness over historical
    snapshots (incl. DONT corpus)

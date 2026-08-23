@@ -24,15 +24,18 @@ from datetime import datetime, timezone
 import config
 from api import db
 from data_providers import build_provider
-from llm.narrator import NarrationResult, Narrator, generate_reflection
+from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
+from llm.thinker import Thinker, ThinkResult, template_think
 from models import FeedEvent
 from paper_trading_engine import (
-    decide_and_act,
     load_portfolio_state,
+    open_position,
     scan_and_execute_exits,
 )
+from rule_engine.gate import evaluate_gate
 from rule_engine.regime import compute_market_regime
+from rule_engine.rules import ACTIVE_RULES
 
 log = logging.getLogger(__name__)
 
@@ -49,11 +52,15 @@ def _rule_summary(gate) -> str:
     return "; ".join(f"{r.rule_id}:{'PASS' if r.passed else 'FAIL'}" for r in gate.rules)
 
 
-async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> dict:
+async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dict:
     """
+    The omo-style cycle (operator decision 2026-08-23):
+
+        manage → read → think → gate → journal
+
     state: optional dict persisted ACROSS ticks by the caller (main()):
-      {"tick": int, "theses": {mint: {...}}} — enables short-term thesis
-      reuse (Task A.5). A fresh empty state means no reuse (tests).
+      {"tick": int, "theses": {mint: {...}}} — enables short-term think/thesis
+      reuse. A fresh empty state means no reuse (tests).
     """
     t0 = time.monotonic()
     candidates = await provider.get_candidates(config.MAX_CANDIDATES_PER_TICK)
@@ -91,31 +98,48 @@ async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> d
                  regime.regime_detail)
 
         for c in candidates:
-            portfolio = await load_portfolio_state(conn)
-            gate = await decide_and_act(c, portfolio, regime, conn)
+            # --- THINK (omo order): the model writes its assessment BEFORE
+            # any rule is evaluated. Its verdict is a necessary veto layer.
+            think = await thinker.think(c)
 
-            # --- Task A.5: reuse prior thesis if stats are unchanged ------
-            narration = None
+            portfolio = await load_portfolio_state(conn)
+            gate = evaluate_gate(c, portfolio, regime, ACTIVE_RULES)
+
+            # --- GATE: think→gate intersection. Either side alone refuses.
+            entry_allowed = gate.all_passed and think.wants_entry
+            vetoed_by_model = gate.all_passed and not think.wants_entry
+
+            full_thesis = think.thesis + (
+                f" | invalidates if: {think.invalidation}"
+                if think.invalidation else ""
+            )
+
+            # --- reuse prior thesis if stats AND verdict are unchanged ------
+            reused_now = False
             if state is not None:
                 prior = (state.get("theses") or {}).get(c.mint_address)
                 within_window = (
                     prior is not None
                     and state["tick"] - prior["tick"] <= REUSE_TICK_WINDOW
+                    and prior.get("think_verdict") == think.verdict
                 )
                 if within_window and reused_if_stable(
                         prior["decision"], gate.all_passed,
                         gate.failed_rule_ids, stats_signature(c)):
-                    narration = NarrationResult(prior["thesis"], "reused", [])
+                    reused_now = True
                     reused += 1
-            if narration is None:
-                narration = await narrator.narrate(gate)
+
+            thesis_text = ("[model veto] " if vetoed_by_model else "") + full_thesis
 
             event = FeedEvent(
                 symbol=c.symbol,
                 mint_address=c.mint_address,
                 candidate_snapshot=c.to_dict(),
-                verdict="pass" if gate.all_passed else "fail",
-                thesis=narration.thesis,
+                verdict="pass" if entry_allowed else "fail",
+                thesis=thesis_text + (
+                    f" | invalidates if: {think.invalidation}"
+                    if think.invalidation else ""
+                ),
                 rule_breakdown=[
                     {"rule_id": r.rule_id, "passed": r.passed,
                      "detail": r.detail, "value": r.value}
@@ -123,28 +147,33 @@ async def run_tick(provider, narrator: Narrator, state: dict | None = None) -> d
                 ],
                 failed_rule_ids=gate.failed_rule_ids,
                 regime_ok=regime.regime_ok,
-                grounding_flags=narration.grounding_flags,
-                narration_source=narration.source,
+                grounding_flags=think.grounding_flags,
+                narration_source=think.source,
             )
 
-            if gate.all_passed:
-                trade = await db.get_open_trade_for_mint(conn, c.mint_address)
-                if trade is not None:
-                    event.led_to_trade_id = trade.trade_id
-                    if not trade.thesis:
+            # --- EXECUTE: open only when both layers agree ------------------
+            if entry_allowed:
+                existing = await db.get_open_trade_for_mint(conn, c.mint_address)
+                if existing is None:
+                    result = await open_position(conn, c, gate)
+                    if result.applied:
+                        trade_text = full_thesis
                         await conn.execute(
                             "UPDATE trades SET thesis = ? WHERE trade_id = ? AND is_open = 1",
-                            (narration.thesis, trade.trade_id),
+                            (trade_text, result.trade.trade_id),
                         )
                         await conn.commit()
-                    opened += 1
+                        event.led_to_trade_id = result.trade.trade_id
+                        opened += 1
 
             if state is not None:
                 state.setdefault("theses", {})[c.mint_address] = {
                     "tick": state["tick"],
                     "decision": {"all_passed": gate.all_passed,
                                  "failed_rule_ids": list(gate.failed_rule_ids)},
-                    "thesis": narration.thesis,
+                    "think_verdict": think.verdict,
+                    "invalidation": think.invalidation,
+                    "thesis": think.thesis,
                 }
 
             event.id = await db.insert_feed_event(conn, event)
@@ -218,8 +247,8 @@ async def main() -> None:
     assert config.PAPER_TRADING_ONLY is True
     await db.init_db()
     provider = build_provider()
-    narrator = Narrator()
-    # Cross-tick state: tick counter + per-mint thesis reuse cache (Task A.5).
+    thinker = Thinker()
+    # Cross-tick state: tick counter + per-mint think/thesis reuse cache.
     # REUSE_TICK_WINDOW bounds how old a reused thesis may be.
     state: dict = {"tick": 0, "theses": {}}
     last_learning_date: str | None = None
@@ -229,7 +258,7 @@ async def main() -> None:
         exit_task = asyncio.create_task(_exit_loop(provider))
         while True:
             try:
-                await run_tick(provider, narrator, state)
+                await run_tick(provider, thinker, state)
             except Exception:
                 log.exception("tick failed — continuing next interval (fail-closed)")
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -253,7 +282,7 @@ async def main() -> None:
                 await close_provider()
             except Exception:
                 log.warning("provider shutdown raised (non-fatal)", exc_info=True)
-        await narrator.aclose()
+        await thinker.aclose()
 
 
 if __name__ == "__main__":

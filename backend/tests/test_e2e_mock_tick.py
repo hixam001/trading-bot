@@ -14,7 +14,7 @@ from typing import Optional
 import config
 from api import db
 from data_providers.mock import MockProvider
-from llm.narrator import Narrator
+from llm.thinker import Thinker
 from main import run_tick
 from rule_engine.rules import ACTIVE_RULES
 
@@ -37,10 +37,10 @@ async def _regime_rows() -> int:
 async def test_full_tick_cycle(env):
     await db.init_db()
     provider = MockProvider()
-    narrator = Narrator()
+    thinker = Thinker()
 
     # --- Tick 1: entries ---------------------------------------------------
-    summary = await run_tick(provider, narrator)
+    summary = await run_tick(provider, thinker)
     assert summary["candidates"] > 0
     assert summary["opened"] >= 1
 
@@ -73,7 +73,7 @@ async def test_full_tick_cycle(env):
                                     decimals: Optional[int] = None) -> float:
             return 0.00001   # deep stop-loss territory
 
-    summary2 = await run_tick(CrashyProvider(), narrator)
+    summary2 = await run_tick(CrashyProvider(), thinker)
     assert summary2["closed"] >= 1
 
     async with db.get_db() as conn:
@@ -109,9 +109,9 @@ async def test_full_tick_cycle(env):
 async def test_regime_logged_once_per_tick_not_per_candidate(env):
     await db.init_db()
     provider = MockProvider()
-    narrator = Narrator()
-    await run_tick(provider, narrator)
-    await run_tick(provider, narrator)
+    thinker = Thinker()
+    await run_tick(provider, thinker)
+    await run_tick(provider, thinker)
     assert await _regime_rows() == 2   # one row per tick, not per candidate
 
 
