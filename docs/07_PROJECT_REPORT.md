@@ -1,8 +1,9 @@
 # 07 — Project Report
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
-Solana memecoins. Report generated 2026-08-22 from the codebase at commit
-`b6a3620`. Status: **live** (real market data, simulated funds).
+Solana memecoins. Report updated 2026-08-23 from the codebase at commit
+`c17a90b`. Status: **live** (real market data, simulated funds; optional
+Supabase Postgres persistence).
 
 ---
 
@@ -221,11 +222,23 @@ cash writes, cap refusal, and flag assertion.
 | Birdeye | memepool trending discovery; decimals; token_security | free tier 401s on security → session auto-disable, fields stay UNKNOWN |
 | Dexscreener | all rule numerics per mint: 1h volume/change, buys/sells, liquidity, mcap, pair age, socials | deepest pair chosen; field names confirmed against real payloads |
 | Jupiter (lite-api) | execution-quality price for exits/holdings | decimals-aware; fails closed without them |
+| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); the last two forward the Privy bearer through Cloudflare (verified live); quota-exhausted providers benched 30 min |
 | Mock | full offline parity incl. threshold edge cases | default backend |
 
 All external calls: 15s timeout, ≤3 retries with backoff, distinct longer
 backoff + counter on 429, non-retryable 401/403, per-provider daily call
 counters surfaced in `/api/system-status`.
+
+### Persistence
+
+SQLite (aiosqlite, WAL) is the default book. Setting `USE_SUPABASE_DB=1` +
+`SUPABASE_DB_URL` transparently switches every repository function to
+Supabase Postgres (`api/db_pg.py`, asyncpg): identical function surface, the
+§5.1 atomicity pattern preserved (conditional writes; rowcount is the sole
+authority on cash), JSONB snapshots, one-open-position-per-mint enforced by
+an exclusion constraint, RLS locked to service-role-only. Pooler TLS is
+authenticated via SHA-256 certificate-fingerprint pinning (TOFU pin file,
+gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 8. LLM layer
 
@@ -263,24 +276,30 @@ counters surfaced in `/api/system-status`.
 
 ## 11. Testing & verification
 
-**80 tests passing** (<1s, fully hermetic): both branches of all ten rules;
-regime incl. empty batch; money math known-correct values + raise-on-invalid;
-atomicity (double-open/double-close/crash-replay/scale-cap/flag assert);
-API shape+pagination on seeded DBs; end-to-end mock tick cycle with forced
-exits and exact cash-conservation arithmetic; Jupiter decimals regression
-tests pinning the 1000× fabrication bug. Live-verified separately:
-providers against real APIs, commit-reveal hashes of the reference system
-recomputed byte-for-byte, one-click launcher start/stop cycle.
+**145 backend tests passing** (<2s, fully hermetic): both branches of all
+ten rules; regime incl. empty batch; money math known-correct values +
+raise-on-invalid; atomicity (double-open/double-close/crash-replay/
+scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
+tick cycle with forced exits and exact cash-conservation arithmetic;
+Jupiter decimals regression tests pinning the 1000× fabrication bug.
+48 live_execution tests (193 combined). Live-verified separately: providers
+against real APIs, Supabase Postgres backend (full atomicity smoke + uvicorn
+boot serving PG data), stealth-chain header forwarding returning real fomo
+board data, commit-reveal hashes of the reference system recomputed
+byte-for-byte, one-click launcher start/stop cycle.
 
 ## 12. Current status
 
 - **Live calibration window: day 0–1.** Real candidates evaluated each
-  tick; entries occur only when rules AND regime pass (the gate correctly
-  kept the book flat during observed low-volume periods).
+  tick; entries occur only when rules AND regime pass. Persistence:
+  Supabase Postgres active (USE_SUPABASE_DB=1); fresh $1,000 book there;
+  legacy SQLite book retained locally as fallback.
 - Known limitations: Birdeye free tier lacks token_security (fields remain
-  unknown); regime thresholds are placeholders pending calibration data;
-  partial scaling (E8/E9), advisory LLM layer (D7), and the commit-reveal
-  proof (appendix) are deliberately post-calibration scope.
+  unknown); ScrapingBee stealth fallback is keyless-only; ZenRows premium
+  tier costs ~10–25 credits/request; regime thresholds are placeholders
+  pending calibration data; partial scaling (E8/E9), advisory LLM layer
+  (D7), and the commit-reveal proof (appendix) are deliberately
+  post-calibration scope.
 
 
 

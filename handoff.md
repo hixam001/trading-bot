@@ -1,7 +1,8 @@
 # HANDOFF — trading-bot
 
-**Last updated:** 2026-08-22 · **Branch:** main (`8316109`) · **Status:** LIVE
-(real market data, simulated funds) · **App:** http://localhost:8000
+**Last updated:** 2026-08-23 · **Branch:** main (`c17a90b`) · **Status:** LIVE
+(real market data, simulated funds; optional Supabase Postgres backend) ·
+**App:** http://localhost:8000
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -54,9 +55,11 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # 145 tests, ~1s
 | `backend/config.py` | ALL thresholds + safety flag + provider keys via env |
 | `backend/models.py` | Candidate (incl. `decimals`), Trade, FeedEvent, RuleResult, GateDecision, PortfolioState |
 | `backend/rule_engine/` | `rules.py` (11 omo-parity entry rules), `exits.py` (omo exit engine: stop/trail/liquidity-break/invalidation/stale/TP-ladder + sell risk gate), `gate.py` (no-short-circuit AND), `regime.py`, `liveness.py` (not_on_break) |
-| `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens, Firecrawl stealth fallback, junk filter) → feeds crowd_heat |
+| `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens) → feeds crowd_heat. Stealth fallback chain: firecrawl (forwards auth headers) → scrapingbee (keyless-only: platform consumes Authorization) → zenrows `custom_headers=true&premium_proxy=true` → scrapeops `keep_headers=true` — the last two carry the Privy bearer through Cloudflare (verified live). `_json_from_body` rejects only statusCode≥400 envelopes (prod-api sends statusCode:200 on success) |
 | `backend/paper_trading_engine.py` | money math + atomic open/close/scale_in + exits + decide_and_act |
-| `backend/api/db.py` | schema + repository; atomic conditional writes return rowcounts |
+| `backend/api/db.py` | schema + repository (SQLite default); when `USE_SUPABASE_DB=1` + `SUPABASE_DB_URL` set, transparently delegates every public function to `db_pg.py`; pytest forces SQLite |
+| `backend/api/db_pg.py` | asyncpg/Supabase Postgres twin of db.py — identical surface incl. §5.1 atomicity (rowcount from execute status); TLS via SHA-256 cert-fingerprint pinning (TOFU, `.supabase_fp.txt` gitignored) |
+| `migrations/supabase/001_init.sql` | run ONCE in Supabase SQL editor: 9 tables, JSONB/TIMESTAMPTZ, one-open-position exclusion constraint, RLS locked |
 | `backend/api/main.py` | FastAPI app; serves built frontend; TICK_LOOP_IN_PROCESS env runs tick loop in-process |
 | `backend/data_providers/` | base(protocol,retry,counters), birdeye, dexscreener, jupiter, live(stack), mock |
 | `backend/llm/` | narrator.py (prompt, Ollama client, template fallback, reflection), grounding.py |
@@ -142,6 +145,21 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
     started only if not already up; stop.sh never kills pre-existing ollama.
 12. **Test hermeticity**: tests pin DATA_BACKEND=mock and tmp DB paths so
     operator .env (live) can't leak into them (bit us twice).
+13. **Supabase Postgres backend (optional)**: db_pg.py mirrors db.py's whole
+    surface over asyncpg; selected when USE_SUPABASE_DB=1 + SUPABASE_DB_URL.
+    pytest guard forces SQLite so the suite can never touch the live remote
+    book. Live smoke passed every atomicity check against real Supabase;
+    uvicorn boot verified serving PG data on all API endpoints.
+14. **Supabase TLS**: pooler serves a self-signed chain → system-CA verify
+    impossible. Implemented SHA-256 cert-fingerprint pinning (TOFU; pin file
+    gitignored; mismatch = hard abort with re-pin instructions).
+15. **Stealth-chain header forwarding**: scrapeops keep_headers=true and
+    zenrows custom_headers=true(+premium_proxy) carry the Privy bearer
+    through Cloudflare — verified live returning REAL board data.
+    ScrapingBee cannot (its platform consumes Authorization as its own key).
+16. **_json_from_body statusCode bug**: prod-api includes statusCode:200 in
+    SUCCESS envelopes; the old any-statusCode rejection silently discarded
+    valid board data on the whole scrape path. Now rejects only ≥400.
 
 
 ## 6. Bugs found & fixed (all regression-tested)
@@ -163,6 +181,12 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 
 - Birdeye free tier: no token_security → security fields always UNKNOWN
   right now (upgrade tier → auto re-enables on restart).
+- ScrapingBee stealth fallback is keyless-only (platform consumes the
+  Authorization header); zenrows premium tier costs ~10–25 credits/request.
+- Supabase backend: pooler cert is self-signed → fingerprint-pinned; if
+  Supabase rotates certs legitimately, delete `backend/.supabase_fp.txt`
+  to re-pin (backend hard-aborts until then). Old SQLite book not migrated
+  to Supabase — fresh book started there.
 - Regime thresholds are placeholders pending calibration data.
 - LLM narrations make ticks take ~40–90s for 20 candidates; fine at the
   60s interval, reduce MAX_CANDIDATES_PER_TICK if needed.
@@ -187,7 +211,8 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 - [ ] Rules stay pure; no short-circuiting; None semantics preserved
 - [ ] Money-touching changes keep atomic write→rowcount→cash ordering
 - [ ] External fields validated via require_type; None never coerced
-- [ ] Tests hermetic (tmp DBs, mock narration) and passing (80)
+- [ ] Tests hermetic (tmp DBs, mock narration) and passing (145)
+- [ ] db_pg.py kept surface-identical to db.py if repository changes land
 - [ ] New rule ⇒ add vocab in llm/grounding.py + both-branch tests
 
 

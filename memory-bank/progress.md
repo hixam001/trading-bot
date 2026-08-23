@@ -26,6 +26,18 @@
 - [x] omo-mimicry rebuild in progress: exit engine + fast scan loop,
       entry gate = omo rules verbatim, old logic purged, crowd conviction
       feed (fomo.fun board) live-validated → **backend 136 / combined 184**
+- [x] Security audit: secret scans CLEAN, stale files removed, gitignore
+      hardened (*.db-journal, wallet-keypair.json)
+- [x] Supabase Postgres backend (optional): migrations/supabase/001_init.sql
+      applied; api/db_pg.py asyncpg twin of db.py (identical surface,
+      §5.1 atomicity preserved); db.py backend selection with pytest
+      SQLite guard; live smoke passed all atomicity checks against real
+      Supabase + uvicorn boot serving PG data on all endpoints
+- [x] Stealth-scrape chain upgraded: scrapeops keep_headers + zenrows
+      custom_headers+premium_proxy forward the Privy bearer — verified
+      pulling REAL fomo board data through Cloudflare; scrapingbee
+      keyless-only (platform limitation); _json_from_body statusCode≥400
+      bugfix (success envelopes were silently discarded)
 
 ## Deliberately not built (per spec sequencing)
 - E8/E9 partial scaling + rolling history (post-calibration)
@@ -37,6 +49,10 @@
 - Birdeye free tier: token_security 401 → security fields UNKNOWN
 - Ticks take 40–90s with 20 candidates (LLM-bound); acceptable
 - Regime/rule thresholds are placeholders — calibration will move them
+- ScrapingBee fallback is keyless-only (platform consumes Authorization)
+- ZenRows premium tier costs ~10–25 credits/request (required for prod-api)
+- Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
+  delete the file to re-pin after a legitimate cert rotation
 
 ## Status
 Live calibration day 0–1. Fresh $1,000 book. App runnable via ./start.sh.
