@@ -42,7 +42,7 @@ if up http://localhost:11434/api/tags; then
 else
   if command -v ollama >/dev/null 2>&1; then
     echo "[ollama] starting ollama serve..."
-    nohup ollama serve >"$LOGS/ollama.log" 2>&1 &
+    nohup setsid ollama serve >"$LOGS/ollama.log" 2>&1 </dev/null &
     echo $! >"$RUN/ollama.pid"
     OLLAMA_STARTED_BY_US=1
     for _ in $(seq 1 30); do
@@ -74,9 +74,13 @@ else
   echo "[backend] starting uvicorn + tick loop..."
   (
     cd "$ROOT/backend"
-    TICK_LOOP_IN_PROCESS=1 nohup "$ROOT/.venv/bin/python" -m uvicorn \
+    # setsid detaches uvicorn into its own session: closing the Konsole
+    # tab or Ctrl+C-ing the script can never take the backend down with it
+    # (nohup alone only blocks SIGHUP — SIGINT still killed it).
+    TICK_LOOP_IN_PROCESS=1 nohup setsid \
+      "$ROOT/.venv/bin/python" -m uvicorn \
       api.main:app --host 127.0.0.1 --port 8000 \
-      >"$LOGS/backend.log" 2>&1 &
+      >"$LOGS/backend.log" 2>&1 </dev/null &
     echo $! >"$RUN/backend.pid"
   )
   ok=0

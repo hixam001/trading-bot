@@ -206,11 +206,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                                                  ticket_usd=ticket)
                     if result.applied:
                         trade_text = full_thesis
-                        await conn.execute(
-                            "UPDATE trades SET thesis = ? WHERE trade_id = ? AND is_open = 1",
-                            (trade_text, result.trade.trade_id),
-                        )
-                        await conn.commit()
+                        await db.set_trade_thesis(
+                            conn, result.trade.trade_id, trade_text)
                         event.led_to_trade_id = result.trade.trade_id
                         opened += 1
             elif refusal_reasons and entry_allowed:

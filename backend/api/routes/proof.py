@@ -27,41 +27,8 @@ router = APIRouter()
 async def get_proof():
     """Full decision record: commits, fills, refusals."""
     async with db.get_db() as conn:
-        commits = []
-        async with conn.execute(
-            """
-            SELECT id, created_at, tick_ts, symbol, mint_address,
-                   verdict, entry_allowed, nonce, payload_json, payload_hash
-            FROM decision_commits ORDER BY created_at DESC LIMIT 100
-            """
-        ) as cur:
-            for row in await cur.fetchall():
-                commits.append({
-                    "id": row["id"],
-                    "created_at": row["created_at"],
-                    "tick_ts": row["tick_ts"],
-                    "symbol": row["symbol"],
-                    "mint": row["mint_address"],
-                    "think_verdict": row["verdict"],
-                    "entry_allowed": bool(row["entry_allowed"]),
-                    "nonce": row["nonce"],
-                    "payload": json.loads(row["payload_json"]),
-                    "payload_hash": row["payload_hash"],
-                })
-
-        fills = []
-        async with conn.execute(
-            """
-            SELECT trade_id, symbol, mint_address, opened_at,
-                   entry_price_usd, position_size_usd, thesis,
-                   closed_at, exit_price_usd, exit_reason,
-                   realized_pnl_usd, realized_pnl_pct, is_open
-            FROM trades ORDER BY opened_at DESC LIMIT 100
-            """
-        ) as cur:
-            cols = [d[0] for d in cur.description]
-            for row in await cur.fetchall():
-                fills.append(dict(zip(cols, row)))
+        commits = await db.get_recent_decision_commits(conn)
+        fills = await db.get_recent_fills(conn)
 
     return {
         "generated_at_utc": __import__("datetime").datetime.now(
@@ -79,8 +46,6 @@ async def get_proof():
 async def get_exits():
     """Exit thresholds, stored HWM marks and open positions with their
     trailing context."""
-    from paper_trading_engine import default_ledger  # noqa: F401
-
     import config as cfg
 
     thresholds = {
@@ -104,17 +69,7 @@ async def get_exits():
 
     marks = []
     async with db.get_db() as conn:
-        async with conn.execute(
-            """
-            SELECT trade_id, symbol, mint_address, entry_price_usd,
-                   position_size_usd, high_water_usd, tranches_taken,
-                   opened_at, is_open
-            FROM trades WHERE is_open = 1
-            """
-        ) as cur:
-            cols = [d[0] for d in cur.description]
-            for row in await cur.fetchall():
-                marks.append(dict(zip(cols, row)))
+        marks = await db.get_open_position_marks(conn)
 
     return {"thresholds": thresholds, "open_position_marks": marks}
 
@@ -127,13 +82,7 @@ async def get_verify():
     verified = failed = 0
 
     async with db.get_db() as conn:
-        async with conn.execute(
-            """
-            SELECT id, nonce, payload_json, payload_hash, symbol, verdict
-            FROM decision_commits ORDER BY created_at DESC LIMIT 200
-            """
-        ) as cur:
-            rows = await cur.fetchall()
+        rows = await db.get_verify_commits(conn)
 
     for row in rows:
         recomputed = hashlib.sha256(

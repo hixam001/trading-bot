@@ -698,6 +698,137 @@ async def upsert_daily_stats(conn: aiosqlite.Connection, stats: DailyStats) -> N
 
 
 # ===========================================================================
+# Proof/journal helpers — formerly raw SQL in routes; MUST live here so the
+# Postgres backend (db_pg.py) can override them with dialect-correct SQL.
+# ===========================================================================
+
+async def count_closed_trades(conn: aiosqlite.Connection) -> int:
+    cursor = await conn.execute("SELECT COUNT(*) FROM trades WHERE is_open = 0")
+    return int((await cursor.fetchone())[0])
+
+
+async def get_recent_decision_commits(
+    conn: aiosqlite.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT id, created_at, tick_ts, symbol, mint_address,
+               verdict, entry_allowed, nonce, payload_json, payload_hash
+        FROM decision_commits ORDER BY created_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        {
+            "id": r["id"],
+            "created_at": r["created_at"],
+            "tick_ts": r["tick_ts"],
+            "symbol": r["symbol"],
+            "mint": r["mint_address"],
+            "think_verdict": r["verdict"],
+            "entry_allowed": bool(r["entry_allowed"]),
+            "nonce": r["nonce"],
+            "payload": json.loads(r["payload_json"]),
+            "payload_hash": r["payload_hash"],
+        }
+        for r in await cursor.fetchall()
+    ]
+
+
+async def get_recent_fills(
+    conn: aiosqlite.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT trade_id, symbol, mint_address, opened_at,
+               entry_price_usd, position_size_usd, thesis,
+               closed_at, exit_price_usd, exit_reason,
+               realized_pnl_usd, realized_pnl_pct, is_open
+        FROM trades ORDER BY opened_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        {
+            "trade_id": r["trade_id"],
+            "symbol": r["symbol"],
+            "mint_address": r["mint_address"],
+            "opened_at": r["opened_at"],
+            "entry_price_usd": r["entry_price_usd"],
+            "position_size_usd": r["position_size_usd"],
+            "thesis": r["thesis"],
+            "closed_at": r["closed_at"],
+            "exit_price_usd": r["exit_price_usd"],
+            "exit_reason": r["exit_reason"],
+            "realized_pnl_usd": r["realized_pnl_usd"],
+            "realized_pnl_pct": r["realized_pnl_pct"],
+            "is_open": bool(r["is_open"]),
+        }
+        for r in await cursor.fetchall()
+    ]
+
+
+async def get_open_position_marks(
+    conn: aiosqlite.Connection,
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT trade_id, symbol, mint_address, entry_price_usd,
+               position_size_usd, high_water_usd, tranches_taken,
+               opened_at, is_open
+        FROM trades WHERE is_open = 1
+        """
+    )
+    return [
+        {
+            "trade_id": r["trade_id"],
+            "symbol": r["symbol"],
+            "mint_address": r["mint_address"],
+            "entry_price_usd": r["entry_price_usd"],
+            "position_size_usd": r["position_size_usd"],
+            "high_water_usd": r["high_water_usd"],
+            "tranches_taken": r["tranches_taken"],
+            "opened_at": r["opened_at"],
+            "is_open": bool(r["is_open"]),
+        }
+        for r in await cursor.fetchall()
+    ]
+
+
+async def get_verify_commits(
+    conn: aiosqlite.Connection, limit: int = 200
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        """
+        SELECT id, nonce, payload_json, payload_hash, symbol, verdict
+        FROM decision_commits ORDER BY created_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    return [dict(r) for r in await cursor.fetchall()]
+
+
+async def set_trade_thesis(
+    conn: aiosqlite.Connection, trade_id: str, text: str
+) -> None:
+    """Attach the full thesis to a freshly opened position (open only)."""
+    await conn.execute(
+        "UPDATE trades SET thesis = ? WHERE trade_id = ? AND is_open = 1",
+        (text, trade_id),
+    )
+    await conn.commit()
+
+
+async def delete_trade_row(conn: aiosqlite.Connection, trade_id: str) -> int:
+    """Rollback helper: remove an unfunded open position (cash refused)."""
+    cursor = await conn.execute(
+        "DELETE FROM trades WHERE trade_id = ? AND is_open = 1", (trade_id,)
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
+# ===========================================================================
 # Backend selection — when Supabase is configured (USE_SUPABASE_DB=1 +
 # SUPABASE_DB_URL), the Postgres implementation in api/db_pg.py overrides
 # every public repository function above; the surface is identical.

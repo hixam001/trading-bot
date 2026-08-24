@@ -190,10 +190,7 @@ async def open_position(
         # rule gates this upstream). Roll the trade row back rather than leave
         # an unfunded position.
         log.error("open_position: cash adjustment refused for %s — rolling back", candidate.symbol)
-        await conn.execute(
-            "DELETE FROM trades WHERE trade_id = ? AND is_open = 1", (trade.trade_id,)
-        )
-        await conn.commit()
+        await db.delete_trade_row(conn, trade.trade_id)
         return OpenResult(False, None, "cash_refused")
 
     log.info(

@@ -704,3 +704,138 @@ async def upsert_daily_stats(conn: asyncpg.Connection, stats: DailyStats) -> Non
         stats.date, stats.open_positions, stats.closed_trades,
         json.dumps(stats.stats_json),
     )
+
+
+# ===========================================================================
+# Proof/journal helpers — mirror api/db.py's SQLite versions with
+# dialect-correct Postgres (bool literals, $n params, ::text timestamps).
+# ===========================================================================
+
+async def count_closed_trades(conn: asyncpg.Connection) -> int:
+    return int(await conn.fetchval(
+        "SELECT COUNT(*) FROM trades WHERE is_open = FALSE"))
+
+
+async def get_recent_decision_commits(
+    conn: asyncpg.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT id, created_at::text AS created_at, tick_ts::text AS tick_ts,
+               symbol, mint_address, verdict, entry_allowed, nonce,
+               payload_json::text AS payload_json, payload_hash
+        FROM decision_commits ORDER BY created_at DESC LIMIT $1
+        """,
+        limit,
+    )
+    return [
+        {
+            "id": r["id"],
+            "created_at": r["created_at"],
+            "tick_ts": r["tick_ts"],
+            "symbol": r["symbol"],
+            "mint": r["mint_address"],
+            "think_verdict": r["verdict"],
+            "entry_allowed": bool(r["entry_allowed"]),
+            "nonce": r["nonce"],
+            "payload": json.loads(r["payload_json"]),
+            "payload_hash": r["payload_hash"],
+        }
+        for r in rows
+    ]
+
+
+async def get_recent_fills(
+    conn: asyncpg.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT trade_id, symbol, mint_address, opened_at::text AS opened_at,
+               entry_price_usd, position_size_usd, thesis,
+               closed_at::text AS closed_at, exit_price_usd, exit_reason,
+               realized_pnl_usd, realized_pnl_pct, is_open
+        FROM trades ORDER BY opened_at DESC LIMIT $1
+        """,
+        limit,
+    )
+    return [
+        {
+            "trade_id": r["trade_id"],
+            "symbol": r["symbol"],
+            "mint_address": r["mint_address"],
+            "opened_at": r["opened_at"],
+            "entry_price_usd": float(r["entry_price_usd"]),
+            "position_size_usd": float(r["position_size_usd"]),
+            "thesis": r["thesis"],
+            "closed_at": r["closed_at"],
+            "exit_price_usd": float(r["exit_price_usd"])
+            if r["exit_price_usd"] is not None else None,
+            "exit_reason": r["exit_reason"],
+            "realized_pnl_usd": float(r["realized_pnl_usd"])
+            if r["realized_pnl_usd"] is not None else None,
+            "realized_pnl_pct": float(r["realized_pnl_pct"])
+            if r["realized_pnl_pct"] is not None else None,
+            "is_open": bool(r["is_open"]),
+        }
+        for r in rows
+    ]
+
+
+async def get_open_position_marks(
+    conn: asyncpg.Connection,
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT trade_id, symbol, mint_address, entry_price_usd,
+               position_size_usd, high_water_usd, tranches_taken,
+               opened_at::text AS opened_at, is_open
+        FROM trades WHERE is_open = TRUE
+        """
+    )
+    return [
+        {
+            "trade_id": r["trade_id"],
+            "symbol": r["symbol"],
+            "mint_address": r["mint_address"],
+            "entry_price_usd": float(r["entry_price_usd"]),
+            "position_size_usd": float(r["position_size_usd"]),
+            "high_water_usd": float(r["high_water_usd"])
+            if r["high_water_usd"] is not None else None,
+            "tranches_taken": int(r["tranches_taken"]),
+            "opened_at": r["opened_at"],
+            "is_open": bool(r["is_open"]),
+        }
+        for r in rows
+    ]
+
+
+async def get_verify_commits(
+    conn: asyncpg.Connection, limit: int = 200
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT id, nonce, payload_json::text AS payload_json, payload_hash,
+               symbol, verdict
+        FROM decision_commits ORDER BY created_at DESC LIMIT $1
+        """,
+        limit,
+    )
+    return [dict(r) for r in rows]
+
+
+async def set_trade_thesis(
+    conn: asyncpg.Connection, trade_id: str, text: str
+) -> None:
+    """Attach the full thesis to a freshly opened position (open only)."""
+    await conn.execute(
+        "UPDATE trades SET thesis = $1 WHERE trade_id = $2 AND is_open = TRUE",
+        text, trade_id,
+    )
+
+
+async def delete_trade_row(conn: asyncpg.Connection, trade_id: str) -> int:
+    """Rollback helper: remove an unfunded open position (cash refused)."""
+    status = await conn.execute(
+        "DELETE FROM trades WHERE trade_id = $1 AND is_open = TRUE", trade_id
+    )
+    return _rowcount(status)
