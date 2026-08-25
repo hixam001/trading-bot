@@ -1,7 +1,7 @@
 # HANDOFF — trading-bot
 
-**Last updated:** 2026-08-23 · **Branch:** main (`c17a90b`) · **Status:** LIVE
-(real market data, simulated funds; optional Supabase Postgres backend) ·
+**Last updated:** 2026-08-24 · **Branch:** main (`66cefa7`) · **Status:** LIVE
+(real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -160,6 +160,19 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 16. **_json_from_body statusCode bug**: prod-api includes statusCode:200 in
     SUCCESS envelopes; the old any-statusCode rejection silently discarded
     valid board data on the whole scrape path. Now rejects only ≥400.
+17. **NO raw SQL outside api/db*.py (enforced rule)**: the PG cutover
+    exposed raw SQLite SQL in journal.py / proof.py / main.py /
+    paper_trading_engine.py → Supabase 42883 `boolean = integer` on every
+    dashboard poll. All moved into repository functions implemented in BOTH
+    backends (count_closed_trades, get_recent_decision_commits,
+    get_recent_fills, get_open_position_marks, get_verify_commits,
+    set_trade_thesis, delete_trade_row). Stale default_ledger import
+    (500 on /api/exits.json) removed.
+18. **Process management**: backend + ollama launch via `setsid` (own
+    session — Konsole Ctrl+C / tab-close cannot kill them; nohup alone only
+    blocks SIGHUP); `timeout 10 ollama list` guards the launch path. API
+    keys in URLs are redacted from logs by a crowd.py log filter (installed
+    at import — setup_logging() never runs under uvicorn).
 
 
 ## 6. Bugs found & fixed (all regression-tested)
@@ -176,6 +189,12 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   sentence punctuation from number tokens)
 - tests leaked ingested files into real KB dir / depended on operator .env
   (fixed: monkeypatched paths + DATA_BACKEND)
+- raw SQLite SQL in journal.py / proof.py / main.py / paper_trading_engine.py
+  → Supabase 42883 boolean=integer on every dashboard poll (fixed: all moved
+  into repository functions in both db backends)
+- stale default_ledger import → 500 on /api/exits.json (fixed: removed)
+- ZenRows/ScrapeOps/ScrapingBee API keys logged in plaintext via httpx URL
+  logging (fixed: _ApiKeyRedactor filter in crowd.py; old logs scrubbed)
 
 ## 7. Known limitations (accepted, documented)
 
@@ -213,6 +232,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 - [ ] External fields validated via require_type; None never coerced
 - [ ] Tests hermetic (tmp DBs, mock narration) and passing (145)
 - [ ] db_pg.py kept surface-identical to db.py if repository changes land
+- [ ] NO raw SQL outside api/db*.py — every query is a repository function
 - [ ] New rule ⇒ add vocab in llm/grounding.py + both-branch tests
 
 

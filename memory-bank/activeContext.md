@@ -162,6 +162,42 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - Verified live: raw key occurrences since restart = 0; apikey=<REDACTED>
   present; 145 tests pass.
 
+### Ops incident + log redaction (this batch)
+- Backend found DOWN (graceful shutdown ~16:22; a 20:16 start.sh attempt
+  stalled at the `ollama list` check and never launched uvicorn).
+  Restarted manually; verified ticks fetching again.
+- Found ZenRows API key leaking into logs/backend.log in plaintext (httpx
+  logs full URLs; key rides as query param). Fixed with _ApiKeyRedactor
+  logging.Filter installed at crowd.py import on httpx+root loggers
+  (idempotent). NOTE: main.setup_logging() never runs under uvicorn — that
+  was why an earlier attempt (filter inside setup_logging) silently no-op'd.
+- Restart race lesson: killing uvicorn then rebinding :8000 after only 3s
+  fails (old instance still shutting down) -> new instance dies, stale one
+  keeps serving. Always wait for the port to free before relaunching.
+- Verified live: raw key occurrences since restart = 0; apikey=<REDACTED>
+  present; 145 tests pass.
+- start.sh hardened: `timeout 10 ollama list` (the 20:16 stall point);
+  backend + ollama launched via setsid (own session — Konsole Ctrl+C /
+  tab-close can no longer kill them; nohup alone only blocks SIGHUP).
+  Old logs scrubbed: 17 plaintext keys removed from backend.log.
+
+### PG migration bug: raw SQL outside db layer (this batch)
+- Supabase logged 42883 `boolean = integer` every ~15s: FOUR files had raw
+  SQLite SQL outside api/db — journal.py (is_open=0), proof.py (is_open=1),
+  main.py (thesis UPDATE ?-placeholders), paper_trading_engine.py (DELETE
+  rollback). Dashboard polls made it repeat on a 15s cadence.
+- FIX: moved ALL of it into the db layer — 7 new functions
+  (count_closed_trades, get_recent_decision_commits, get_recent_fills,
+  get_open_position_marks, get_verify_commits, set_trade_thesis,
+  delete_trade_row) implemented in BOTH db.py and db_pg.py. Zero raw SQL
+  outside api/db*.py (grep-verified).
+- Also removed stale `from paper_trading_engine import default_ledger` in
+  proof.py get_exits (name no longer exists — 500 on /api/exits.json).
+- Verified live: all 6 endpoints 200; verify.json 80/80 seals match;
+  0 tracebacks / 0 boolean=integer in current instance log; 145 tests.
+- RULE going forward: NO raw SQL outside api/db*.py — every query must be
+  a repository function so both backends stay in lockstep.
+
 ## Watch-outs
 
 
