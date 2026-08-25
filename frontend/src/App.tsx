@@ -1,12 +1,10 @@
 import { useState } from 'react'
-import PaperTradingBanner from './components/PaperTradingBanner'
 import LiveFeed from './components/LiveFeed'
 import Holdings from './components/Holdings'
 import TradeJournal from './components/TradeJournal'
 import StatsDashboard from './components/StatsDashboard'
 import MarketRegimePanel from './components/MarketRegimePanel'
 import PromotionGate from './components/PromotionGate'
-import KnowledgeBase from './components/KnowledgeBase'
 import SystemStatus from './components/SystemStatus'
 import { useApi } from './hooks/useApi'
 import { useFeedSocket } from './hooks/useWebSocket'
@@ -16,7 +14,7 @@ import type {
   TradeRow,
 } from './types'
 
-const TABS = ['feed', 'journal', 'knowledge', 'gate'] as const
+const TABS = ['feed', 'journal', 'gate'] as const
 type Tab = (typeof TABS)[number]
 
 export default function App() {
@@ -31,7 +29,6 @@ export default function App() {
   const regimes = useApi<{ regimes: Parameters<typeof MarketRegimePanel>[0]['regimes'] }>(
     '/api/market-regime?limit=30', 15000)
   const gate = useApi<Parameters<typeof PromotionGate>[0]['data']>('/api/promotion-gate', 30000)
-  const kb = useApi<Parameters<typeof KnowledgeBase>[0]['kb']>('/api/knowledge-base', 60000)
   const status = useApi<Parameters<typeof SystemStatus>[0]['status']>('/api/system-status', 15000)
 
   const offline =
@@ -44,7 +41,6 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
-      <PaperTradingBanner />
       <div className="flex items-center gap-4 px-4 py-2 border-b border-term-border">
         <span className="font-bold text-term-blue">trading-bot</span>
         <nav className="flex gap-1 text-xs">
@@ -67,22 +63,12 @@ export default function App() {
           {stats.data && <StatsDashboard stats={stats.data} />}
 
           {tab === 'feed' && (
-            <>
-              {holdings.data && (
-                <Holdings
-                  holdings={holdings.data.open_positions}
-                  cash={holdings.data.cash_usd}
-                />
-              )}
-              <LiveFeed events={events} connected={connected} />
-            </>
+            <LiveFeed events={events} connected={connected} />
           )}
 
           {tab === 'journal' && journal.data && (
             <TradeJournal trades={journal.data.trades} total={journal.data.total} />
           )}
-
-          {tab === 'knowledge' && kb.data && <KnowledgeBase kb={kb.data} />}
 
           {tab === 'gate' && gate.data && <PromotionGate data={gate.data} />}
         </div>

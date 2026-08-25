@@ -1,6 +1,6 @@
 # HANDOFF — trading-bot
 
-**Last updated:** 2026-08-24 · **Branch:** main (`66cefa7`) · **Status:** LIVE
+**Last updated:** 2026-08-25 · **Branch:** main (`08066fa`+) · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
 
@@ -67,7 +67,7 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # 145 tests, ~1s
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
 | `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Ships DISARMED: hardcoded LIVE_TRADING_ENABLED=False, REQUIRE_MANUAL_CONFIRMATION=True, kill switch + daily-loss breaker, confirmation queue w/ fail-closed expiry, idempotency ledger, caps. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Zero live-network test coverage — devnet + throwaway keypair REQUIRED before any mainnet use |
-| `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats, regime, gate, KB, status) |
+| `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats [equity/spend/realized/unrealized/cash], regime, gate, status); no knowledge tab, no paper-trading banner (removed 2026-08-25) |
 | `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, omotrades comparison, project report |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
 
@@ -173,6 +173,19 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
     blocks SIGHUP); `timeout 10 ollama list` guards the launch path. API
     keys in URLs are redacted from logs by a crowd.py log filter (installed
     at import — setup_logging() never runs under uvicorn).
+19. **Dashboard overhaul (2026-08-25, user-requested)**: feed rows read
+    ENTER/PASS (was ENTER/REJECT); `[model veto]` prefix REMOVED from
+    main.py — thesis stored/shown verbatim (also fixed double-appended
+    "invalidates if" sentence); full un-truncated model answer + token
+    contract address (click-to-copy) in expanded feed view; explicit amber
+    "model chose not to enter:" block when all rules pass but the model
+    declines. /api/stats gained realized_pnl_usd / unrealized_pnl_usd
+    (live marks net of exit costs, None when no prices) / total_spend_usd
+    (open cost basis incl. fee+slippage); UI shows ONLY those five numbers
+    (equity curve chart removed from UI, field kept in API for compat).
+    Knowledge tab + PaperTradingBanner component deleted (KB no longer
+    feeds any prompt — verified thinker.py never imports it; backend KB
+    endpoint untouched). PAPER_TRADING_ONLY safety machinery untouched.
 
 
 ## 6. Bugs found & fixed (all regression-tested)

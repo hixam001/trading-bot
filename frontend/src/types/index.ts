@@ -65,6 +65,9 @@ export interface StatsResponse {
   profit_factor: number | null
   max_drawdown_pct: number
   total_pnl_usd: number
+  realized_pnl_usd: number
+  unrealized_pnl_usd: number | null
+  total_spend_usd: number
   equity_curve: { closed_at: string; equity_usd: number }[]
   paper_trading_only: boolean
 }

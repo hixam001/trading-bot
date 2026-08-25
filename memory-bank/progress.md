@@ -55,4 +55,7 @@
   delete the file to re-pin after a legitimate cert rotation
 
 ## Status
-Live calibration day 0–1. Fresh $1,000 book. App runnable via ./start.sh.
+Live calibration day ~2. Fresh $1,000 book. Dashboard v2 shipped
+(2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
+address in feed detail, five-number portfolio stats panel; knowledge tab +
+paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).

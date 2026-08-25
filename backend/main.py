@@ -118,7 +118,6 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
 
             # --- GATE: think→gate intersection. Either side alone refuses.
             entry_allowed = gate.all_passed and think.wants_entry
-            vetoed_by_model = gate.all_passed and not think.wants_entry
 
             # --- SIZING + daily deploy cap -----------------------------------
             ticket = compute_ticket(portfolio.cash_usd, c.fomo_heat)
@@ -153,17 +152,16 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                     reused_now = True
                     reused += 1
 
-            thesis_text = ("[model veto] " if vetoed_by_model else "") + full_thesis
+            # Thesis shown verbatim — full_thesis already carries the model's
+            # answer plus its invalidation sentence exactly once.
+            thesis_text = full_thesis
 
             event = FeedEvent(
                 symbol=c.symbol,
                 mint_address=c.mint_address,
                 candidate_snapshot=c.to_dict(),
                 verdict="pass" if entry_allowed else "fail",
-                thesis=thesis_text + (
-                    f" | invalidates if: {think.invalidation}"
-                    if think.invalidation else ""
-                ),
+                thesis=thesis_text,
                 rule_breakdown=[
                     {"rule_id": r.rule_id, "passed": r.passed,
                      "detail": r.detail, "value": r.value}

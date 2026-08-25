@@ -1,9 +1,26 @@
 # Active Context — trading-bot
 
-**As of 2026-08-23 (omo-mimicry rebuild in progress).** Repo:
+**As of 2026-08-25 (calibration running; dashboard v2 shipped).** Repo:
 `/home/hixam/Downloads/Projects/trading-bot/`.
 
-## Current focus: rebuilding the bot on omotrades' logic
+## DONE
+### Dashboard overhaul (2026-08-25)
+User-requested frontend rework: feed rows now read ENTER/PASS; the
+`[model veto]` prefix was stripped from main.py so theses display verbatim
+(also fixed the double-appended "invalidates if" sentence); expanded feed
+rows show the COMPLETE model answer un-truncated plus the token contract
+address with click-to-copy, and an amber "model chose not to enter:" block
+when all rules pass but the model declines. /api/stats gained
+realized_pnl_usd, unrealized_pnl_usd (compute_unrealized_pnl over live
+marks, fail-soft on unavailable prices), total_spend_usd (open cost basis
+incl. fee+slippage). Portfolio-stats panel shows ONLY total equity / total
+spend / realized p&l / unrealized p&l / cash (equity-curve chart removed
+from UI; API field kept for compat). Knowledge tab and PaperTradingBanner
+deleted from the frontend (verified the THINK prompt never consumes the KB;
+read-only backend endpoint left intact). Holdings now render only in the
+right sidebar. 145 backend tests pass; vite build clean.
+
+## Current focus: calibration window continues
 Trigger: DB forensics showed −60% portfolio ($1,000 → $113 cash): 25 closed
 trades, 16% win rate, stops realizing −40% avg on a −20% config, and DONT
 re-entered 15×/stopped out 15× for −$709. User approved FULL mimicry of
