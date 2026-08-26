@@ -314,7 +314,7 @@ RESEARCH_PER_TICK: int = int(os.getenv("RESEARCH_PER_TICK", "8"))
 # Empty SOCIAL_LLM_API_KEY = stage disabled (fail-soft, like every feed).
 SOCIAL_LLM_BASE_URL: str = os.getenv("SOCIAL_LLM_BASE_URL", "https://api.groq.com/openai/v1")
 SOCIAL_LLM_API_KEY: str = os.getenv("SOCIAL_LLM_API_KEY", "")
-SOCIAL_LLM_MODEL: str = os.getenv("SOCIAL_LLM_MODEL", "llama-3.3-70b-versatile")
+SOCIAL_LLM_MODEL: str = os.getenv("SOCIAL_LLM_MODEL", "qwen/qwen3.8-27b")
 SOCIAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("SOCIAL_LLM_TIMEOUT_SECONDS", "20"))
 SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
 
