@@ -29,6 +29,19 @@ necessary veto layer). Source-level study: omo's fomo.server.ts,
 fomo-auth.server.ts, pipeline.server.ts, audit.server.ts, market.server.ts,
 execute.server.ts, blocklist.ts, PROCESS.md.
 
+## Planned next phase: LLM API migration (2026-08-26)
+
+See `docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md` and handoff section 14.
+Target DeepSeek V4 Flash direct API for the thinker in strict non-thinking
+JSON mode; retain Groq for evidence-only Twitter/social reads. Instrument
+tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes
+before switching. Provider failure must return thinker `pass` for entry; a
+template may explain but cannot approve an entry.
+
+Current learning is measurement-only: daily aggregates, rejection breakdowns,
+and post-close reflections. Reviewed OMO evidence shows adaptive context and
+auditability, not demonstrated autonomous weight training.
+
 ## DONE
 ### Exit engine (81b9898) — rule_engine/exits.py
 omo's exit set ported: stop −20%, trail 50%-activation/40pp give-back vs

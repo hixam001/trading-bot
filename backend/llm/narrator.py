@@ -11,10 +11,8 @@ Hard rules for this module:
     rule list; flags are recorded on the feed event, never silently dropped.
 
 Two backends:
-  - ollama   — local Qwen3-8B via a PERSISTENT httpx.AsyncClient (no per-call
-               client construction). Live mode only. Thinking mode disabled
-               ("think": false + /no_think + <think> stripping) because the
-               reasoning block at ~23 tok/s would dominate tick latency.
+    - deepseek — direct API JSON completion via a persistent client. Live mode
+                             only. The model narrates an already-decided result.
   - template — deterministic synthesizer used in mock mode or when Ollama is
                unreachable. Grounded BY CONSTRUCTION (it only formats the
                rule details it was handed).
@@ -28,6 +26,7 @@ from typing import Optional
 import httpx
 
 import config
+from llm.client import DeepSeekJSONClient
 from llm.grounding import validate_numbers, validate_thesis
 from models import GateDecision
 
@@ -81,6 +80,7 @@ class Narrator:
 
     def __init__(self) -> None:
         self._client: Optional[httpx.AsyncClient] = None
+        self._deepseek = DeepSeekJSONClient()
         self._ollama_ok: Optional[bool] = None   # None = unchecked
 
     @property
@@ -95,6 +95,7 @@ class Narrator:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+        await self._deepseek.aclose()
 
     async def check_ollama_health(self) -> bool:
         """GET /api/tags with a short timeout; cached between ticks (D4)."""
@@ -143,7 +144,7 @@ class Narrator:
     async def narrate(self, gate: GateDecision) -> NarrationResult:
         """
         Mock mode: template only (fully offline, deterministic).
-        Live mode: Ollama first, template fallback when unreachable/empty.
+        Live mode: DeepSeek first, template fallback when unreachable/empty.
         """
         detail_strings = [r.detail for r in gate.rules]
         rule_ids = [r.rule_id for r in gate.rules]
@@ -151,11 +152,13 @@ class Narrator:
         thesis: Optional[str] = None
         source = ""
         if config.DATA_BACKEND == "live":
-            if self._ollama_ok is None:
-                await self.check_ollama_health()
-            if self._ollama_ok:
-                thesis = await self._ollama_generate(build_prompt(gate))
-                source = f"ollama:{config.MODEL_NAME}" if thesis else ""
+            result = await self._deepseek.complete_json(
+                "You narrate an already-decided paper-trading result. Reply with plain text only.",
+                build_prompt(gate),
+                json_mode=False,
+            )
+            thesis = result.text if result else None
+            source = f"deepseek:{config.DEEPSEEK_MODEL}" if thesis else ""
 
         if not thesis:
             thesis = _template_thesis(gate)
@@ -203,10 +206,13 @@ async def generate_reflection(trade, rule_summary: str) -> str:
     if config.DATA_BACKEND == "live":
         n = Narrator()
         try:
-            if await n.check_ollama_health():
-                text = await n._ollama_generate(prompt)
-                if text:
-                    return text
+            result = await n._deepseek.complete_json(
+                "Reflect on the closed paper trade using only the supplied data.",
+                prompt,
+                json_mode=False,
+            )
+            if result:
+                return result.text
         finally:
             await n.aclose()
     pnl_pct = trade.realized_pnl_pct or 0.0

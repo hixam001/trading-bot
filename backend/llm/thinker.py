@@ -11,9 +11,8 @@ think→gate intersection omotrades runs. Either side alone refuses, and the
 refusal is journalled as loudly as an entry.
 
 Fail-closed by design:
-  * Ollama unreachable / unparsable output -> verdict falls back to the
-    deterministic template thinker, tagged 'degraded' in its source — never
-    an invented verdict.
+    * DeepSeek unreachable / unparsable output -> deterministic template
+        explanation with verdict forced to 'pass'.
   * DATA_BACKEND=mock always uses the template thinker — tests never touch
     Ollama.
 
@@ -29,9 +28,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Optional
 
-import httpx
-
 import config
+from llm.client import DeepSeekJSONClient
 from models import Candidate
 
 log = logging.getLogger(__name__)
@@ -61,7 +59,7 @@ class ThinkResult:
     thesis: str
     invalidation: str
     verdict: str                     # "buy" | "pass"
-    source: str                      # "ollama:<model>" | "template" | "degraded:*"
+    source: str                      # "deepseek:<model>" | "template" | "degraded:*"
     grounding_flags: list[str] = field(default_factory=list)
 
     @property
@@ -139,86 +137,38 @@ def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str]]:
 
 
 class Thinker:
-    """omo's think stage on local qwen3. One client per process."""
+    """OMO think stage using DeepSeek with a fail-closed fallback."""
 
     def __init__(self) -> None:
-        self._client: Optional[httpx.AsyncClient] = None
-        self._ollama_ok: Optional[bool] = None
-
-    @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(config.OLLAMA_TIMEOUT_SECONDS)
-            )
-        return self._client
+        self._deepseek = DeepSeekJSONClient()
 
     async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
-
-    async def check_ollama_health(self) -> bool:
-        try:
-            resp = await self.client.get(
-                config.OLLAMA_TAGS_ENDPOINT, timeout=httpx.Timeout(5.0)
-            )
-            ok = resp.status_code == 200 and config.MODEL_NAME in resp.text
-        except httpx.HTTPError:
-            ok = False
-        if ok != self._ollama_ok:
-            log.info("Ollama health: %s (model %s)", "UP" if ok else "DOWN",
-                     config.MODEL_NAME)
-        self._ollama_ok = ok
-        return ok
-
-    async def _ollama_generate(self, prompt: str) -> Optional[str]:
-        try:
-            resp = await self.client.post(
-                config.OLLAMA_GENERATE_ENDPOINT,
-                json={
-                    "model": config.MODEL_NAME,
-                    "prompt": prompt,
-                    "stream": False,
-                    "think": False,          # qwen3 thinking dominates latency
-                    "options": {
-                        "temperature": 0.2,
-                        "num_ctx": config.OLLAMA_NUM_CTX,
-        "num_predict": config.OLLAMA_NUM_PREDICT,
-                    },
-                },
-            )
-            resp.raise_for_status()
-            text = (resp.json().get("response") or "").strip()
-            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-            return text.strip() or None
-        except (httpx.HTTPError, ValueError) as exc:
-            log.warning("ollama generate failed: %s", exc)
-            return None
+        await self._deepseek.aclose()
 
     async def think(self, c: Candidate) -> ThinkResult:
         """
         The pre-trade verdict. Mock mode -> template thinker (offline,
-        deterministic). Live mode -> qwen3; any failure degrades to the
-        template with a 'degraded' tag rather than guessing a verdict.
+        deterministic). Live mode -> DeepSeek; any failure degrades to a
+        deterministic pass.
         """
         if config.DATA_BACKEND != "live":
             return template_think(c)
 
-        if self._ollama_ok is None:
-            await self.check_ollama_health()
-        if not self._ollama_ok:
-            result = template_think(c)
-            result.source = "degraded:ollama-down"
-            return result
+        result = await self._deepseek.complete_json(
+            "You are a conservative pre-trade analyst. Reply with strict JSON only.",
+            build_think_prompt(c),
+        )
+        parsed = parse_verdict_json(result.text) if result else None
+        if parsed is not None:
+            thesis, invalidation, verdict = parsed
+            return ThinkResult(
+                thesis, invalidation, verdict,
+                source=f"deepseek:{config.DEEPSEEK_MODEL}",
+            )
 
-        raw = await self._ollama_generate(build_think_prompt(c))
-        parsed = parse_verdict_json(raw) if raw else None
-        if parsed is None:
-            fallback = template_think(c)
-            fallback.source = "degraded:unparsable"
-            return fallback
-
-        thesis, invalidation, verdict = parsed
-        return ThinkResult(thesis, invalidation, verdict,
-                           source=f"ollama:{config.MODEL_NAME}")
+        # A template explains the refusal but cannot approve an entry when
+        # the configured live provider did not answer validly.
+        fallback = template_think(c)
+        fallback.verdict = "pass"
+        fallback.source = "degraded:deepseek-unavailable"
+        return fallback

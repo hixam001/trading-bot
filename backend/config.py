@@ -62,11 +62,18 @@ STATIC_KNOWLEDGE_FILE: Path = KNOWLEDGE_BASE_DIR / "static_knowledge.md"
 INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 
 # ---------------------------------------------------------------------------
-# Ollama / LLM — local only, no cloud fallback
+# LLM providers
 # Qwen3-8B: empirically ~23.6 tok/s on the target 6GB VRAM GPU with 100%
 # valid structured output. The LLM is the pipeline bottleneck; nothing here
 # may add avoidable serial I/O on top of it.
 # ---------------------------------------------------------------------------
+DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_TIMEOUT_SECONDS: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "12"))
+DEEPSEEK_MAX_TOKENS: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "192"))
+
+# Legacy local provider settings remain available for explicit offline use.
 OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen3:8b")
 OLLAMA_TIMEOUT_SECONDS: float = 120.0

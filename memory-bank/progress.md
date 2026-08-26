@@ -54,6 +54,12 @@
 - Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
   delete the file to re-pin after a legitimate cert rotation
 
+- LLM API migration is planned, not implemented: DeepSeek V4 Flash thinker,
+      Groq social, usage/outcome accounting, shadow replay, and canary gates are
+      specified in docs/08 and handoff section 14.
+- Current live thinker fallback can produce `buy` from the template during
+      Ollama failure; migration must change this to fail-closed `pass`.
+
 ## Status
 Live calibration day ~2. Fresh $1,000 book. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract

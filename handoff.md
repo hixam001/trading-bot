@@ -16,8 +16,10 @@ A local **paper-trading research system** for Solana memecoins. Every tick
 (Dexscreener pairs), computes a market-wide regime snapshot, and evaluates
 each candidate against **ten deterministic rules**. The AND of all rules is
 the entire entry decision. Exits come only from three fixed numeric checks.
-A local LLM (qwen3:8b via Ollama) **narrates decisions already made** — it
-never decides, scores, or overrides anything. Everything is logged to SQLite
+A local LLM (currently qwen3:8b via Ollama) performs a pre-trade **think/veto
+  stage** and narrates decisions; entry still requires the model's buy verdict
+  AND every deterministic rule to pass. The model never sizes, opens, closes,
+  or overrides numeric exits. Everything is logged to SQLite
 and visible in a React dashboard served by the backend itself.
 
 **Non-negotiable:** the paper-trading pipeline (`backend/`) is paper only —
@@ -220,10 +222,11 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   to re-pin (backend hard-aborts until then). Old SQLite book not migrated
   to Supabase — fresh book started there.
 - Regime thresholds are placeholders pending calibration data.
-- LLM narrations make ticks take ~40–90s for 20 candidates; fine at the
+- LLM thinker/narrations make ticks take ~40–90s for 20 candidates; fine at the
   60s interval, reduce MAX_CANDIDATES_PER_TICK if needed.
-- Post-calibration scope, deliberately unbuilt: partial scaling (E8/E9),
-  advisory LLM layer (D7), commit-reveal proof (docs/05).
+- Post-calibration scope, deliberately unbuilt: LLM API migration and usage
+  accounting (docs/08), durable OMO memory/events roadmap (OMO-R5), and the
+  remaining approved OMO roadmap items in section 13.
 
 ## 8. Next steps
 
@@ -233,8 +236,14 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 2. Watch first entries/exits; verify realized P&L sanity on close.
 3. Optional upgrades: Birdeye tier with token_security; fomo-index source
    for a crowd_heat-style rule (docs/06 §3.2).
-4. After calibration: E8/E9 partial scaling, D7 advisory layer, proof
-   mechanism only if going public with real capital.
+4. After calibration: complete approved OMO roadmap work in section 13,
+  starting with OMO-R5 memory/events.
+5. **LLM API migration:** implement section 14 and
+  docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. Target DeepSeek V4 Flash
+  direct API for the thinker, Groq for evidence-only social reads, and
+  measured usage/outcome instrumentation before switching models.
+6. No automatic learning, threshold changes, prompt changes, model changes,
+  or live-trading promotion is permitted.
 
 ## 9. Invariants checklist (before any change)
 
@@ -244,6 +253,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 - [ ] Money-touching changes keep atomic write→rowcount→cash ordering
 - [ ] External fields validated via require_type; None never coerced
 - [ ] Tests hermetic (tmp DBs, mock narration) and passing (145)
+- [ ] LLM provider failure returns thinker `pass` for entry; templates explain only
 - [ ] db_pg.py kept surface-identical to db.py if repository changes land
 - [ ] NO raw SQL outside api/db*.py — every query is a repository function
 - [ ] New rule ⇒ add vocab in llm/grounding.py + both-branch tests
@@ -455,3 +465,54 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
   rationale: exact bind-at-execute leaves no bypass channel while disarmed),
   then APPROVED as OMO-R7 in the same session once the operator reviewed the
   mechanism — it matters only when armed, and only for out-of-pipeline fills.
+
+## 14. LLM API migration and feedback plan (2026-08-26) — TO BE IMPLEMENTED
+
+Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. This is a planned
+provider migration, not an implementation status claim.
+
+### API/model decisions
+
+- **Thinker primary:** DeepSeek V4 Flash direct API, non-thinking mode, strict
+  JSON output, bounded prompt/output, and a provider-neutral adapter.
+- **Thesis/reflection analysis:** DeepSeek also supplies post-close thesis
+  reflection; it never performs execution itself.
+- **Thinker fallback:** deterministic refusal (`pass`) for timeout, outage,
+  quota exhaustion, invalid JSON, or provider error. A template may explain
+  the refusal but must never approve an entry while the provider is unavailable.
+- **Twitter/social:** retain Groq initially. It is an evidence-only,
+  low-latency classifier (`organic|peaked|unclear`), not a trade decision.
+  DeepSeek may be a later fallback only after an independent benchmark.
+- **Reflections/reports:** queue DeepSeek V4 Flash work off-peak; never block
+  exits or the tick loop. V4 Pro is an evaluation challenger only for now.
+
+### Required implementation order
+
+1. Add provider/model/prompt versioning and per-call token, cache, cost,
+   latency, status, and peak-window accounting in both database backends.
+2. Extract a shared OpenAI-compatible JSON client with DeepSeek, Groq, and
+   template adapters; preserve key redaction, bounded retries, and breakers.
+3. Run Qwen-versus-DeepSeek shadow replay over sealed snapshots and the DONT
+   corpus; shadow results must not alter paper trades.
+4. Canary DeepSeek in paper mode only, recording precision, missed upside,
+   adverse excursion, drawdown, p95 latency, JSON validity, fallback rate,
+   and cost per candidate/entry/closed trade.
+5. Add delayed outcome labels at 5m, 15m, 1h, 6h, and 24h, then produce
+   human-approved experiment proposals. Never auto-edit thresholds, prompts,
+   models, or trade state.
+6. Update older docs that still call Qwen narration-only after measured
+   migration results are available.
+
+### Cost and feedback controls
+
+- Target thinker budget: 300–600 input tokens and 60–140 output tokens,
+  maximum 192 output tokens, one request per candidate at most.
+- Preserve blocklist-before-think, candidate prioritization, thesis reuse,
+  no duplicate in-flight mint requests, daily USD/token budgets, and queues.
+- DeepSeek pricing is variable; the 2026-08-26 official V4 Flash example is
+  $0.22/M cache-miss input and $0.66/M output off-peak, with peak rates
+  currently double. Store the peak-window flag on every request.
+- Current learning is measurement-only: daily P&L, win rate, profit factor,
+  drawdown, rejection breakdowns, and post-close reflections. Reviewed OMO
+  evidence shows adaptive context and auditability, not demonstrated
+  autonomous model training or weight updates.
