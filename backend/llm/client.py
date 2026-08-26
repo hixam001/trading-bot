@@ -52,9 +52,9 @@ def _estimate_cost(provider: str, input_tokens: int, output_tokens: int, cache_t
         # cache-hit input is $0.007 / 1M
         # Peak rates are double
         mult = 2.0 if is_peak else 1.0
-        in_cost = (input_tokens / 1_000_000.0) * 0.22 * mult
-        out_cost = (output_tokens / 1_000_000.0) * 0.66 * mult
-        cache_cost = (cache_tokens / 1_000_000.0) * 0.007 * mult
+        in_cost = (input_tokens / 1_000_000.0) * 0.59 * mult
+        out_cost = (output_tokens / 1_000_000.0) * 0.79 * mult
+        cache_cost = (cache_tokens / 1_000_000.0) * 0.0 * mult
         return in_cost + out_cost + cache_cost
     elif provider == "groq":
         # Groq Llama 3 70B: ~$0.59/1M input, $0.79/1M output
@@ -121,14 +121,14 @@ class LLMClient:
             payload["response_format"] = {"type": "json_object"}
             
         started = time.monotonic()
-        is_peak = _is_peak_window() if self.provider == "deepseek" else False
+        is_peak = False
         
         try:
             response = await self.client.post(
                 f"{self.base_url}/chat/completions",
                 headers=self._headers(),
                 json=payload,
-                timeout=config.DEEPSEEK_TIMEOUT_SECONDS if self.provider == "deepseek" else config.SOCIAL_LLM_TIMEOUT_SECONDS,
+                timeout=config.GROQ_TIMEOUT_SECONDS if getattr(self, "is_main", False) else config.SOCIAL_LLM_TIMEOUT_SECONDS,
             )
             
             body: dict[str, Any] = {}
@@ -194,9 +194,10 @@ class LLMClient:
             )
 
 
-class DeepSeekClient(LLMClient):
+class MainGroqClient(LLMClient):
     def __init__(self, client: Optional[httpx.AsyncClient] = None):
-        super().__init__("deepseek", config.DEEPSEEK_BASE_URL, config.DEEPSEEK_API_KEY, config.DEEPSEEK_MODEL, client)
+        super().__init__("groq", config.GROQ_BASE_URL, config.GROQ_API_KEY, config.GROQ_MODEL, client)
+        self.is_main = True
 
 
 class GroqClient(LLMClient):

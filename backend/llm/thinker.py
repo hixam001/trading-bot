@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import config
-from llm.client import DeepSeekClient, LLMResult
+from llm.client import MainGroqClient, LLMResult
 from models import Candidate
 
 log = logging.getLogger(__name__)
@@ -168,21 +168,21 @@ class Thinker:
     """OMO think stage using DeepSeek with a fail-closed fallback."""
 
     def __init__(self) -> None:
-        self._deepseek = DeepSeekClient()
+        self._main_llm = MainGroqClient()
 
     async def aclose(self) -> None:
-        await self._deepseek.aclose()
+        await self._main_llm.aclose()
 
     async def think(self, c: Candidate, memory_line: str = "") -> ThinkResult:
         """
         The pre-trade verdict. Mock mode -> template thinker (offline,
-        deterministic). Live mode -> DeepSeek; any failure degrades to a
+        deterministic). Live mode -> MainGroqClient; any failure degrades to a
         deterministic pass.
         """
         if config.DATA_BACKEND != "live":
             return template_think(c)
 
-        result = await self._deepseek.complete_json(
+        result = await self._main_llm.complete_json(
             task="thinker",
             system_prompt="You are a conservative pre-trade analyst. Reply with strict JSON only.",
             user_prompt=build_think_prompt(c, memory_line),

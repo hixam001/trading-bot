@@ -253,8 +253,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 4. After calibration: complete approved OMO roadmap work in section 13,
   starting with OMO-R5 memory/events.
 5. **LLM API migration:** implemented in section 14.
-  docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. Target DeepSeek V4 Flash
-  direct API for the thinker, Groq for evidence-only social reads, and
+  docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. Target Groq for the thinker (qwen3.8-27b), Groq for evidence-only social reads, and
   measured usage/outcome instrumentation before switching models.
 6. No automatic learning, threshold changes, prompt changes, model changes,
   or live-trading promotion is permitted.
@@ -564,7 +563,7 @@ and 14 above.
 5. **OMO-R1 Independent verifier and binding report.** — ✅ IMPLEMENTED. Four-check binding verification (`tx_confirmed`, `time_ordering`, `fee_payer`, `mint_present`) in `/api/binding.json`. Fail-closed: missing RPC data → `unknown`, never `pass`. New `signature/phase/matched_by` columns on `decision_commits`.
 6. **OMO-R6 Public disclosure and reasoning feeds.** — ✅ IMPLEMENTED. `/api/disclosure.json` (machine state, no secrets) + `/api/reasoning.json` (per-decision provenance: model source, inputs hash, commit hash).
 7. **OMO-R7 Retro audit-log signature matching.** — ✅ IMPLEMENTED. `retro_matcher.py` runs post-cycle in both `main.py` and `run_live_cycle.py`. Exact-bind rows (`signature IS NOT NULL`) never overwritten. Double-claim prevented by `taken` set.
-8. **LLM migration completion** — DeepSeek for thesis/thinker and reflections;
+8. **LLM migration completion** — Groq for thesis/thinker and reflections;
    Groq for social evidence; usage accounting, shadow replay, paper canary,
    and delayed outcome labels before any model promotion.
 

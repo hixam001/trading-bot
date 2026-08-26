@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import re
 from pathlib import Path
+from backend.llm.client import MainGroqClient
 
 import config
 
@@ -57,7 +58,7 @@ async def _llm_digest(content: str) -> str | None:
     from llm.narrator import Narrator
     n = Narrator()
     try:
-        result = await n._deepseek.complete_json(
+        result = await n._main_llm.complete_json(
             task="kb_digest",
             system_prompt="Summarize the following trading notes in at most 5 concise sentences using ONLY the information given. Do not invent advice.",
             user_prompt=content[:6000],
@@ -67,7 +68,7 @@ async def _llm_digest(content: str) -> str | None:
             return result.text
         return None
     finally:
-        await n.aclose()
+        await n._main_llm.aclose()
 
 
 async def ingest_file(filename: str, content: str) -> dict:

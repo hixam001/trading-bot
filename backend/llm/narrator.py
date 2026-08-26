@@ -26,7 +26,7 @@ from typing import Optional
 import httpx
 
 import config
-from llm.client import DeepSeekClient, LLMResult
+from llm.client import MainGroqClient, LLMResult
 from llm.grounding import validate_numbers, validate_thesis
 from models import GateDecision
 
@@ -81,7 +81,7 @@ class Narrator:
 
     def __init__(self) -> None:
         self._client: Optional[httpx.AsyncClient] = None
-        self._deepseek = DeepSeekClient()
+        self._main_llm = MainGroqClient()
         self._ollama_ok: Optional[bool] = None   # None = unchecked
 
     @property
@@ -96,7 +96,7 @@ class Narrator:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
-        await self._deepseek.aclose()
+        await self._main_llm.aclose()
 
     async def check_ollama_health(self) -> bool:
         """GET /api/tags with a short timeout; cached between ticks (D4)."""
@@ -153,7 +153,7 @@ class Narrator:
         thesis: Optional[str] = None
         source = ""
         if config.DATA_BACKEND == "live":
-            result = await self._deepseek.complete_json(
+            result = await self._main_llm.complete_json(
                 task="narrator",
                 system_prompt="You narrate an already-decided paper-trading result. Reply with plain text only.",
                 user_prompt=build_prompt(gate),
@@ -209,10 +209,11 @@ async def generate_reflection(trade, rule_summary: str) -> str:
     if config.DATA_BACKEND == "live":
         n = Narrator()
         try:
-            result = await n._deepseek.complete_json(
+            result = await n._main_llm.complete_json(
                 task="reflection",
                 system_prompt="Reflect on the closed paper trade using only the supplied data.",
                 user_prompt=prompt,
+                budget=config.GROQ_MAX_TOKENS,
                 json_mode=False,
             )
             if result and result.text:

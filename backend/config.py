@@ -67,11 +67,11 @@ INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 # valid structured output. The LLM is the pipeline bottleneck; nothing here
 # may add avoidable serial I/O on top of it.
 # ---------------------------------------------------------------------------
-DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
-DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
-DEEPSEEK_TIMEOUT_SECONDS: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "12"))
-DEEPSEEK_MAX_TOKENS: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "192"))
+GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
+GROQ_BASE_URL: str = os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1")
+GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
+GROQ_TIMEOUT_SECONDS: float = float(os.getenv("GROQ_TIMEOUT_SECONDS", "12"))
+GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "192"))
 
 # Legacy local provider settings remain available for explicit offline use.
 OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
