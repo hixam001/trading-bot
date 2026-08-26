@@ -560,19 +560,62 @@ async def insert_decision_commit(
     nonce: str,
     payload_json: str,
     payload_hash: str,
+    model_version: Optional[str] = None,
+    prompt_version: Optional[str] = None,
 ) -> int:
     status = await conn.execute(
         """
         INSERT INTO decision_commits (
             created_at, tick_ts, symbol, mint_address, verdict,
-            entry_allowed, nonce, payload_json, payload_hash
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+            entry_allowed, nonce, payload_json, payload_hash,
+            model_version, prompt_version
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
         ON CONFLICT (payload_hash) DO NOTHING
         """,
         _ts(created_at), _ts(tick_ts), symbol, mint_address, verdict,
         bool(entry_allowed), nonce, payload_json, payload_hash,
+        model_version, prompt_version,
     )
     return _rowcount(status)
+
+async def insert_llm_call_usage(
+    conn: asyncpg.Connection,
+    ts: str,
+    task: str,
+    provider: str,
+    model: str,
+    status_str: str,
+    tick_ts: Optional[str] = None,
+    mint_address: Optional[str] = None,
+    latency_ms: Optional[int] = None,
+    input_tokens: Optional[int] = None,
+    cache_hit_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    estimated_cost_usd: Optional[float] = None,
+    is_peak_window: bool = False,
+    degradation_reason: Optional[str] = None,
+) -> int:
+    return await conn.fetchval(
+        """
+        INSERT INTO llm_call_usage (
+            ts, task, provider, model, tick_ts, mint_address, status,
+            latency_ms, input_tokens, cache_hit_tokens, output_tokens,
+            total_tokens, estimated_cost_usd, is_peak_window, degradation_reason
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        RETURNING id
+        """,
+        _ts(ts), task, provider, model, _ts(tick_ts) if tick_ts else None, mint_address, status_str,
+        latency_ms, input_tokens, cache_hit_tokens, output_tokens,
+        total_tokens, estimated_cost_usd, int(is_peak_window), degradation_reason,
+    )
+
+
+async def get_llm_call_usage(
+    conn: asyncpg.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch("SELECT * FROM llm_call_usage ORDER BY id DESC LIMIT $1", limit)
+    return [dict(r) for r in rows]
 
 
 # OMO-R7 retro attribution helpers -----------------------------------------

@@ -29,7 +29,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import config
-from llm.client import DeepSeekJSONClient
+from llm.client import DeepSeekClient, LLMResult
 from models import Candidate
 
 log = logging.getLogger(__name__)
@@ -67,6 +67,7 @@ class ThinkResult:
     break_taking: bool = False
     break_minutes: int = 0
     break_reason: str = ""
+    llm_usage: Optional[LLMResult] = None
 
     @property
     def wants_entry(self) -> bool:
@@ -167,7 +168,7 @@ class Thinker:
     """OMO think stage using DeepSeek with a fail-closed fallback."""
 
     def __init__(self) -> None:
-        self._deepseek = DeepSeekJSONClient()
+        self._deepseek = DeepSeekClient()
 
     async def aclose(self) -> None:
         await self._deepseek.aclose()
@@ -182,10 +183,11 @@ class Thinker:
             return template_think(c)
 
         result = await self._deepseek.complete_json(
-            "You are a conservative pre-trade analyst. Reply with strict JSON only.",
-            build_think_prompt(c, memory_line),
+            task="thinker",
+            system_prompt="You are a conservative pre-trade analyst. Reply with strict JSON only.",
+            user_prompt=build_think_prompt(c, memory_line),
         )
-        parsed = parse_verdict_json(result.text) if result else None
+        parsed = parse_verdict_json(result.text) if result and result.text else None
         if parsed is not None:
             thesis, invalidation, verdict, break_obj = parsed
             return ThinkResult(
@@ -194,11 +196,13 @@ class Thinker:
                 break_taking=bool(break_obj.get("taking")),
                 break_minutes=int(break_obj.get("minutes") or 0),
                 break_reason=str(break_obj.get("reason") or ""),
+                llm_usage=result
             )
 
         # A template explains the refusal but cannot approve an entry when
         # the configured live provider did not answer validly.
         fallback = template_think(c)
         fallback.verdict = "pass"
-        fallback.source = "degraded:deepseek-unavailable"
+        fallback.source = f"degraded:{result.degradation_reason if result else 'unavailable'}"
+        fallback.llm_usage = result
         return fallback

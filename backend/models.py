@@ -254,6 +254,8 @@ class FeedEvent:
     grounding_flags: list[str] = field(default_factory=list)   # ungrounded-term flags (D2) — flagged, never dropped
     narration_source: str = ""                 # "ollama:<model>" | "template" | ""
     led_to_trade_id: Optional[str] = None
+    model_version: Optional[str] = None
+    prompt_version: Optional[str] = None
     id: Optional[int] = None                   # set after DB insert
 
     def to_dict(self) -> dict[str, Any]:
@@ -271,6 +273,8 @@ class FeedEvent:
             "grounding_flags": self.grounding_flags,
             "narration_source": self.narration_source,
             "led_to_trade_id": self.led_to_trade_id,
+            "model_version": self.model_version,
+            "prompt_version": self.prompt_version,
         }
 
 

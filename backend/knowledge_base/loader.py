@@ -57,13 +57,15 @@ async def _llm_digest(content: str) -> str | None:
     from llm.narrator import Narrator
     n = Narrator()
     try:
-        if not await n.check_ollama_health():
-            return None
-        return await n._ollama_generate(
-            "Summarize the following trading notes in at most 5 concise "
-            "sentences using ONLY the information given. Do not invent "
-            "advice.\n\n" + content[:6000]
+        result = await n._deepseek.complete_json(
+            task="kb_digest",
+            system_prompt="Summarize the following trading notes in at most 5 concise sentences using ONLY the information given. Do not invent advice.",
+            user_prompt=content[:6000],
+            json_mode=False
         )
+        if result and result.text:
+            return result.text
+        return None
     finally:
         await n.aclose()
 

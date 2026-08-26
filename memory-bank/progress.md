@@ -69,7 +69,7 @@
 - Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
   delete the file to re-pin after a legitimate cert rotation
 
-- LLM API migration: DeepSeek V4 Flash thinker and Groq social reads are wired and verified. Usage/outcome accounting, shadow replay, and canary gates are specified in docs/08 and handoff section 14.
+- LLM API migration: DeepSeek V4 Flash thinker and Groq social reads are wired and verified. Usage/outcome accounting, shadow replay, and canary gates are implemented.
 - Live execution is wired but remains disarmed; no mainnet execution is
       authorized. Run the funded throwaway-keypair devnet drill before any
       future arming discussion.

@@ -104,9 +104,10 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
         # --- READ stage part 3: realtime social read (evidence only, never a
         # verdict). Provider-agnostic (Groq/Grok/OpenRouter); disabled when no
         # SOCIAL_LLM_API_KEY is configured.
+        social_usages = []
         try:
             from llm.social import enrich_social
-            await enrich_social(candidates)
+            _, social_usages = await enrich_social(candidates)
         except Exception:
             log.warning("social read failed - continuing without it",
                         exc_info=True)
@@ -136,6 +137,28 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
         log.info("tick regime: %s (%s)", "OK" if regime.regime_ok else "BAD",
                  regime.regime_detail)
 
+        # Record social LLM usages
+        if config.DATA_BACKEND == "live":
+            for su in social_usages:
+                await db.insert_llm_call_usage(
+                    conn,
+                    ts=tick_ts,
+                    task=su.task,
+                    provider=su.provider,
+                    model=su.model,
+                    status="success" if not su.degradation_reason else "error",
+                    tick_ts=tick_ts,
+                    mint_address=su.mint_address,
+                    latency_ms=int(su.latency_ms),
+                    input_tokens=su.input_tokens,
+                    cache_hit_tokens=su.cache_hit_tokens,
+                    output_tokens=su.output_tokens,
+                    total_tokens=su.total_tokens,
+                    estimated_cost_usd=su.estimated_cost_usd,
+                    is_peak_window=su.is_peak_window,
+                    degradation_reason=su.degradation_reason,
+                )
+
         for c in candidates:
             # --- THINK (omo order): the model writes its assessment BEFORE
             # any rule is evaluated. Its verdict is a necessary veto layer.
@@ -144,8 +167,35 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
             if memories:
                 memory_line = "Memory (context only): " + " | ".join(
                     f"{m['topic']}: {m['note']}" for m in memories)
-            think = await thinker.think(c, memory_line)
-            
+            try:
+                think = await thinker.think(c, memory_line)
+            except Exception as e:
+                log.error("thinker error on %s: %s", c.symbol, e, exc_info=True)
+                from llm.thinker import template_think
+                think = template_think(c)
+
+            # Record thinker LLM usage
+            if getattr(think, "llm_usage", None):
+                tu = think.llm_usage
+                await db.insert_llm_call_usage(
+                    conn,
+                    ts=tick_ts,
+                    task=tu.task,
+                    provider=tu.provider,
+                    model=tu.model,
+                    status="success" if not tu.degradation_reason else "error",
+                    tick_ts=tick_ts,
+                    mint_address=c.mint_address,
+                    latency_ms=int(tu.latency_ms),
+                    input_tokens=tu.input_tokens,
+                    cache_hit_tokens=tu.cache_hit_tokens,
+                    output_tokens=tu.output_tokens,
+                    total_tokens=tu.total_tokens,
+                    estimated_cost_usd=tu.estimated_cost_usd,
+                    is_peak_window=tu.is_peak_window,
+                    degradation_reason=tu.degradation_reason,
+                )
+
             if think.break_taking:
                 from rule_engine import liveness
                 liveness.set_break(True, think.break_minutes, think.break_reason)
@@ -240,7 +290,10 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                 (nonce + "|" + canonical).encode()).hexdigest()
             await db.insert_decision_commit(
                 conn, now_iso, now_iso, c.symbol, c.mint_address,
-                think.verdict, entry_allowed, nonce, canonical, payload_hash)
+                think.verdict, entry_allowed, nonce, canonical, payload_hash,
+                model_version=think.llm_usage.model if getattr(think, "llm_usage", None) else None,
+                prompt_version=think.llm_usage.pricing_snapshot_id if getattr(think, "llm_usage", None) else None,
+            )
 
             # --- EXECUTE: open only when both layers agree ------------------
             if entry_allowed and not refusal_reasons:
@@ -281,6 +334,10 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                     "thesis": think.thesis,
                 }
 
+            event.narration_source = getattr(think, "source", "unknown")
+            if getattr(think, "llm_usage", None):
+                event.model_version = think.llm_usage.model
+                event.prompt_version = think.llm_usage.pricing_snapshot_id
             event.id = await db.insert_feed_event(conn, event)
             await db.insert_event(
                 conn, "did" if entry_allowed else "refused", tick_ts,

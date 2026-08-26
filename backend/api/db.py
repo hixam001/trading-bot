@@ -54,7 +54,9 @@ CREATE TABLE IF NOT EXISTS feed_events (
     regime_ok               INTEGER NOT NULL DEFAULT 0,
     grounding_flags         TEXT    NOT NULL DEFAULT '[]',
     narration_source        TEXT    NOT NULL DEFAULT '',
-    led_to_trade_id         TEXT
+    led_to_trade_id         TEXT,
+    model_version           TEXT,
+    prompt_version          TEXT
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -136,13 +138,35 @@ CREATE TABLE IF NOT EXISTS decision_commits (
     -- OMO-R1/R7: fill binding and retro attribution fields (nullable)
     signature       TEXT,               -- Solana tx sig when a fill is bound
     phase           TEXT,               -- 'filled' | null
-    matched_by      TEXT                -- 'exact' | 'retro' | null
+    matched_by      TEXT,               -- 'exact' | 'retro' | null
+    model_version   TEXT,
+    prompt_version  TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_decision_commits_created
     ON decision_commits(created_at);
 CREATE INDEX IF NOT EXISTS idx_decision_commits_sig
     ON decision_commits(signature) WHERE signature IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS llm_call_usage (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                      TEXT    NOT NULL,
+    task                    TEXT    NOT NULL,
+    provider                TEXT    NOT NULL,
+    model                   TEXT    NOT NULL,
+    tick_ts                 TEXT,
+    mint_address            TEXT,
+    status                  TEXT    NOT NULL,
+    latency_ms              INTEGER,
+    input_tokens            INTEGER,
+    cache_hit_tokens        INTEGER,
+    output_tokens           INTEGER,
+    total_tokens            INTEGER,
+    estimated_cost_usd      REAL,
+    is_peak_window          INTEGER NOT NULL DEFAULT 0,
+    degradation_reason      TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_llm_call_usage_ts ON llm_call_usage(ts);
 
 -- OMO-R5 durable event stream and weighted lessons recalled by the thinker.
 CREATE TABLE IF NOT EXISTS events (
@@ -208,6 +232,10 @@ async def init_db() -> None:
             "ALTER TABLE decision_commits ADD COLUMN signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN phase TEXT",
             "ALTER TABLE decision_commits ADD COLUMN matched_by TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN model_version TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN prompt_version TEXT",
+            "ALTER TABLE feed_events ADD COLUMN model_version TEXT",
+            "ALTER TABLE feed_events ADD COLUMN prompt_version TEXT",
         ):
             try:
                 await conn.execute(stmt)
@@ -244,8 +272,8 @@ async def insert_feed_event(conn: aiosqlite.Connection, event: FeedEvent) -> int
         INSERT INTO feed_events (
             ts, symbol, mint_address, candidate_snapshot, verdict, thesis,
             rule_breakdown, failed_rule_ids, regime_ok, grounding_flags,
-            narration_source, led_to_trade_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            narration_source, led_to_trade_id, model_version, prompt_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.ts, event.symbol, event.mint_address,
@@ -253,6 +281,7 @@ async def insert_feed_event(conn: aiosqlite.Connection, event: FeedEvent) -> int
             json.dumps(event.rule_breakdown), json.dumps(event.failed_rule_ids),
             int(event.regime_ok), json.dumps(event.grounding_flags),
             event.narration_source, event.led_to_trade_id,
+            event.model_version, event.prompt_version,
         ),
     )
     await conn.commit()
@@ -274,6 +303,8 @@ def _row_to_feed_dict(row: aiosqlite.Row) -> dict[str, Any]:
         "grounding_flags": json.loads(row["grounding_flags"]),
         "narration_source": row["narration_source"],
         "led_to_trade_id": row["led_to_trade_id"],
+        "model_version": row["model_version"] if "model_version" in row.keys() else None,
+        "prompt_version": row["prompt_version"] if "prompt_version" in row.keys() else None,
     }
 
 
@@ -594,20 +625,65 @@ async def insert_decision_commit(
     nonce: str,
     payload_json: str,
     payload_hash: str,
+    model_version: Optional[str] = None,
+    prompt_version: Optional[str] = None,
 ) -> int:
     cursor = await conn.execute(
         """
         INSERT OR IGNORE INTO decision_commits (
             created_at, tick_ts, symbol, mint_address, verdict,
-            entry_allowed, nonce, payload_json, payload_hash
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            entry_allowed, nonce, payload_json, payload_hash,
+            model_version, prompt_version
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (created_at, tick_ts, symbol, mint_address, verdict,
-         int(entry_allowed), nonce, payload_json, payload_hash),
+         int(entry_allowed), nonce, payload_json, payload_hash,
+         model_version, prompt_version),
     )
     await conn.commit()
     return max(cursor.rowcount, 0)
 
+
+async def insert_llm_call_usage(
+    conn: aiosqlite.Connection,
+    ts: str,
+    task: str,
+    provider: str,
+    model: str,
+    status: str,
+    tick_ts: Optional[str] = None,
+    mint_address: Optional[str] = None,
+    latency_ms: Optional[int] = None,
+    input_tokens: Optional[int] = None,
+    cache_hit_tokens: Optional[int] = None,
+    output_tokens: Optional[int] = None,
+    total_tokens: Optional[int] = None,
+    estimated_cost_usd: Optional[float] = None,
+    is_peak_window: bool = False,
+    degradation_reason: Optional[str] = None,
+) -> int:
+    cursor = await conn.execute(
+        """
+        INSERT INTO llm_call_usage (
+            ts, task, provider, model, tick_ts, mint_address, status,
+            latency_ms, input_tokens, cache_hit_tokens, output_tokens,
+            total_tokens, estimated_cost_usd, is_peak_window, degradation_reason
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (ts, task, provider, model, tick_ts, mint_address, status,
+         latency_ms, input_tokens, cache_hit_tokens, output_tokens,
+         total_tokens, estimated_cost_usd, int(is_peak_window), degradation_reason),
+    )
+    await conn.commit()
+    return int(cursor.lastrowid)
+
+
+async def get_llm_call_usage(
+    conn: aiosqlite.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute("SELECT * FROM llm_call_usage ORDER BY id DESC LIMIT ?", (limit,))
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
 
 # OMO-R7 retro attribution helpers -----------------------------------------
 

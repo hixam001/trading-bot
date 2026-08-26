@@ -26,7 +26,7 @@ from typing import Optional
 import httpx
 
 import config
-from llm.client import DeepSeekJSONClient
+from llm.client import DeepSeekClient, LLMResult
 from llm.grounding import validate_numbers, validate_thesis
 from models import GateDecision
 
@@ -48,10 +48,11 @@ Do not mention any check not listed above. /no_think"""
 
 
 class NarrationResult:
-    def __init__(self, thesis: str, source: str, grounding_flags: list[str]):
+    def __init__(self, thesis: str, source: str, grounding_flags: list[str], llm_usage: Optional[LLMResult] = None):
         self.thesis = thesis
         self.source = source                    # "ollama:<model>" | "template"
         self.grounding_flags = grounding_flags
+        self.llm_usage = llm_usage
 
 
 def build_prompt(gate: GateDecision) -> str:
@@ -80,7 +81,7 @@ class Narrator:
 
     def __init__(self) -> None:
         self._client: Optional[httpx.AsyncClient] = None
-        self._deepseek = DeepSeekJSONClient()
+        self._deepseek = DeepSeekClient()
         self._ollama_ok: Optional[bool] = None   # None = unchecked
 
     @property
@@ -153,16 +154,18 @@ class Narrator:
         source = ""
         if config.DATA_BACKEND == "live":
             result = await self._deepseek.complete_json(
-                "You narrate an already-decided paper-trading result. Reply with plain text only.",
-                build_prompt(gate),
+                task="narrator",
+                system_prompt="You narrate an already-decided paper-trading result. Reply with plain text only.",
+                user_prompt=build_prompt(gate),
                 json_mode=False,
             )
             thesis = result.text if result else None
             source = f"deepseek:{config.DEEPSEEK_MODEL}" if thesis else ""
+            llm_usage = result
 
         if not thesis:
             thesis = _template_thesis(gate)
-            source = "template"
+            source = f"degraded:{result.degradation_reason}" if 'result' in locals() and result else "template"
 
         flags: list[str] = []
         if not thesis.strip():
@@ -176,7 +179,7 @@ class Narrator:
             log.warning("narration grounding flags for %s: %s",
                         gate.candidate.symbol, flags)
 
-        return NarrationResult(thesis.strip(), source, flags)
+        return NarrationResult(thesis.strip(), source, flags, llm_usage=locals().get('llm_usage'))
 
 
 # ---------------------------------------------------------------------------
@@ -207,11 +210,12 @@ async def generate_reflection(trade, rule_summary: str) -> str:
         n = Narrator()
         try:
             result = await n._deepseek.complete_json(
-                "Reflect on the closed paper trade using only the supplied data.",
-                prompt,
+                task="reflection",
+                system_prompt="Reflect on the closed paper trade using only the supplied data.",
+                user_prompt=prompt,
                 json_mode=False,
             )
-            if result:
+            if result and result.text:
                 return result.text
         finally:
             await n.aclose()

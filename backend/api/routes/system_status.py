@@ -18,12 +18,14 @@ async def get_system_status(request: Request):
     ollama_ok = await narrator.check_ollama_health()
     async with db.get_db() as conn:
         providers = await db.get_provider_call_summary(conn)
+        llm_usage = await db.get_llm_call_usage(conn, limit=100)
     return {
         "paper_trading_only": config.PAPER_TRADING_ONLY,
         "data_backend": config.DATA_BACKEND,
         "ollama_reachable": ollama_ok,
         "model": config.MODEL_NAME,
-        "narration_mode": "ollama" if (config.DATA_BACKEND == "live" and ollama_ok) else "template",
+        "narration_mode": "deepseek" if config.DATA_BACKEND == "live" else "template",
         "provider_calls_today": providers,
+        "llm_usage_recent": llm_usage,
         "tick_interval_seconds": config.TICK_INTERVAL_SECONDS,
     }

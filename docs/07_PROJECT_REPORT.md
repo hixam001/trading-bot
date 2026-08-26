@@ -43,7 +43,7 @@ position-opening function.
   the backend itself at http://localhost:8000 (single origin, one process).
 - **Launcher**: `./start.sh` (ollama serve if needed → backend + tick loop →
   browser), `./stop.sh`, `trading-bot.desktop` app-menu entry.
-- **LLM**: Ollama qwen3:8b, thinking mode disabled, template fallback.
+- **LLM**: DeepSeek V4 Flash via direct API for Thinker/Narrator, Groq API for evidence-only social reads, with comprehensive usage logging (latency, tokens, cost).
 - **Data**: Birdeye memepool trending (discovery + decimals + security),
   Dexscreener pairs (all rule numerics + age + socials), Jupiter lite-api
   (execution-quality price for open positions).

@@ -35,6 +35,7 @@ import httpx
 
 import config
 from models import Candidate
+from llm.client import GroqClient, LLMResult
 
 log = logging.getLogger(__name__)
 
@@ -80,90 +81,50 @@ def parse_social(raw: str) -> Optional[tuple[str, str]]:
 
 
 class SocialReader:
-    """Generic OpenAI-compatible client. The provider lives in three env
-    values; this class never branches on which one is configured."""
+    """Generic OpenAI-compatible client wrapper."""
 
     def __init__(self, client: Optional[httpx.AsyncClient] = None) -> None:
-        self._client = client
-        self._ok: Optional[bool] = None
+        self._groq = GroqClient(client=client)
 
     @property
     def enabled(self) -> bool:
         return bool(config.SOCIAL_LLM_API_KEY)
 
-    def _headers(self) -> dict:
-        return {
-            "authorization": f"Bearer {config.SOCIAL_LLM_API_KEY}",
-            "content-type": "application/json",
-        }
-
     async def health(self) -> bool:
         """Cheap GET /models probe, cached per process like the thinker does."""
-        if self._ok is not None:
-            return self._ok
-        own = self._client is None
-        client = self._client or httpx.AsyncClient()
-        try:
-            resp = await client.get(
-                config.SOCIAL_LLM_BASE_URL.rstrip("/") + "/models",
-                headers=self._headers(), timeout=10.0)
-            self._ok = resp.status_code == 200
-        except httpx.HTTPError:
-            self._ok = False
-        finally:
-            if own:
-                await client.aclose()
-        log.info("social provider %s health: %s", config.SOCIAL_LLM_BASE_URL,
-                 "UP" if self._ok else "DOWN")
-        return self._ok
+        return await self._groq.health()
 
-    async def read(self, c: Candidate) -> Optional[tuple[str, str]]:
-        """One social read. Returns (interest, note) or None on any failure."""
+    async def read(self, c: Candidate) -> Optional[tuple[str, str, LLMResult]]:
+        """One social read. Returns (interest, note, usage) or None on any failure."""
         if not self.enabled or not await self.health():
             return None
-        payload = {
-            "model": config.SOCIAL_LLM_MODEL,
-            "messages": [
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": _user_prompt(c)},
-            ],
-            "temperature": 0.2,
-            "max_tokens": 200,
-        }
-        own = self._client is None
-        client = self._client or httpx.AsyncClient()
-        try:
-            resp = await client.post(
-                config.SOCIAL_LLM_BASE_URL.rstrip("/") + "/chat/completions",
-                headers=self._headers(), json=payload,
-                timeout=config.SOCIAL_LLM_TIMEOUT_SECONDS)
-            if resp.status_code != 200:
-                log.info("social read %s: HTTP %s", c.symbol, resp.status_code)
-                return None
-            content = (resp.json().get("choices") or [{}])[0].get("message", {}).get("content") or ""
-        except (httpx.HTTPError, ValueError) as exc:
-            log.info("social read %s failed: %s", c.symbol, exc)
+            
+        result = await self._groq.complete_json(
+            task="social_read",
+            system_prompt=SYSTEM_PROMPT,
+            user_prompt=_user_prompt(c),
+            budget=200
+        )
+        parsed = parse_social(result.text) if result and result.text else None
+        if not parsed:
             return None
-        finally:
-            if own:
-                await client.aclose()
-        return parse_social(content)
+        return parsed[0], parsed[1], result
 
 
 async def enrich_social(
     candidates: list[Candidate],
     client: Optional[httpx.AsyncClient] = None,
     limit: Optional[int] = None,
-) -> int:
-    """Social-read the head of the board, fail-soft. Returns applied count.
+) -> tuple[int, list[LLMResult]]:
+    """Social-read the head of the board, fail-soft. Returns (applied count, usages).
     Disabled entirely (0 calls) when SOCIAL_LLM_API_KEY is empty."""
     reader = SocialReader(client=client)
     if not reader.enabled:
-        return 0
+        return 0, []
     picks = [c for c in candidates if c.social_interest is None]
     picks = picks[: (limit if limit is not None else config.SOCIAL_READ_PER_TICK)]
     if not picks:
-        return 0
+        return 0, []
     sem = asyncio.Semaphore(4)
 
     async def one(c: Candidate):
@@ -172,11 +133,14 @@ async def enrich_social(
 
     results = await asyncio.gather(*(one(c) for c in picks), return_exceptions=True)
     applied = 0
+    usages = []
     for cand, res in zip(picks, results):
         if isinstance(res, Exception) or res is None:
             continue
-        cand.social_interest, cand.social_note = res
+        cand.social_interest, cand.social_note, usage = res
+        usage.mint_address = cand.mint_address # Attach mint to LLMResult
+        usages.append(usage)
         applied += 1
     if applied:
         log.info("social read: %s/%s candidates classified", applied, len(picks))
-    return applied
+    return applied, usages

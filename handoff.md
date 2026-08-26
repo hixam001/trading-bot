@@ -226,9 +226,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 - Regime thresholds are placeholders pending calibration data.
 - LLM thinker/narrations make ticks take ~40–90s for 20 candidates; fine at the
   60s interval, reduce MAX_CANDIDATES_PER_TICK if needed.
-- Post-calibration scope, deliberately unbuilt: LLM API migration and usage
-  accounting (docs/08), durable OMO memory/events roadmap (OMO-R5), and the
-  remaining approved OMO roadmap items in section 13.
+- Post-calibration scope, deliberately unbuilt: Full multi-wallet management, auto-adjustment of thresholds based on LLM feedback (docs/08), durable OMO memory/events roadmap (OMO-R5), and the remaining approved OMO roadmap items in section 13.
 
 ### OMO-R5 implementation (2026-08-26)
 
@@ -254,7 +252,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
    for a crowd_heat-style rule (docs/06 §3.2).
 4. After calibration: complete approved OMO roadmap work in section 13,
   starting with OMO-R5 memory/events.
-5. **LLM API migration:** implement section 14 and
+5. **LLM API migration:** implemented in section 14.
   docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. Target DeepSeek V4 Flash
   direct API for the thinker, Groq for evidence-only social reads, and
   measured usage/outcome instrumentation before switching models.
@@ -499,7 +497,7 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
   then APPROVED as OMO-R7 in the same session once the operator reviewed the
   mechanism — it matters only when armed, and only for out-of-pipeline fills.
 
-## 14. LLM API migration and feedback plan (2026-08-26) — TO BE IMPLEMENTED
+## 14. LLM API migration and feedback plan (2026-08-26) — IMPLEMENTED
 
 Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. This is a planned
 provider migration. 

@@ -46,8 +46,16 @@ async def run_daily_learning() -> dict:
     async with db.get_db() as conn:
         closed = await db.get_all_closed_trades(conn)
         events = await db.get_feed_events(conn, limit=1000)
+        usages = await db.get_llm_call_usage(conn, limit=1000)
 
     stats = compute_daily_stats(closed)
+    
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    daily_cost = sum(
+        u["estimated_cost_usd"] or 0.0 for u in usages
+        if u["ts"].startswith(today)
+    )
+    stats["daily_llm_cost_usd"] = round(daily_cost, 4)
 
     # G2: which rules are responsible for the most rejections?
     reject_counter: Counter = Counter()

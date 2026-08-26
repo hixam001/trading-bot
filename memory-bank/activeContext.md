@@ -66,11 +66,11 @@ necessary veto layer). Source-level study: omo's fomo.server.ts,
 fomo-auth.server.ts, pipeline.server.ts, audit.server.ts, market.server.ts,
 execute.server.ts, blocklist.ts, PROCESS.md.
 
-## Planned next phase: LLM API migration continuation (2026-08-26)
+## Completed phase: LLM API migration continuation (2026-08-26)
 
 See `docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md` and handoff section 14.
-DeepSeek V4 Flash direct API is configured for the thinker in strict non-thinking JSON mode; Groq is configured for evidence-only Twitter/social reads.
-Instrumentation of tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes are next. Provider failure must return thinker `pass` for entry; a template may explain but cannot approve an entry.
+DeepSeek direct API is configured for the thinker in strict non-thinking JSON mode; Groq is configured for evidence-only Twitter/social reads.
+Instrumentation of tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes have been implemented. Provider failure must return thinker `pass` for entry; a template may explain but cannot approve an entry.
 
 Current learning is measurement-only: daily aggregates, rejection breakdowns,
 and post-close reflections. Reviewed OMO evidence shows adaptive context and
