@@ -178,6 +178,12 @@ async def run_cycle(once: bool = False) -> dict:
                "candidates": len(candidates)}
     for c in candidates:
         think = await thinker.think(c)
+        
+        if think.break_taking:
+            from rule_engine import liveness
+            liveness.set_break(think.break_minutes, think.break_reason)
+            log.warning("self-regulating break triggered: %d mins (reason: %s)", think.break_minutes, think.break_reason)
+            
         gate = evaluate_gate(c, portfolio, regime, ACTIVE_RULES)
         entry_allowed = gate.all_passed and think.wants_entry
         failed = [r.rule_id for r in gate.rules if not r.passed]

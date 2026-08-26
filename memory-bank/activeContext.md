@@ -4,6 +4,10 @@
 `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### OMO-R4 Self-regulating break system (2026-08-26)
+File-backed state (`break_state.json` inside `live_execution/state`) implements the `not_on_break` rule parity. The thinker can pass a `"break": {"taking": true, "minutes": 15, "reason": "..."}` block in its JSON verdict, which sets a persistent UTC expiry timestamp. While on break, the gate fails closed loudly on the `not_on_break` rule, blocking entries while exits continue functioning normally. Fail-safe semantics apply on state file corruption. LLM API migration for thinker (DeepSeek) and social (Groq) is verified.
+
+## DONE
 ### OMO-R5 memory/events system (2026-08-26)
 Durable mirrored `events` and weighted `memories` tables now exist in both
 repositories. Tick stages write read/thought/did/refused/trade events;
@@ -38,14 +42,11 @@ necessary veto layer). Source-level study: omo's fomo.server.ts,
 fomo-auth.server.ts, pipeline.server.ts, audit.server.ts, market.server.ts,
 execute.server.ts, blocklist.ts, PROCESS.md.
 
-## Planned next phase: LLM API migration (2026-08-26)
+## Planned next phase: LLM API migration continuation (2026-08-26)
 
 See `docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md` and handoff section 14.
-Target DeepSeek V4 Flash direct API for the thinker in strict non-thinking
-JSON mode; retain Groq for evidence-only Twitter/social reads. Instrument
-tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes
-before switching. Provider failure must return thinker `pass` for entry; a
-template may explain but cannot approve an entry.
+DeepSeek V4 Flash direct API is configured for the thinker in strict non-thinking JSON mode; Groq is configured for evidence-only Twitter/social reads.
+Instrumentation of tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes are next. Provider failure must return thinker `pass` for entry; a template may explain but cannot approve an entry.
 
 Current learning is measurement-only: daily aggregates, rejection breakdowns,
 and post-close reflections. Reviewed OMO evidence shows adaptive context and

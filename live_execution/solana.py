@@ -23,11 +23,16 @@ log = logging.getLogger(__name__)
 LAMPORTS_PER_SOL = 1_000_000_000
 
 
-async def rpc(method: str, params: list, timeout: float = 15.0):
+async def rpc(
+    method: str,
+    params: list,
+    timeout: float = 15.0,
+    endpoints: Optional[list[str]] = None,
+):
     """JSON-RPC across RPC_URLS; first non-error result wins.
     None = every endpoint failed."""
     async with httpx.AsyncClient(timeout=timeout) as client:
-        for endpoint in config.RPC_URLS:
+        for endpoint in endpoints or config.RPC_URLS:
             try:
                 resp = await client.post(
                     endpoint,
@@ -45,12 +50,14 @@ async def rpc(method: str, params: list, timeout: float = 15.0):
     return None
 
 
-async def send_raw_transaction(raw_signed: bytes) -> Optional[str]:
+async def send_raw_transaction(
+    raw_signed: bytes, endpoints: Optional[list[str]] = None
+) -> Optional[str]:
     """Broadcast the signed tx across RPCs; return the first accepted
     signature, else None."""
     payload = base64.b64encode(raw_signed).decode()
     async with httpx.AsyncClient(timeout=15.0) as client:
-        for endpoint in config.RPC_URLS:
+        for endpoint in endpoints or config.RPC_URLS:
             try:
                 resp = await client.post(
                     endpoint,
@@ -79,7 +86,11 @@ async def send_raw_transaction(raw_signed: bytes) -> Optional[str]:
     return None
 
 
-async def confirm_signature(signature: str, timeout_s: float | None = None) -> dict:
+async def confirm_signature(
+    signature: str,
+    timeout_s: float | None = None,
+    endpoints: Optional[list[str]] = None,
+) -> dict:
     """
     Poll getSignatureStatuses until confirmed/finalized (2s cadence). A send
     that is never confirmed is NOT a fill and must never be journalled.
@@ -87,7 +98,11 @@ async def confirm_signature(signature: str, timeout_s: float | None = None) -> d
     """
     deadline = asyncio.get_event_loop().time() + (timeout_s or config.CONFIRM_TIMEOUT_SECONDS)
     while asyncio.get_event_loop().time() < deadline:
-        res = await rpc("getSignatureStatuses", [[signature], {"searchTransactionHistory": False}])
+        res = await rpc(
+            "getSignatureStatuses",
+            [[signature], {"searchTransactionHistory": False}],
+            endpoints=endpoints,
+        )
         values = (res or {}).get("value") or []
         if values and values[0]:
             status = values[0]

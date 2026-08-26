@@ -25,6 +25,7 @@ from typing import Optional
 from live_execution import config, kill_switch, solana, wallet
 from live_execution.confirmation_queue import ConfirmationError
 from live_execution.jupiter_executor import (
+    Refusal,
     USDC_DECIMALS,
     _BACKEND_QUOTE_URL,
     _BACKEND_USDC_MINT,
@@ -105,11 +106,15 @@ async def place_buy(
 ) -> OrderResult:
     """Automated omo-style BUY: every guard fails closed before any network call."""
     base = OrderResult(side="buy", symbol=symbol, mint=mint)
-    if not config.LIVE_TRADING_ENABLED:
-        return OrderResult(**{**base.to_json(), "status": "unarmed",
-                              "reason": "LIVE_TRADING_ENABLED is False - real execution is disarmed"})
     ledger = ledger or default_ledger()
     queue = queue or default_queue()
+    try:
+        preflight(usd, mint, output_decimals, ledger)
+    except Refusal as exc:
+        status = "unarmed" if not config.LIVE_TRADING_ENABLED else "blocked"
+        return OrderResult(**{**base.to_json(), "status": status, "reason": str(exc)})
+    except kill_switch.KillSwitchTripped as exc:
+        return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
     try:
         kill_switch.assert_not_tripped()
     except Exception as exc:

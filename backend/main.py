@@ -145,10 +145,18 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                 memory_line = "Memory (context only): " + " | ".join(
                     f"{m['topic']}: {m['note']}" for m in memories)
             think = await thinker.think(c, memory_line)
+            
+            if think.break_taking:
+                from rule_engine import liveness
+                liveness.set_break(think.break_minutes, think.break_reason)
+                log.warning("self-regulating break triggered: %d mins (reason: %s)", think.break_minutes, think.break_reason)
+                
             await db.insert_event(
                 conn, "thought", tick_ts, c.symbol, c.mint_address,
                 {"verdict": think.verdict, "source": think.source,
-                 "invalidation": think.invalidation},
+                 "invalidation": think.invalidation,
+                 "break_taking": think.break_taking,
+                 "break_reason": think.break_reason},
             )
 
             portfolio = await load_portfolio_state(conn)

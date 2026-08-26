@@ -381,7 +381,7 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
   expose recent events via existing feed routes.
 - Operator flagged this IMPORTANT: do this one before all others.
 
-### OMO-R4 — Self-regulating break system ✅ APPROVED
+### OMO-R4 — Self-regulating break system ✅ IMPLEMENTED (2026-08-26)
 - omo reference: `not_on_break` gate rule + `breakUntil`/`breakReason` state in
   omo-brain.server.ts.
 - The loop may pause itself for a stated reason, persisted until a timestamp;
@@ -500,7 +500,8 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 ## 14. LLM API migration and feedback plan (2026-08-26) — TO BE IMPLEMENTED
 
 Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. This is a planned
-provider migration, not an implementation status claim.
+provider migration. 
+**Status update (2026-08-26):** DeepSeek V4 Flash is now the primary thinker API, and Groq is the primary social read API. Both are wired and functioning correctly. Instrumentation and shadow replay steps remain in progress.
 
 ### API/model decisions
 
@@ -556,8 +557,8 @@ and 14 above.
 
 ### Approved — implement in this order
 
-1. **OMO-R5 Memory/events system** — IMPORTANT; implement first.
-2. **OMO-R4 Self-regulating break system.**
+1. **OMO-R5 Memory/events system** — ✅ IMPLEMENTED.
+2. **OMO-R4 Self-regulating break system** — ✅ IMPLEMENTED.
 3. **OMO-R3 Durable thesis book.**
 4. **OMO-R2 FOMO intel with author P&L.**
 5. **OMO-R1 Independent verifier and binding report.**

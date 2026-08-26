@@ -49,7 +49,8 @@ price ${price_usd} | liquidity ${liquidity_usd} | mcap ${market_cap_usd}
 Respond with STRICT JSON only (no prose outside it):
 {{"thesis": "1-2 sentences: why attention exists, citing ONLY the numbers above",
   "invalidation": "one sentence: the specific move that proves this wrong",
-  "verdict": "buy" or "pass"}}
+  "verdict": "buy" or "pass",
+  "break": {{"taking": false, "minutes": 15, "reason": "why"}} }}
 
 Be conservative: refuse hype without substance, refuse tokens whose crowd \
 is already leaving. /no_think"""
@@ -62,6 +63,9 @@ class ThinkResult:
     verdict: str                     # "buy" | "pass"
     source: str                      # "deepseek:<model>" | "template" | "degraded:*"
     grounding_flags: list[str] = field(default_factory=list)
+    break_taking: bool = False
+    break_minutes: int = 0
+    break_reason: str = ""
 
     @property
     def wants_entry(self) -> bool:
@@ -121,8 +125,8 @@ def template_think(c: Candidate) -> ThinkResult:
     )
 
 
-def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str]]:
-    """Extract (thesis, invalidation, verdict) from raw model text."""
+def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str, dict]]:
+    """Extract (thesis, invalidation, verdict, break_obj) from raw model text."""
     match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
     if not match:
         return None
@@ -135,7 +139,10 @@ def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str]]:
     invalidation = str(obj.get("invalidation") or "").strip()
     if verdict not in ("buy", "pass") or not thesis or not invalidation:
         return None
-    return thesis, invalidation, verdict
+    break_obj = obj.get("break") or {}
+    if not isinstance(break_obj, dict):
+        break_obj = {}
+    return thesis, invalidation, verdict, break_obj
 
 
 class Thinker:
@@ -162,10 +169,13 @@ class Thinker:
         )
         parsed = parse_verdict_json(result.text) if result else None
         if parsed is not None:
-            thesis, invalidation, verdict = parsed
+            thesis, invalidation, verdict, break_obj = parsed
             return ThinkResult(
                 thesis, invalidation, verdict,
                 source=f"deepseek:{config.DEEPSEEK_MODEL}",
+                break_taking=bool(break_obj.get("taking")),
+                break_minutes=int(break_obj.get("minutes") or 0),
+                break_reason=str(break_obj.get("reason") or ""),
             )
 
         # A template explains the refusal but cannot approve an entry when

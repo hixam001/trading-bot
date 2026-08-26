@@ -182,7 +182,11 @@ def not_on_break(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult
     from rule_engine import liveness
     on_break = liveness.is_on_break()
     ok = not on_break
-    detail = "awake" if ok else "operator break active — no entries"
+    if ok:
+        detail = "awake"
+    else:
+        reason = liveness.break_reason()
+        detail = f"operator break active — {reason}" if reason else "operator break active — no entries"
     return RuleResult("not_on_break", ok, detail, value=ok)
 
 

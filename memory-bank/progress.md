@@ -3,6 +3,7 @@
 ## Works (all verified)
 - [x] OMO-R5 durable events + weighted memory recall, prompt context,
       stage event hooks, `/api/events.json` (2026-08-26)
+- [x] OMO-R4 Self-regulating break system wired into thinker and gate loops (2026-08-26)
 - [x] 10 deterministic rules, both branches tested, no short-circuit (B1–B12)
 - [x] Candidate model with all fields incl. decimals + None semantics (B13)
 - [x] Market regime: computed once/tick, own table, API endpoint (C1–C5)
@@ -61,9 +62,7 @@
 - Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
   delete the file to re-pin after a legitimate cert rotation
 
-- LLM API migration is planned, not implemented: DeepSeek V4 Flash thinker,
-      Groq social, usage/outcome accounting, shadow replay, and canary gates are
-      specified in docs/08 and handoff section 14.
+- LLM API migration: DeepSeek V4 Flash thinker and Groq social reads are wired and verified. Usage/outcome accounting, shadow replay, and canary gates are specified in docs/08 and handoff section 14.
 - Live execution is wired but remains disarmed; no mainnet execution is
       authorized. Run the funded throwaway-keypair devnet drill before any
       future arming discussion.

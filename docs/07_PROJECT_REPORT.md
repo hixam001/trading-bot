@@ -320,7 +320,11 @@ events are available through the read-only `/api/events.json` endpoint.
 Regression tests cover validation, persistence, hit increments, prompt
 injection, and mock-tick stage events.
 
-## 14. Incorporated P0 report
+## 14. OMO-R4 Self-regulating break system
+
+Implemented 2026-08-26. The `not_on_break` rule was updated to use a persistent JSON state file that fail-closes if corrupted. The thinker can pass a `break` block (minutes and reason) in its JSON verdict, which triggers a persistent UTC expiry timestamp. While on break, the gate fails closed on the `not_on_break` rule, preventing new entries but allowing exits to continue uninterrupted.
+
+## 15. Incorporated P0 report
 
 The former standalone `P0_REPORT.md` is incorporated here as the historical
 P0 implementation and verification record.
