@@ -322,10 +322,10 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 ## 13. Approved omo-parity roadmap (2026-08-26) — TO BE IMPLEMENTED
 
 Decision record from the source-level comparison vs omotrades/omo (full detail
-in docs/P0_REPORT.md §6). Six features APPROVED, two REJECTED, one DEFERRED.
+in docs/P0_REPORT.md §6). Seven features APPROVED, one REJECTED, one DEFERRED.
 Every approved item carries a stable ID (**OMO-R#**) — use it in branch names,
 commit messages and test files so later implementation is traceable. Order of
-implementation: R5 first (marked important), then R4, R3, R2, R1, R6.
+implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 
 ### OMO-R5 — Memory/events system ✅ APPROVED, IMPORTANT (implement FIRST)
 - omo reference: `OmoEvent`/`OmoMemory` types + hydrate logic in
@@ -415,15 +415,43 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6.
 - Full web UI terminal is explicitly OUT OF SCOPE for now; JSON first, a UI
   can be layered later on the same endpoints.
 
+### OMO-R7 — Audit-log signature matching (retro attribution) ✅ APPROVED
+- omo reference: `linkAuditToFills()` in `src/lib/audit.server.ts`.
+- Purpose: attribute fills to decision rows when a fill BYPASSES the pipeline
+  (e.g. a hand-placed trade against the live wallet once armed). Exact
+  bind-at-execute (CommitLog.bind) stays the PRIMARY binding and is never
+  overwritten by this layer — retro matching only ever touches rows whose
+  signature is still null.
+- Algorithm (omo's, kept intact):
+    1. pending = decision rows with verdict=act AND signature IS NULL
+       (newest 60);
+    2. candidates = recent fills (newest 120) whose signature is not already
+      claimed by another row;
+    3. match on: same symbol (case-insensitive, $ stripped) + same side +
+       fill_at >= decision_at + within a 12h window;
+    4. earliest unmatched fill wins; a `taken` signatures set grows during the
+       run so nothing is claimed twice;
+    5. write back signature, matched_at, phase=filled.
+- Safeguards (beyond omo): an "unattributed fills" listing must be visible in
+  /api/proof.json rather than silently heuristic-matching every orphan; each
+  matched row keeps a `matched_by: retro` marker so exact vs retro bindings are
+  distinguishable in the public surface.
+- Touch points: query helpers in api/db.py + api/db_pg.py (identical surfaces),
+  matcher module callable from run_live_cycle.py post-cycle step and main.py,
+  surfaced via api/routes/proof.py.
+- Tests: double-claim prevention (3 decisions / 2 fills), window edge cases,
+  side/symbol mismatch rejection, exact-bind precedence over retro.
+
 ### REJECTED / DEFERRED — do not re-litigate without operator approval
 - ❌ **On-chain memo commitments + reveal protocol** (omo precommit memo layer)
   — REJECTED 2026-08-26. Local CommitLog seal-before-broadcast stands as the
   sealing mechanism; OMO-R1 is scoped to work WITHOUT on-chain memos.
-- ❌ **Audit-log retro signature linking** (12h-window match of fills to past
-  decisions) — REJECTED 2026-08-26. Direct bind-at-execute-time kept; it is
-  stricter than retro-matching.
 - ⏸ **Off-book multi-chain tracking** (BNB/other-chain positions marked and
   repriced into equity) — DEFERRED temporarily. Revisit only after the Solana
   side is armed and has a live track record.
 - ℹ️ Armed trading history needs no build work: it accrues automatically once
   live cycles run armed.
+- 📝 Audit-log retro signature linking was initially REJECTED (2026-08-26,
+  rationale: exact bind-at-execute leaves no bypass channel while disarmed),
+  then APPROVED as OMO-R7 in the same session once the operator reviewed the
+  mechanism — it matters only when armed, and only for out-of-pipeline fills.
