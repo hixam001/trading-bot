@@ -32,40 +32,6 @@ if ! (cd "$ROOT/frontend" && npm run build --silent >"$LOGS/frontend-build.log" 
   echo "[frontend] continuing with the last successful build if present."
 fi
 
-# --- 3) Ollama (only started if not already running) -------------------------
-MODEL_NAME="$(grep -E '^MODEL_NAME=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
-MODEL_NAME="${MODEL_NAME:-qwen3:8b}"
-
-OLLAMA_STARTED_BY_US=0
-if up http://localhost:11434/api/tags; then
-  echo "[ollama] already running — reusing"
-else
-  if command -v ollama >/dev/null 2>&1; then
-    echo "[ollama] starting ollama serve..."
-    nohup setsid ollama serve >"$LOGS/ollama.log" 2>&1 </dev/null &
-    echo $! >"$RUN/ollama.pid"
-    OLLAMA_STARTED_BY_US=1
-    for _ in $(seq 1 30); do
-      up http://localhost:11434/api/tags && break
-      sleep 1
-    done
-    up http://localhost:11434/api/tags \
-      && echo "[ollama] up" \
-      || echo "[ollama] WARNING: did not come up in 30s — narration falls back to templates"
-  else
-    echo "[ollama] WARNING: ollama not installed — narration falls back to templates"
-  fi
-fi
-echo "$OLLAMA_STARTED_BY_US" >"$RUN/ollama_started_by_us"
-
-if command -v ollama >/dev/null 2>&1; then
-  # timeout guard: a wedged `ollama list` must never block the backend launch
-  if ! timeout 10 ollama list 2>/dev/null | grep -q "$MODEL_NAME"; then
-    echo "[ollama] NOTE: model '$MODEL_NAME' not found locally."
-    echo "[ollama]       Run 'ollama pull $MODEL_NAME' for LLM narration;"
-    echo "[ollama]       until then deterministic template narration is used."
-  fi
-fi
 
 # --- 4) Backend (+ in-process tick loop) -------------------------------------
 if up http://localhost:8000/api/system-status; then
