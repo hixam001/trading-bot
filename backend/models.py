@@ -54,6 +54,23 @@ class Candidate:
     buys_1h: Optional[int] = None
     sells_1h: Optional[int] = None
     price_change_1h_pct: Optional[float] = None   # percent, e.g. -12.5
+    # --- omo-parity breadth fields ---------------------------------------
+    price_change_5m_pct: Optional[float] = None
+    price_change_6h_pct: Optional[float] = None
+    price_change_24h_pct: Optional[float] = None
+    fdv_usd: Optional[float] = None               # fully-diluted valuation
+    buys_6h: Optional[int] = None
+    sells_6h: Optional[int] = None
+    volume_6h_usd: Optional[float] = None
+    pool_count: Optional[int] = None              # number of Solana pools
+    total_liquidity_usd: Optional[float] = None   # summed across ALL pools
+    top_pool_share: Optional[float] = None        # deepest/total, 0..1
+    boosted: Optional[bool] = None                # paid Dexscreener boost active
+    # Realtime social read (llm/social.py) - EVIDENCE ONLY, never a verdict:
+    # interest in {organic, peaked, unclear}; note is one grounded sentence.
+    social_interest: Optional[str] = None
+    web_summary: Optional[str] = None            # condensed web evidence lines
+    social_note: Optional[str] = None
     age_hours: Optional[float] = None
     holder_count: Optional[int] = None
     top_holder_pct: Optional[float] = None
@@ -96,6 +113,20 @@ class Candidate:
             "buys_1h": self.buys_1h,
             "sells_1h": self.sells_1h,
             "price_change_1h_pct": self.price_change_1h_pct,
+            "price_change_5m_pct": self.price_change_5m_pct,
+            "price_change_6h_pct": self.price_change_6h_pct,
+            "price_change_24h_pct": self.price_change_24h_pct,
+            "fdv_usd": self.fdv_usd,
+            "buys_6h": self.buys_6h,
+            "sells_6h": self.sells_6h,
+            "volume_6h_usd": self.volume_6h_usd,
+            "pool_count": self.pool_count,
+            "total_liquidity_usd": self.total_liquidity_usd,
+            "top_pool_share": self.top_pool_share,
+            "boosted": self.boosted,
+            "social_interest": self.social_interest,
+            "web_summary": self.web_summary,
+            "social_note": self.social_note,
             "age_hours": self.age_hours,
             "market_cap_usd": self.market_cap_usd,
             "holder_count": self.holder_count,

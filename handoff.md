@@ -250,3 +250,71 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 
 
 
+
+## 10. omo-parity batch (2026-08-25)
+
+- **Candidate breadth**: chg5m/6h/24h, fdv, buys/sells/vol 6h, pool_count,
+  total_liquidity_usd, top_pool_share, boosted (models.py + dexscreener.py).
+- **research.py** (new): omo researchToken port - cross-pool aggregates,
+  wired into main.py read stage (live-only, RESEARCH_PER_TICK cap).
+- **discovery.py rebuilt**: slot-composed board (flow core + newborn slots +
+  mover slots + 5 guaranteed rotation slots, cap 16) + boost feeds -> boosted flag.
+- **Refusals public**: get_refusal_events() in db.py AND db_pg.py;
+  GET /api/refusals.json; refusals now inside /api/proof.json.
+- **live_execution omo engine**: solana.py (multi-RPC failover, send,
+  confirm-before-journal, getTokenSupply decimals), executor.py
+  (place_order buy+sell with unarmed/blocked/failed/filled statuses, price-
+  impact floor 2.5%%, SOL reserve, daily deploy cap $300, idempotent buys,
+  pro-rata ledger.reduce_position for TP trims), wallet address verification.
+- **run_live_cycle.py** (ROOT): autonomous manage->read->think->gate->execute
+  bridge; backend never imports live_execution (isolation intact).
+- **LLM**: OLLAMA_NUM_PREDICT knob (512 default) wired into thinker+narrator.
+- Tests: 202 passing (7 new: executor guards, ledger sell math, research
+  aggregation, discovery composition). Live UNARMED cycle smoke-tested.
+- **Social read stage (rigid provider system)**: llm/social.py - generic
+  OpenAI-compatible client (Groq/Grok/OpenRouter all speak the same protocol).
+  Switching provider = 3 env values, zero code. Evidence-only output
+  (interest: organic/peaked/unclear + one grounded note), never a verdict;
+  disabled when SOCIAL_LLM_API_KEY empty; fail-soft like every feed.
+  Wired into main.py + run_live_cycle.py read stage; injected into the
+  thinker prompt as the {social_line} evidence line. Tests: 206 passing.
+
+## 11. P0 batch (2026-08-25, session 2)
+
+- **Birdeye now OPTIONAL**: live stack starts without BIRDEYE_API_KEY;
+  trending lens skips, discovery = keyword rotation + new listings.
+- **onchain_security.py** (new): free Solana RPC authority checks
+  (getAccountInfo jsonParsed) fill mint/freeze revocation when Birdeye
+  absent or silent; security_clear works keyless. ONCHAIN_RPC_URLS config.
+- **Sell sealing (paper)**: scan_and_execute_exits writes a
+  decision_commits row (verdict=sell, payload=trade_id/rule/fraction/price)
+  BEFORE close_position / trim_position executes.
+- **Live commit log**: live_execution/commit_log.py CommitLog — seal intent
+  sha256(nonce|payload) before broadcast, bind signature on confirm;
+  wired into place_buy + place_sell via _broadcast_and_confirm.
+- **Devnet drill**: run_live_cycle.py --drill runs wallet→balance→decimals→
+  blockhash→sign→send→confirm self-transfer of dust on devnet only.
+- Tests: 208 passing (commit-log roundtrip, authority parser, social stage).
+
+## 12. Session 3 additions (2026-08-25, later)
+
+- **Web-read stage**: llm/web_research.py - Firecrawl search API evidence
+  (last 24h) condensed into thinker prompt via {web_line}. Uses existing
+  FIRECRAWL_API_KEY; disabled when key empty. Wired into main.py and
+  run_live_cycle.py read stages.
+- **Rigid social provider system**: llm/social.py - provider-agnostic
+  OpenAI-compatible client (Groq/Grok/OpenRouter/Cerebras all speak the same
+  /chat/completions protocol). Switching provider = SOCIAL_LLM_BASE_URL + _KEY
+  + _MODEL env change, zero code change. Evidence-only output (interest:
+  organic/peaked/unclear + one grounded note), never a verdict.
+- **Gate is now exactly omotrades 9 rules** (market_regime_ok and
+  security_clear retired from ACTIVE_RULES; functions kept for re-enable).
+- **Onchain security**: live stack fills mint/freeze authority flags from
+  free Solana RPC (onchain_security.py) when Birdeye absent/silent.
+- **Discovery slot guarantees**: newborn/movers/rotation slots + boost feeds.
+- **Refusals public**: /api/refusals.json + refusals in /api/proof.json.
+- **Live execution complete (DISARMED)**: solana.py multi-RPC + confirm,
+  commit_log.py, executor.py place_order buy+sell (unarmed/blocked/failed/
+  filled statuses), wallet verify_expected_address, ledger reduce_position,
+  run_live_cycle.py --drill devnet self-transfer drill.
+- **Tests: 212 passing** (backend 158 + live_execution 54).

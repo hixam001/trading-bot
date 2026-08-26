@@ -29,15 +29,18 @@ async def get_proof():
     async with db.get_db() as conn:
         commits = await db.get_recent_decision_commits(conn)
         fills = await db.get_recent_fills(conn)
+        refusals = await db.get_refusal_events(conn, limit=100)
 
     return {
         "generated_at_utc": __import__("datetime").datetime.now(
             __import__("datetime").timezone.utc).isoformat(),
         "commits": commits,
         "fills": fills,
+        "refusals": refusals,
         "counts": {
             "commits": len(commits),
             "fills": len(fills),
+            "refusals": len(refusals),
         },
     }
 
@@ -107,4 +110,22 @@ async def get_verify():
         "totals": {"checked": len(results), "verified": verified,
                    "failed": failed},
         "rows": results,
+    }
+
+@router.get("/api/refusals.json")
+async def get_refusals(limit: int = 100):
+    """Every refusal with its full rule breakdown, newest first.
+
+    omo publishes refusals as loudly as fills: a person faking automation
+    has no reason to invent hundreds of boring nos, so the refusals are the
+    most telling part of the record. Read-only; verdict=fail covers both
+    model vetoes and failed gate rules.
+    """
+    async with db.get_db() as conn:
+        rows = await db.get_refusal_events(conn, min(max(limit, 1), 500))
+    return {
+        "generated_at_utc": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).isoformat(),
+        "count": len(rows),
+        "refusals": rows,
     }

@@ -196,3 +196,55 @@ class ExecutionLedger:
             if _dt.date.fromtimestamp(r["ts"]) == today:
                 total += r["pnl_usd"]
         return total
+
+    def open_token_amounts(self) -> dict[str, float]:
+        """{mint: token units still open} summed over unclosed buys."""
+        out: dict[str, float] = {}
+        for r in self._load():
+            if r["kind"] == "buy" and r["status"] in self._OPEN:
+                out[r["mint"]] = out.get(r["mint"], 0.0) + float(r.get("tokens_out") or 0.0)
+        return out
+
+    def deployed_today_usd(self) -> float:
+        """Sum of buy cost stamped today - feeds MAX_DAILY_DEPLOY_USD."""
+        import datetime as _dt
+
+        today = _dt.date.fromtimestamp(self.now_fn())
+        total = 0.0
+        for r in self._load():
+            if r["kind"] == "buy" and _dt.date.fromtimestamp(r["ts"]) == today:
+                total += float(r.get("usd_size") or 0.0)
+        return total
+
+    def reduce_position(self, mint: str, fraction: float, proceeds_usd: float) -> ExecutionRecord:
+        # Partial-or-full SELL against the OLDEST open buy (FIFO). fraction=1.0
+        # closes; smaller fractions shrink the open buy pro-rata - trims need this.
+        records = self._load()
+        open_buys = [r for r in records if r["kind"] == "buy" and r["mint"] == mint and r["status"] in self._OPEN]
+        if not open_buys:
+            raise ValueError(f"no open position for {mint}")
+        target_key = open_buys[0]["idempotency_key"]
+        frac = min(max(fraction, 0.01), 1.0)
+        rec = ExecutionRecord(
+            kind="close",
+            idempotency_key=f"close-{mint}-{new_id()}",
+            mint=mint,
+            usd_size=proceeds_usd,
+            pnl_usd=None,
+            ts=self.now_fn(),
+        )
+        for r in records:
+            if (r["kind"] == "buy" and r["mint"] == mint
+                    and r["status"] in self._OPEN
+                    and r["idempotency_key"] == target_key):
+                cost_part = float(r["usd_size"]) * frac
+                rec.pnl_usd = proceeds_usd - cost_part
+                if frac >= 0.999:
+                    r["status"] = "closed"
+                else:
+                    r["usd_size"] = float(r["usd_size"]) - cost_part
+                    r["tokens_out"] = float(r.get("tokens_out") or 0.0) * (1.0 - frac)
+                break
+        records.append(rec.to_json())
+        self._save(records)
+        return rec

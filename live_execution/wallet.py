@@ -54,3 +54,20 @@ def load_keypair(path: str | None = None):
 def pubkey_string(keypair) -> str:
     """Public address for display/logging. Safe: public key only."""
     return str(keypair.pubkey())
+
+
+def verify_expected_address(keypair) -> str:
+    """
+    Fail-closed identity check (omo keys.server.ts parity): when
+    EXPECTED_WALLET_ADDRESS is set, the loaded keypair MUST derive that
+    exact pubkey - otherwise refuse loudly instead of quietly trading from
+    some other account. Returns the verified address.
+    """
+    expected = config.EXPECTED_WALLET_ADDRESS.strip()
+    actual = pubkey_string(keypair)
+    if expected and actual != expected:
+        raise WalletError(
+            f"keypair derives {actual}, which is not the expected wallet "
+            f"{expected} - refusing to trade from an unpublished account"
+        )
+    return actual

@@ -90,6 +90,30 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
             log.warning("crowd enrichment failed — proxy heat in use (fail-soft)",
                         exc_info=True)
 
+    # --- READ stage part 2: second-pass cross-pool research on the head of
+    # the board (omo researches the names it cares about). Live-only so mock
+    # runs stay hermetic; fail-soft like every feed.
+    if config.DATA_BACKEND == "live":
+        try:
+            from data_providers.research import enrich_with_research
+            await enrich_with_research(candidates)
+        except Exception:
+            log.warning("token research failed - continuing without it",
+                        exc_info=True)
+        # --- READ stage part 3: realtime social read (evidence only, never a
+        # verdict). Provider-agnostic (Groq/Grok/OpenRouter); disabled when no
+        # SOCIAL_LLM_API_KEY is configured.
+        try:
+            from llm.social import enrich_social
+            await enrich_social(candidates)
+        except Exception:
+            log.warning("social read failed - continuing without it",
+                        exc_info=True)
+        try:
+            from llm.web_research import enrich_web
+            await enrich_web(candidates)
+        except Exception:
+            log.warning("web research failed - continuing without it,", exc_info=True)
     # Regime computed ONCE per tick from the full batch (C2), logged ONCE.
     regime = compute_market_regime(candidates)
 
@@ -333,4 +357,3 @@ async def main() -> None:
 
 if __name__ == "__main__":
     asyncio.run(main())
-

@@ -81,6 +81,9 @@ OLLAMA_TAGS_ENDPOINT: str = f"{OLLAMA_URL}/api/tags"
 # response.prompt_eval_count on first live narration; raise to 2048 only if
 # the measured count exceeds ~700.
 OLLAMA_NUM_CTX: int = int(os.getenv("OLLAMA_NUM_CTX", "1024"))
+# Output token ceiling (num_predict). Ollama truncates long structured output
+# at its own default; raise via env without touching code. -1 = unlimited.
+OLLAMA_NUM_PREDICT: int = int(os.getenv("OLLAMA_NUM_PREDICT", "512"))
 # In mock data mode the narrator uses a deterministic template backend so the
 # full pipeline runs without Ollama; live mode uses Ollama when reachable.
 NARRATOR_FALLBACK_TO_TEMPLATE: bool = True
@@ -105,6 +108,15 @@ JUPITER_API_KEY: str = os.getenv("JUPITER_API_KEY", "")
 
 BIRDEYE_BASE_URL: str = "https://public-api.birdeye.so"
 DEXSCREENER_BASE_URL: str = "https://api.dexscreener.com"
+
+# Free on-chain RPC for authority/security reads (no Birdeye needed).
+ONCHAIN_RPC_URLS: list = [
+    u for u in (
+        os.getenv("SOLANA_RPC_URL", ""),
+        "https://api.mainnet-beta.solana.com",
+        "https://solana-rpc.publicnode.com",
+    ) if u
+]
 JUPITER_QUOTE_URL: str = "https://lite-api.jup.ag/swap/v1/quote"
 USDC_MINT: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 SOL_MINT: str = "So11111111111111111111111111111111111111112"
@@ -284,3 +296,23 @@ RATE_LIMIT_EXTRA_BACKOFF_SECONDS: float = 15.0
 # ---------------------------------------------------------------------------
 TICK_INTERVAL_SECONDS: int = int(os.getenv("TICK_INTERVAL_SECONDS", "60"))
 MAX_CANDIDATES_PER_TICK: int = int(os.getenv("MAX_CANDIDATES_PER_TICK", "20"))
+# Second-pass deep-research budget per tick (omo researches the names it
+# actually cares about - one extra Dexscreener call each, capped).
+RESEARCH_PER_TICK: int = int(os.getenv("RESEARCH_PER_TICK", "8"))
+# Realtime social read (omo realtime role) - ANY OpenAI-compatible provider.
+# Groq today, Grok tomorrow: switching is ONLY these three env values.
+#   groq: https://api.groq.com/openai/v1 + llama-3.3-70b-versatile
+#   xai:  https://api.x.ai/v1           + grok-3-mini (or newer)
+#   openrouter: https://openrouter.ai/api/v1 + vendor/model
+# Empty SOCIAL_LLM_API_KEY = stage disabled (fail-soft, like every feed).
+SOCIAL_LLM_BASE_URL: str = os.getenv("SOCIAL_LLM_BASE_URL", "https://api.groq.com/openai/v1")
+SOCIAL_LLM_API_KEY: str = os.getenv("SOCIAL_LLM_API_KEY", "")
+SOCIAL_LLM_MODEL: str = os.getenv("SOCIAL_LLM_MODEL", "llama-3.3-70b-versatile")
+SOCIAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("SOCIAL_LLM_TIMEOUT_SECONDS", "20"))
+SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
+
+# Live web search evidence for the think stage (omo web-research parity).
+# Uses the existing FIRECRAWL_API_KEY; empty key = stage disabled.
+# tbs=qdr:d limits results to the last 24h like omo recent=true.
+WEB_SEARCH_PER_TICK: int = int(os.getenv("WEB_SEARCH_PER_TICK", "8"))
+WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "20"))

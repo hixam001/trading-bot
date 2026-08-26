@@ -44,6 +44,8 @@ Token: {symbol} ({name})
 price ${price_usd} | liquidity ${liquidity_usd} | mcap ${market_cap_usd}
 1h: vol ${volume_1h_usd}, {buys_1h} buys vs {sells_1h} sells, change {chg_1h}%
 24h vol ${volume_24h_usd} | age {age_hours}h | twitter:{twitter} telegram:{telegram} site:{site}
+{social_line}
+{web_line}
 
 Respond with STRICT JSON only (no prose outside it):
 {{"thesis": "1-2 sentences: why attention exists, citing ONLY the numbers above",
@@ -70,6 +72,12 @@ class ThinkResult:
 def _candidate_view(c: Candidate) -> dict:
     def yn(v):
         return "yes" if v else ("no" if v is False else "?")
+    social_line = ""
+    if c.social_interest is not None:
+        social_line = "Social read (evidence only): interest looks " + str(c.social_interest) + ". " + str(c.social_note)
+    web_line = ""
+    if c.web_summary:
+        web_line = "Web (last 24h): " + str(c.web_summary)
     return {
         "symbol": c.symbol,
         "name": c.name or c.symbol,
@@ -85,9 +93,9 @@ def _candidate_view(c: Candidate) -> dict:
         "twitter": yn(c.has_twitter),
         "telegram": yn(c.has_telegram),
         "site": yn(c.has_website),
+        "social_line": social_line,
+        "web_line": web_line,
     }
-
-
 def build_think_prompt(c: Candidate) -> str:
     return THINK_PROMPT.format(**_candidate_view(c))
 
@@ -176,6 +184,7 @@ class Thinker:
                     "options": {
                         "temperature": 0.2,
                         "num_ctx": config.OLLAMA_NUM_CTX,
+        "num_predict": config.OLLAMA_NUM_PREDICT,
                     },
                 },
             )

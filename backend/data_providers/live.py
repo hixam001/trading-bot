@@ -40,10 +40,20 @@ class LiveProviderStack:
         self.new_listings.start()
         self.keyword_scanner = KeywordScanner(self._client)
 
+    async def _trending(self, limit: int) -> list[Candidate]:
+        """Optional lens - skipped when BIRDEYE_API_KEY is unset."""
+        if not config.BIRDEYE_API_KEY:
+            return []
+        try:
+            return await self.birdeye.get_candidates(limit)
+        except ProviderError as exc:
+            log.warning("trending lens failed (continuing): %s", exc)
+        return []
+
     async def get_candidates(self, limit: int) -> list[Candidate]:
         # Three lenses, fetched concurrently:
         trending, fresh_events, keyword_cands = await asyncio.gather(
-            self.birdeye.get_candidates(limit),
+            self._trending(limit),
             asyncio.to_thread(self.new_listings.drain, max(limit // 2, 1)),
             self.keyword_scanner.scan(),
         )
@@ -95,13 +105,26 @@ class LiveProviderStack:
 
         # Security enrichment concurrently; failure leaves None (= unknown).
         async def _secure(c: Candidate) -> None:
-            try:
-                info: SecurityInfo = await self.birdeye.get_security_info(c.mint_address)
-                c.mint_authority_revoked = info.mint_authority_revoked
-                c.freeze_authority_revoked = info.freeze_authority_revoked
-                c.is_likely_honeypot = info.is_likely_honeypot
-            except ProviderError:
-                pass   # already logged upstream; fields stay unknown
+            # Birdeye token_security when configured; free on-chain RPC
+            # authority reads always fill whatever stays unknown.
+            if config.BIRDEYE_API_KEY:
+                try:
+                    info: SecurityInfo = await self.birdeye.get_security_info(c.mint_address)
+                    c.mint_authority_revoked = info.mint_authority_revoked
+                    c.freeze_authority_revoked = info.freeze_authority_revoked
+                    c.is_likely_honeypot = info.is_likely_honeypot
+                except ProviderError:
+                    pass
+            if c.mint_authority_revoked is None or c.freeze_authority_revoked is None:
+                try:
+                    from data_providers.onchain_security import get_authority_flags
+                    flags = await get_authority_flags(c.mint_address)
+                except Exception:
+                    flags = {}
+                if c.mint_authority_revoked is None:
+                    c.mint_authority_revoked = flags.get("mint_authority_revoked")
+                if c.freeze_authority_revoked is None:
+                    c.freeze_authority_revoked = flags.get("freeze_authority_revoked")
 
         await asyncio.gather(*(_secure(c) for c in merged))
         log.info("Live stack: %d candidates enriched (trending=%d new_listing=%d)",
@@ -122,6 +145,14 @@ class LiveProviderStack:
 
     async def get_security_info(self, mint_address: str) -> SecurityInfo:
         return await self.birdeye.get_security_info(mint_address)
+        if config.BIRDEYE_API_KEY:
+            try:
+                return await self.birdeye.get_security_info(mint_address)
+            except ProviderError:
+                pass
+        from data_providers.onchain_security import get_authority_flags
+        flags = await get_authority_flags(mint_address)
+        return SecurityInfo(mint_authority_revoked=flags.get("mint_authority_revoked"), freeze_authority_revoked=flags.get("freeze_authority_revoked"))
 
     async def aclose(self) -> None:
         await self.new_listings.stop()
@@ -135,12 +166,13 @@ def build_provider():
         return MockProvider()
     if config.DATA_BACKEND == "live":
         if not config.BIRDEYE_API_KEY:
-            # Fail fast and loud: live mode without a Birdeye key means every
-            # candidate fetch would 401 — never start half-configured.
-            raise RuntimeError(
-                "DATA_BACKEND=live requires BIRDEYE_API_KEY in /.env "
-                "(Dexscreener and Jupiter keys are optional; their basic "
-                "endpoints are currently keyless)."
+            # Birdeye is now OPTIONAL (omo parity: zero keyed APIs required).
+            # Without a key the trending lens is skipped and security falls
+            # back to free on-chain RPC authority reads.
+            log.warning(
+                "BIRDEYE_API_KEY not set - trending lens disabled; "
+                "discovery = keyword rotation + new listings; "
+                "security = on-chain authority checks"
             )
         return LiveProviderStack()
     raise RuntimeError(

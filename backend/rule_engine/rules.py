@@ -209,7 +209,7 @@ def security_clear(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
 
 
 # ---------------------------------------------------------------------------
-# The active rule set (omotrades parity + our two additions), in evaluation
+# The active rule set - EXACTLY omotrades 9 rules, in evaluation order.
 # order. evaluate_gate() runs ALL of them unconditionally (no short-circuiting)
 # so every rejection shows its full profile in the journal.
 # ---------------------------------------------------------------------------
@@ -224,7 +224,5 @@ ACTIVE_RULES = [
     cash_available,
     already_held,
     not_on_break,
-    market_regime_ok,
-    security_clear,
 ]
 

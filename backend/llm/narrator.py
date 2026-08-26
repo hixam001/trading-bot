@@ -125,6 +125,7 @@ class Narrator:
                         # Explicit small context window: KV-cache RAM scales
                         # with num_ctx, not prompt length (see config comment).
                         "num_ctx": config.OLLAMA_NUM_CTX,
+                        "num_predict": config.OLLAMA_NUM_PREDICT,
                     },
                 },
             )

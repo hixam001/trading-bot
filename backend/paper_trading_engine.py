@@ -19,7 +19,10 @@ name"), so pyramiding into a ticket is structurally impossible.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
@@ -474,6 +477,22 @@ async def scan_and_execute_exits(
             )
             continue
 
+        nonce = uuid.uuid4().hex
+        payload = {
+            "v": 1, "kind": "exit",
+            "trade_id": trade.trade_id, "symbol": trade.symbol,
+            "mint_address": trade.mint_address,
+            "rule": gated.rule_id, "action": gated.action,
+            "fraction": gated.fraction, "detail": gated.detail,
+            "price_usd": price, "decided_at": now.isoformat(),
+        }
+        payload_json = json.dumps(payload, sort_keys=True)
+        payload_hash = hashlib.sha256((nonce + "|" + payload_json).encode()).hexdigest()
+        await db.insert_decision_commit(
+            conn, now.isoformat(), now.isoformat(), trade.symbol,
+            trade.mint_address, "sell", True, nonce,
+            payload_json, payload_hash,
+        )
         if gated.action == "close_full":
             result = await close_position(conn, trade, price, gated.rule_id)
             if result.applied:

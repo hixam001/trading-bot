@@ -247,6 +247,20 @@ async def count_feed_events(conn: aiosqlite.Connection) -> int:
     return int((await cursor.fetchone())[0])
 
 
+async def get_refusal_events(
+    conn: aiosqlite.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    """Every rejection at full detail - refusals are a first-class public
+    artifact (omo parity). verdict=fail means think or gate refused.
+    """
+    cursor = await conn.execute(
+        "SELECT * FROM feed_events WHERE verdict = ? ORDER BY id DESC LIMIT ?",
+        ("fail", limit),
+    )
+    rows = await cursor.fetchall()
+    return [_row_to_feed_dict(r) for r in rows]
+
+
 # ===========================================================================
 # Trades — atomic, idempotent state changes (§5.1)
 # ===========================================================================

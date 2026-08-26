@@ -46,6 +46,7 @@ def _extract_pair_fields(pair: dict) -> dict:
     chg_obj = pair.get("priceChange") if isinstance(pair.get("priceChange"), dict) else {}
     txns = pair.get("txns") if isinstance(pair.get("txns"), dict) else {}
     h1 = txns.get("h1") if isinstance(txns.get("h1"), dict) else {}
+    h6t = txns.get("h6") if isinstance(txns.get("h6"), dict) else {}
     info = pair.get("info") if isinstance(pair.get("info"), dict) else {}
 
     # Token age from the pair's creation timestamp (ms epoch). None stays None.
@@ -73,6 +74,8 @@ def _extract_pair_fields(pair: dict) -> dict:
     market_cap = require_type(pair.get("marketCap"), (int, float), "marketCap", "dexscreener")
     if market_cap is None:
         market_cap = require_type(pair.get("fdv"), (int, float), "fdv", "dexscreener")
+    # FDV recorded separately from marketCap (omo breadth field).
+    fdv_usd = require_type(pair.get("fdv"), (int, float), "fdv", "dexscreener")
 
     return {
         "price_usd": price,
@@ -87,6 +90,13 @@ def _extract_pair_fields(pair: dict) -> dict:
         "has_twitter": has_twitter,
         "has_telegram": has_telegram,
         "has_website": has_website,
+        "price_change_5m_pct": require_type(chg_obj.get("m5"), (int, float), "priceChange.m5", "dexscreener"),
+        "price_change_6h_pct": require_type(chg_obj.get("h6"), (int, float), "priceChange.h6", "dexscreener"),
+        "price_change_24h_pct": require_type(chg_obj.get("h24"), (int, float), "priceChange.h24", "dexscreener"),
+        "fdv_usd": fdv_usd,
+        "buys_6h": int(h6t.get("buys") or 0) or None,
+        "sells_6h": int(h6t.get("sells") or 0) or None,
+        "volume_6h_usd": require_type(vol_obj.get("h6"), (int, float), "volume.h6", "dexscreener"),
     }
 
 
@@ -161,7 +171,9 @@ class DexscreenerProvider:
                          "volume_24h_usd", "volume_1h_usd",
                          "price_change_1h_pct", "buys_1h", "sells_1h",
                          "age_hours", "has_twitter", "has_telegram",
-                         "has_website"):
+                         "has_website", "price_change_5m_pct",
+                         "price_change_6h_pct", "price_change_24h_pct",
+                         "fdv_usd", "buys_6h", "sells_6h", "volume_6h_usd"):
                 value = fields.get(attr)
                 if value is not None:
                     setattr(cand, attr, value)

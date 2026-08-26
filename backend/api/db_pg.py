@@ -288,6 +288,18 @@ async def count_feed_events(conn: asyncpg.Connection) -> int:
     return int(await conn.fetchval("SELECT COUNT(*) FROM feed_events"))
 
 
+async def get_refusal_events(
+    conn: asyncpg.Connection, limit: int = 100
+) -> list[dict[str, Any]]:
+    """Postgres twin of db.get_refusal_events - identical surface.
+    """
+    rows = await conn.fetch(
+        f"SELECT {_FEED_COLS} FROM feed_events WHERE verdict = $1 ORDER BY id DESC LIMIT $2",
+        "fail", limit,
+    )
+    return [_row_to_feed_dict(r) for r in rows]
+
+
 # ===========================================================================
 # Trades — atomic, idempotent state changes (§5.1)
 # ===========================================================================

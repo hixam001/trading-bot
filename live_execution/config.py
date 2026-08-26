@@ -85,3 +85,41 @@ CONFIRM_EXPIRY_SECONDS: float = 300.0
 # On-chain confirmation polling
 CONFIRM_TIMEOUT_SECONDS: float = 60.0
 
+
+
+# ---------------------------------------------------------------------------
+# omo-parity execution plumbing (2026-08-25).
+# ---------------------------------------------------------------------------
+# Rotating RPC list: first configured endpoint wins, then public fallbacks
+# (omo solana.server.ts parity). Public endpoints rate-limit hard; set
+# SOLANA_RPC_URL to a paid RPC before arming.
+RPC_URLS: list = [
+    u for u in (
+        os.getenv("SOLANA_RPC_URL", ""),
+        "https://api.mainnet-beta.solana.com",
+        "https://solana-rpc.publicnode.com",
+    ) if u
+]
+
+# Fail-closed identity check (omo keys.server.ts parity): when set, the
+# loaded keypair MUST derive this exact pubkey or loading refuses loudly.
+EXPECTED_WALLET_ADDRESS: str = os.getenv("EXPECTED_WALLET_ADDRESS", "")
+
+# Quote guards (omo EXECUTION_LIMITS parity).
+MAX_PRICE_IMPACT_PCT: float = 2.5      # block quotes above this impact
+MIN_SOL_RESERVE: float = 0.05          # keep this much SOL for fees/rent
+
+# Rolling UTC-day notional cap on NEW deployments (omo maxDailyUsd parity,
+# scaled to this book). Checked against the execution ledger.
+MAX_DAILY_DEPLOY_USD: float = 300.0
+
+
+# ---------------------------------------------------------------------------
+# DEVNET DRILL (P0-1): exercises wallet load, address verify, chain reads,
+# build/sign/send/confirm - WITHOUT Jupiter and WITHOUT tokens. Safe by
+# construction: devnet endpoint only. Run via run_live_cycle.py --drill.
+# ---------------------------------------------------------------------------
+DRILL_RPC_URL: str = os.getenv(
+    "DRILL_RPC_URL", "https://api.devnet.solana.com"
+)
+DRILL_TRANSFER_LAMPORTS: int = int(os.getenv("DRILL_TRANSFER_LAMPORTS", "100000"))  # 0.0001 SOL
