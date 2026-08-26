@@ -1,6 +1,7 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] OMO-R2 FOMO crowd intel upgrade: theses WITH author P&L (2026-08-26)
 - [x] OMO-R5 durable events + weighted memory recall, prompt context,
       stage event hooks, `/api/events.json` (2026-08-26)
 - [x] OMO-R4 Self-regulating break system wired into thinker and gate loops (2026-08-26)

@@ -94,6 +94,7 @@ class Candidate:
     # None = no feed answered -> the rule falls back to the presence proxy.
     fomo_heat: Optional[int] = None
     crowd_heat_source: str = ""            # "fomo" | "pumpfun" | "" (= proxy)
+    fomo_theses: Optional[list[dict]] = None
     # Discovery provenance ONLY — observability field. The rule engine never
     # reads or branches on this. "trending" | "new_listing" | "both" |
     # "unknown" (explicit unknown; never silently defaulted to trending).
@@ -106,6 +107,7 @@ class Candidate:
             "mint_address": self.mint_address,
             "fomo_heat": self.fomo_heat,
             "crowd_heat_source": self.crowd_heat_source,
+            "fomo_theses": self.fomo_theses,
             "price_usd": self.price_usd,
             "liquidity_usd": self.liquidity_usd,
             "volume_24h_usd": self.volume_24h_usd,

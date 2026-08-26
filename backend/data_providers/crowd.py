@@ -592,17 +592,9 @@ async def fetch_fomo_theses(mint: str) -> Optional[dict]:
 # Enrichment entry point — called once per tick in the READ stage
 # ---------------------------------------------------------------------------
 
-async def _heat_for_mint(mint: str) -> tuple[Optional[int], str]:
-    """(heat, source) from the fomo board; (None, '') if the feed is down."""
-    data = await fetch_fomo_theses(mint)
-    if data is not None:
-        return heat_from_count(data["total"]), "fomo"
-    return None, ""
-
-
 async def enrich_crowd_heat(candidates: list) -> None:
     """
-    Fill candidate.fomo_heat / crowd_heat_source from the live feeds.
+    Fill candidate.fomo_heat / crowd_heat_source / fomo_theses from the live feeds.
     Fail-soft everywhere: any exception leaves the proxy fallback intact.
     Called from main.run_tick's read stage (before think/gate).
     """
@@ -611,10 +603,11 @@ async def enrich_crowd_heat(candidates: list) -> None:
 
     async def _one(candidate) -> None:
         try:
-            heat, source = await _heat_for_mint(candidate.mint_address)
-            if heat is not None:
-                candidate.fomo_heat = heat
-                candidate.crowd_heat_source = source
+            data = await fetch_fomo_theses(candidate.mint_address)
+            if data is not None:
+                candidate.fomo_heat = heat_from_count(data["total"])
+                candidate.crowd_heat_source = "fomo"
+                candidate.fomo_theses = data["theses"]
         except Exception as exc:
             log.info("crowd enrichment skipped for %s: %s",
                      candidate.symbol, exc)

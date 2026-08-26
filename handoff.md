@@ -406,7 +406,7 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
   buy confirms AND after paper opens (paper rows carry their own thesis);
   retire hook in both exit paths; read-only `GET /api/theses.json`.
 
-### OMO-R2 — FOMO crowd intel upgrade: theses WITH author PnL ✅ APPROVED
+### OMO-R2 — FOMO crowd intel upgrade: theses WITH author P&L ✅ IMPLEMENTED (2026-08-26)
 - omo reference: `src/lib/fomo.server.ts` (`readFomoIntel`,
   `describeFomoIntel`, `readOwnBasis`).
 - Current state: data_providers/crowd.py already reads thesis COUNTS off
@@ -560,7 +560,7 @@ and 14 above.
 1. **OMO-R5 Memory/events system** — ✅ IMPLEMENTED.
 2. **OMO-R4 Self-regulating break system** — ✅ IMPLEMENTED.
 3. **OMO-R3 Durable thesis book.** — ✅ IMPLEMENTED.
-4. **OMO-R2 FOMO intel with author P&L.**
+4. **OMO-R2 FOMO intel with author P&L.** — ✅ IMPLEMENTED.
 5. **OMO-R1 Independent verifier and binding report.**
 6. **OMO-R6 Public disclosure and reasoning feeds.**
 7. **OMO-R7 Retro audit-log signature matching.**

@@ -4,6 +4,10 @@
 `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### OMO-R2 FOMO crowd intel upgrade (2026-08-26)
+Full thesis rows with author P&L are now fetched from fomo.fun and injected into the LLM thinker prompt. The prompt instructs the model to weigh each claim by whether its author is actually up on their position.
+
+## DONE
 ### OMO-R4 Self-regulating break system (2026-08-26)
 File-backed state (`break_state.json` inside `live_execution/state`) implements the `not_on_break` rule parity. The thinker can pass a `"break": {"taking": true, "minutes": 15, "reason": "..."}` block in its JSON verdict, which sets a persistent UTC expiry timestamp. While on break, the gate fails closed loudly on the `not_on_break` rule, blocking entries while exits continue functioning normally. Fail-safe semantics apply on state file corruption. LLM API migration for thinker (DeepSeek) and social (Groq) is verified.
 

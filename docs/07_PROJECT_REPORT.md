@@ -324,7 +324,11 @@ injection, and mock-tick stage events.
 
 Implemented 2026-08-26. The `not_on_break` rule was updated to use a persistent JSON state file that fail-closes if corrupted. The thinker can pass a `break` block (minutes and reason) in its JSON verdict, which triggers a persistent UTC expiry timestamp. While on break, the gate fails closed on the `not_on_break` rule, preventing new entries but allowing exits to continue uninterrupted.
 
-## 15. Incorporated P0 report
+## 15. OMO-R2 FOMO crowd intel upgrade
+
+Implemented 2026-08-26. Full thesis rows with author P&L are fetched from the fomo.fun feed and injected as evidence lines into the LLM thinker prompt. The prompt is instructed to weigh claims by whether the author is actually up on their position, providing a richer, performance-backed crowd conviction signal.
+
+## 16. Incorporated P0 report
 
 The former standalone `P0_REPORT.md` is incorporated here as the historical
 P0 implementation and verification record.

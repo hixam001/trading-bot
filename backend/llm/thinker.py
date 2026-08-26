@@ -44,6 +44,7 @@ price ${price_usd} | liquidity ${liquidity_usd} | mcap ${market_cap_usd}
 24h vol ${volume_24h_usd} | age {age_hours}h | twitter:{twitter} telegram:{telegram} site:{site}
 {social_line}
 {web_line}
+{crowd_line}
 {memory_line}
 
 Respond with STRICT JSON only (no prose outside it):
@@ -53,7 +54,7 @@ Respond with STRICT JSON only (no prose outside it):
   "break": {{"taking": false, "minutes": 15, "reason": "why"}} }}
 
 Be conservative: refuse hype without substance, refuse tokens whose crowd \
-is already leaving. /no_think"""
+is already leaving. Weigh any crowd claims by whether the author is actually up on their position. /no_think"""
 
 
 @dataclass
@@ -81,6 +82,22 @@ def _candidate_view(c: Candidate, memory_line: str = "") -> dict:
     web_line = ""
     if c.web_summary:
         web_line = "Web (last 24h): " + str(c.web_summary)
+        
+    crowd_line = ""
+    if getattr(c, "fomo_theses", None):
+        lines = []
+        for t in c.fomo_theses:
+            who = t.get("who", "unknown")
+            size = t.get("size_usd", 0.0)
+            pnl_usd = t.get("realized_usd", 0.0) if t.get("closed") else t.get("unrealized_usd", 0.0)
+            pnl_pct = t.get("pnl_pct", 0.0)
+            text = t.get("text", "")
+            direction = "up" if pnl_usd >= 0 else "down"
+            pnl_usd_abs = abs(pnl_usd)
+            lines.append(f"@{who} on {c.symbol} — holding ${size:,.2f}, {direction} ${pnl_usd_abs:,.2f} ({pnl_pct:+.1f}%): \"{text}\"")
+        if lines:
+            crowd_line = "Crowd theses (fomo.fun):\n" + "\n".join(lines)
+            
     return {
         "symbol": c.symbol,
         "name": c.name or c.symbol,
@@ -98,6 +115,7 @@ def _candidate_view(c: Candidate, memory_line: str = "") -> dict:
         "site": yn(c.has_website),
         "social_line": social_line,
         "web_line": web_line,
+        "crowd_line": crowd_line,
         "memory_line": memory_line,
     }
 def build_think_prompt(c: Candidate, memory_line: str = "") -> str:
