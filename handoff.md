@@ -565,7 +565,8 @@ and 14 above.
 7. **OMO-R7 Retro audit-log signature matching.** — ✅ IMPLEMENTED. `retro_matcher.py` runs post-cycle in both `main.py` and `run_live_cycle.py`. Exact-bind rows (`signature IS NOT NULL`) never overwritten. Double-claim prevented by `taken` set.
 8. **LLM migration completion** — Groq for thesis/thinker and reflections;
    Groq for social evidence; usage accounting, shadow replay, paper canary,
-   and delayed outcome labels before any model promotion.
+   and delayed outcome labels before any model promotion. DeepSeek migration is
+   planned next once API keys with sufficient balance are available.
 
 ### Rejected or deferred — do not implement without approval
 
