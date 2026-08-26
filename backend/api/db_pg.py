@@ -301,6 +301,76 @@ async def get_refusal_events(
 
 
 # ===========================================================================
+# OMO-R5 memory/events — append-only observations and weighted lessons
+# ===========================================================================
+
+async def insert_event(
+    conn: asyncpg.Connection, kind: str, ts: str, symbol: str = "",
+    mint_address: str = "", payload: Optional[dict[str, Any]] = None,
+) -> int:
+    if kind not in {"thought", "did", "refused", "read", "trade"}:
+        raise ValueError(f"invalid event kind: {kind}")
+    return int(await conn.fetchval(
+        "INSERT INTO events (ts, kind, symbol, mint_address, payload_json) "
+        "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+        _ts(ts), kind, symbol, mint_address, json.dumps(payload or {}, sort_keys=True),
+    ))
+
+
+async def get_recent_events(
+    conn: asyncpg.Connection, limit: int = 100,
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        "SELECT id, ts::text AS ts, kind, symbol, mint_address, "
+        "payload_json::text AS payload_json FROM events ORDER BY id DESC LIMIT $1",
+        limit,
+    )
+    return [
+        {"id": row["id"], "ts": row["ts"], "kind": row["kind"],
+         "symbol": row["symbol"], "mint_address": row["mint_address"],
+         "payload": json.loads(row["payload_json"])}
+        for row in rows
+    ]
+
+
+async def upsert_memory(
+    conn: asyncpg.Connection, topic: str, note: str, weight: float = 1.0,
+) -> int:
+    if not topic.strip() or not note.strip() or weight <= 0:
+        raise ValueError("memory topic, note, and positive weight are required")
+    row = await conn.fetchrow(
+        "SELECT id FROM memories WHERE topic = $1 AND note = $2", topic, note
+    )
+    if row:
+        await conn.execute(
+            "UPDATE memories SET weight = $1, updated_at = $2 WHERE id = $3",
+            weight, _now(), row["id"],
+        )
+        return int(row["id"])
+    return int(await conn.fetchval(
+        "INSERT INTO memories (topic, note, weight, updated_at) "
+        "VALUES ($1, $2, $3, $4) RETURNING id", topic, note, weight, _now()
+    ))
+
+
+async def recall_memories(
+    conn: asyncpg.Connection, topic: str = "", limit: int = 3,
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        "SELECT id, topic, note, weight, hits FROM memories "
+        "WHERE $1 = '' OR topic = $1 ORDER BY weight DESC, hits DESC, id DESC LIMIT $2",
+        topic, limit,
+    )
+    for row in rows:
+        await conn.execute("UPDATE memories SET hits = hits + 1 WHERE id = $1", row["id"])
+    return [
+        {"id": row["id"], "topic": row["topic"], "note": row["note"],
+         "weight": row["weight"], "hits": row["hits"] + 1}
+        for row in rows
+    ]
+
+
+# ===========================================================================
 # Trades — atomic, idempotent state changes (§5.1)
 # ===========================================================================
 

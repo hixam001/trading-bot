@@ -1,7 +1,16 @@
 # Active Context — trading-bot
 
-**As of 2026-08-25 (calibration running; dashboard v2 shipped).** Repo:
+**As of 2026-08-26 (calibration running; dashboard v2 shipped; OMO-R5 landed).** Repo:
 `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### OMO-R5 memory/events system (2026-08-26)
+Durable mirrored `events` and weighted `memories` tables now exist in both
+repositories. Tick stages write read/thought/did/refused/trade events;
+topic-scoped memory recall increments hits and is injected into thinker
+prompts as context only. Read-only `/api/events.json` exposes recent events.
+Regression coverage passes for validation, persistence, hit accounting,
+prompt injection, and mock tick stage events.
 
 ## DONE
 ### Dashboard overhaul (2026-08-25)
@@ -41,6 +50,24 @@ template may explain but cannot approve an entry.
 Current learning is measurement-only: daily aggregates, rejection breakdowns,
 and post-close reflections. Reviewed OMO evidence shows adaptive context and
 auditability, not demonstrated autonomous weight training.
+
+### Live execution status (2026-08-26)
+The root-only `live_execution/` path is fully wired but disarmed. The bridge is
+`run_live_cycle.py` -> shared read/DeepSeek think/deterministic gate ->
+`live_execution.executor.place_order` -> Jupiter quote/swap -> local wallet
+signing -> rotating Solana RPC broadcast/confirmation -> commit-log binding ->
+execution ledger. Open-position management reprices live ledger positions and
+routes deterministic exit decisions through the sell path. `backend/` never
+imports `live_execution`.
+
+Safety state is unchanged and non-negotiable: hardcoded
+`LIVE_TRADING_ENABLED=False`, mandatory manual confirmation, wallet identity
+check, kill switch, daily-loss breaker, exposure/position/daily caps,
+idempotency, confirmation expiry, price-impact guard, SOL reserve, and
+unknown-decimals refusal. Solana endpoint selection for the devnet drill and
+offline execution tests were verified; a funded throwaway-keypair devnet drill
+is still required before any mainnet consideration. No live money has been
+executed.
 
 ## DONE
 ### Exit engine (81b9898) — rule_engine/exits.py

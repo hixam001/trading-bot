@@ -44,6 +44,7 @@ price ${price_usd} | liquidity ${liquidity_usd} | mcap ${market_cap_usd}
 24h vol ${volume_24h_usd} | age {age_hours}h | twitter:{twitter} telegram:{telegram} site:{site}
 {social_line}
 {web_line}
+{memory_line}
 
 Respond with STRICT JSON only (no prose outside it):
 {{"thesis": "1-2 sentences: why attention exists, citing ONLY the numbers above",
@@ -67,7 +68,7 @@ class ThinkResult:
         return self.verdict == "buy"
 
 
-def _candidate_view(c: Candidate) -> dict:
+def _candidate_view(c: Candidate, memory_line: str = "") -> dict:
     def yn(v):
         return "yes" if v else ("no" if v is False else "?")
     social_line = ""
@@ -93,9 +94,10 @@ def _candidate_view(c: Candidate) -> dict:
         "site": yn(c.has_website),
         "social_line": social_line,
         "web_line": web_line,
+        "memory_line": memory_line,
     }
-def build_think_prompt(c: Candidate) -> str:
-    return THINK_PROMPT.format(**_candidate_view(c))
+def build_think_prompt(c: Candidate, memory_line: str = "") -> str:
+    return THINK_PROMPT.format(**_candidate_view(c, memory_line))
 
 
 def template_think(c: Candidate) -> ThinkResult:
@@ -145,7 +147,7 @@ class Thinker:
     async def aclose(self) -> None:
         await self._deepseek.aclose()
 
-    async def think(self, c: Candidate) -> ThinkResult:
+    async def think(self, c: Candidate, memory_line: str = "") -> ThinkResult:
         """
         The pre-trade verdict. Mock mode -> template thinker (offline,
         deterministic). Live mode -> DeepSeek; any failure degrades to a
@@ -156,7 +158,7 @@ class Thinker:
 
         result = await self._deepseek.complete_json(
             "You are a conservative pre-trade analyst. Reply with strict JSON only.",
-            build_think_prompt(c),
+            build_think_prompt(c, memory_line),
         )
         parsed = parse_verdict_json(result.text) if result else None
         if parsed is not None:

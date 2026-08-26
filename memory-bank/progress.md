@@ -1,6 +1,8 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] OMO-R5 durable events + weighted memory recall, prompt context,
+      stage event hooks, `/api/events.json` (2026-08-26)
 - [x] 10 deterministic rules, both branches tested, no short-circuit (B1–B12)
 - [x] Candidate model with all fields incl. decimals + None semantics (B13)
 - [x] Market regime: computed once/tick, own table, API endpoint (C1–C5)
@@ -38,6 +40,11 @@
       pulling REAL fomo board data through Cloudflare; scrapingbee
       keyless-only (platform limitation); _json_from_body statusCode≥400
       bugfix (success envelopes were silently discarded)
+- [x] Live execution wiring verified: root bridge, Jupiter quote/swap,
+      local signing, rotating RPC send/confirm, commit binding, ledger
+      journal, live manage/sell path, and fail-closed preflight are connected;
+      disarmed by hardcoded `LIVE_TRADING_ENABLED=False`; 45 focused tests
+      pass. Funded throwaway-keypair devnet drill remains required.
 
 ## Deliberately not built (per spec sequencing)
 - E8/E9 partial scaling + rolling history (post-calibration)
@@ -57,8 +64,9 @@
 - LLM API migration is planned, not implemented: DeepSeek V4 Flash thinker,
       Groq social, usage/outcome accounting, shadow replay, and canary gates are
       specified in docs/08 and handoff section 14.
-- Current live thinker fallback can produce `buy` from the template during
-      Ollama failure; migration must change this to fail-closed `pass`.
+- Live execution is wired but remains disarmed; no mainnet execution is
+      authorized. Run the funded throwaway-keypair devnet drill before any
+      future arming discussion.
 
 ## Status
 Live calibration day ~2. Fresh $1,000 book. Dashboard v2 shipped

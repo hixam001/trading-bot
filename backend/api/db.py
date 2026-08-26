@@ -138,6 +138,28 @@ CREATE TABLE IF NOT EXISTS decision_commits (
 CREATE INDEX IF NOT EXISTS idx_decision_commits_created
     ON decision_commits(created_at);
 
+-- OMO-R5 durable event stream and weighted lessons recalled by the thinker.
+CREATE TABLE IF NOT EXISTS events (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts           TEXT    NOT NULL,
+    kind         TEXT    NOT NULL CHECK (kind IN ('thought', 'did', 'refused', 'read', 'trade')),
+    symbol       TEXT    NOT NULL DEFAULT '',
+    mint_address TEXT    NOT NULL DEFAULT '',
+    payload_json TEXT    NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS memories (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    topic      TEXT    NOT NULL,
+    note       TEXT    NOT NULL,
+    weight     REAL    NOT NULL DEFAULT 1.0,
+    hits       INTEGER NOT NULL DEFAULT 0,
+    updated_at TEXT    NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events(ts);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind);
+CREATE INDEX IF NOT EXISTS idx_memories_topic_weight ON memories(topic, weight DESC);
+
 -- Singleton portfolio row; id is always 1 (CHECK-enforced).
 CREATE TABLE IF NOT EXISTS portfolio_state (
     id          INTEGER PRIMARY KEY CHECK (id = 1),
@@ -259,6 +281,85 @@ async def get_refusal_events(
     )
     rows = await cursor.fetchall()
     return [_row_to_feed_dict(r) for r in rows]
+
+
+# ===========================================================================
+# OMO-R5 memory/events — append-only observations and weighted lessons
+# ===========================================================================
+
+async def insert_event(
+    conn: aiosqlite.Connection, kind: str, ts: str, symbol: str = "",
+    mint_address: str = "", payload: Optional[dict[str, Any]] = None,
+) -> int:
+    if kind not in {"thought", "did", "refused", "read", "trade"}:
+        raise ValueError(f"invalid event kind: {kind}")
+    cursor = await conn.execute(
+        "INSERT INTO events (ts, kind, symbol, mint_address, payload_json) "
+        "VALUES (?, ?, ?, ?, ?)",
+        (ts, kind, symbol, mint_address, json.dumps(payload or {}, sort_keys=True)),
+    )
+    await conn.commit()
+    return int(cursor.lastrowid)
+
+
+async def get_recent_events(
+    conn: aiosqlite.Connection, limit: int = 100,
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        "SELECT id, ts, kind, symbol, mint_address, payload_json "
+        "FROM events ORDER BY id DESC LIMIT ?", (limit,)
+    )
+    return [
+        {"id": row["id"], "ts": row["ts"], "kind": row["kind"],
+         "symbol": row["symbol"], "mint_address": row["mint_address"],
+         "payload": json.loads(row["payload_json"])}
+        for row in await cursor.fetchall()
+    ]
+
+
+async def upsert_memory(
+    conn: aiosqlite.Connection, topic: str, note: str, weight: float = 1.0,
+) -> int:
+    if not topic.strip() or not note.strip() or weight <= 0:
+        raise ValueError("memory topic, note, and positive weight are required")
+    cursor = await conn.execute(
+        "SELECT id FROM memories WHERE topic = ? AND note = ?", (topic, note)
+    )
+    row = await cursor.fetchone()
+    if row:
+        await conn.execute(
+            "UPDATE memories SET weight = ?, updated_at = ? WHERE id = ?",
+            (weight, _now_iso(), row["id"]),
+        )
+        await conn.commit()
+        return int(row["id"])
+    cursor = await conn.execute(
+        "INSERT INTO memories (topic, note, weight, updated_at) VALUES (?, ?, ?, ?)",
+        (topic, note, weight, _now_iso()),
+    )
+    await conn.commit()
+    return int(cursor.lastrowid)
+
+
+async def recall_memories(
+    conn: aiosqlite.Connection, topic: str = "", limit: int = 3,
+) -> list[dict[str, Any]]:
+    """Return strongest lessons and count each returned lesson as recalled."""
+    cursor = await conn.execute(
+        "SELECT id, topic, note, weight, hits FROM memories "
+        "WHERE ? = '' OR topic = ? ORDER BY weight DESC, hits DESC, id DESC LIMIT ?",
+        (topic, topic, limit),
+    )
+    rows = await cursor.fetchall()
+    for row in rows:
+        await conn.execute("UPDATE memories SET hits = hits + 1 WHERE id = ?", (row["id"],))
+    if rows:
+        await conn.commit()
+    return [
+        {"id": row["id"], "topic": row["topic"], "note": row["note"],
+         "weight": row["weight"], "hits": row["hits"] + 1}
+        for row in rows
+    ]
 
 
 # ===========================================================================

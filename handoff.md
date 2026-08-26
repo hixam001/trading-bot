@@ -1,6 +1,6 @@
 # HANDOFF — trading-bot
 
-**Last updated:** 2026-08-25 · **Branch:** main (`08066fa`+) · **Status:** LIVE
+**Last updated:** 2026-08-26 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
 
@@ -68,7 +68,7 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # 145 tests, ~1s
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
-| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Ships DISARMED: hardcoded LIVE_TRADING_ENABLED=False, REQUIRE_MANUAL_CONFIRMATION=True, kill switch + daily-loss breaker, confirmation queue w/ fail-closed expiry, idempotency ledger, caps. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Zero live-network test coverage — devnet + throwaway keypair REQUIRED before any mainnet use |
+| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. Ships DISARMED: hardcoded `LIVE_TRADING_ENABLED=False`, `REQUIRE_MANUAL_CONFIRMATION=True`, kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, and decimals guards. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Offline/mock wiring tests pass; a funded throwaway-keypair devnet drill is still REQUIRED before any mainnet use. |
 | `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats [equity/spend/realized/unrealized/cash], regime, gate, status); no knowledge tab, no paper-trading banner (removed 2026-08-25) |
 | `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, omotrades comparison, project report |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
@@ -228,6 +228,20 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   accounting (docs/08), durable OMO memory/events roadmap (OMO-R5), and the
   remaining approved OMO roadmap items in section 13.
 
+### OMO-R5 implementation (2026-08-26)
+
+- Added mirrored `events` and `memories` persistence to SQLite and Supabase;
+  events accept only `thought|did|refused|read|trade` and memory weights must
+  be positive.
+- Added repository functions for append-only event writes, recent event reads,
+  weighted memory upsert, and recall. Recall increments `hits` for every
+  returned lesson and is bounded by topic and limit.
+- `main.run_tick()` now records read, thought, did/refused, and successful
+  paper-trade events. Recalled lessons are injected into the thinker as
+  context only; deterministic rules and paper execution remain authoritative.
+- Added read-only `/api/events.json` and regression tests covering validation,
+  persistence, hit accounting, prompt context, and mock-tick stage events.
+
 ## 8. Next steps
 
 1. **Calibration window (10 days)** is underway: let it run; review daily
@@ -329,6 +343,23 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   run_live_cycle.py --drill devnet self-transfer drill.
 - **Tests: 212 passing** (backend 158 + live_execution 54).
 
+### Live execution wiring verification (2026-08-26)
+
+- Confirmed the root-only live bridge is connected end to end:
+  `run_live_cycle.py` → shared provider/read/DeepSeek think stages →
+  deterministic rules → `live_execution.executor.place_order` → Jupiter
+  quote/swap → local wallet signing → rotating Solana RPC broadcast → on-chain
+  confirmation → commit-log binding → execution ledger.
+- Manage exits use live ledger positions, chain decimals, Jupiter pricing, the
+  shared exit rules, and `place_order(side="sell")`; paper backend never
+  imports `live_execution`.
+- Fixed Solana endpoint selection used by the devnet drill and ensured the
+  `place_buy` wrapper performs complete offline preflight before any network
+  call. Live-execution focused tests: 45 passing; full suite: 215 passing.
+- Real execution remains OFF: `LIVE_TRADING_ENABLED=False` is hardcoded and
+  cannot be set through `.env`; manual confirmation remains enabled. No
+  mainnet execution has been authorized or claimed as network-verified.
+
 ## 13. Approved omo-parity roadmap (2026-08-26) — TO BE IMPLEMENTED
 
 Decision record from the source-level comparison vs omotrades/omo (full detail
@@ -337,7 +368,7 @@ Every approved item carries a stable ID (**OMO-R#**) — use it in branch names,
 commit messages and test files so later implementation is traceable. Order of
 implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 
-### OMO-R5 — Memory/events system ✅ APPROVED, IMPORTANT (implement FIRST)
+### OMO-R5 — Memory/events system ✅ IMPLEMENTED (2026-08-26)
 - omo reference: `OmoEvent`/`OmoMemory` types + hydrate logic in
   `src/lib/omo-brain.server.ts`.
 - Persistent event log with kinds `thought|did|refused|read|trade`, plus
@@ -516,3 +547,39 @@ provider migration, not an implementation status claim.
   drawdown, rejection breakdowns, and post-close reflections. Reviewed OMO
   evidence shows adaptive context and auditability, not demonstrated
   autonomous model training or weight updates.
+
+## 15. Final implementation queue (2026-08-26)
+
+This is the last section in the handoff and is the authoritative short list of
+what comes next. Full requirements and OMO references remain in sections 13
+and 14 above.
+
+### Approved — implement in this order
+
+1. **OMO-R5 Memory/events system** — IMPORTANT; implement first.
+2. **OMO-R4 Self-regulating break system.**
+3. **OMO-R3 Durable thesis book.**
+4. **OMO-R2 FOMO intel with author P&L.**
+5. **OMO-R1 Independent verifier and binding report.**
+6. **OMO-R6 Public disclosure and reasoning feeds.**
+7. **OMO-R7 Retro audit-log signature matching.**
+8. **LLM migration completion** — DeepSeek for thesis/thinker and reflections;
+   Groq for social evidence; usage accounting, shadow replay, paper canary,
+   and delayed outcome labels before any model promotion.
+
+### Rejected or deferred — do not implement without approval
+
+- **Rejected:** on-chain memo commitments and reveal protocol. Local
+  CommitLog sealing remains the chosen mechanism.
+- **Deferred:** off-book multi-chain tracking until Solana has a live track
+  record.
+- **Not yet validated:** mainnet live execution. The live execution package is
+  wired but remains disarmed; a funded throwaway-keypair devnet drill is
+  required before any future arming discussion.
+
+### Standing safety conditions
+
+- `PAPER_TRADING_ONLY=True` and `LIVE_TRADING_ENABLED=False` remain hardcoded.
+- Deterministic rules, exits, cash guards, kill switches, and manual approval
+  retain authority over every execution path.
+- No automatic threshold, prompt, model, or live-trading promotion changes.

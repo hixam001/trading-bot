@@ -1,8 +1,8 @@
 # 07 — Project Report
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
-Solana memecoins. Report updated 2026-08-23 from the codebase at commit
-`c17a90b`. Status: **live** (real market data, simulated funds; optional
+Solana memecoins. Report updated 2026-08-26 from the current main branch.
+Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
 
 ---
@@ -14,7 +14,9 @@ assembles a candidate batch from real market data, computes a market-wide
 regime snapshot, and evaluates every candidate against **ten deterministic
 rules**. The AND of those rules is the *entire* entry decision. Open
 positions are checked against **three fixed numeric exit conditions** every
-tick. A local LLM (Qwen3-8B via Ollama) does exactly two things: narrate
+tick. A DeepSeek-compatible thinker path supplies pre-trade analysis with a
+fail-closed template fallback; Groq remains evidence-only for social reads.
+The model does exactly two things: narrate
 decisions that were already made, and (later phase) add advisory flags that
 can never override a verdict. Every decision — pass or fail — is persisted
 with its full rule breakdown, narrated thesis, and grounding-check results,
@@ -266,7 +268,9 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 10. Safety invariants (non-negotiable)
 
-1. No real execution path exists anywhere; no wallet, no tx construction.
+1. The paper backend contains no real execution path, wallet, or transaction
+  construction. Real execution is isolated in root `live_execution/`, which
+  remains hard-disabled by `LIVE_TRADING_ENABLED = False`.
 2. `PAPER_TRADING_ONLY = True` hardcoded + runtime-asserted in every
    position-opening function.
 3. `promotion_gate.py` is read-only; no "promote"/"activate" can exist.
@@ -276,13 +280,16 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 11. Testing & verification
 
-**145 backend tests passing** (<2s, fully hermetic): both branches of all
+**158 backend tests passing** (<2s, fully hermetic): both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
 tick cycle with forced exits and exact cash-conservation arithmetic;
 Jupiter decimals regression tests pinning the 1000× fabrication bug.
-48 live_execution tests (193 combined). Live-verified separately: providers
+54 live_execution tests (212 combined). The live execution bridge is wired
+and remains disarmed; its offline/mock flow covers execution guards, Jupiter
+request shapes, confirmation, ledger recording, and commit binding.
+Live-verified separately: providers
 against real APIs, Supabase Postgres backend (full atomicity smoke + uvicorn
 boot serving PG data), stealth-chain header forwarding returning real fomo
 board data, commit-reveal hashes of the reference system recomputed
@@ -300,6 +307,62 @@ byte-for-byte, one-click launcher start/stop cycle.
   pending calibration data; partial scaling (E8/E9), advisory LLM layer
   (D7), and the commit-reveal proof (appendix) are deliberately
   post-calibration scope.
+
+## 13. OMO-R5 memory and events
+
+Implemented 2026-08-26. Both database backends persist an append-only event
+stream with kinds `thought`, `did`, `refused`, `read`, and `trade`, plus
+weighted lessons with recall-hit counts. Each tick records its read, think,
+outcome, and successful paper-trade stages. Strongest topic-matched lessons
+are recalled into the thinker prompt as context only; they cannot change
+deterministic rules, sizing, exits, cash, or the paper-only boundary. Recent
+events are available through the read-only `/api/events.json` endpoint.
+Regression tests cover validation, persistence, hit increments, prompt
+injection, and mock-tick stage events.
+
+## 14. Incorporated P0 report
+
+The former standalone `P0_REPORT.md` is incorporated here as the historical
+P0 implementation and verification record.
+
+### 14.1 Gate rules
+
+Gate: exactly omotrades 9 entry rules: `liquidity_floor`, `volume_alive`,
+`buy_pressure`, `not_newborn_fade`, `public_presence`, `crowd_heat`,
+`cash_available`, `already_held`, and `not_on_break`.
+
+### 14.2 What was implemented
+
+- `models.py` gained 13 optional breadth fields; Dexscreener extracts them.
+- `research.py` performs cross-pool aggregates and is wired into the read stage.
+- Discovery guarantees board composition slots and filters fake charts.
+- Refusals are available through `/api/refusals.json` and `/api/proof.json`.
+- `social.py` and `web_research.py` provide evidence-only adapters.
+- Root `live_execution/` provides multi-RPC, seal-before-broadcast, wallet
+  verification, guarded orders, and pro-rata trims while remaining disabled.
+- The root live runner is wired through read, DeepSeek think, deterministic
+  gate, execution, confirmation, ledger, and commit binding.
+- `OLLAMA_NUM_PREDICT` controls local generation when the template fallback is
+  used; execution remains isolated from `backend/`.
+
+### 14.3 Risk and verification record
+
+The omo-parity swap retired `security_clear` from the active nine-rule gate;
+authority fields remain logged for post-hoc audit. This is an accepted omo
+parity risk and can only be changed by an explicit operator decision.
+
+The verification record contains 215 tests at the time of the P0 snapshot
+(backend 161 plus live execution 54), including commit-log tamper detection,
+authority parsing, social and web evidence contracts, research/discovery
+coverage, refusal API shape, sell sealing, ledger reductions, executor guards,
+wallet identity checks, and a mocked devnet self-transfer drill. The funded
+throwaway-keypair devnet drill remains mandatory before any mainnet
+consideration; no mainnet execution has occurred.
+
+The remaining comparison gaps are armed trading history, richer Birdeye
+security signals, a realtime social firehose, multi-wallet infrastructure,
+and a longer runtime soak. These are limitations, not claims of autonomous
+model training or live-money validation.
 
 
 

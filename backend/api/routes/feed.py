@@ -19,3 +19,10 @@ async def get_feed(
         events = await db.get_feed_events(conn, limit=limit, offset=offset)
         total = await db.count_feed_events(conn)
     return {"total": total, "limit": limit, "offset": offset, "events": events}
+
+
+@router.get("/api/events.json")
+async def get_events(limit: int = Query(100, ge=1, le=500)):
+    async with db.get_db() as conn:
+        events = await db.get_recent_events(conn, limit=limit)
+    return {"events": events}

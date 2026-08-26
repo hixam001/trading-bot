@@ -68,6 +68,7 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
       reuse. A fresh empty state means no reuse (tests).
     """
     t0 = time.monotonic()
+    tick_ts = datetime.now(timezone.utc).isoformat()
     candidates = await provider.get_candidates(config.MAX_CANDIDATES_PER_TICK)
     if state is not None:
         state["tick"] = state.get("tick", 0) + 1
@@ -129,13 +130,26 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
             regime_ok=regime.regime_ok,
             detail=regime.regime_detail,
         )
+        await db.insert_event(conn, "read", tick_ts,
+                      payload={"candidate_count": len(candidates),
+                           "regime_ok": regime.regime_ok})
         log.info("tick regime: %s (%s)", "OK" if regime.regime_ok else "BAD",
                  regime.regime_detail)
 
         for c in candidates:
             # --- THINK (omo order): the model writes its assessment BEFORE
             # any rule is evaluated. Its verdict is a necessary veto layer.
-            think = await thinker.think(c)
+            memories = await db.recall_memories(conn, topic=c.symbol, limit=3)
+            memory_line = ""
+            if memories:
+                memory_line = "Memory (context only): " + " | ".join(
+                    f"{m['topic']}: {m['note']}" for m in memories)
+            think = await thinker.think(c, memory_line)
+            await db.insert_event(
+                conn, "thought", tick_ts, c.symbol, c.mint_address,
+                {"verdict": think.verdict, "source": think.source,
+                 "invalidation": think.invalidation},
+            )
 
             portfolio = await load_portfolio_state(conn)
             gate = evaluate_gate(c, portfolio, regime, ACTIVE_RULES)
@@ -232,6 +246,10 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                             conn, result.trade.trade_id, trade_text)
                         event.led_to_trade_id = result.trade.trade_id
                         opened += 1
+                        await db.insert_event(
+                            conn, "trade", tick_ts, c.symbol, c.mint_address,
+                            {"action": "open", "trade_id": result.trade.trade_id},
+                        )
             elif refusal_reasons and entry_allowed:
                 log.info("ENTRY REFUSED %s: %s", c.symbol,
                          " ".join(refusal_reasons))
@@ -247,6 +265,13 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                 }
 
             event.id = await db.insert_feed_event(conn, event)
+            await db.insert_event(
+                conn, "did" if entry_allowed else "refused", tick_ts,
+                c.symbol, c.mint_address,
+                {"entry_allowed": entry_allowed,
+                 "failed_rule_ids": list(gate.failed_rule_ids),
+                 "model_verdict": think.verdict},
+            )
 
         # --- manage: omotrades-model exit engine (§5.2 rebuild) -------------
         # Full rule set + sell risk gate; runs here AND on the dedicated fast

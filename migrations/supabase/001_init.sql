@@ -141,7 +141,29 @@ CREATE TABLE IF NOT EXISTS decision_commits (
 CREATE INDEX IF NOT EXISTS idx_decision_commits_created
     ON decision_commits (created_at DESC);
 
--- 8. portfolio_state — singleton cash row (id always 1) -------------------------
+-- 8. OMO-R5 durable event stream and weighted memories ----------------------
+CREATE TABLE IF NOT EXISTS events (
+    id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    ts           TIMESTAMPTZ NOT NULL,
+    kind         TEXT NOT NULL CHECK (kind IN ('thought','did','refused','read','trade')),
+    symbol       TEXT NOT NULL DEFAULT '',
+    mint_address TEXT NOT NULL DEFAULT '',
+    payload_json JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS idx_events_ts ON events (ts DESC);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events (kind);
+
+CREATE TABLE IF NOT EXISTS memories (
+    id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    topic      TEXT NOT NULL,
+    note       TEXT NOT NULL,
+    weight     DOUBLE PRECISION NOT NULL DEFAULT 1.0 CHECK (weight > 0),
+    hits       INTEGER NOT NULL DEFAULT 0,
+    updated_at TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_memories_topic_weight ON memories (topic, weight DESC);
+
+-- 9. portfolio_state — singleton cash row (id always 1) -------------------------
 CREATE TABLE IF NOT EXISTS portfolio_state (
     id           INTEGER PRIMARY KEY CHECK (id = 1),
     cash_usd     DOUBLE PRECISION NOT NULL,
@@ -151,14 +173,15 @@ INSERT INTO portfolio_state (id, cash_usd)
 VALUES (1, 1000.0)
 ON CONFLICT (id) DO NOTHING;
 
--- 9. Lock down RLS ---------------------------------------------------------------
+-- 10. Lock down RLS --------------------------------------------------------------
 -- Backend uses service role (bypasses RLS). Anon/authenticated keys get NOTHING.
 DO $$
 DECLARE t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY[
         'feed_events','trades','market_regime','provider_call_counters',
-        'kb_documents','daily_stats','decision_commits','portfolio_state',
+        'kb_documents','daily_stats','decision_commits','events','memories',
+        'portfolio_state',
         'schema_migrations'
     ] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);
