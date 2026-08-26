@@ -789,6 +789,65 @@ async def upsert_daily_stats(conn: asyncpg.Connection, stats: DailyStats) -> Non
 
 
 # ===========================================================================
+# Theses (OMO-R3) - Durable Thesis Book
+# ===========================================================================
+
+async def upsert_thesis(
+    conn: asyncpg.Connection,
+    trade_id: str,
+    mint_address: str,
+    symbol: str,
+    author: str,
+    thesis: str,
+    created_at: str,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO theses (
+            trade_id, mint_address, symbol, author, thesis, created_at, updated_at
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+        ON CONFLICT (trade_id) DO UPDATE SET
+            thesis = EXCLUDED.thesis,
+            updated_at = EXCLUDED.updated_at
+        """,
+        trade_id, mint_address, symbol, author, thesis, _ts(created_at), _now(),
+    )
+
+
+async def retire_thesis(
+    conn: asyncpg.Connection,
+    trade_id: str,
+    closed_at: str,
+    realized_pnl_usd: float,
+) -> None:
+    await conn.execute(
+        """
+        UPDATE theses
+        SET closed_at = $1, realized_pnl_usd = $2
+        WHERE trade_id = $3
+        """,
+        _ts(closed_at), realized_pnl_usd, trade_id,
+    )
+
+
+async def get_theses(
+    conn: asyncpg.Connection, limit: int = 100, offset: int = 0
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        """
+        SELECT trade_id, mint_address, symbol, author, thesis,
+               created_at::text AS created_at,
+               updated_at::text AS updated_at,
+               closed_at::text AS closed_at,
+               realized_pnl_usd
+        FROM theses ORDER BY created_at DESC LIMIT $1 OFFSET $2
+        """,
+        limit, offset,
+    )
+    return [dict(r) for r in rows]
+
+
+# ===========================================================================
 # Proof/journal helpers — mirror api/db.py's SQLite versions with
 # dialect-correct Postgres (bool literals, $n params, ::text timestamps).
 # ===========================================================================

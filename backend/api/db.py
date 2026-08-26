@@ -172,6 +172,20 @@ CREATE INDEX IF NOT EXISTS idx_feed_events_id     ON feed_events(id);
 CREATE INDEX IF NOT EXISTS idx_trades_is_open     ON trades(is_open);
 CREATE INDEX IF NOT EXISTS idx_trades_closed_at   ON trades(closed_at);
 CREATE INDEX IF NOT EXISTS idx_regime_computed_at ON market_regime(computed_at);
+
+-- OMO-R3 Durable thesis book
+CREATE TABLE IF NOT EXISTS theses (
+    trade_id          TEXT PRIMARY KEY,
+    mint_address      TEXT NOT NULL,
+    symbol            TEXT NOT NULL,
+    author            TEXT NOT NULL,
+    thesis            TEXT NOT NULL,
+    created_at        TEXT NOT NULL,
+    updated_at        TEXT NOT NULL,
+    closed_at         TEXT,
+    realized_pnl_usd  REAL
+);
+CREATE INDEX IF NOT EXISTS idx_theses_mint ON theses(mint_address);
 """
 
 
@@ -941,6 +955,61 @@ async def delete_trade_row(conn: aiosqlite.Connection, trade_id: str) -> int:
     )
     await conn.commit()
     return max(cursor.rowcount, 0)
+
+
+# ===========================================================================
+# Theses (OMO-R3) - Durable Thesis Book
+# ===========================================================================
+
+async def upsert_thesis(
+    conn: aiosqlite.Connection,
+    trade_id: str,
+    mint_address: str,
+    symbol: str,
+    author: str,
+    thesis: str,
+    created_at: str,
+) -> None:
+    await conn.execute(
+        """
+        INSERT INTO theses (
+            trade_id, mint_address, symbol, author, thesis, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(trade_id) DO UPDATE SET
+            thesis = excluded.thesis,
+            updated_at = excluded.updated_at
+        """,
+        (trade_id, mint_address, symbol, author, thesis, created_at, _now_iso()),
+    )
+    await conn.commit()
+
+
+async def retire_thesis(
+    conn: aiosqlite.Connection,
+    trade_id: str,
+    closed_at: str,
+    realized_pnl_usd: float,
+) -> None:
+    await conn.execute(
+        """
+        UPDATE theses
+        SET closed_at = ?, realized_pnl_usd = ?
+        WHERE trade_id = ?
+        """,
+        (closed_at, realized_pnl_usd, trade_id),
+    )
+    await conn.commit()
+
+
+async def get_theses(
+    conn: aiosqlite.Connection, limit: int = 100, offset: int = 0
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        "SELECT * FROM theses ORDER BY created_at DESC LIMIT ? OFFSET ?",
+        (limit, offset)
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
 
 
 # ===========================================================================

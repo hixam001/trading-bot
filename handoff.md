@@ -395,7 +395,7 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 - Note: `not_on_break` is already one of the 9 ACTIVE_RULES with a hardcoded
   "not on break" input — this adds the actual break state behind it.
 
-### OMO-R3 — Durable thesis book ✅ APPROVED
+### OMO-R3 — Durable thesis book ✅ IMPLEMENTED (2026-08-26)
 - omo reference: `src/lib/theses.server.ts` + public `/api/public/theses.json`.
 - Per-position write-up as database state: created at entry (required author =
   `operator` | `model` plus model id when model), revised while held, retired
@@ -559,7 +559,7 @@ and 14 above.
 
 1. **OMO-R5 Memory/events system** — ✅ IMPLEMENTED.
 2. **OMO-R4 Self-regulating break system** — ✅ IMPLEMENTED.
-3. **OMO-R3 Durable thesis book.**
+3. **OMO-R3 Durable thesis book.** — ✅ IMPLEMENTED.
 4. **OMO-R2 FOMO intel with author P&L.**
 5. **OMO-R1 Independent verifier and binding report.**
 6. **OMO-R6 Public disclosure and reasoning feeds.**

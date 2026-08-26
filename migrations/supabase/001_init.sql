@@ -173,7 +173,21 @@ INSERT INTO portfolio_state (id, cash_usd)
 VALUES (1, 1000.0)
 ON CONFLICT (id) DO NOTHING;
 
--- 10. Lock down RLS --------------------------------------------------------------
+-- 10. theses — durable write-up for each position (OMO-R3) -----------------
+CREATE TABLE IF NOT EXISTS theses (
+    trade_id          TEXT PRIMARY KEY,
+    mint_address      TEXT NOT NULL,
+    symbol            TEXT NOT NULL,
+    author            TEXT NOT NULL,
+    thesis            TEXT NOT NULL,
+    created_at        TIMESTAMPTZ NOT NULL,
+    updated_at        TIMESTAMPTZ NOT NULL,
+    closed_at         TIMESTAMPTZ,
+    realized_pnl_usd  DOUBLE PRECISION
+);
+CREATE INDEX IF NOT EXISTS idx_theses_mint ON theses (mint_address);
+
+-- 11. Lock down RLS --------------------------------------------------------------
 -- Backend uses service role (bypasses RLS). Anon/authenticated keys get NOTHING.
 DO $$
 DECLARE t TEXT;
@@ -181,7 +195,7 @@ BEGIN
     FOREACH t IN ARRAY ARRAY[
         'feed_events','trades','market_regime','provider_call_counters',
         'kb_documents','daily_stats','decision_commits','events','memories',
-        'portfolio_state',
+        'portfolio_state','theses',
         'schema_migrations'
     ] LOOP
         EXECUTE format('ALTER TABLE %I ENABLE ROW LEVEL SECURITY', t);

@@ -129,3 +129,19 @@ async def get_refusals(limit: int = 100):
         "count": len(rows),
         "refusals": rows,
     }
+
+@router.get("/api/theses.json")
+async def get_theses(limit: int = 100):
+    """The Durable Thesis Book.
+    
+    Every position's written thesis, updated over its lifecycle, and stamped
+    with the realized PnL on exit.
+    """
+    async with db.get_db() as conn:
+        rows = await db.get_theses(conn, min(max(limit, 1), 500))
+    return {
+        "generated_at_utc": __import__("datetime").datetime.now(
+            __import__("datetime").timezone.utc).isoformat(),
+        "count": len(rows),
+        "theses": rows,
+    }

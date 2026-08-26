@@ -252,6 +252,15 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                         trade_text = full_thesis
                         await db.set_trade_thesis(
                             conn, result.trade.trade_id, trade_text)
+                        await db.upsert_thesis(
+                            conn,
+                            trade_id=result.trade.trade_id,
+                            mint_address=c.mint_address,
+                            symbol=c.symbol,
+                            author=f"model:{think.source}",
+                            thesis=trade_text,
+                            created_at=result.trade.opened_at,
+                        )
                         event.led_to_trade_id = result.trade.trade_id
                         opened += 1
                         await db.insert_event(

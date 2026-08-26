@@ -4,6 +4,7 @@
 - [x] OMO-R5 durable events + weighted memory recall, prompt context,
       stage event hooks, `/api/events.json` (2026-08-26)
 - [x] OMO-R4 Self-regulating break system wired into thinker and gate loops (2026-08-26)
+- [x] OMO-R3 Durable thesis book hooked into live and paper cycles + /api/theses.json (2026-08-26)
 - [x] 10 deterministic rules, both branches tested, no short-circuit (B1–B12)
 - [x] Candidate model with all fields incl. decimals + None semantics (B13)
 - [x] Market regime: computed once/tick, own table, API endpoint (C1–C5)

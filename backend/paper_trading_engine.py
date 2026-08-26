@@ -248,6 +248,12 @@ async def close_position(
         "CLOSED %s [%s]: pnl $%+.4f (%+.1f%%) | proceeds $%.2f",
         trade.symbol, exit_reason, realized_usd, realized_pct, proceeds,
     )
+    await db.retire_thesis(
+        conn,
+        trade_id=trade.trade_id,
+        closed_at=closed_at,
+        realized_pnl_usd=realized_usd,
+    )
     trade.closed_at = closed_at
     trade.exit_price_usd = exit_price
     trade.exit_reason = exit_reason

@@ -46,6 +46,7 @@ from rule_engine.exits import ExitInput, evaluate_exits  # noqa: E402
 from rule_engine.gate import evaluate_gate        # noqa: E402
 from rule_engine.regime import compute_market_regime  # noqa: E402
 from rule_engine.rules import ACTIVE_RULES        # noqa: E402
+from api import db                                # noqa: E402
 
 from live_execution import config as live_config  # noqa: E402
 from live_execution import solana                 # noqa: E402
@@ -135,6 +136,14 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
         log.info("sell -> %s %s", result.status, result.reason)
         if result.status == "filled" and decision.action == "close_full":
             hwm.pop(mint, None)
+            async with db.get_db() as conn:
+                pnl = result.usd_value - m["cost"]
+                await db.retire_thesis(
+                    conn,
+                    trade_id=f"live-{mint[:8]}",
+                    closed_at=datetime.now(timezone.utc).isoformat(),
+                    realized_pnl_usd=pnl,
+                )
 
 
 async def run_cycle(once: bool = False) -> dict:
@@ -202,6 +211,17 @@ async def run_cycle(once: bool = False) -> dict:
             idempotency_key=f"{c.mint_address}-{datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")}",
         )
         log.info("buy %s $%.2f -> %s %s", c.symbol, usd, result.status, result.reason)
+        if result.status == "filled":
+            async with db.get_db() as conn:
+                await db.upsert_thesis(
+                    conn,
+                    trade_id=f"live-{c.mint_address[:8]}",
+                    mint_address=c.mint_address,
+                    symbol=c.symbol,
+                    author=f"model:{think.source}",
+                    thesis=think.thesis + (f" | invalidates if: {think.invalidation}" if think.invalidation else ""),
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                )
         outcome["entries"].append({"symbol": c.symbol, "status": result.status,
                                    "reason": result.reason})
         break   # one decision per cycle (omo cadence parity)
