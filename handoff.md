@@ -318,3 +318,112 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   filled statuses), wallet verify_expected_address, ledger reduce_position,
   run_live_cycle.py --drill devnet self-transfer drill.
 - **Tests: 212 passing** (backend 158 + live_execution 54).
+
+## 13. Approved omo-parity roadmap (2026-08-26) — TO BE IMPLEMENTED
+
+Decision record from the source-level comparison vs omotrades/omo (full detail
+in docs/P0_REPORT.md §6). Six features APPROVED, two REJECTED, one DEFERRED.
+Every approved item carries a stable ID (**OMO-R#**) — use it in branch names,
+commit messages and test files so later implementation is traceable. Order of
+implementation: R5 first (marked important), then R4, R3, R2, R1, R6.
+
+### OMO-R5 — Memory/events system ✅ APPROVED, IMPORTANT (implement FIRST)
+- omo reference: `OmoEvent`/`OmoMemory` types + hydrate logic in
+  `src/lib/omo-brain.server.ts`.
+- Persistent event log with kinds `thought|did|refused|read|trade`, plus
+  weighted memories (topic, note, weight, hits) recalled into the thinker
+  prompt so accumulated lessons influence future decisions; `hits` increments
+  on recall.
+- Touch points: `events` + `memories` tables in BOTH api/db.py and api/db_pg.py
+  (surfaces stay identical); writer hooks in every tick stage; recall injected
+  as `{memory_line}` in the thinker prompt (same pattern as social/web lines);
+  expose recent events via existing feed routes.
+- Operator flagged this IMPORTANT: do this one before all others.
+
+### OMO-R4 — Self-regulating break system ✅ APPROVED
+- omo reference: `not_on_break` gate rule + `breakUntil`/`breakReason` state in
+  omo-brain.server.ts.
+- The loop may pause itself for a stated reason, persisted until a timestamp;
+  while broken, the existing `not_on_break` gate rule fails CLOSED and the
+  refusal records "on break" loudly. Resume only by expiry or explicit
+  operator clear.
+- Touch points: state file beside kill_switch.json (REUSE kill_switch.py's
+  fail-safe semantics: corrupt state = refuse, never assume fine); wire the
+  real state into rule_engine/gate.py `not_on_break`; honor it in main.py and
+  run_live_cycle.py tick loops.
+- Note: `not_on_break` is already one of the 9 ACTIVE_RULES with a hardcoded
+  "not on break" input — this adds the actual break state behind it.
+
+### OMO-R3 — Durable thesis book ✅ APPROVED
+- omo reference: `src/lib/theses.server.ts` + public `/api/public/theses.json`.
+- Per-position write-up as database state: created at entry (required author =
+  `operator` | `model` plus model id when model), revised while held, retired
+  at close with realized PnL filed against the row. Live size/pnl always
+  refreshed from the book/chain, NEVER trusted from the row. Stored text wins
+  over any late/cached feed read (omo invariant).
+- Touch points: `theses` table in db.py + db_pg.py; write hook after a live
+  buy confirms AND after paper opens (paper rows carry their own thesis);
+  retire hook in both exit paths; read-only `GET /api/theses.json`.
+
+### OMO-R2 — FOMO crowd intel upgrade: theses WITH author PnL ✅ APPROVED
+- omo reference: `src/lib/fomo.server.ts` (`readFomoIntel`,
+  `describeFomoIntel`, `readOwnBasis`).
+- Current state: data_providers/crowd.py already reads thesis COUNTS off
+  prod-api.fomo.family for crowd_heat (Privy session + Firecrawl stealth
+  fallback, queue-gap + response-TTL plumbing done).
+- Upgrade scope: return FULL thesis rows — text, handle, author position
+  sizeUsd, unrealizedUsd, realizedUsd, closed — and render omo-style evidence
+  lines ("@who on $SYM — holding $X, up $Y (Z%): \"text\"") into the thinker
+  prompt as a new `{crowd_line}`; prompt instructs the model to weigh each
+  claim by whether its author is actually up on the position.
+- Extend crowd.py — do NOT duplicate its session/proxy plumbing. Fail-soft as
+  today: no feed = empty line, loop continues. Env unchanged:
+  FOMO_PRIVY_REFRESH_TOKEN + FIRECRAWL_API_KEY.
+
+### OMO-R1 — Independent verifier upgrade + binding report ✅ APPROVED
+- omo reference: `src/lib/verify.server.ts` + `readBinding()` in
+  precommit.server.ts.
+- Scope NOTE: on-chain memo sealing was REJECTED (see below), so verification
+  cannot mirror omo's memo-hash checks. What IS verifiable without memos:
+  extend /api/verify.json so each decision-commit row bound to a fill is
+  checked against PUBLIC RPC instead of our own journal:
+    1. fetch the fill tx via getTransaction on the bound signature
+       (needs a get_transaction helper in live_execution/solana.py);
+    2. checks per row: tx exists and confirmed; time ordering (commit
+       sealed_at < fill blockTime); account key 0 == our wallet address;
+       pre/postTokenBalances include the committed mint;
+    3. new read-only `GET /api/binding.json` in api/routes/proof.py:
+       pairs committed mint vs mint actually touched, with matched /
+       mismatched counts (omo BindingReport shape).
+- Touch points: live_execution/solana.py (get_transaction), api/routes/proof.py
+  (extend verify + add binding), commit rows already carry payload/nonce/
+  signature. Tests: mock RPC fixtures; every mismatch case must report the
+  FAILED check explicitly — a check that cannot run reports unknown, never
+  pass.
+
+### OMO-R6 — Public machine-truth feeds (disclosure + reasoning) ✅ APPROVED
+- omo reference: `src/lib/disclosure.server.ts`; `/api/public/disclosure.json`
+  and `/api/public/reasoning.json`.
+- Minimum scope: two more read-only JSON endpoints alongside proof/exits/
+  verify/refusals:
+    - `/api/disclosure.json` — live machine state: armed/disarmed flag,
+      kill-switch state, break state (OMO-R4), last cycle timestamp + step
+      results, config truths (caps, floors), no secrets;
+    - `/api/reasoning.json` — per-decision provenance: which model produced
+      the thesis, stage timings, inputs snapshot hash (sha256 of the gated
+      inputs), linked commit hash.
+- Full web UI terminal is explicitly OUT OF SCOPE for now; JSON first, a UI
+  can be layered later on the same endpoints.
+
+### REJECTED / DEFERRED — do not re-litigate without operator approval
+- ❌ **On-chain memo commitments + reveal protocol** (omo precommit memo layer)
+  — REJECTED 2026-08-26. Local CommitLog seal-before-broadcast stands as the
+  sealing mechanism; OMO-R1 is scoped to work WITHOUT on-chain memos.
+- ❌ **Audit-log retro signature linking** (12h-window match of fills to past
+  decisions) — REJECTED 2026-08-26. Direct bind-at-execute-time kept; it is
+  stricter than retro-matching.
+- ⏸ **Off-book multi-chain tracking** (BNB/other-chain positions marked and
+  repriced into equity) — DEFERRED temporarily. Revisit only after the Solana
+  side is armed and has a live track record.
+- ℹ️ Armed trading history needs no build work: it accrues automatically once
+  live cycles run armed.
