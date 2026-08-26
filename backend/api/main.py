@@ -81,6 +81,12 @@ try:
 except ImportError:
     pass  # proof endpoints optional; decision_commits table may not exist yet
 
+try:
+    from api.routes.disclosure import router as disclosure_router
+    app.include_router(disclosure_router)
+except ImportError:
+    pass  # OMO-R6 disclosure endpoints
+
 
 @app.websocket("/ws/feed")
 async def ws_feed(ws: WebSocket):

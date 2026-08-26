@@ -4,6 +4,7 @@
 Solana memecoins. Report updated 2026-08-26 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
+**OMO parity: ALL R1–R7 features implemented.** Tests: **222 passing**.
 
 ---
 
@@ -359,18 +360,56 @@ The omo-parity swap retired `security_clear` from the active nine-rule gate;
 authority fields remain logged for post-hoc audit. This is an accepted omo
 parity risk and can only be changed by an explicit operator decision.
 
-The verification record contains 215 tests at the time of the P0 snapshot
-(backend 161 plus live execution 54), including commit-log tamper detection,
+The verification record contains 222 tests at the time of the current report
+(backend 192 plus live_execution 30), including commit-log tamper detection,
 authority parsing, social and web evidence contracts, research/discovery
 coverage, refusal API shape, sell sealing, ledger reductions, executor guards,
-wallet identity checks, and a mocked devnet self-transfer drill. The funded
-throwaway-keypair devnet drill remains mandatory before any mainnet
+wallet identity checks, a mocked devnet self-transfer drill, and — as of
+2026-08-26 — the full OMO-R1/R6/R7 test suites (binding verification, disclosure
+no-secrets, reasoning provenance, and retro-match safety properties).
+
+The funded throwaway-keypair devnet drill remains mandatory before any mainnet
 consideration; no mainnet execution has occurred.
 
-The remaining comparison gaps are armed trading history, richer Birdeye
-security signals, a realtime social firehose, multi-wallet infrastructure,
-and a longer runtime soak. These are limitations, not claims of autonomous
-model training or live-money validation.
+## 17. OMO parity completion (2026-08-26)
 
+All seven approved OMO parity items are now implemented:
 
+| ID | Feature | Status | Key files |
+|---|---|---|---|
+| OMO-R1 | Independent verifier + binding report | ✅ | `proof.py` `/api/binding.json`, `solana.py` `get_transaction()` |
+| OMO-R2 | FOMO crowd intel with author P&L | ✅ | `crowd.py`, `thinker.py` `crowd_line` |
+| OMO-R3 | Durable thesis book | ✅ | `db.py` `upsert_thesis/retire_thesis`, `proof.py` `/api/theses.json` |
+| OMO-R4 | Self-regulating break system | ✅ | `liveness.py`, `rules.py` `not_on_break` |
+| OMO-R5 | Events + memory system | ✅ | `db.py` `insert_event/recall_memories`, routes `/api/events.json` |
+| OMO-R6 | Public disclosure + reasoning feeds | ✅ | `disclosure.py` `/api/disclosure.json` + `/api/reasoning.json` |
+| OMO-R7 | Retro audit-log signature matching | ✅ | `retro_matcher.py`, `db.py` `bind_commit_signature` |
 
+### OMO-R4 bug fix (2026-08-26)
+
+`liveness.set_break(think.break_minutes, think.break_reason)` in `main.py`
+was silently passing the wrong types to positional slots: `break_minutes`
+(int) into `taking` (bool), and `break_reason` (str) into `minutes` (int).
+Fixed to `set_break(True, think.break_minutes, think.break_reason)`. The
+failing path (model requesting a break with minutes > 0) would have raised a
+TypeError at runtime and logged at the wrong level. This was the only
+programmatic bug found across the R2–R5 verification pass.
+
+### Root pytest.ini restored
+
+The root `pytest.ini` (with `asyncio_mode = auto`) was intentionally removed
+in commit `20ddc0a`. This caused all async tests to fail when running from
+the repo root. Restored with `testpaths = backend/tests live_execution/tests`
+so the canonical combined run `python -m pytest -q` produces a clean 222-test
+result.
+
+### schema additions for OMO-R1/R7
+
+Three nullable columns added to `decision_commits` via idempotent ALTER TABLE:
+- `signature TEXT` — Solana tx signature bound at exact-fill or retro attribution
+- `phase TEXT` — `'filled'` when bound
+- `matched_by TEXT` — `'exact'` (CommitLog) or `'retro'` (retro_matcher)
+
+A partial index on `(signature) WHERE signature IS NOT NULL` keeps the binding
+lookup O(1). Both SQLite (db.py) and Postgres (db_pg.py) backends apply the
+same migrations idempotently on `init_db()`.

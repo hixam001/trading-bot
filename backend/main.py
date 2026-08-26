@@ -148,7 +148,7 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
             
             if think.break_taking:
                 from rule_engine import liveness
-                liveness.set_break(think.break_minutes, think.break_reason)
+                liveness.set_break(True, think.break_minutes, think.break_reason)
                 log.warning("self-regulating break triggered: %d mins (reason: %s)", think.break_minutes, think.break_reason)
                 
             await db.insert_event(
@@ -296,6 +296,15 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
         closed += await scan_and_execute_exits(
             provider, conn, on_close=_on_closed_trade
         )
+
+        # --- OMO-R7: retro audit-log signature matching (post-cycle) --------
+        # Attributes out-of-pipeline fills to decision rows when a fill
+        # bypasses the tick. Fail-soft; never blocks the tick.
+        try:
+            from retro_matcher import run_retro_match
+            await run_retro_match(conn)
+        except Exception:
+            log.debug("retro_match failed (non-fatal)", exc_info=True)
 
     elapsed_ms = (time.monotonic() - t0) * 1000.0   # K4 latency instrumentation
     log.info("tick done in %.0f ms: %d candidates, %d entries/scale-ins, "

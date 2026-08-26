@@ -1,7 +1,27 @@
 # Active Context — trading-bot
 
-**As of 2026-08-26 (calibration running; dashboard v2 shipped; OMO-R5 landed).** Repo:
+**As of 2026-08-26 (OMO-R1, R6, R7 DONE; full OMO parity reached).** Repo:
 `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### OMO-R1 Independent verifier + binding report (2026-08-26)
+`/api/binding.json` runs four binding checks per sealed decision commit: tx_confirmed (meta.err == null), time_ordering (commit_at < blockTime), fee_payer (account key 0 == wallet), mint_present (mint in pre/postTokenBalances). Each check that cannot run reports `unknown`, never `pass` (fail-closed). New `signature`, `phase`, `matched_by` nullable columns added to `decision_commits` via idempotent ALTER TABLE migrations in both SQLite and Postgres backends. `live_execution/solana.py` gains `get_transaction()` helper. `/api/verify.json` extended with `created_at` and `signature` fields.
+
+## DONE
+### OMO-R6 Public disclosure + reasoning feeds (2026-08-26)
+`/api/disclosure.json`: machine state — armed/disarmed, kill-switch state, break state, config truths (caps/floors/thresholds). Zero secrets. `/api/reasoning.json`: per-decision provenance — model source (from payload), inputs snapshot hash (sha256 of canonical payload_json), linked commit hash. Both registered in `api/main.py` via the same optional try/except pattern.
+
+## DONE
+### OMO-R7 Retro audit-log signature matching (2026-08-26)
+`backend/retro_matcher.py`: omo-exact algorithm — same symbol (case-insensitive, $-stripped) + side + fill_at >= decision_at + 12h window; earliest fill wins; `taken` set prevents double-claim. Runs post-cycle in both `main.py` and `run_live_cycle.py`. Exact-bind rows (signature IS NOT NULL) protected by WHERE clause in `bind_commit_signature`. Three new DB functions in both backends: `get_pending_unsigned_commits`, `get_recent_fills_for_retro`, `bind_commit_signature`.
+
+## DONE
+### OMO-R4 Bug fix (2026-08-26)
+`liveness.set_break(think.break_minutes, think.break_reason)` was silently passing int/str to the wrong positional slots (`taking=break_minutes`, `minutes=break_reason`). Fixed to `set_break(True, think.break_minutes, think.break_reason)`.
+
+## DONE
+### Root pytest.ini restored (2026-08-26)
+Root `pytest.ini` with `asyncio_mode = auto` and `testpaths = backend/tests live_execution/tests` restored (was removed in commit 20ddc0a). Full suite: **222 tests passing**.
 
 ## DONE
 ### OMO-R2 FOMO crowd intel upgrade (2026-08-26)

@@ -1,8 +1,7 @@
-# HANDOFF — trading-bot
-
 **Last updated:** 2026-08-26 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
+**Tests:** 222 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -40,8 +39,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # 145 tests, ~1s
-.venv/bin/python -m pytest -q                           # 193 incl. live_execution
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 192 tests
+.venv/bin/python -m pytest -q                           # full suite: 222 tests, ~1.5s
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -70,6 +69,9 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # 145 tests, ~1s
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
 | `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. Ships DISARMED: hardcoded `LIVE_TRADING_ENABLED=False`, `REQUIRE_MANUAL_CONFIRMATION=True`, kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, and decimals guards. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Offline/mock wiring tests pass; a funded throwaway-keypair devnet drill is still REQUIRED before any mainnet use. |
 | `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats [equity/spend/realized/unrealized/cash], regime, gate, status); no knowledge tab, no paper-trading banner (removed 2026-08-25) |
+| `backend/api/routes/proof.py` | OMO-R1 binding report (`/api/binding.json`), `/api/verify.json`, `/api/refusals.json`, `/api/theses.json`, `/api/proof.json`, `/api/exits.json` |
+| `backend/api/routes/disclosure.py` | OMO-R6 public machine-truth feeds: `/api/disclosure.json` (armed/break/config state) + `/api/reasoning.json` (per-decision provenance) |
+| `backend/retro_matcher.py` | OMO-R7 retro audit-log signature matching: attributes out-of-pipeline fills to decision commit rows using omo's exact algorithm (symbol+side match, 12h window, earliest fill wins, taken set) |
 | `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, omotrades comparison, project report |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
 
@@ -558,12 +560,12 @@ and 14 above.
 ### Approved — implement in this order
 
 1. **OMO-R5 Memory/events system** — ✅ IMPLEMENTED.
-2. **OMO-R4 Self-regulating break system** — ✅ IMPLEMENTED.
+2. **OMO-R4 Self-regulating break system** — ✅ IMPLEMENTED. *(Bug fixed 2026-08-26: `liveness.set_break(think.break_minutes, think.break_reason)` was passing int/str in wrong positional slots; fixed to `set_break(True, think.break_minutes, think.break_reason)`.)*
 3. **OMO-R3 Durable thesis book.** — ✅ IMPLEMENTED.
 4. **OMO-R2 FOMO intel with author P&L.** — ✅ IMPLEMENTED.
-5. **OMO-R1 Independent verifier and binding report.**
-6. **OMO-R6 Public disclosure and reasoning feeds.**
-7. **OMO-R7 Retro audit-log signature matching.**
+5. **OMO-R1 Independent verifier and binding report.** — ✅ IMPLEMENTED. Four-check binding verification (`tx_confirmed`, `time_ordering`, `fee_payer`, `mint_present`) in `/api/binding.json`. Fail-closed: missing RPC data → `unknown`, never `pass`. New `signature/phase/matched_by` columns on `decision_commits`.
+6. **OMO-R6 Public disclosure and reasoning feeds.** — ✅ IMPLEMENTED. `/api/disclosure.json` (machine state, no secrets) + `/api/reasoning.json` (per-decision provenance: model source, inputs hash, commit hash).
+7. **OMO-R7 Retro audit-log signature matching.** — ✅ IMPLEMENTED. `retro_matcher.py` runs post-cycle in both `main.py` and `run_live_cycle.py`. Exact-bind rows (`signature IS NOT NULL`) never overwritten. Double-claim prevented by `taken` set.
 8. **LLM migration completion** — DeepSeek for thesis/thinker and reflections;
    Groq for social evidence; usage accounting, shadow replay, paper canary,
    and delayed outcome labels before any model promotion.

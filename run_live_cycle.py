@@ -225,7 +225,18 @@ async def run_cycle(once: bool = False) -> dict:
         outcome["entries"].append({"symbol": c.symbol, "status": result.status,
                                    "reason": result.reason})
         break   # one decision per cycle (omo cadence parity)
+
+    # --- OMO-R7: retro audit-log signature matching (post-cycle) ----------
+    # Only runs from the paper-side DB; the live book has its own CommitLog.
+    try:
+        from retro_matcher import run_retro_match
+        async with db.get_db() as retro_conn:
+            await run_retro_match(retro_conn)
+    except Exception:
+        log.debug("retro_match post-cycle failed (non-fatal)", exc_info=True)
+
     return outcome
+
 
 
 def main() -> None:

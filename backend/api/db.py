@@ -132,11 +132,17 @@ CREATE TABLE IF NOT EXISTS decision_commits (
     entry_allowed   INTEGER NOT NULL,   -- 1 = both layers agreed
     nonce           TEXT    NOT NULL,
     payload_json    TEXT    NOT NULL,   -- canonical reveal payload
-    payload_hash    TEXT    NOT NULL UNIQUE
+    payload_hash    TEXT    NOT NULL UNIQUE,
+    -- OMO-R1/R7: fill binding and retro attribution fields (nullable)
+    signature       TEXT,               -- Solana tx sig when a fill is bound
+    phase           TEXT,               -- 'filled' | null
+    matched_by      TEXT                -- 'exact' | 'retro' | null
 );
 
 CREATE INDEX IF NOT EXISTS idx_decision_commits_created
     ON decision_commits(created_at);
+CREATE INDEX IF NOT EXISTS idx_decision_commits_sig
+    ON decision_commits(signature) WHERE signature IS NOT NULL;
 
 -- OMO-R5 durable event stream and weighted lessons recalled by the thinker.
 CREATE TABLE IF NOT EXISTS events (
@@ -198,6 +204,10 @@ async def init_db() -> None:
         for stmt in (
             "ALTER TABLE trades ADD COLUMN high_water_usd REAL",
             "ALTER TABLE trades ADD COLUMN tranches_taken INTEGER NOT NULL DEFAULT 0",
+            # OMO-R1/R7: binding + retro attribution columns on decision_commits
+            "ALTER TABLE decision_commits ADD COLUMN signature TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN phase TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN matched_by TEXT",
         ):
             try:
                 await conn.execute(stmt)
@@ -599,6 +609,91 @@ async def insert_decision_commit(
     return max(cursor.rowcount, 0)
 
 
+# OMO-R7 retro attribution helpers -----------------------------------------
+
+async def get_pending_unsigned_commits(
+    conn: aiosqlite.Connection, limit: int = 60
+) -> list[dict[str, Any]]:
+    """Decision rows with entry_allowed=1 AND signature IS NULL (newest first).
+    These are candidates for retro attribution when an out-of-pipeline fill
+    is detected. Only rows that intended an entry are eligible."""
+    cursor = await conn.execute(
+        """
+        SELECT id, created_at, symbol, mint_address, verdict, payload_json
+        FROM decision_commits
+        WHERE entry_allowed = 1 AND signature IS NULL
+        ORDER BY created_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "symbol": row["symbol"],
+            "mint_address": row["mint_address"],
+            "verdict": row["verdict"],
+            "payload": json.loads(row["payload_json"]),
+        }
+        for row in await cursor.fetchall()
+    ]
+
+
+async def get_recent_fills_for_retro(
+    conn: aiosqlite.Connection, limit: int = 120
+) -> list[dict[str, Any]]:
+    """Fills (opened trades) whose signature is not already claimed — candidates
+    for retro attribution. A 'fill' here is any opened trade row. Side is
+    always 'buy' for opens (the only side our paper engine currently writes)."""
+    cursor = await conn.execute(
+        """
+        SELECT trade_id, symbol, mint_address, opened_at, entry_price_usd,
+               position_size_usd
+        FROM trades
+        WHERE trade_id NOT IN (
+            SELECT trade_id FROM trades WHERE trade_id IN (
+                SELECT payload_json FROM decision_commits
+                WHERE signature IS NOT NULL AND signature = trade_id
+            )
+        )
+        ORDER BY opened_at DESC LIMIT ?
+        """,
+        (limit,),
+    )
+    return [
+        {
+            "trade_id": row["trade_id"],
+            "symbol": row["symbol"],
+            "mint_address": row["mint_address"],
+            "opened_at": row["opened_at"],
+            "side": "buy",
+        }
+        for row in await cursor.fetchall()
+    ]
+
+
+async def bind_commit_signature(
+    conn: aiosqlite.Connection,
+    commit_id: int,
+    signature: str,
+    phase: str,
+    matched_by: str,
+) -> int:
+    """Write back signature, phase, and matched_by to a decision commit row.
+    Only updates rows that still have signature IS NULL (exact-bind rows are
+    never overwritten). Returns affected rowcount."""
+    cursor = await conn.execute(
+        """
+        UPDATE decision_commits
+        SET signature = ?, phase = ?, matched_by = ?
+        WHERE id = ? AND signature IS NULL
+        """,
+        (signature, phase, matched_by, commit_id),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
 async def get_trade_by_id(conn: aiosqlite.Connection, trade_id: str) -> Optional[Trade]:
     cursor = await conn.execute("SELECT * FROM trades WHERE trade_id = ?", (trade_id,))
     row = await cursor.fetchone()
@@ -929,7 +1024,8 @@ async def get_verify_commits(
 ) -> list[dict[str, Any]]:
     cursor = await conn.execute(
         """
-        SELECT id, nonce, payload_json, payload_hash, symbol, verdict
+        SELECT id, nonce, payload_json, payload_hash, symbol, verdict,
+               created_at, signature
         FROM decision_commits ORDER BY created_at DESC LIMIT ?
         """,
         (limit,),

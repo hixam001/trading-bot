@@ -140,3 +140,24 @@ async def latest_blockhash(endpoint: str) -> str | None:
     if not res:
         return None
     return (res.get("value") or {}).get("blockhash")
+
+
+async def get_transaction(sig: str) -> dict | None:
+    """
+    OMO-R1: fetch a confirmed transaction by signature for binding verification.
+
+    Returns the raw RPC result dict on success (callers must inspect
+    `meta.err == null` for confirmation and extract `blockTime` /
+    `transaction.message.accountKeys`), or None on any failure.
+
+    Fail-closed: a None result means the check cannot be run and should
+    be reported as `unknown`, not `pass`. Never raises.
+    """
+    res = await rpc(
+        "getTransaction",
+        [sig, {"encoding": "jsonParsed",
+               "commitment": "confirmed",
+               "maxSupportedTransactionVersion": 0}],
+    )
+    return res if isinstance(res, dict) else None
+

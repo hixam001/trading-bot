@@ -224,6 +224,18 @@ async def init_db() -> None:
             """,
             float(config.INITIAL_CASH_USD), _now(),
         )
+        # OMO-R1/R7: idempotent column additions for decision_commits
+        for col_sql in (
+            "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS signature TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS phase TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS matched_by TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_decision_commits_sig "
+            "ON decision_commits(signature) WHERE signature IS NOT NULL",
+        ):
+            try:
+                await conn.execute(col_sql)
+            except Exception:
+                pass  # column/index already exists
     log.info("db_pg: Supabase schema verified, portfolio seeded/confirmed")
 
 
@@ -559,6 +571,80 @@ async def insert_decision_commit(
         """,
         _ts(created_at), _ts(tick_ts), symbol, mint_address, verdict,
         bool(entry_allowed), nonce, payload_json, payload_hash,
+    )
+    return _rowcount(status)
+
+
+# OMO-R7 retro attribution helpers -----------------------------------------
+
+async def get_pending_unsigned_commits(
+    conn: asyncpg.Connection, limit: int = 60
+) -> list[dict[str, Any]]:
+    """Decision rows with entry_allowed=True AND signature IS NULL (newest first)."""
+    import json as _json
+    rows = await conn.fetch(
+        """
+        SELECT id, created_at::text AS created_at, symbol, mint_address,
+               verdict, payload_json::text AS payload_json
+        FROM decision_commits
+        WHERE entry_allowed = TRUE AND signature IS NULL
+        ORDER BY created_at DESC LIMIT $1
+        """,
+        limit,
+    )
+    return [
+        {
+            "id": row["id"],
+            "created_at": row["created_at"],
+            "symbol": row["symbol"],
+            "mint_address": row["mint_address"],
+            "verdict": row["verdict"],
+            "payload": _json.loads(row["payload_json"]),
+        }
+        for row in rows
+    ]
+
+
+async def get_recent_fills_for_retro(
+    conn: asyncpg.Connection, limit: int = 120
+) -> list[dict[str, Any]]:
+    """Opened trade rows not already claimed by a bound commit."""
+    rows = await conn.fetch(
+        """
+        SELECT trade_id, symbol, mint_address, opened_at::text AS opened_at,
+               entry_price_usd, position_size_usd
+        FROM trades
+        ORDER BY opened_at DESC LIMIT $1
+        """,
+        limit,
+    )
+    return [
+        {
+            "trade_id": row["trade_id"],
+            "symbol": row["symbol"],
+            "mint_address": row["mint_address"],
+            "opened_at": row["opened_at"],
+            "side": "buy",
+        }
+        for row in rows
+    ]
+
+
+async def bind_commit_signature(
+    conn: asyncpg.Connection,
+    commit_id: int,
+    signature: str,
+    phase: str,
+    matched_by: str,
+) -> int:
+    """Write back signature, phase, matched_by. Only updates if still NULL."""
+    status = await conn.execute(
+        """
+        UPDATE decision_commits
+        SET signature = $1, phase = $2, matched_by = $3
+        WHERE id = $4 AND signature IS NULL
+        """,
+        signature, phase, matched_by, commit_id,
     )
     return _rowcount(status)
 
@@ -956,12 +1042,13 @@ async def get_verify_commits(
     rows = await conn.fetch(
         """
         SELECT id, nonce, payload_json::text AS payload_json, payload_hash,
-               symbol, verdict
+               symbol, verdict, created_at::text AS created_at, signature
         FROM decision_commits ORDER BY created_at DESC LIMIT $1
         """,
         limit,
     )
     return [dict(r) for r in rows]
+
 
 
 async def set_trade_thesis(
