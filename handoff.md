@@ -260,12 +260,14 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
    — full plan in section 18, gated on a funded DeepSeek key + shadow replay.
 6. No automatic learning, threshold changes, prompt changes, model changes,
    or live-trading promotion is permitted.
-7. **Reference parity is complete (REF-R1–R9 + R11).** The ONLY remaining item
-   is **§27 — Enable live execution**, the operator's final manual task (fund
-   wallet → devnet drill → hand-flip the two hardcoded flags). No session may
-   arm before every other task is done.
-8. **Full remaining-task list lives in §28** (grouped: final gating task,
-   in-progress calibration, post-calibration, optional upgrades, deferred,
+7. **Reference parity for the original scope is complete (REF-R1–R9 + R11).**
+   The 2026-08-27 omo audit added a five-item **code queue** (A7 wash-trade
+   filter, A6 symbol blocklist, A3 venue attribution, A2 chain book re-derivation,
+   A4 own-basis read-back) — see §28. Those ship test-green FIRST; **§27 —
+   Enable live execution** stays the operator's final manual task after them.
+   No session may arm before every other task is done.
+8. **Full remaining-task list lives in §28** (grouped: code queue, final gating
+   task, in-progress calibration, post-calibration, optional upgrades, deferred,
    and never-to-build invariants). Read §28 before picking up any new work.
 
 ## 9. Invariants checklist (before any change)
@@ -1501,6 +1503,7 @@ This is REF-R10's promotion path — it is a human checklist, not code.
 
 ### Preconditions (all must be true before arming)
 - [ ] All preceding handoff tasks implemented, tested, committed.
+- [ ] **The §28 code queue (A7/A6/A3/A2/A4) shipped test-green.**
 - [ ] REF-R11 memo layer + micro-bootstrap shipped and test-green (§26).
 - [ ] Full suite passing (379+); isolation grep clean.
 
@@ -1532,18 +1535,64 @@ positions remain managed/journalled. Backend is unaffected
 
 ## 28. Tasks yet to be implemented (roadmap snapshot, 2026-08-27)
 
-Reference parity for the implementable items is COMPLETE (REF-R1–R9 + R11).
-What remains is either operator-gated, post-calibration, or needs external
-credits/keys. Grouped by kind so a future session knows what is code, what is a
-human action, and what is deliberately out of scope.
+Reference parity for the originally-scoped items is COMPLETE (REF-R1–R9 + R11).
+The 2026-08-27 omo audit (docs/08) surfaced five further parity gaps — those are
+the **active code queue** below and must ship test-green BEFORE arming. Everything
+else is operator-gated, post-calibration, or needs external credits/keys. Grouped
+by kind so a future session knows what is code, what is a human action, and what
+is deliberately out of scope. **§27 (enable live execution) remains the final
+task no matter what — the code queue never displaces it.**
 
-### A. Final gating task — operator-only, NO code (handoff §27)
+### Code queue — implement these BEFORE arming (from the omo audit)
+
+Five items closing remaining reference gaps. All are code; none require arming
+and none touch the hardcoded safety flags. Sequenced by impact + dependency.
+Accurate current-state notes are included so a future session does not redo work
+that already exists.
+
+- [ ] **A7 — Wash-trade "fake chart" filter** (highest impact, pure logic).
+      Port omo's `isFakeChart` (src/lib/market.server.ts — 13 thresholds: fee-vs-
+      fdv, vol-vs-depth 20×/150×, thin-crowd, one-sided, straight-bleed, dead-tape,
+      headline-day-empty-present, paper-float) into `backend/rule_engine/
+      fake_chart.py`. Add `volume_5m_usd` to `Candidate` + extract `volume.m5` in
+      `dexscreener.py`. Apply in `main.py` READ stage BEFORE think/gate so filtered
+      rows never burn LLM/scrape credits. Hand-computed threshold tests for all 13.
+- [ ] **A6 — Hardcoded symbol blocklist** (extend existing `blocklist.py`).
+      CURRENT STATE: mint-based manual + auto-blocking already exists and is
+      enforced in `run_tick`. GAP: no static name list. Add a `BLOCKED_SYMBOLS`
+      frozenset of known rugged/manufactured/closed names + `is_blocked_symbol()`,
+      enforced in `filter_candidates()` alongside the mint check (case-insensitive).
+      omo ref: src/lib/blocklist.ts.
+- [ ] **A3 — Venue attribution** (live-path). New `live_execution/venue.py`:
+      `fetch_fill_venue(signature)` parses the confirmed fill tx account keys to
+      label the executing program (pump.fun AMM / raydium / meteora / orca /
+      jupiter). Store on the ExecutionLedger record + a `decision_commits.venue`
+      column (idempotent migration, both db.py + db_pg.py + supabase file); surface
+      in /api/proof.json + /api/binding.json. omo ref: execute.server.ts
+      `fetchFillVenue`. Mocked-tx tests per venue.
+- [ ] **A2 — Chain book re-derivation** (live-path, advisory). New
+      `live_execution/chain_book.py`: `derive_book_from_chain(wallet)` reads all
+      token accounts via `getTokenAccountsByOwner`, prices each via a 1-token
+      Jupiter quote, and diffs against the local ExecutionLedger — logs drift
+      warnings. Called at `run_live_cycle.py` cycle start; advisory, never blocks
+      a cycle. omo ref: wallet.server.ts. Mocked-RPC tests.
+- [ ] **A4 — Own-basis read-back** (minor). CURRENT STATE: the fomo prod-api
+      integration is ALREADY done in `crowd.py` (Privy session minting + refresh-
+      token rotation persistence, direct + stealth-proxy failover, per-author P&L
+      extraction, and the thinker already shows each author's size/P&L). GAP: we do
+      not read OUR OWN cost basis back from FOMO's accounting. Add
+      `fetch_own_position(mint, wallet)` reading our `authorTrade`, and show it in
+      the thinker prompt. Uses the existing `FOMO_PRIVY_REFRESH_TOKEN` — no new
+      secret. omo ref: fomo.server.ts `authorTrade`.
+
+### A. Final gating task — operator-only, NO code (handoff §27) — STILL LAST
 - [ ] **REF-R10 — Enable live execution.** The promotion path. Fund the wallet
       (0.03 SOL fee reserve + $3–5 USDC capital) → funded throwaway-keypair
       devnet drill (now incl. the memo step) → hand-flip
       `LIVE_TRADING_ENABLED=True` then `REQUIRE_MANUAL_CONFIRMATION=False` →
       supervise one `--once` cycle. Deliberately the LAST task; no session may
-      arm before every other task is done.
+      arm before every other task is done — **including the entire code queue
+      above (A7/A6/A3/A2/A4) shipping test-green first.**
 
 ### B. In progress
 - [ ] **Calibration window (~10 days).** Let the paper book run; review daily
