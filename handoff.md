@@ -369,6 +369,12 @@ Every approved item carries a stable ID (**REF-R#**) — use it in branch names,
 commit messages and test files so later implementation is traceable. Order of
 implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 
+> **All seven items below (REF-R1–R7) are IMPLEMENTED.** A second batch from the
+> 2026-08-27 audit — **REF-R8 (drawdown sizing), REF-R9 (closed-loop learning),
+> REF-R10 (live execution, gated), REF-R11 (on-chain memo, re-opened)** — is
+> documented in **§22**.
+
+
 ### REF-R5 — Memory/events system ✅ IMPLEMENTED (2026-08-26)
 - reference: event/memory types + hydrate logic in
   `src/lib/brain.server.ts`.
@@ -563,13 +569,26 @@ and 14 above.
    Groq for social evidence; usage accounting, shadow replay, paper canary,
    and delayed outcome labels before any model promotion. DeepSeek migration is
    planned next once API keys with sufficient balance are available.
+9. **REF-R8 Drawdown-adaptive position sizing** — ⏳ TO BE IMPLEMENTED (batch 2,
+   §22). Equity-based ticket with a drawdown factor + hard order/daily ceilings,
+   ported from the reference `risk.server.ts`. Paper-compatible, fail-closed.
+10. **REF-R9 Closed-loop learning → conviction factor** — ⏳ TO BE IMPLEMENTED
+    (batch 2, §22). Bounded [0.6, 1.2] conviction factor from realized outcomes
+    that multiplies the R8 ticket, ported from the reference `learn.server.ts`.
+    Build AFTER R8.
 
 ### Rejected or deferred — do not implement without approval
 
 - **Rejected:** on-chain memo commitments and reveal protocol. Local
-  CommitLog sealing remains the chosen mechanism.
+  CommitLog sealing remains the chosen mechanism. *(Re-opened ONLY as planning
+  item REF-R11 in §22 per the 2026-08-27 audit; still requires explicit operator
+  approval before any code.)*
 - **Deferred:** off-book multi-chain tracking until Solana has a live track
   record.
+- **Deferred-by-design:** live execution (REF-R10, §22) — the promotion path.
+  The live execution package is wired but remains disarmed; a funded
+  throwaway-keypair devnet drill plus promotion-gate green-light plus explicit
+  operator approval are all required before any arming discussion.
 - **Not yet validated:** mainnet live execution. The live execution package is
   wired but remains disarmed; a funded throwaway-keypair devnet drill is
   required before any future arming discussion.
@@ -1020,3 +1039,177 @@ asserted; `live_execution/` untouched and disarmed. Mock mode is hermetic (brain
 inert). Every degradation logged with a reason. Keys only in server `.env`.
 
 (redaction verified in logs); no raw SQL outside api/db*.py.
+
+## 22. Reference-parity roadmap batch 2 — capability gaps from the 2026-08-27 audit (TO BE IMPLEMENTED)
+
+Source: the feature-by-feature audit of this repo vs the reference repository
+(2026-08-27). Batch 1 (§13, REF-R1–R7) is fully implemented. This batch records
+the four capabilities the reference has that we still lack, each with a stable ID
+(**REF-R8 … REF-R11**) and concrete implementation detail. Two are genuine,
+safe, paper-compatible gaps approved to build now (R8, R9). Two are gated /
+re-opened items documented for planning only (R10, R11) — they carry explicit
+approval gates and MUST NOT be implemented without operator sign-off.
+
+Implementation order for the approved pair: **R8 first, then R9** (R9's
+conviction factor multiplies the R8 risk budget, so R8's sizing surface must
+exist first).
+
+### REF-R8 — Drawdown-adaptive position sizing ✅ APPROVED — TO BE IMPLEMENTED
+- reference: `computeBudget()` in `src/lib/risk.server.ts`.
+- Gap: our `compute_ticket()` (`backend/paper_trading_engine.py`) sizes from
+  cash × crowd-heat conviction only. It never shrinks when the book is under
+  water on open risk. The reference ticket is a function of EQUITY and of a
+  drawdown factor derived from live unrealized P&L — a desk would impose
+  exactly this, expressed as checkable arithmetic.
+- Reference constants (keep identical for parity):
+    - `PER_ORDER_FRACTION = 0.035` (3.5% of equity at full conviction)
+    - `DAY_MULTIPLE = 4` (a day may contain 4 full-size tickets)
+    - `HARD_ORDER_CEILING_USD = 3000`, `HARD_DAILY_CEILING_USD = 12000`
+    - `MIN_TICKET_USD = 25` (we already have `config.MIN_TICKET_USD = 25.0`)
+- Reference formula (port verbatim):
+    - `open_drawdown_pct = min(0, unrealized_usd) / equity`  (0 if equity ≤ 0)
+    - `drawdown_factor  = clamp(1 + open_drawdown_pct * 2.5, 0.5, 1.0)`
+      → −20% of equity in open losses halves the ticket; flat/green = full size.
+    - `max_order_usd = round(clamp(equity * 0.035 * drawdown_factor, 25, 3000))`
+      (if equity ≤ 0 → `MIN_TICKET_USD`, fail CLOSED, never open)
+    - `max_daily_usd = round(clamp(max_order_usd * 4, 25, 12000))`
+- What to implement:
+    1. New PURE function `compute_risk_budget(equity_usd, unrealized_usd) ->
+       RiskBudget` in `paper_trading_engine.py` (or a new `risk_budget.py`),
+       returning a dataclass `{equity_usd, drawdown_factor, max_order_usd,
+       max_daily_usd, formula, derived}`. Pure + deterministic so the published
+       numbers are recomputable from the same public inputs (reference invariant).
+    2. Add a `SIZING_MODE = "risk_budget"` branch to `compute_ticket()` that
+       returns `max_order_usd`. KEEP `"fixed"` and `"conviction"` untouched for
+       calibration comparability — do not change their outputs.
+    3. Thread equity + unrealized P&L to the sizing call site in `main.py` /
+       `run_live_cycle.py`: equity = `PortfolioState.cash_usd + Σ position
+       value`; unrealized = Σ `compute_unrealized_pnl(trade, current_price)`
+       over open positions (already exists). If no readable book → pass
+       `(0, 0)` so the budget fails closed to `MIN_TICKET_USD`.
+    4. Config additions in `config.py`: `PER_ORDER_FRACTION`, `DAY_MULTIPLE`,
+       `HARD_ORDER_CEILING_USD`, `HARD_DAILY_CEILING_USD` (mirror reference
+       defaults). `MIN_TICKET_USD` already exists.
+    5. Enforce the DAILY ceiling: track USD deployed this UTC day and refuse an
+       entry that would push deployed-today past `max_daily_usd` (new guard in
+       the entry path, fail-closed, logged). This is the half of the reference
+       budget we do not enforce at all today.
+    6. Surface the computed budget (equity, drawdown_factor, max_order,
+       max_daily, formula) via `/api/disclosure.json` (REF-R6) so the numbers
+       are public and reproducible.
+- Fail-closed rules: non-finite/≤0 equity → `MIN_TICKET_USD`; any exception in
+  the budget path → `MIN_TICKET_USD` (never raise into the tick); the model
+  still decides WHETHER to enter, never the size (size stays pure code).
+- Tests (`tests/test_risk_budget.py`): flat/green book → factor 1.0; −20% open
+  loss → factor 0.5 and ticket halved; clamp at both ceilings and the floor;
+  equity 0 / negative / NaN → `MIN_TICKET_USD`; daily-ceiling refusal; formula
+  string is stable + recomputable. Hand-compute every expectation (defense-first
+  rule 4).
+
+### REF-R9 — Closed-loop learning → conviction factor ✅ APPROVED — TO BE IMPLEMENTED
+- reference: `computeCalibration()` in `src/lib/learn.server.ts`.
+- Gap: our `learning_loop.py` already computes win rate / profit factor / max
+  drawdown from closed trades, but only LOGS advisory recommendations — nothing
+  that happened after a trade changes what the next trade is allowed to be. The
+  loop is OPEN. The reference closes it: realized outcomes produce a single
+  bounded conviction factor that MULTIPLIES the order size, so a run of losses
+  shrinks the next ticket and a run of wins restores it.
+- Reference formula (port verbatim), over closed outcomes `[{pnl_pct, ...}]`:
+    - `win_rate = winners / usable`; `avg_win_pct`, `avg_loss_pct` per side
+    - `expectancy_pct = win_rate * avg_win_pct + (1 - win_rate) * avg_loss_pct`
+    - `raw = expectancy_pct >= 0 ? 1 + min(expectancy_pct/50, 0.2)
+                                 : 1 + max(expectancy_pct/25, -0.4)`
+      (+10% expectancy → +20% ticket; −10% expectancy → −40% ticket)
+    - `confidence = min(usable_count / 12, 1.0)`  (small samples pulled to 1 so
+      three trades cannot rewrite the book)
+    - `conviction_factor = clamp(1 + (raw - 1) * confidence, 0.6, 1.2)`
+    - No usable closed trades → `conviction_factor = 1.0` (FLAT, no adjustment)
+- What to implement:
+    1. New PURE function `compute_calibration(closed_trades) -> Calibration`
+       (dataclass `{samples, wins, win_rate, avg_win_pct, avg_loss_pct,
+       expectancy_pct, conviction_factor, formula}`), in `learning_loop.py` or a
+       new `calibration.py`. Reuse `realized_pnl_pct` from closed `Trade` rows
+       (`db.get_all_closed_trades` already feeds `run_daily_learning`).
+    2. PERSIST the calibration so the public surfaces read the same numbers the
+       sizing used: store it in the daily-stats row (`stats_json`) and/or a
+       dedicated meta row, mirroring the reference writing to `omo_meta`.
+    3. WIRE it into sizing: `final_ticket = risk_budget.max_order_usd *
+       conviction_factor` (R8 × R9), still clamped to the hard ceilings and
+       floored at `MIN_TICKET_USD`. This is the single feedback term that closes
+       the loop.
+    4. Surface `conviction_factor` + formula via `/api/disclosure.json`.
+- Fail-closed rules: no/insufficient samples → 1.0 (never shrink or grow on
+  thin data); factor hard-bounded [0.6, 1.2]; any exception → 1.0. This is
+  arithmetic, NOT model output and NOT automatic threshold changes (those stay
+  manual per §15 standing conditions).
+- Tests (`tests/test_calibration.py`): FLAT → 1.0; a winning sample → factor >1
+  capped at 1.2; a losing sample → factor <1 floored at 0.6; small-sample
+  confidence pulls toward 1; hand-computed expectancy for a fixed fixture.
+
+### REF-R10 — Live execution (the promotion path) ⏸ DEFERRED-BY-DESIGN — GATED
+- reference: `execute.server.ts`, `solana.server.ts`, `wallet.server.ts` — the
+  reference trades real funds.
+- Status: this is a DELIBERATE capability gap, not a defect. We are paper-only
+  by design (`PAPER_TRADING_ONLY=True` hardcoded + asserted at boot and inside
+  every position-opening function). This entry documents the intended end-state
+  and the gates that must be cleared BEFORE any arming work. It is NOT a
+  "just implement it" task.
+- Already built (do not rebuild): `live_execution/` package is wired but
+  disarmed — `jupiter_executor.py` (quote/swap), `solana.py` (RPC + send with
+  preflight ON, deliberately stricter than the reference `skipPreflight=True`),
+  `wallet.py`, `commit_log.py` (seal-before-broadcast), `confirmation_queue.py`,
+  `kill_switch.py`, `drill.py`. `promotion_gate.py` is a READ-ONLY go/no-go
+  readiness checklist that can never itself trigger live trading.
+- Gates that must ALL be cleared, in order, before arming is even discussed:
+    1. `promotion_gate.py` checklist fully green (read-only evaluation).
+    2. A funded THROWAWAY-KEYPAIR devnet drill passes end-to-end (quote →
+       seal → broadcast → confirm → journal), per §15 "Not yet validated".
+    3. A paper track record exists and is reviewed (win rate, drawdown, the R8/R9
+       sizing behaving as specified under real outcomes).
+    4. EXPLICIT operator approval to flip `PAPER_TRADING_ONLY` — this remains a
+       separate, human-reviewed step and is never automated.
+- What implementation would touch (only after the gates): arm the executor path
+  in `run_live_cycle.py`, wire real wallet keypair handling (secrets stay in
+  server env, never logged), and keep every deterministic rule / exit / kill
+  switch authoritative over the live path exactly as over paper.
+- Invariant that does not move: the LLM stays veto/input-only; deterministic
+  rules + manual approval retain authority over every execution path.
+
+### REF-R11 — On-chain precommit memo (commit–reveal) 🔁 RE-OPENED FOR PLANNING — REQUIRES OPERATOR APPROVAL
+- reference: `precommit.server.ts` (~481 lines) — writes a precommit memo
+  ON-CHAIN before a fill, then reveals it later, so the decision is timestamped
+  on-chain ahead of execution.
+- History: this was **REJECTED on 2026-08-26** (§13 "REJECTED / DEFERRED") on
+  the rationale that local `CommitLog` seal-before-broadcast is a sufficient
+  sealing mechanism while disarmed, and REF-R1 was scoped to work WITHOUT
+  on-chain memos. It is re-opened here ONLY as a planning item because the
+  2026-08-27 audit lists it as a capability the reference has that we lack.
+  **Do NOT implement without explicit operator approval** — re-litigating a
+  rejected item needs sign-off (§13 rule).
+- Current state (what we have instead): local tamper-evident `decision_commits`
+  trail — `sha256(nonce | canonical_payload)` stored with plaintext, plus
+  `retro_matcher.py` (REF-R7) and the REF-R1 binding report. No on-chain memo.
+- What implementation would require (if approved):
+    1. A memo write step that posts the decision hash to-chain BEFORE broadcast
+       (the commit), and a reveal step mapping the memo to the executed fill.
+    2. Integration with `commit_log.py` so the on-chain memo and the local seal
+       agree on the same canonical payload + nonce.
+    3. A verifier extension (REF-R1 surface) that checks the on-chain memo
+       exists, predates the fill, and matches the committed hash.
+    4. Fail-closed: any memo-write failure must block the fill (a decision that
+       cannot be committed on-chain is not executed), never silently skip.
+- Only matters when armed (REF-R10 gates apply first). While disarmed, the local
+  seal remains the chosen mechanism and this stays a planning entry.
+
+### Batch-2 implementation order + standing conditions
+- Build now (paper-compatible, no arming involved): **REF-R8 → REF-R9**.
+- Documented-only, gated: **REF-R10** (promotion path) and **REF-R11**
+  (on-chain memo, re-opened from a 2026-08-26 rejection) — both require explicit
+  operator approval before any code is written.
+- Standing safety conditions from §15 apply unchanged: `PAPER_TRADING_ONLY=True`
+  and `LIVE_TRADING_ENABLED=False` stay hardcoded; deterministic rules, exits,
+  cash guards, kill switches, and manual approval retain authority over every
+  execution path; no automatic threshold/prompt/model/live-trading promotion.
+
+
+
