@@ -14,14 +14,18 @@ attribution, chain reconciliation, own-basis read-back — handoff §29)
 implemented 2026-08-27; A11 thesis re-authoring (the module the original
 audit missed, found in the same-day re-read — handoff §30) implemented
 2026-08-27. R10 (live execution): the §27 devnet drill PASSED 5/5 on
-2026-08-28 (handoff §31); the operator then performed the human-only arming
-steps on this machine (handoff §32) — the repo itself still ships DISARMED.
+2026-08-28 (handoff §31); the operator performed the human-only arming
+steps, supervised live cycles, and on 2026-08-28 explicitly directed that
+the ARMED state be committed and pushed (handoff §33) — this repo is now
+committed ARMED (`LIVE_TRADING_ENABLED=True`,
+`REQUIRE_MANUAL_CONFIRMATION=False`); a fresh clone that does not want real
+trading must flip the flag before running anything.
 The 2026-08-28 cash-corruption incident (bad quote → phantom cash in the
 PAPER book) was fixed with hardcoded bad-quote guards on both books and a
 final full-coverage omo audit closed every open question (handoff §32,
-docs/09 §F): no trading-critical parity gap remains.** Tests: **486 total —
-485 passing while the operator's machine is armed** (the 1 red test is the
-ships-disarmed canary; handoff §32).
+docs/09 §F): no trading-critical parity gap remains.** Tests: **486 passing
+(suite fully green; the flag-state canary pins the committed ARMED state —
+handoff §33).**
 
 ---
 
@@ -973,15 +977,41 @@ plumbing. **Verdict: no trading-critical parity gap remains.**
 ### Arming state
 The operator performed the §27 human-only steps on this machine
 (`LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`,
-hand-edited as designed). That edit is local operational state and is
-deliberately NOT committed — the repo ships disarmed, enforced by the canary
-test `test_safety_flags_are_hardcoded_safe_defaults` (expected red while
-armed). Rollback remains one line.
+hand-edited as designed). SUPERSEDED 2026-08-28 (handoff §33): the operator
+explicitly directed that the armed state be committed and pushed — done. The
+canary test was re-purposed (`test_safety_flags_match_the_committed_state`)
+to pin the committed state, and `/api/disclosure.json`'s `armed` field was
+fixed to read the real live_execution flag (it previously always reported
+False). Rollback remains one line.
 
 ### Verification
-486 tests total; 485 pass while armed (the canary is the single red test).
+486 tests, all passing (suite fully green again).
 Guards regression-tested on the exact incident shape; live jump guard
 hermetically tested (stubbed chain reads, no network).
+
+## 18. Armed state committed (2026-08-28, handoff §33)
+
+Operator-directed ("push config as armed, no questions asked"): the §27
+arming edit is now committed and pushed. What shipped with it:
+
+- `live_execution/config.py` ARMED (the operator's own hand-edit; diff
+  scanned — no secrets; all keys remain in the gitignored `.env`).
+- Canary re-purposed to pin the committed flag state — any silent flip in
+  either direction now fails loudly; suite fully green (486).
+- Disclosure truthfulness fix: `armed` in `/api/disclosure.json` now reads
+  the real flag via the sanctioned optional import (fail-closed False if the
+  package is absent) instead of a nonexistent backend attribute.
+- Docs aligned: config header, README (section renamed "Live trading
+  (operator-ARMED)" with an explicit warning for anyone cloning), handoff
+  §1/§3/§27/§32 + new §33, memory-bank.
+- Unchanged: no env bypass exists; kill switch, daily-loss breaker, caps,
+  identity pin, SOL reserve, and memo-before-fill all remain active.
+
+Honest trade-off (on record): a fresh clone of this repo is armed by
+default. It still cannot trade without a funded wallet keypair + RPC config
+in `.env` (all gitignored), but cloners must read the README warning first.
+This was the operator's explicit, informed choice after the devnet drill
+passed 5/5 and live cycles were supervised.
 
 clean. Arm flags untouched: `LIVE_TRADING_ENABLED=False`,
 `REQUIRE_MANUAL_CONFIRMATION=True`. Remaining operator-only steps: mainnet

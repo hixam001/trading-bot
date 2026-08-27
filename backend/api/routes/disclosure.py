@@ -117,7 +117,9 @@ async def get_disclosure():
     REF-R6: live machine state for public auditability.
 
     Fields:
-      armed          — LIVE_TRADING_ENABLED (always False; hardcoded disarmed)
+      armed          — LIVE_TRADING_ENABLED read verbatim from live_execution
+                       (fail-closed False if the package is absent); the feed
+                       can never claim disarmed while the machine is armed
       paper_only     — PAPER_TRADING_ONLY (always True; hardcoded)
       kill_switch    — state from live_execution/state/kill_switch.json
       break          — state from live_execution/state/break_state.json
@@ -129,8 +131,15 @@ async def get_disclosure():
                        job (stale horizon, per-pass cap, scope)
       generated_at_utc
     """
-    # Safety fields — both hardcoded constants; surface them for auditability.
-    armed = getattr(config, "LIVE_TRADING_ENABLED", False)
+    # Safety fields — surface them for auditability. `armed` reads the REAL
+    # live_execution flag (fail-closed False when the package is not
+    # importable) so the public feed can never claim disarmed while the
+    # machine is armed. paper_only stays hardcoded True in backend/config.py.
+    try:
+        from live_execution import config as _le_config
+        armed = bool(getattr(_le_config, "LIVE_TRADING_ENABLED", False))
+    except ImportError:
+        armed = False
     paper_only = getattr(config, "PAPER_TRADING_ONLY", True)
 
     kill = _kill_switch_state()

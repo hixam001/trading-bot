@@ -1,8 +1,8 @@
 **Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 486 total — 485 passing while the operator's machine is armed
-(the 1 red test is the ships-disarmed canary; see §32)
+**Tests:** 486 passing (suite fully green; the flag-state canary now pins
+the committed ARMED state — see §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -29,10 +29,11 @@ no wallet, no transaction construction anywhere there.
 `PAPER_TRADING_ONLY = True` is hardcoded in `backend/config.py` and
 runtime-asserted inside every position-opening function. The separate
 `live_execution/` package at the repo ROOT (never imported by backend/) is
-the only real-execution code; it ships DISARMED — hardcoded
-`LIVE_TRADING_ENABLED = False`, mandatory manual confirmation, kill switch,
-daily-loss breaker — and must never be armed without a human editing its
-config.py and testing the full flow on Solana devnet first. If a task ever
+the only real-execution code. **Since 2026-08-28 it is committed ARMED**
+(`LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False`) by
+explicit operator direction after the §27 devnet drill passed 5/5 (§31/§33);
+kill switch + daily-loss breaker + caps + identity pin all remain active.
+The flags stay human-edit-only (no env bypass). If a task ever
 seems to require real execution inside backend/ — stop and flag it.
 
 ## 2. How to run / stop / test
@@ -71,7 +72,7 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 379 test
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
-| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Ships DISARMED: hardcoded `LIVE_TRADING_ENABLED=False`, `REQUIRE_MANUAL_CONFIRMATION=True`, kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Offline/mock wiring tests pass; a funded throwaway-keypair devnet drill (now incl. a memo step) is still REQUIRED before any mainnet use. |
+| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. |
 | `live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
 | `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats [equity/spend/realized/unrealized/cash], regime, gate, status); no knowledge tab, no paper-trading banner (removed 2026-08-25) |
 | `backend/api/routes/proof.py` | REF-R1 binding report (`/api/binding.json`), `/api/verify.json` (REF-R11: also re-verifies the on-chain commit memo hash + slot ordering), `/api/refusals.json`, `/api/theses.json`, `/api/proof.json`, `/api/exits.json` |
@@ -1503,11 +1504,14 @@ transaction construction lives in `live_execution/`.
 
 ---
 
-## 27. FINAL TASK: Enable live execution (operator-only, last of all)
+## 27. FINAL TASK: Enable live execution — COMPLETED 2026-08-28 (§31 drill, §33 committed)
 
-**Sequencing rule:** every other handoff task completes FIRST. Arming is the
-operator's last manual act. No session may arm, or propose arming, before then.
-This is REF-R10's promotion path — it is a human checklist, not code.
+**Status: DONE.** The operator ran the devnet drill (5/5, §31), funded the
+mainnet wallet, hand-edited the flags ARMED, supervised live cycles, and on
+2026-08-28 explicitly directed that the armed state be committed and pushed
+(§33). The sequencing rule below is retained as history: every other handoff
+task completed FIRST; arming was the operator's last manual act; no session
+performed it. This is REF-R10's promotion path — a human checklist, not code.
 
 ### Preconditions (all must be true before arming)
 - [x] All preceding handoff tasks implemented, tested, committed.
@@ -1887,15 +1891,43 @@ wired into sizing (final grep: `convictionFactor` lives only in
 queued), scale custody (memo burner key — documented deviation), and hosting
 plumbing. **No trading-critical parity gap remains.**
 
-### Arming state (operator-executed; repo still ships DISARMED)
+### Arming state (operator-executed; ARMED state committed 2026-08-28 — see §33)
 The operator performed the §27 human-only steps on this machine:
 `live_execution/config.py` now carries `LIVE_TRADING_ENABLED = True` and
 `REQUIRE_MANUAL_CONFIRMATION = False` (hand-edited, as designed — no env
-bypass exists). That edit is LOCAL OPERATIONAL STATE and is deliberately NOT
-committed: the repo default stays disarmed, and
-`test_safety_flags_are_hardcoded_safe_defaults` is the canary that enforces
-it — it is EXPECTED to be red while this machine is armed (it is doing its
-job: loudly marking the working tree as armed so the armed state can never
-be silently committed). Suite: **486 tests; 485 pass while armed**.
+bypass exists). SUPERSEDED 2026-08-28: the operator explicitly directed that
+this armed state be committed and pushed (§33); the canary test was
+re-purposed to pin the committed state. Suite: **486 tests, all passing**.
 Rollback is still one line: `LIVE_TRADING_ENABLED = False`.
+
+## 33. Armed state committed and pushed (2026-08-28, operator-directed)
+
+After §31 (devnet drill 5/5), §27's human steps, and supervised live cycles,
+the operator explicitly directed: "push config as armed, no questions asked".
+Done, exactly as directed:
+
+- **Committed**: `live_execution/config.py` with `LIVE_TRADING_ENABLED=True`,
+  `REQUIRE_MANUAL_CONFIRMATION=False` (the operator's own hand-edit; the
+  diff contained no secrets — verified by scan; all keys live in the
+  gitignored `.env`).
+- **Canary re-purposed**: `test_safety_flags_are_hardcoded_safe_defaults` →
+  `test_safety_flags_match_the_committed_state` — now pins the COMMITTED flag
+  state, so any silent flip in either direction fails loudly. Suite fully
+  green: **486 passing**.
+- **Disclosure truthfulness fix**: `/api/disclosure.json`'s `armed` field
+  previously read a nonexistent backend-config attribute (always False — it
+  would have lied "disarmed" while armed). It now reads the real
+  `live_execution` flag via the sanctioned function-local optional import
+  (fail-closed False if the package is absent). Test updated accordingly.
+- **Docs aligned**: config.py header, README live-trading section (incl.
+  "if you clone this and don't want real trading, flip the flag" warning),
+  handoff §1/§3/§27/§32, memory-bank, project report.
+- **Unchanged**: no env bypass exists; kill switch, daily-loss breaker,
+  caps, identity pin, SOL reserve, memo-before-fill all active; rollback is
+  one line (`LIVE_TRADING_ENABLED = False`).
+- **Honest trade-off on record**: a fresh clone of this repo is now armed by
+  default. It still cannot trade without a funded wallet keypair + RPC config
+  in `.env` (all gitignored), but anyone cloning should read the README
+  warning first. This was the operator's explicit, informed choice.
+
 

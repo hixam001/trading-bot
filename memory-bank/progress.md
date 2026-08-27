@@ -1,6 +1,13 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §33 armed state committed + pushed (handoff §33) (2026-08-28):
+      operator-directed ("push config as armed, no questions asked").
+      `live_execution/config.py` committed ARMED (`LIVE_TRADING_ENABLED=True`,
+      `REQUIRE_MANUAL_CONFIRMATION=False`); canary test re-purposed to pin the
+      committed state; disclosure `armed` fixed to read the real flag (it
+      previously always said False); README/handoff/report aligned with a
+      clone-warning. 486 passing, fully green. §27 is now fully COMPLETE.
 - [x] §32 cash-corruption fix + bad-quote guards + final omo audit (handoff
       §32) (2026-08-28): phantom-cash incident root-caused (bad quote ~2,960×
       → poisoned high-water → TP trim credited ≈$94k); two hardcoded

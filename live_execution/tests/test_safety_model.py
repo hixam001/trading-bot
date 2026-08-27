@@ -40,11 +40,17 @@ def state(tmp_path) -> Path:
     return tmp_path
 
 
-# --- hardcoded safety flags (load-bearing repo defaults) ----------------------
+# --- hardcoded safety flags (load-bearing repo state) ------------------------
 
-def test_safety_flags_are_hardcoded_safe_defaults():
-    assert le_config.LIVE_TRADING_ENABLED is False
-    assert le_config.REQUIRE_MANUAL_CONFIRMATION is True
+def test_safety_flags_match_the_committed_state():
+    # 2026-08-28: the operator completed §27 (devnet drill 5/5, handoff §31),
+    # hand-edited the flags ARMED, and explicitly directed that the armed
+    # state be committed and pushed. This canary now pins the COMMITTED
+    # state so any silent flip in either direction fails loudly. Safety
+    # layers that remain hardcoded regardless: kill switch, daily-loss
+    # breaker, idempotency ledger, exposure caps, SOL reserve, identity pin.
+    assert le_config.LIVE_TRADING_ENABLED is True
+    assert le_config.REQUIRE_MANUAL_CONFIRMATION is False
 
 
 def test_safety_flags_are_not_env_readable():

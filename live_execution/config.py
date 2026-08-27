@@ -5,15 +5,21 @@ Deliberately SEPARATE from backend/config.py: the paper system's
 PAPER_TRADING_ONLY=True stays hardcoded True forever and must never gate (or
 be gated by) this package.
 
-THE TWO LOAD-BEARING SAFETY DEFAULTS ARE HARDCODED — never env-settable,
-never changed by code. Edited only by a human, manually, in this file:
+THE TWO LOAD-BEARING SAFETY FLAGS ARE HARDCODED — never env-settable,
+never changed by code. Edited only by a human, manually, in this file.
 
-  LIVE_TRADING_ENABLED       = False   (master arm switch)
-  REQUIRE_MANUAL_CONFIRMATION = True   (every trade needs human approval)
+CURRENT STATE (committed 2026-08-28 by explicit operator direction after the
+§27 devnet drill passed 5/5 — handoff §31):
 
-Everything downstream fails closed when these are not exactly right. There is
-deliberately NO environment-variable bypass: one stray .env line must never
-be able to arm real-money execution.
+  LIVE_TRADING_ENABLED       = True    (master arm switch — ARMED)
+  REQUIRE_MANUAL_CONFIRMATION = False  (autonomous flow — operator-armed)
+
+Everything downstream still fails closed on any unreadable/invalid state, and
+the remaining safety layers are untouched: kill switch, automatic daily-loss
+circuit breaker, idempotency ledger, exposure/position caps, SOL reserve,
+wallet identity pin, decimals guards. There is deliberately NO
+environment-variable bypass: one stray .env line must never be able to arm
+or disarm real-money execution.
 """
 from __future__ import annotations
 
@@ -23,8 +29,8 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 # SAFETY FLAGS — HARDCODED. NEVER READ FROM ENV. NEVER CHANGED BY CODE.
 # ---------------------------------------------------------------------------
-LIVE_TRADING_ENABLED: bool = False
-REQUIRE_MANUAL_CONFIRMATION: bool = True
+LIVE_TRADING_ENABLED: bool = True
+REQUIRE_MANUAL_CONFIRMATION: bool = False
 
 # ---------------------------------------------------------------------------
 # Operator infrastructure (NOT safety flags — arming still requires the

@@ -44,12 +44,12 @@ async def test_disclosure_paper_only_always_true():
 
 
 @pytest.mark.asyncio
-async def test_disclosure_armed_always_false():
-    """LIVE_TRADING_ENABLED defaults to False; disclosure must surface False."""
+async def test_disclosure_armed_surfaces_the_flag_verbatim():
+    """Disclosure must surface LIVE_TRADING_ENABLED unedited. Since the
+    operator armed this machine (2026-08-28, committed), that is True."""
     from api.routes.disclosure import get_disclosure
     result = await get_disclosure()
-    # While unarmed (default), armed must be False
-    assert result["armed"] is False
+    assert result["armed"] is True
 
 
 @pytest.mark.asyncio

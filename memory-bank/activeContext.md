@@ -1,7 +1,25 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (cash-corruption incident FIXED + bad-quote guards on both books; final full-coverage omo audit closed — no trading-critical parity gap remains; operator has ARMED this machine per §27 human-only steps — repo still ships DISARMED, armed config deliberately uncommitted).**
+**As of 2026-08-28 (ARMED STATE COMMITTED + PUSHED by explicit operator direction — handoff §33; §27 fully complete; suite fully green at 486; disclosure `armed` now reads the real flag).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### §33 armed state committed (operator-directed) (2026-08-28)
+Operator: "push config as armed, no questions asked". Done: committed
+`live_execution/config.py` with `LIVE_TRADING_ENABLED=True` +
+`REQUIRE_MANUAL_CONFIRMATION=False` (the operator's own hand-edit; diff
+scanned — no secrets; keys stay in gitignored `.env`). Canary re-purposed:
+`test_safety_flags_match_the_committed_state` pins the committed state (any
+silent flip either way fails loudly). Disclosure truthfulness fix:
+`/api/disclosure.json` `armed` previously read a nonexistent backend attr
+(always False — would have lied while armed); now reads the real
+live_execution flag via sanctioned optional import (fail-closed False if
+absent). Docs aligned (config header, README warning for cloners, handoff
+§1/§3/§27/§32/§33, project report). Suite **486 passing**. Unchanged: no env
+bypass; kill switch / daily-loss breaker / caps / identity pin / SOL reserve
+/ memo-before-fill all active; rollback one line. Honest trade-off recorded:
+a fresh clone is armed by default but cannot trade without a funded wallet +
+RPC in `.env` (gitignored) — operator's explicit informed choice.
 
 ## DONE
 ### §32 cash-corruption incident + bad-quote guards + final omo audit (2026-08-28)

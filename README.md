@@ -11,10 +11,11 @@ A local trading research system for Solana memecoins with two layers:
    liquidity-break / invalidation / stale / take-profit ladder) scanned every
    15s. All money is simulated — `PAPER_TRADING_ONLY = True` is hardcoded and
    runtime-asserted inside every position-opening function.
-2. **Live-execution package (optional, ships DISARMED)** — `live_execution/`
-   can route the same brain into real Jupiter swaps from a wallet you fund.
-   It ships hardcoded OFF and can only be armed by a human editing its
-   config file (see [Live trading](#live-trading-optional--ships-disarmed)).
+2. **Live-execution package (operator-ARMED in this repo)** — `live_execution/`
+   routes the same brain into real Jupiter swaps from a funded wallet.
+   This repo is committed ARMED by its operator (2026-08-28, after the §27
+   devnet drill passed 5/5); the flags are editable **only by a human in
+   `live_execution/config.py`** (see [Live trading](#live-trading-operator-armed)).
 
 **The LLM never trades.** Decisions are made by pure, testable code; the
 model (DeepSeek by default) performs a pre-trade think/veto stage, narrates
@@ -101,7 +102,7 @@ arm flags) are deliberately hardcoded in `backend/config.py` /
 | `SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS_API_KEY` | optional | stealth-scrape failover chain for the crowd feed (auto-benching on 402/429) |
 | `USE_SUPABASE_DB`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run `migrations/supabase/001_init.sql` once first) |
 | `TICK_INTERVAL_SECONDS`, `MAX_CANDIDATES_PER_TICK`, `INITIAL_CASH_USD` | optional | tick cadence + paper book starting cash (defaults 60 / 20 / 1000) |
-| `WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL` | live only | see [Live trading](#live-trading-optional--ships-disarmed) |
+| `WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL` | live only | see [Live trading](#live-trading-operator-armed) |
 
 If a main-LLM key is missing/invalid the system **fails closed**: the model
 stage degrades to deterministic template passes that can never produce a buy.
@@ -159,19 +160,23 @@ cd live_execution && ../.venv/bin/python -m pytest tests/ -q   # live package on
 Tests are hermetic: they force `DATA_BACKEND=mock` and their own tmp
 databases — your `.env` and real book can never leak into them.
 
-## Live trading (optional — ships DISARMED)
+## Live trading (operator-ARMED)
 
-> ⚠️ **Real money. Read `handoff.md` §26/§27 before even thinking about
-> this.** Nothing in this section is needed for the paper bot.
+> ⚠️ **Real money. Read `handoff.md` §26/§27/§31 before touching this.**
+> Nothing in this section is needed for the paper bot.
 
 `live_execution/` routes the same read/think/gate brain into real Jupiter
-swaps. Safety model: hardcoded `LIVE_TRADING_ENABLED = False` master switch +
-`REQUIRE_MANUAL_CONFIRMATION = True` (both editable **only by a human in
-`live_execution/config.py`** — no env bypass exists by design), kill switch
-file, automatic daily-loss breaker, per-trade $50 / per-day $300 / 3-position
-caps, wallet identity pin, idempotency ledger, SOL-reserve + USDC funding
-checks, and an on-chain commit memo published BEFORE every fill
-(commit–reveal proof).
+swaps. **State committed to this repo (2026-08-28, explicit operator
+direction after the devnet drill passed 5/5): `LIVE_TRADING_ENABLED = True`,
+`REQUIRE_MANUAL_CONFIRMATION = False`.** Both flags are editable **only by a
+human in `live_execution/config.py`** — no env bypass exists by design.
+Remaining safety layers (all still active): kill switch file, automatic
+daily-loss breaker, per-trade $50 / per-day $300 / 3-position caps, wallet
+identity pin, idempotency ledger, SOL-reserve + USDC funding checks, and an
+on-chain commit memo published BEFORE every fill (commit–reveal proof).
+**If you clone this repo and do NOT want it trading real money, flip
+`LIVE_TRADING_ENABLED = False` before running anything** — and never point
+`WALLET_KEYPAIR_PATH` at a funded wallet.
 
 ### Where the keys go
 
@@ -181,21 +186,21 @@ checks, and an on-chain commit memo published BEFORE every fill
 | Wallet identity pin | `.env` `EXPECTED_WALLET_ADDRESS` | the loaded keypair MUST derive this exact pubkey or loading refuses loudly |
 | RPC | `.env` `SOLANA_RPC_URL` | public endpoint rate-limits hard; use a paid RPC for real use |
 
-### Arming procedure (human-only, in order)
+### Arming procedure (what the operator did — human-only, in order)
 
-1. Run the **devnet drill** until it passes 100%:
+1. Ran the **devnet drill** until it passed 100%:
    `python run_live_cycle.py --drill` (exercises wallet load, identity pin,
    chain reads, sign/send/confirm, and the commit-memo path — devnet only,
-   no Jupiter, no tokens).
-2. Fund the **mainnet** wallet (0.03 SOL + $3–5 USDC) and point `.env` at it
-   (`WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL`).
-3. Hand-edit `live_execution/config.py`: `LIVE_TRADING_ENABLED = True`
-   (later optionally `REQUIRE_MANUAL_CONFIRMATION = False`).
-4. Supervise one cycle: `python run_live_cycle.py --once`.
+   no Jupiter, no tokens). Passed 5/5 on 2026-08-28 (handoff §31).
+2. Funded the **mainnet** wallet (0.03 SOL + $3–5 USDC) and pointed `.env` at
+   it (`WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL`).
+3. Hand-edited `live_execution/config.py`: `LIVE_TRADING_ENABLED = True`,
+   `REQUIRE_MANUAL_CONFIRMATION = False` — and committed that state.
+4. Supervised one cycle: `python run_live_cycle.py --once`.
 
-Rollback is one line: `LIVE_TRADING_ENABLED = False`. The repo itself always
-ships disarmed — a test (`test_safety_flags_are_hardcoded_safe_defaults`)
-enforces that and stays red on a machine that is armed, by design.
+Rollback is one line: `LIVE_TRADING_ENABLED = False`. A test
+(`test_safety_flags_match_the_committed_state`) pins the committed flag
+state so any silent flip in either direction fails loudly.
 
 Live cash is accurate by construction: it is the wallet's real on-chain USDC
 balance re-read every cycle (never an internal accumulator), and exits are
@@ -214,7 +219,7 @@ backend/                 paper pipeline (ALL Python; run from inside backend/)
   api/                   FastAPI app + repository layer (db.py SQLite / db_pg.py Postgres)
   tests/                 backend test suite
 frontend/                React + Vite + Tailwind dashboard
-live_execution/          REAL-money package (ships disarmed; never imported by backend/)
+live_execution/          REAL-money package (operator-ARMED; never imported by backend/)
 run_live_cycle.py        root bridge: live decision cycle + --drill
 migrations/supabase/     one-time SQL for the optional Postgres book
 docs/                    00 blueprint → 09 omo audit comparison
@@ -233,7 +238,7 @@ cd backend && TICK_LOOP_IN_PROCESS=1 ../.venv/bin/python -m uvicorn api.main:app
 # Frontend hot-reload dev server (proxies /api and /ws to :8000):
 cd frontend && npm install && npm run dev      # http://localhost:5173
 
-# One autonomous live-style decision cycle (disarmed by default):
+# One autonomous live-style decision cycle (ARMED in this repo — real money if a funded wallet is configured):
 python run_live_cycle.py --once
 ```
 
@@ -265,7 +270,7 @@ python run_live_cycle.py --once
 | Dashboard blank after code changes | rebuild: `cd frontend && npm run build`, or just re-run `./start.sh` |
 | Crowd feed shows weak conviction | the fomo.fun board needs `FOMO_PRIVY_REFRESH_TOKEN` + `FIRECRAWL_API_KEY` (see `.env.example` §6) |
 | DeepSeek calls skipped at night | peak-window pricing guard (01:00–04:00 / 06:00–10:00 UTC weekdays); non-urgent jobs resume off-peak |
-| Test suite shows 1 red test | your machine is armed (`LIVE_TRADING_ENABLED=True`) — that's the ships-disarmed canary working as designed |
+| Test suite shows a red flag-state test | someone flipped `live_execution/config.py` without updating the pinning test — check `git diff` on that file before doing anything |
 
 ## Provenance note
 
