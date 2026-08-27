@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] Dead-provider fail-fast + reference fomo-path audit (handoff §24):
+      transport-error benching (`_CONSECUTIVE_ERRORS`, 2-in-a-row → bench like
+      a 402, any response resets the streak) so a dead scraper can never stall
+      a tick; `_scrape_firecrawl` wrapped in try/except (was uncaught);
+      `_FIRECRAWL_TIMEOUT(45s)` → `_STEALTH_TIMEOUT(25s)` reference parity;
+      `_direct_get` 2 transport attempts. Reference audit confirmed its fomo
+      fallback is the same Firecrawl stealth-proxy we already call (no free
+      mechanism). 6 new tests (23 in test_crowd.py); 337 combined passing;
+      live-verified: ScrapingBee benched after exactly 2 timeouts, crowd stage
+      degrades in seconds not ~15 min (2026-08-27)
 - [x] REF-R8 + REF-R9 reference-parity batch 2 (handoff §22→§23): drawdown-
       adaptive risk budget (`compute_risk_budget`, verbatim reference port,
       fail-closed to $25, published formula) × closed-loop conviction factor
@@ -108,8 +118,12 @@
 - Birdeye free tier: token_security 401 → security fields UNKNOWN
 - Ticks take 40–90s with 20 candidates (LLM-bound); acceptable
 - Regime/rule thresholds are placeholders — calibration will move them
-- ScrapingBee fallback is keyless-only (platform consumes Authorization)
+- ScrapingBee fallback is keyless-only (platform consumes Authorization);
+  it also ReadTimeouts on stealth reads — now benched after 2 consecutive
+  transport errors so it can't stall ticks (handoff §24)
 - ZenRows premium tier costs ~10–25 credits/request (required for prod-api)
+- ⚠ Firecrawl + ZenRows are 402 credit-exhausted (benched). REAL crowd heat
+  needs a Firecrawl top-up — the stealth chain self-heals, no code change.
 - Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
   delete the file to re-pin after a legitimate cert rotation
 
@@ -123,7 +137,15 @@
       future arming discussion.
 
 ## Status
-Live calibration day ~2. Main LLM now DeepSeek V4 Flash (2026-08-27,
+Live calibration day ~2. Dead-provider fail-fast shipped (2026-08-27, handoff
+§24): a provider that times out / fails to connect twice in a row is now
+benched exactly like a 402, so a dead scraper can never stall a tick again
+(was ~15 min/tick when ScrapingBee ReadTimeouts went un-benched). Stealth
+timeout cut 45s→25s and direct read gets 2 transport attempts (reference
+parity). Reference audit confirmed its fomo fallback is the same Firecrawl
+stealth-proxy we already call — no free scrape mechanism exists. Firecrawl +
+ZenRows are credit-exhausted (402, benched); refilling Firecrawl restores real
+crowd heat with zero code changes. Main LLM now DeepSeek V4 Flash (2026-08-27,
 handoff §19): shadow-replay-gated, flipped via MAIN_LLM_PROVIDER, first
 full tick verified (all thinker calls success, peak-window cost accounting
 correct, zero tracebacks). Fresh $1,000 book. Supabase schema-drift incident
@@ -136,4 +158,5 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 289 passing** (was 262; +23 llm-brain, +4 reuse fail-closed regression).
+**Tests: 337 combined passing** (backend 289 + live_execution 48; +6 crowd
+dead-provider fail-fast this batch).

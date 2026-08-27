@@ -73,7 +73,11 @@ def _install_key_redactor() -> None:
 _install_key_redactor()
 
 _TIMEOUT = httpx.Timeout(15.0)
-_FIRECRAWL_TIMEOUT = httpx.Timeout(45.0)
+# Reference parity: their stealth-proxy call runs on a 25s budget. 45s per hop
+# times candidates-per-tick is what stalled ticks ~15 minutes when a provider
+# went dead (2026-08-27) — a stealth scrape that has not answered in 25s is
+# not about to answer.
+_STEALTH_TIMEOUT = httpx.Timeout(25.0)
 
 # ---------------------------------------------------------------------------
 # Refresh-token rotation persistence
@@ -310,22 +314,29 @@ def _fomo_headers(token: str) -> dict:
 
 
 async def _direct_get(url: str, headers: dict) -> Optional[dict]:
-    """Plain GET. Returns parsed JSON, or None on any failure/challenge."""
-    try:
-        async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.get(url, headers={
-                "accept": "application/json",
-                **headers,
-            })
-        if resp.status_code != 200 or _looks_like_challenge(resp.text):
-            return None
-        return resp.json()
-    except Exception as exc:
-        log.info("direct get failed for %s: %s", url[:80], exc)
-        return None
+    """Plain GET. Returns parsed JSON, or None on any failure/challenge.
+    Two transport attempts (reference parity — their request() tries twice):
+    Cloudflare only waves an IP through occasionally, so one retry is cheap.
+    A real HTTP response (even 403) is NOT retried — only transport errors."""
+    for attempt in range(2):
+        try:
+            async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
+                resp = await client.get(url, headers={
+                    "accept": "application/json",
+                    **headers,
+                })
+            if resp.status_code != 200 or _looks_like_challenge(resp.text):
+                return None
+            return resp.json()
+        except Exception as exc:
+            log.info("direct get failed for %s (attempt %d): %s",
+                     url[:80], attempt + 1, exc)
+    return None
 
 
 _BENCHED_UNTIL: dict[str, float] = {}             # scraper -> monotonic ts
+_CONSECUTIVE_ERRORS: dict[str, int] = {}          # scraper -> transport errors in a row
+_TRANSPORT_ERROR_BENCH_AFTER = 2   # N consecutive transport failures -> bench
 
 
 def _bench(name: str, seconds: Optional[float] = None) -> None:
@@ -350,9 +361,31 @@ def _handle_provider_status(name: str, status: int, body: str) -> None:
     if status == 402:
         log.warning("%s: 402 credit exhaustion — %s", name, snippet)
         _bench(name)
+        _CONSECUTIVE_ERRORS[name] = 0
     elif status == 429:
         log.warning("%s: 429 rate-limited — %s", name, snippet)
         _bench(name, config.STEALTH_THROTTLE_BACKOFF_SECONDS)
+        _CONSECUTIVE_ERRORS[name] = 0
+
+
+def _transport_error(name: str) -> None:
+    """Count a transport failure (timeout / connection error). A provider that
+    fails _TRANSPORT_ERROR_BENCH_AFTER times IN A ROW is benched exactly like
+    a 402 — a dead provider must cost a couple of timeouts ONCE, never one
+    full timeout per candidate for the whole tick (the ~15-minute-tick bug,
+    2026-08-27: ScrapingBee ReadTimeouts were never benched)."""
+    n = _CONSECUTIVE_ERRORS.get(name, 0) + 1
+    _CONSECUTIVE_ERRORS[name] = n
+    if n >= _TRANSPORT_ERROR_BENCH_AFTER:
+        log.warning("%s: %d consecutive transport errors — benching", name, n)
+        _bench(name)
+        _CONSECUTIVE_ERRORS[name] = 0
+
+
+def _transport_success(name: str) -> None:
+    """Any completed response (whatever its status) proves the transport
+    works — the consecutive-error streak resets."""
+    _CONSECUTIVE_ERRORS[name] = 0
 
 
 def _json_from_body(text: str) -> Optional[dict]:
@@ -385,13 +418,20 @@ async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
         "proxy": "stealth",
         "headers": {"accept": "application/json", **headers},
     }
-    async with httpx.AsyncClient(timeout=_FIRECRAWL_TIMEOUT) as client:
-        resp = await client.post(
-            config.FIRECRAWL_SCRAPE_URL,
-            headers={"authorization": f"Bearer {config.FIRECRAWL_API_KEY}",
-                     "content-type": "application/json"},
-            json=body,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=_STEALTH_TIMEOUT) as client:
+            resp = await client.post(
+                config.FIRECRAWL_SCRAPE_URL,
+                headers={"authorization": f"Bearer {config.FIRECRAWL_API_KEY}",
+                         "content-type": "application/json"},
+                json=body,
+            )
+    except Exception as exc:
+        log.warning("firecrawl: scrape error: %s",
+                    str(exc) or type(exc).__name__)
+        _transport_error("firecrawl")
+        return None
+    _transport_success("firecrawl")
     if resp.status_code in (402, 429):
         _handle_provider_status("firecrawl", resp.status_code, resp.text)
         return None
@@ -422,12 +462,14 @@ async def _scrape_get_template(name: str, template: str,
     get_url = template.format(api_key=api_key, url=target)
     req_headers = {"accept": "*/*", **(fwd_headers or {})}
     try:
-        async with httpx.AsyncClient(timeout=_FIRECRAWL_TIMEOUT) as client:
+        async with httpx.AsyncClient(timeout=_STEALTH_TIMEOUT) as client:
             resp = await client.get(get_url, headers=req_headers)
     except Exception as exc:
         log.warning("%s: scrape error: %s", name,
                     str(exc) or type(exc).__name__)
+        _transport_error(name)
         return None
+    _transport_success(name)
     if resp.status_code in (402, 429):
         _handle_provider_status(name, resp.status_code, resp.text)
         return None

@@ -41,6 +41,7 @@ def fresh_state(monkeypatch):
     monkeypatch.setattr(crowd, "_sessions", {})
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
     monkeypatch.setattr(crowd, "_BENCHED_UNTIL", {})
+    monkeypatch.setattr(crowd, "_CONSECUTIVE_ERRORS", {})
     monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
 
 
@@ -403,3 +404,129 @@ def test_crowd_heat_rule_blocks_low_real_feed_heat():
 def test_crowd_heat_rule_proxy_tag_when_no_feed():
     r = rules_mod.crowd_heat(make_candidate(), None, None)
     assert r.passed and "[proxy]" in r.detail
+
+
+# --- dead-provider fail-fast (2026-08-27) -----------------------------------------
+# A provider that times out twice in a row is benched exactly like a 402, so a
+# dead scraper costs two timeouts ONCE per process, never one full timeout per
+# candidate per tick (the ~15-minute-tick bug: ScrapingBee ReadTimeouts were
+# logged and ignored forever).
+
+_SB_TEMPLATE = ("https://app.scrapingbee.com/api/v1/?api_key={api_key}"
+                "&url={url}&stealth_proxy=true")
+
+
+async def test_two_consecutive_timeouts_bench_provider(monkeypatch):
+    monkeypatch.setattr(config, "SCRAPINGBEE_API_KEY", "sb-key")
+    calls = {"n": 0}
+
+    class TimeoutClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            calls["n"] += 1
+            raise crowd.httpx.ReadTimeout("simulated dead provider")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", TimeoutClient)
+
+    # attempt 1: counted, still transient
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://origin.example/x") is None
+    assert not crowd._is_benched("scrapingbee")
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 1
+
+    # attempt 2: streak hits the threshold -> benched like a 402
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://origin.example/x") is None
+    assert crowd._is_benched("scrapingbee")
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 0
+    assert calls["n"] == 2     # a third read skips it without any network call
+
+
+async def test_single_timeout_is_transient_not_benched(monkeypatch):
+    class TimeoutClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            raise crowd.httpx.ReadTimeout("one-off")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", TimeoutClient)
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://origin.example/x") is None
+    assert not crowd._is_benched("scrapingbee")
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 1
+
+
+async def test_success_resets_the_error_streak(monkeypatch):
+    """timeout -> 200 -> timeout must NOT bench: the streak only counts
+    consecutive failures."""
+    outcomes = ["timeout", "ok", "timeout"]
+
+    class FlakyClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            outcome = outcomes.pop(0)
+            if outcome == "timeout":
+                raise crowd.httpx.ReadTimeout("flaky")
+            return FakeResponse(200, text='{"responseObject": {"items": []}}')
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", FlakyClient)
+
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is None
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 1
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is not None
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 0
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is None
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 1
+    assert not crowd._is_benched("scrapingbee")
+
+
+async def test_firecrawl_transport_error_fails_soft_and_benches(monkeypatch):
+    """The firecrawl POST used to raise uncaught on transport errors; now it
+    fails soft, counts the streak, and benches after two — like every other
+    hop in the chain."""
+    monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "fc-key")
+
+    class DeadClient(FakeClient):
+        async def post(self, url, **kw):
+            raise crowd.httpx.ConnectTimeout("firecrawl unreachable")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", DeadClient)
+
+    assert await crowd._scrape_firecrawl("https://origin.example/x", {}) is None
+    assert not crowd._is_benched("firecrawl")
+    assert await crowd._scrape_firecrawl("https://origin.example/x", {}) is None
+    assert crowd._is_benched("firecrawl")
+
+
+async def test_direct_get_retries_transport_once(monkeypatch):
+    """Reference parity: the direct read gets two transport attempts, but a
+    real HTTP response (even 403) is never retried."""
+    calls = {"n": 0}
+
+    class FlakyClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            calls["n"] += 1
+            if calls["n"] == 1:
+                raise crowd.httpx.ConnectError("connection reset")
+            return FakeResponse(200, {"ok": True})
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", FlakyClient)
+    assert await crowd._direct_get("https://origin.example/x", {}) == {"ok": True}
+    assert calls["n"] == 2
+
+    calls["n"] = 0
+
+    class ForbiddenClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            calls["n"] += 1
+            return FakeResponse(403, text="denied")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", ForbiddenClient)
+    assert await crowd._direct_get("https://origin.example/x", {}) is None
+    assert calls["n"] == 1
+
+
+def test_stealth_timeout_matches_reference_budget():
+    # the reference proxy call runs on a 25s budget; the old 45s per hop is
+    # what let one dead provider stall a whole tick for ~15 minutes
+    assert crowd._STEALTH_TIMEOUT.read == 25.0
+    assert crowd._STEALTH_TIMEOUT.connect == 25.0

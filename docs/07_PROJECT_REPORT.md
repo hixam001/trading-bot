@@ -5,8 +5,9 @@ Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
-risk budget × closed-loop conviction) implemented 2026-08-27.** Tests:
-**331 passing**.
+risk budget × closed-loop conviction) implemented 2026-08-27; dead-provider
+fail-fast shipped 2026-08-27 (handoff §24).** Tests:
+**337 passing**.
 
 ---
 
@@ -231,7 +232,7 @@ cash writes, cap refusal, and flag assertion.
 | Birdeye | memepool trending discovery; decimals; token_security | free tier 401s on security → session auto-disable, fields stay UNKNOWN |
 | Dexscreener | all rule numerics per mint: 1h volume/change, buys/sells, liquidity, mcap, pair age, socials | deepest pair chosen; field names confirmed against real payloads |
 | Jupiter (lite-api) | execution-quality price for exits/holdings | decimals-aware; fails closed without them |
-| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); the last two forward the Privy bearer through Cloudflare (verified live); a credit-exhausted provider (HTTP 402) is benched 30 min while a merely rate-limited one (HTTP 429) takes only a short ~75s backoff, and the provider's own error reason is logged |
+| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); the last two forward the Privy bearer through Cloudflare (verified live); a credit-exhausted provider (HTTP 402) is benched 30 min while a merely rate-limited one (HTTP 429) takes only a short ~75s backoff, and the provider's own error reason is logged; a provider that fails transport (timeout/connect) twice in a row is benched like a 402 so a dead scraper can never stall a tick (handoff §24) |
 | Mock | full offline parity incl. threshold edge cases | default backend |
 
 All external calls: 15s timeout, ≤3 retries with backoff, distinct longer
@@ -325,7 +326,7 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 11. Testing & verification
 
-**283 backend tests passing** (<2s, fully hermetic): both branches of all
+**289 backend tests passing** (<2s, fully hermetic): both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
@@ -344,8 +345,12 @@ published formula incl. Math.round half-up parity, fail-closed unreadable
 inputs, at-cost marking, ticket clamps, derived daily-ceiling refusal
 through a real tick, stats_json merge persistence, disclosure blocks);
 REF-R9 calibration suite (12 tests: FLAT/caps/floors/confidence pull/
-hand-computed mixed book, never-raises on garbage).
-48 live_execution tests (**331 combined** via root pytest.ini). The live
+hand-computed mixed book, never-raises on garbage);
+crowd dead-provider fail-fast suite (6 tests: 2-consecutive-timeout bench,
+single-timeout transient, success resets streak, firecrawl transport error
+fails soft + benches, direct-get retries transport once but never a 403,
+stealth timeout == 25s reference budget).
+48 live_execution tests (**337 combined** via root pytest.ini). The live
 execution bridge is wired
 and remains disarmed; its offline/mock flow covers execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.
@@ -589,3 +594,59 @@ reference repository at implementation time.
   (verified against the reference source, not assumed).
 - REF-R10 (live promotion) and REF-R11 (on-chain memo) remain gated /
   documented-only pending operator approval.
+
+---
+
+## 12. Dead-provider fail-fast + reference fomo-path audit (2026-08-27)
+
+### Problem
+Operator-reported ~15-minute tick stalls. Live log confirmed Firecrawl +
+ZenRows were 402 credit-exhausted (already benched correctly by the existing
+handler) — but the real stall was **ScrapingBee**: its stealth reads
+ReadTimeout, and `_scrape_get_template` caught + logged the timeout yet never
+benched the provider, so every candidate re-tried it (~20 candidates × 45s).
+
+### Reference audit (how the reference gets fomo data)
+Verbatim from its source — nothing exotic, and we already had both paths:
+- **Primary** = exactly ours: Privy refresh-token → bearer, then direct
+  `fetch()` to `prod-api.fomo.family` (9s timeout, 2 attempts, fail-soft).
+- **Fallback** = a scraping API too, just behind their own gateway:
+  `POST {OMO_CONNECTOR_GATEWAY_URL}/scrape` with
+  `X-Connection-Api-Key: {FIRECRAWL_API_KEY}`, body
+  `{url, formats:["rawHtml"], onlyMainContent:false, proxy:"stealth",
+  headers:{...}}`, 25s timeout. That is Firecrawl stealth-proxy — the
+  identical payload our `_scrape_firecrawl` sends, on the same credits.
+- **No free mechanism exists** — fomo firewalls datacenter IPs, so some
+  residential/stealth proxy is the only way through when direct fails. The
+  difference was **timeout discipline**: one proxy hop at 25s that fails soft,
+  vs our 5-hop chain at 45s each with dead hops never benched.
+
+### Fix (`backend/data_providers/crowd.py`)
+1. **Transport-error benching** — `_CONSECUTIVE_ERRORS` streak +
+   `_transport_error()`/`_transport_success()`: 2 consecutive transport
+   failures (timeout / connect) bench a provider exactly like a 402; any
+   completed response resets the streak.
+2. **`_scrape_firecrawl` wrapped in try/except** — previously raised uncaught
+   on transport errors (would crash the chain); now counted + benched.
+3. **Timeout parity** — `_FIRECRAWL_TIMEOUT(45s)` → `_STEALTH_TIMEOUT(25s)`
+   on both stealth paths.
+4. **Direct-path parity** — `_direct_get` now 2 transport attempts (reference
+   does 2 tries); a real HTTP response (even 403) is never retried.
+
+### Verification
+- 6 new tests in `tests/test_crowd.py` (23 total there); combined suite
+  **337 passed** (backend 289 + live_execution 48).
+- **Live-verified after restart:** ScrapingBee timeout #1 (25s budget,
+  counted), timeout #2 → "2 consecutive transport errors — benching" → benched
+  30 min. Only 2 scrapingbee errors in the whole log; every later candidate
+  skips it. Crowd stage now degrades to proxy heat in **seconds**, not ~15 min.
+  0 tracebacks.
+
+### Status / next
+- **Refilling Firecrawl credits is the only way to restore REAL crowd heat** —
+  no code fixes an empty account; after a top-up the chain self-heals with
+  zero changes (firecrawl is hop #1). ZenRows renewal is optional backup.
+- ScrapOps 401 (key rejected) and the direct-403 firewall remain as-is; both
+  fail fast and are harmless now. Jupiter `lite-api` 429s in the exit loop are
+  a separate pre-existing rate-limit, unrelated to this fix.
+

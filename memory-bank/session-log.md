@@ -1,3 +1,24 @@
+## Memory-bank update - 2026-08-27 (dead-provider fail-fast session)
+
+- **Reference fomo-path audit** (verbatim from its source): primary = Privy
+  bearer → direct `fetch` (9s, 2 attempts); fallback = Firecrawl stealth-proxy
+  behind their own gateway (`proxy:"stealth"`, `rawHtml`, 25s) — the identical
+  payload we already send, same credits. No free scrape mechanism exists.
+- **crowd.py**: `_CONSECUTIVE_ERRORS` + `_transport_error()`/
+  `_transport_success()` — 2 consecutive transport failures (timeout/connect)
+  bench a provider exactly like a 402; any completed response resets the
+  streak. `_scrape_firecrawl` wrapped in try/except (was uncaught → would
+  crash the chain). `_FIRECRAWL_TIMEOUT(45s)` → `_STEALTH_TIMEOUT(25s)` on
+  both stealth paths. `_direct_get` now 2 transport attempts (never retries a
+  real HTTP response, even 403).
+- **Root cause of ~15-min ticks**: ScrapingBee ReadTimeouts were caught +
+  logged but never benched → every candidate re-tried it (~20 × 45s).
+- **Tests: 337 combined passing** (backend 289 incl. 6 new in test_crowd.py +
+  live_execution 48). Live-verified after restart: ScrapingBee benched after
+  exactly 2 timeouts, crowd stage degrades in seconds, 0 tracebacks.
+- **Operator action pending**: refill Firecrawl credits to restore REAL crowd
+  heat (chain self-heals, no code change). ZenRows renewal optional.
+
 ## Memory-bank update - 2026-08-27 (REF-R8 + REF-R9 session)
 
 - **config.py**: SIZING_MODE gains "risk_budget" (default stays "fixed");

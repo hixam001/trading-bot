@@ -1289,3 +1289,65 @@ repository at implementation time. REF-R10/R11 remain gated / documented-only.
 - This builds the §22 gate-3 artifact: a paper track record where sizing
   behaves as specified under real outcomes. REF-R10/R11 stay gated.
 
+
+## 24. Dead-provider fail-fast + reference fomo-path audit (2026-08-27)
+
+### Problem (operator-reported: "ticks stall ~15 min; maybe Firecrawl credits?")
+Live log confirmed TWO credit-exhausted providers (Firecrawl 402, ZenRows 402
+— both correctly benched by the existing 402 handler) **plus** the real stall
+source: **ScrapingBee ReadTimeouts were never benched.** `_scrape_get_template`
+caught the timeout, logged it, returned None — and the next candidate tried it
+again. ~20 candidates × 45s timeout ≈ 15 min of pure waiting per tick, forever.
+
+### Reference audit (how the reference gets fomo data)
+Verbatim from its source — nothing exotic, and we already had both paths:
+- **Primary** = exactly ours: Privy refresh-token → bearer, then direct
+  `fetch()` to `prod-api.fomo.family` (9s timeout, **2 attempts**, fail-soft).
+- **Fallback** = a scraping API too, just behind their own gateway:
+  `POST {OMO_CONNECTOR_GATEWAY_URL}/scrape` with
+  `X-Connection-Api-Key: {FIRECRAWL_API_KEY}`, body
+  `{url, formats:["rawHtml"], onlyMainContent:false, proxy:"stealth",
+  headers:{...}}`, **25s timeout**. That is Firecrawl stealth-proxy — the
+  identical payload our `_scrape_firecrawl` sends. Their gateway is a routing
+  layer over the same Firecrawl key (same credits). **No free mechanism
+  exists** — fomo firewalls datacenter IPs, so some residential/stealth proxy
+  is the only way through when direct fails.
+- **The real difference = timeout discipline.** Reference: one proxy hop, 25s,
+  fails soft. Ours (before): 5-hop chain, 45s each, dead hops never benched.
+
+### Fix (`backend/data_providers/crowd.py`)
+1. **Transport-error benching** — new `_CONSECUTIVE_ERRORS` counter +
+   `_transport_error()`/`_transport_success()`. A provider that fails
+   `_TRANSPORT_ERROR_BENCH_AFTER=2` times **in a row** (timeout / connection
+   error) is benched exactly like a 402; any completed response resets the
+   streak. Generalizes fail-fast from "out of credits" to "unusable".
+2. **`_scrape_firecrawl` wrapped in try/except** — it previously raised
+   uncaught on transport errors (would crash the chain). Now counted + benched
+   like every other hop.
+3. **Timeout parity** — `_FIRECRAWL_TIMEOUT(45s)` → `_STEALTH_TIMEOUT(25s)`
+   on both stealth paths (reference parity).
+4. **Direct-path parity** — `_direct_get` now makes **2 transport attempts**
+   (reference does 2 tries); a real HTTP response (even 403) is never retried.
+
+### Verification
+- 6 new tests in `tests/test_crowd.py` (23 total there): 2 consecutive
+  timeouts → benched + skipped; single timeout → transient, not benched;
+  success resets the streak; firecrawl transport error fails soft + benches;
+  direct-get retries transport once but not a 403; stealth timeout == 25s.
+- **Full combined suite: 337 passed** (backend 289 + live_execution 48).
+- **Live-verified after restart:** ScrapingBee timeout #1 at 18:39:09 (25s
+  budget, counted), timeout #2 at 18:39:42 → "2 consecutive transport errors —
+  benching" → benched 30 min. Only **2** scrapingbee errors in the whole log;
+  every later candidate skips it instantly. Crowd stage now degrades to proxy
+  heat in **seconds**, not ~15 min. Firecrawl + ZenRows still 402-benched as
+  before. 0 tracebacks.
+
+### Status / next
+- **Refilling Firecrawl credits is the only way to restore REAL crowd heat** —
+  no code fixes an empty account. After a top-up the chain self-heals with
+  zero changes (firecrawl is hop #1). ZenRows renewal is optional backup.
+- ScrapOps 401 (key rejected) and the direct-403 firewall remain as-is; both
+  fail fast and are harmless now.
+- Jupiter `lite-api` 429s in the exit loop are a separate pre-existing
+  rate-limit, unrelated to this fix.
+

@@ -1,9 +1,27 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (REF-R8 + REF-R9 implemented: drawdown-adaptive risk budget × closed-loop conviction; reference-parity batch 2 complete for the approved pair).**
+**As of 2026-08-27 (dead-provider fail-fast shipped: transport-error benching + 25s stealth-timeout parity; REF-R8 + REF-R9 reference-parity batch 2 complete).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### Dead-provider fail-fast + reference fomo-path audit (handoff §24) (2026-08-27)
+Operator-reported ~15-min tick stalls root-caused: Firecrawl + ZenRows were
+402 credit-exhausted (already benched correctly) but **ScrapingBee
+ReadTimeouts were never benched** — every candidate re-tried it, ~20 × 45s.
+Reference audit (verbatim from its source): primary path = exactly ours
+(Privy bearer → direct `fetch`, 9s, 2 attempts); fallback = Firecrawl
+stealth-proxy behind their own gateway (`proxy:"stealth"`, `rawHtml`, 25s) —
+the identical payload we already send, same credits. No free mechanism
+exists; the difference was timeout discipline. Fix in `crowd.py`:
+`_CONSECUTIVE_ERRORS` + `_transport_error()`/`_transport_success()` — 2
+consecutive transport failures bench a provider like a 402, any response
+resets the streak; `_scrape_firecrawl` wrapped in try/except (was uncaught);
+`_FIRECRAWL_TIMEOUT(45s)` → `_STEALTH_TIMEOUT(25s)`; `_direct_get` now 2
+transport attempts (never retries a real HTTP response). 6 new tests (23 in
+test_crowd.py); **337 combined passing**; live-verified: ScrapingBee benched
+after exactly 2 timeouts, crowd stage now degrades in seconds. Refilling
+Firecrawl credits is the only way back to REAL crowd heat (chain self-heals).
+
 ### REF-R8 + REF-R9 — risk budget × conviction factor (handoff §22 → §23) (2026-08-27)
 Verbatim ports of the reference `computeBudget()` / `computeCalibration()`
 (re-fetched from the reference repo at implementation time). NEW
@@ -411,10 +429,14 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - ⚠ TERMINAL: login shell is FISH — no `$?`, no heredocs; `bash -c` quoting
   breaks silently. Write bash scripts to files; read outputs from /tmp files.
 - pytest canonical: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- Suite now: backend 136, combined root 184 (root pytest.ini asyncio_mode)
+- Suite now: backend 289, combined root 337 (root pytest.ini asyncio_mode)
 - isolation grep (backend must not mention live_execution) must stay clean
 - .env.example documents ALL env fields incl. crowd-feed keys; user has
   FOMO_PRIVY_REFRESH_TOKEN + FIRECRAWL_API_KEY filled
+- ⚠ CROWD HEAT: Firecrawl + ZenRows are 402 credit-exhausted (benched). REAL
+  crowd heat needs a Firecrawl top-up — the chain self-heals, no code change.
+  Dead providers now bench after 2 consecutive transport errors (handoff §24),
+  so a dead scraper can never stall a tick again.
 
 
 ### Security audit + Supabase prep (this batch)
