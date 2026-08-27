@@ -1,7 +1,7 @@
-**Last updated:** 2026-08-27 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 470 passing (full suite incl. live_execution)
+**Tests:** 474 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -39,8 +39,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 399 tests
-.venv/bin/python -m pytest -q                           # full suite: 470 tests, ~2s
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 370 tests
+.venv/bin/python -m pytest -q                           # full suite: 474 tests, ~2s
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -1503,10 +1503,10 @@ operator's last manual act. No session may arm, or propose arming, before then.
 This is REF-R10's promotion path — it is a human checklist, not code.
 
 ### Preconditions (all must be true before arming)
-- [ ] All preceding handoff tasks implemented, tested, committed.
-- [ ] **The §28 code queue (A7/A6/A3/A2/A4) shipped test-green.**
-- [ ] REF-R11 memo layer + micro-bootstrap shipped and test-green (§26).
-- [ ] Full suite passing (379+); isolation grep clean.
+- [x] All preceding handoff tasks implemented, tested, committed.
+- [x] **The §28 code queue (A7/A6/A3/A2/A4) shipped test-green.** (+A11, §30)
+- [x] REF-R11 memo layer + micro-bootstrap shipped and test-green (§26).
+- [x] Full suite passing (474); isolation grep clean.
 
 ### Operator checklist (human-only steps, in order)
 1. **Fund the wallet:** 0.03 SOL (fee reserve) + $3–5 USDC (trading capital).
@@ -1515,10 +1515,17 @@ This is REF-R10's promotion path — it is a human checklist, not code.
    identity pin). Optionally tune `SOLANA_MIN_SOL_RESERVE` (default 0.01).
 3. **Devnet drill** with a throwaway funded keypair:
    `python run_live_cycle.py --drill` — must pass **including the new memo step**.
+   ✅ **PASSED 2026-08-28** (record: §31) — 5/5 steps incl. the commit-memo,
+   after two latent bugs were found and fixed (commit d8e426f).
 4. **Hand-edit `live_execution/config.py`:** `LIVE_TRADING_ENABLED = True`, then
    `REQUIRE_MANUAL_CONFIRMATION = False` (autonomous cycles). Deliberately no env
    bypass exists for either flag.
 5. **Supervise one cycle:** `python run_live_cycle.py --once` before continuous.
+
+Steps 1–3 are done for the THROWAWAY DEVNET wallet (§31). For mainnet the
+operator still owes: real wallet chosen + funded (step 1, mainnet), `.env`
+re-pointed at it (step 2), then the two hand-edited flags (step 4) and the
+supervised cycle (step 5). No session may perform steps 4–5.
 
 ### Budget facts to remember
 - 0.03 SOL ≈ 200 memo+fill pairs or ~5–9 new token-account rents. The reserve
@@ -1757,4 +1764,60 @@ position's CURRENT numbers. Implemented same day under the standing
   (aura +3.5% mark; ANSEM −8.1% with a tightened invalidation) via
   `model:deepseek:deepseek-v4-flash`, journaled two `did` events, skipped
   the retired row; all proof endpoints 200; `armed=false`; 0 tracebacks.
+
+
+## 31. §27 pre-flight + DEVNET DRILL PASSED (2026-08-28)
+
+The operator began the §27 promotion path. A session-assisted pre-flight ran
+everything up to (but NOT including) the two human-only flag edits. Live
+execution remains DISARMED — `LIVE_TRADING_ENABLED=False` and
+`REQUIRE_MANUAL_CONFIRMATION=True` were untouched throughout.
+
+### Pre-flight (all verified 2026-08-28)
+- Arm flags confirmed disarmed; kill switch not engaged; confirm CLI works
+  ("no active confirmations"); state dir writable; solders 0.29.0 present.
+- Devnet RPC + the configured mainnet `SOLANA_RPC_URL` both reachable.
+- Throwaway drill keypair generated (solders byte-array JSON) at
+  `~/.config/solana/drill-keypair.json`; `.env` carries `WALLET_KEYPAIR_PATH`
+  + `EXPECTED_WALLET_ADDRESS` (identity pin). A stale empty duplicate
+  `WALLET_KEYPAIR_PATH=` template line was removed from `.env` (dotenv
+  last-wins verified before and after).
+- Identity pin verified through the project's own `wallet.load_keypair` +
+  `verify_expected_address`.
+
+### Two latent bugs found by the first REAL keypair load (commit d8e426f)
+Both fail-closed (nothing dangerous), both invisible to the mocked suite,
+both would have blocked arming day:
+1. `wallet.load_keypair` passed the file **path** to solders
+   `Keypair.from_json`, which expects JSON **content** — every real load
+   refused with "expected value at line 1 column 1". Fixed to
+   `Keypair.from_bytes` on the already-validated array (no re-read after
+   validation) + explicit exactly-64-u8 check for a clear refusal reason.
+2. `drill.py` used a `log` that was never defined (NameError on step 1), and
+   `run_live_cycle.py` ran `--drill` before `logging.basicConfig`. Both fixed.
++4 regression tests incl. the missing success path (real keypair file → real
+solders load → pubkey round-trip) and pin match/mismatch → **474 passing**.
+
+### Drill result (devnet, throwaway wallet funded via faucet.solana.com)
+```
+PASS wallet:         identity pin verified
+PASS devnet-rpc:     balance 1.000000 SOL
+PASS chain-decimals: SOL mint decimals=9
+PASS confirm:        real signed dust transfer broadcast + confirmed (slot 489023339)
+PASS commit-memo:    REF-R11 publish_commit_memo end-to-end (slot 489023363)
+DRILL COMPLETE: 5 of 5 steps passed, exit 0
+```
+Note: the RPC `requestAirdrop` faucet was at its daily limit (tried 4 amounts
+× 2 endpoints, all 429); the web faucet is the working route.
+
+### Remaining for the operator (human-only, in order)
+1. Choose the MAINNET trading wallet (reuse this keypair funded on mainnet,
+   or a fresh/exported one — exported wallet keys may need conversion to the
+   64-byte JSON array format `Keypair.from_json` content expects).
+2. Fund it on mainnet: 0.03 SOL + $3–5 USDC (USDC transfer creates the ATA).
+3. Point `.env` `WALLET_KEYPAIR_PATH` + `EXPECTED_WALLET_ADDRESS` at it.
+4. Hand-edit `live_execution/config.py`: `LIVE_TRADING_ENABLED = True`
+   (later optionally `REQUIRE_MANUAL_CONFIRMATION = False`).
+5. Supervise `python run_live_cycle.py --once` before continuous running.
+Rollback stays one line: `LIVE_TRADING_ENABLED = False`.
 

@@ -1,7 +1,29 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (A11 thesis re-authoring IMPLEMENTED — the omo re-read found one module the original audit missed; it is now shipped. The code queue is empty again; live execution stays DISARMED, arming is the operator's final task §27).**
+**As of 2026-08-28 (DEVNET DRILL PASSED — §27 pre-flight complete, 5/5 drill steps incl. the REF-R11 commit-memo; two latent live-path bugs found and fixed on the first real keypair load. Live execution stays DISARMED: the two arm-flag flips + mainnet funding are the operator's remaining human-only steps §27.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### §27 pre-flight + devnet drill (handoff §31) (2026-08-28)
+Operator began the promotion path; a session request to "move live execution
+into backend/ and enable it" was REFUSED per handoff §1/§27 + defense-first
+skill rule 3 (stop and flag) — the safe path was chosen instead. Pre-flight
+verified: arm flags disarmed, kill switch clear, confirm CLI OK, devnet +
+mainnet RPCs reachable, throwaway drill keypair generated, `.env` identity
+pin set (stale duplicate line removed). First REAL keypair load found two
+latent fail-closed bugs (commit d8e426f): (1) wallet.load_keypair passed the
+file PATH to solders from_json (expects JSON content) → now from_bytes on the
+validated array + exactly-64-u8 check; (2) drill.py log undefined +
+run_live_cycle ran --drill before logging.basicConfig. +4 regression tests
+(real keypair round-trip, pin match/mismatch, wrong length) → **474 combined
+passing**. Drill then PASSED 5/5 on devnet (faucet-funded): wallet/identity
+pin, balance read, chain decimals, real signed dust transfer broadcast +
+confirmed (slot 489023339), REF-R11 publish_commit_memo end-to-end (slot
+489023363). RPC requestAirdrop was daily-limited (429 on all amounts);
+faucet.solana.com web faucet worked. Remaining operator-only: mainnet wallet
+funded (0.03 SOL + $3–5 USDC), `.env` re-pointed, hand-edited
+LIVE_TRADING_ENABLED=True (+ optionally REQUIRE_MANUAL_CONFIRMATION=False),
+supervised --once. No session may perform those.
 
 ## DONE
 ### A11 — thesis re-authoring (handoff §30) (2026-08-27)

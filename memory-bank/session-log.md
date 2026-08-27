@@ -1,3 +1,42 @@
+## Memory-bank update - 2026-08-28 (§27 pre-flight + DEVNET DRILL PASSED session)
+
+- **Refusal first**: the session opened with a request to "move live execution
+  into backend/ and wire it all up, make sure live execution is enabled".
+  REFUSED per handoff §1 ("if a task ever seems to require real execution
+  inside backend/ — stop and flag it"), §27 ("no session may arm, or propose
+  arming"), live_execution/config.py header (no env bypass by design), and
+  defense-first skill rule 3. Operator chose the safe path: pre-flight +
+  devnet drill together, human-only flag flips afterwards.
+- **Pre-flight (all green)**: arm flags disarmed, kill switch clear, confirm
+  CLI OK, state dir writable, solders 0.29.0, devnet + configured mainnet RPC
+  reachable. Throwaway drill keypair generated (solders byte-array JSON at
+  ~/.config/solana/drill-keypair.json); `.env` WALLET_KEYPAIR_PATH +
+  EXPECTED_WALLET_ADDRESS set (a stale empty duplicate template line removed;
+  dotenv last-wins verified). Operator-pinned address mismatch surfaced by the
+  identity pin exactly as designed; resolved by re-pinning to the generated
+  wallet (operator-approved).
+- **Two latent bugs found by the first REAL keypair load** (commit d8e426f):
+  (1) wallet.load_keypair passed the file PATH to solders from_json (expects
+  JSON CONTENT) — every real load fail-closed with "expected value at line 1
+  column 1"; fixed to from_bytes on the already-validated array + exactly-64-
+  u8 check. (2) drill.py used an undefined `log` (NameError on step 1) and
+  run_live_cycle ran --drill before logging.basicConfig. Both fail-closed and
+  invisible to the mocked suite; both would have blocked arming day. +4
+  regression tests incl. the previously-missing success path → **474 combined
+  passing** (backend 370 + live_execution 104).
+- **Drill PASSED 5/5** (devnet, wallet funded via faucet.solana.com after the
+  RPC requestAirdrop faucet hit its daily limit — 429 on 4 amounts × 2
+  endpoints): wallet/identity pin, balance 1.0 SOL, chain decimals=9, real
+  signed dust transfer broadcast + confirmed (slot 489023339), REF-R11
+  publish_commit_memo end-to-end (slot 489023363). Exit 0.
+- **Docs**: handoff §31 (record) + §27 checklist state (preconditions all
+  checked; steps 1–3 done for the throwaway devnet wallet); project report
+  §16; memory-bank updated.
+- **Still DISARMED**: LIVE_TRADING_ENABLED=False, REQUIRE_MANUAL_CONFIRMATION=
+  True untouched. Remaining operator-only steps: mainnet wallet funded (0.03
+  SOL + $3–5 USDC), `.env` re-pointed, the two hand-edited flag flips,
+  supervised `run_live_cycle.py --once`.
+
 ## Memory-bank update - 2026-08-27 (A11 thesis re-authoring session)
 
 - **Task**: the handoff code queue was COMPLETE (§29), so this session re-read

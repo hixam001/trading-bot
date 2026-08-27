@@ -1,6 +1,15 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §27 pre-flight + DEVNET DRILL PASSED (handoff §31) (2026-08-28): first
+      real keypair load exposed + fixed two latent fail-closed bugs (wallet
+      from_json path-vs-content → from_bytes on validated array + 64-u8
+      check; drill.py undefined log + logging order) — commit d8e426f, +4
+      regression tests. Drill 5/5 on devnet incl. real signed+broadcast+
+      confirmed dust transfer and the REF-R11 commit-memo path. Arm flags
+      untouched (still DISARMED); remaining steps are operator-only: mainnet
+      wallet funding, `.env` re-point, the two hand-edited flags, supervised
+      --once
 - [x] A11 thesis re-authoring (handoff §30): `backend/thesis_restate.py` —
       the module the original omo audit missed (`thesis-author.server.ts`),
       found in the 2026-08-27 re-read (full local clone). Once per tick/cycle,
@@ -218,5 +227,5 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 470 combined passing** (backend 399 + live_execution 71; +26 A11
-thesis re-authoring this batch).
+**Tests: 474 combined passing** (backend 370 + live_execution 104; +4 wallet
+regression tests this batch).

@@ -1,7 +1,7 @@
 # 07 — Project Report
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
-Solana memecoins. Report updated 2026-08-27 from the current main branch.
+Solana memecoins. Report updated 2026-08-28 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
@@ -14,8 +14,9 @@ attribution, chain reconciliation, own-basis read-back — handoff §29)
 implemented 2026-08-27; A11 thesis re-authoring (the module the original
 audit missed, found in the same-day re-read — handoff §30) implemented
 2026-08-27. R10 (live execution) remains deferred-by-design —
-arming is the operator's final manual task (handoff §27).** Tests:
-**470 passing**.
+arming is the operator's final manual task (handoff §27); the §27 devnet
+drill PASSED 5/5 on 2026-08-28 (handoff §31), still DISARMED.** Tests:
+**474 passing**.
 
 ---
 
@@ -862,4 +863,61 @@ our REF-R8×REF-R9 wiring remains strictly ahead of their public code. Their
 `exit.server.ts` is still missing from the public repo (README mentions it;
 raw fetch 404) — nothing to port.
 
+
+
+## 16. §27 pre-flight + devnet drill (2026-08-28)
+
+The §27 arming checklist's machine-checkable preconditions were verified and
+the **devnet drill PASSED 5/5** — the last automated gate before the
+operator's human-only flag flips. Full record: handoff §31.
+
+### Refusal recorded
+The session opened with a request to "move live execution into backend/ and
+enable it". It was refused per handoff §1 (backend/ is paper-only by
+non-negotiable contract), §27 (no session may arm), and defense-first skill
+rule 3. The operator chose the safe path instead: pre-flight + drill now,
+human-only arming afterwards.
+
+### Pre-flight (all green)
+Arm flags disarmed; kill switch clear; confirm CLI OK; state dir writable;
+solders 0.29.0; devnet + configured mainnet RPC reachable. Throwaway drill
+keypair generated (solders byte-array JSON); `.env` wallet path + identity
+pin set. The pin caught an operator-pinned address mismatch exactly as
+designed; resolved by re-pinning to the generated wallet (operator-approved).
+
+### Two latent bugs found by the first REAL keypair load (commit d8e426f)
+1. `wallet.load_keypair` passed the file **path** to solders `from_json`
+   (which expects JSON **content**) — every real load fail-closed with
+   "expected value at line 1 column 1". Fixed: `from_bytes` on the
+   already-validated array + an exactly-64-u8 check.
+2. `drill.py` used an undefined `log` (NameError on step 1), and
+   `run_live_cycle.py` ran `--drill` before `logging.basicConfig`.
+
+Both were fail-closed (safe) and invisible to the mocked suite, but both
+would have blocked arming day — proof the drill earns its keep. +4
+regression tests, including the previously-missing success path (real
+keypair file → real solders load → pubkey round-trip) and identity-pin
+match/mismatch.
+
+### Drill results (devnet, wallet funded via faucet.solana.com)
+The RPC `requestAirdrop` faucet was at its daily limit (429 across 4
+amounts × 2 endpoints); the web faucet is the working route.
+
+```
+PASS wallet:         J1pRF3YZoJj7UpPXcmth4oP11f5cK1UqwFRv9RNXhm34 (pin verified)
+PASS devnet-rpc:     balance 1.0 SOL
+PASS chain-decimals: SOL mint decimals=9
+PASS funds:          ≥ MIN_SOL_RESERVE
+PASS transfer:       real signed dust transfer broadcast + confirmed
+                     (slot 489023339)
+PASS commit-memo:    REF-R11 publish_commit_memo end-to-end
+                     (slot 489023363)
+```
+
+### Verification
+474 combined passing (backend 370 + live_execution 104). Isolation grep
+clean. Arm flags untouched: `LIVE_TRADING_ENABLED=False`,
+`REQUIRE_MANUAL_CONFIRMATION=True`. Remaining operator-only steps: mainnet
+wallet funded (0.03 SOL + $3–5 USDC), `.env` re-pointed, the two hand-edited
+flag flips, supervised `run_live_cycle.py --once`.
 
