@@ -22,7 +22,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter
 from api import db
@@ -89,12 +91,136 @@ async def get_exits():
     return {"thresholds": thresholds, "open_position_marks": marks}
 
 
+# ---------------------------------------------------------------------------
+# REF-R11 — on-chain precommit memo verification
+# ---------------------------------------------------------------------------
+
+# The memo program echoes the memo text into the transaction's program logs;
+# that echo is what anyone can read back from public RPC (reference parity —
+# verify.server.ts uses the identical log-line shape).
+_MEMO_LOG_RE = re.compile(r'Memo \(len \d+\): "(.*)"$')
+
+
+def _memo_text_from_tx(tx: dict) -> Optional[str]:
+    """Extract the memo text from a fetched transaction's program logs."""
+    for line in (tx.get("meta") or {}).get("logMessages") or []:
+        m = _MEMO_LOG_RE.search(line)
+        if m:
+            return m.group(1)
+    return None
+
+
+async def _verify_memo(row: dict, recomputed_hash: str, _get_tx,
+                       memo_prefix: str) -> dict:
+    """
+    REF-R11 memo checks for one decision-commit row.
+
+    Checks (all must pass for status='verified'):
+      1. memo_confirmed          — memo tx exists, meta.err == null
+      2. memo_hash_matches_chain — memo text after the prefix equals the
+         recomputed sha256(nonce|canonical_payload)
+      3. memo_before_fill        — memo slot strictly earlier than the bound
+         fill's slot (no fill bound -> unknown)
+    Any check that cannot run reports 'unknown', NEVER 'pass' (fail closed).
+    Rows without a memo signature report status='not_published' — honestly,
+    never dressed up as proof (the reference shows these "as such" too).
+    """
+    memo_sig = row.get("memo_signature")
+    if not memo_sig:
+        return {"published": False, "status": "not_published", "checks": []}
+
+    base = {"published": True, "memo_signature": memo_sig,
+            "memo_slot": row.get("memo_slot")}
+    if _get_tx is None:
+        return {**base, "status": "unknown", "checks": [
+            {"name": "rpc_available", "status": "unknown",
+             "detail": "live_execution not importable in paper mode"}]}
+
+    try:
+        memo_tx = await _get_tx(memo_sig)
+    except Exception as exc:
+        memo_tx = None
+        log.debug("verify: memo fetch failed for %s: %s", memo_sig[:20], exc)
+    if memo_tx is None:
+        return {**base, "status": "unknown", "checks": [
+            {"name": "memo_fetch", "status": "unknown",
+             "detail": "RPC returned no data for memo signature"}]}
+
+    checks = []
+    meta = memo_tx.get("meta") or {}
+    err = meta.get("err")
+    checks.append({
+        "name": "memo_confirmed",
+        "status": "pass" if err is None else "fail",
+        "detail": "no error" if err is None else f"err={err}",
+    })
+
+    memo_text = _memo_text_from_tx(memo_tx)
+    on_chain_hash = None
+    if memo_text is not None and memo_text.startswith(memo_prefix):
+        on_chain_hash = memo_text[len(memo_prefix):]
+    hash_ok = on_chain_hash is not None and on_chain_hash == recomputed_hash
+    checks.append({
+        "name": "memo_hash_matches_chain",
+        "status": "pass" if hash_ok else "fail",
+        "detail": f"on_chain={on_chain_hash!r} recomputed={recomputed_hash[:16]}",
+    })
+
+    memo_slot = memo_tx.get("slot")
+    fill_sig = row.get("signature")
+    if not fill_sig:
+        checks.append({"name": "memo_before_fill", "status": "unknown",
+                       "detail": "no fill bound to this commit"})
+    else:
+        try:
+            fill_tx = await _get_tx(fill_sig)
+        except Exception:
+            fill_tx = None
+        fill_slot = fill_tx.get("slot") if isinstance(fill_tx, dict) else None
+        if memo_slot is None or fill_slot is None:
+            checks.append({"name": "memo_before_fill", "status": "unknown",
+                           "detail": f"slots unavailable (memo={memo_slot} fill={fill_slot})"})
+        else:
+            order_ok = int(memo_slot) < int(fill_slot)
+            checks.append({
+                "name": "memo_before_fill",
+                "status": "pass" if order_ok else "fail",
+                "detail": f"memo_slot={memo_slot} fill_slot={fill_slot}",
+            })
+
+    statuses = [c["status"] for c in checks]
+    if "fail" in statuses:
+        overall = "failed"
+    elif "unknown" in statuses:
+        overall = "unknown"
+    else:
+        overall = "verified"
+    return {**base, "status": overall, "on_chain_hash": on_chain_hash,
+            "memo_slot": memo_slot, "checks": checks}
+
+
 @router.get("/api/verify.json")
 async def get_verify():
     """Recompute sha256(nonce|canonical_payload) for every decision commit
-    and report pass/fail per row."""
+    and report pass/fail per row. REF-R11: rows carrying an on-chain memo
+    signature additionally get the memo verified against public RPC (memo
+    confirmed, memo text matches the committed hash, memo slot precedes the
+    bound fill). RPC unavailable -> 'unknown', never 'pass'."""
+    # Optional RPC read helper + memo prefix (live_execution is not
+    # importable in pure-paper mode; the local recompute still runs).
+    _get_tx = None
+    memo_prefix = "commit:v1:"
+    try:
+        from live_execution.solana import get_transaction as _get_tx_fn
+        from live_execution.memo import MEMO_PREFIX as _live_prefix
+        _get_tx = _get_tx_fn
+        memo_prefix = _live_prefix
+    except ImportError:
+        pass
+
     results = []
     verified = failed = 0
+    memo_totals = {"published": 0, "verified": 0, "failed": 0, "unknown": 0}
 
     async with db.get_db() as conn:
         rows = await db.get_verify_commits(conn)
@@ -108,6 +234,11 @@ async def get_verify():
             verified += 1
         else:
             failed += 1
+        memo_block = await _verify_memo(row, recomputed, _get_tx, memo_prefix)
+        if memo_block["published"]:
+            memo_totals["published"] += 1
+            if memo_block["status"] in memo_totals:
+                memo_totals[memo_block["status"]] += 1
         results.append({
             "id": row["id"],
             "symbol": row["symbol"],
@@ -115,12 +246,18 @@ async def get_verify():
             "stored_hash": row["payload_hash"],
             "recomputed_hash": recomputed,
             "match": ok,
+            "memo": memo_block,
         })
 
     return {
         "algorithm": "sha256(nonce|canonical_payload_json)",
+        "memo_algorithm": f"memo text = '{memo_prefix}' + hash, written "
+                          "on-chain BEFORE the fill; recomputed from the "
+                          "revealed payload+nonce and matched against the "
+                          "memo log line fetched from public RPC",
         "totals": {"checked": len(results), "verified": verified,
                    "failed": failed},
+        "memo_totals": memo_totals,
         "rows": results,
     }
 

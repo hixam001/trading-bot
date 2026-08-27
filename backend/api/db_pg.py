@@ -279,6 +279,9 @@ _SCHEMA_SYNC_SQL = (
     "ALTER TABLE feed_events ADD COLUMN IF NOT EXISTS prompt_version TEXT",
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS model_version TEXT",
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS prompt_version TEXT",
+    # REF-R11: on-chain precommit memo columns (003_commit_memos.sql).
+    "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_signature TEXT",
+    "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_slot BIGINT",
     # Same RLS-lockdown posture as 001_init.sql §11: backend connects with
     # the service role (bypasses RLS); anon keys must see nothing.
     "ALTER TABLE llm_call_usage ENABLE ROW LEVEL SECURITY",
@@ -314,6 +317,9 @@ async def init_db() -> None:
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS phase TEXT",
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS matched_by TEXT",
+            # REF-R11: on-chain precommit memo columns (null on paper commits)
+            "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_signature TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_slot BIGINT",
             "CREATE INDEX IF NOT EXISTS idx_decision_commits_sig "
             "ON decision_commits(signature) WHERE signature IS NOT NULL",
         ):
@@ -796,6 +802,39 @@ async def bind_commit_signature(
     return _rowcount(status)
 
 
+async def get_commit_id_by_hash(
+    conn: asyncpg.Connection, payload_hash: str
+) -> Optional[int]:
+    """Look up a decision commit id by its UNIQUE payload hash (REF-R11:
+    the bridge journals a seal, then needs the row id to bind memo/fill)."""
+    row = await conn.fetchrow(
+        "SELECT id FROM decision_commits WHERE payload_hash = $1",
+        payload_hash,
+    )
+    return int(row["id"]) if row else None
+
+
+async def bind_commit_memo(
+    conn: asyncpg.Connection,
+    commit_id: int,
+    memo_signature: str,
+    memo_slot: Optional[int],
+) -> int:
+    """REF-R11: attach the confirmed on-chain commit memo to a decision
+    commit row. Only updates rows without a memo signature already."""
+    status = await conn.execute(
+        """
+        UPDATE decision_commits
+        SET memo_signature = $1, memo_slot = $2
+        WHERE id = $3 AND memo_signature IS NULL
+        """,
+        memo_signature,
+        int(memo_slot) if memo_slot is not None else None,
+        commit_id,
+    )
+    return _rowcount(status)
+
+
 async def get_trade_by_id(conn: asyncpg.Connection, trade_id: str) -> Optional[Trade]:
     row = await conn.fetchrow(
         f"SELECT {_TRADE_COLS} FROM trades WHERE trade_id = $1", trade_id)
@@ -1137,7 +1176,8 @@ async def get_recent_decision_commits(
         """
         SELECT id, created_at::text AS created_at, tick_ts::text AS tick_ts,
                symbol, mint_address, verdict, entry_allowed, nonce,
-               payload_json::text AS payload_json, payload_hash
+               payload_json::text AS payload_json, payload_hash,
+               signature, memo_signature, memo_slot
         FROM decision_commits ORDER BY created_at DESC LIMIT $1
         """,
         limit,
@@ -1154,6 +1194,9 @@ async def get_recent_decision_commits(
             "nonce": r["nonce"],
             "payload": json.loads(r["payload_json"]),
             "payload_hash": r["payload_hash"],
+            "signature": r["signature"],
+            "memo_signature": r["memo_signature"],
+            "memo_slot": int(r["memo_slot"]) if r["memo_slot"] is not None else None,
         }
         for r in rows
     ]
@@ -1229,7 +1272,8 @@ async def get_verify_commits(
     rows = await conn.fetch(
         """
         SELECT id, nonce, payload_json::text AS payload_json, payload_hash,
-               symbol, verdict, created_at::text AS created_at, signature
+               symbol, verdict, created_at::text AS created_at, signature,
+               memo_signature, memo_slot
         FROM decision_commits ORDER BY created_at DESC LIMIT $1
         """,
         limit,

@@ -139,6 +139,10 @@ CREATE TABLE IF NOT EXISTS decision_commits (
     signature       TEXT,               -- Solana tx sig when a fill is bound
     phase           TEXT,               -- 'filled' | null
     matched_by      TEXT,               -- 'exact' | 'retro' | null
+    -- REF-R11: on-chain precommit memo (the seal hash published as a Solana
+    -- memo BEFORE the fill; nullable — paper commits never have one)
+    memo_signature  TEXT,
+    memo_slot       INTEGER,
     model_version   TEXT,
     prompt_version  TEXT
 );
@@ -232,6 +236,9 @@ async def init_db() -> None:
             "ALTER TABLE decision_commits ADD COLUMN signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN phase TEXT",
             "ALTER TABLE decision_commits ADD COLUMN matched_by TEXT",
+            # REF-R11: on-chain precommit memo columns (null on paper commits)
+            "ALTER TABLE decision_commits ADD COLUMN memo_signature TEXT",
+            "ALTER TABLE decision_commits ADD COLUMN memo_slot INTEGER",
             "ALTER TABLE decision_commits ADD COLUMN model_version TEXT",
             "ALTER TABLE decision_commits ADD COLUMN prompt_version TEXT",
             "ALTER TABLE feed_events ADD COLUMN model_version TEXT",
@@ -770,6 +777,42 @@ async def bind_commit_signature(
     return max(cursor.rowcount, 0)
 
 
+async def get_commit_id_by_hash(
+    conn: aiosqlite.Connection, payload_hash: str
+) -> Optional[int]:
+    """Look up a decision commit id by its UNIQUE payload hash (REF-R11:
+    the bridge journals a seal, then needs the row id to bind memo/fill)."""
+    cursor = await conn.execute(
+        "SELECT id FROM decision_commits WHERE payload_hash = ?",
+        (payload_hash,),
+    )
+    row = await cursor.fetchone()
+    return int(row["id"]) if row else None
+
+
+async def bind_commit_memo(
+    conn: aiosqlite.Connection,
+    commit_id: int,
+    memo_signature: str,
+    memo_slot: Optional[int],
+) -> int:
+    """REF-R11: attach the confirmed on-chain commit memo to a decision
+    commit row. Only updates rows without a memo signature already (a
+    recorded memo is never overwritten). Returns affected rowcount."""
+    cursor = await conn.execute(
+        """
+        UPDATE decision_commits
+        SET memo_signature = ?, memo_slot = ?
+        WHERE id = ? AND memo_signature IS NULL
+        """,
+        (memo_signature,
+         int(memo_slot) if memo_slot is not None else None,
+         commit_id),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
 async def get_trade_by_id(conn: aiosqlite.Connection, trade_id: str) -> Optional[Trade]:
     cursor = await conn.execute("SELECT * FROM trades WHERE trade_id = ?", (trade_id,))
     row = await cursor.fetchone()
@@ -1057,7 +1100,8 @@ async def get_recent_decision_commits(
     cursor = await conn.execute(
         """
         SELECT id, created_at, tick_ts, symbol, mint_address,
-               verdict, entry_allowed, nonce, payload_json, payload_hash
+               verdict, entry_allowed, nonce, payload_json, payload_hash,
+               signature, memo_signature, memo_slot
         FROM decision_commits ORDER BY created_at DESC LIMIT ?
         """,
         (limit,),
@@ -1074,6 +1118,9 @@ async def get_recent_decision_commits(
             "nonce": r["nonce"],
             "payload": json.loads(r["payload_json"]),
             "payload_hash": r["payload_hash"],
+            "signature": r["signature"],
+            "memo_signature": r["memo_signature"],
+            "memo_slot": r["memo_slot"],
         }
         for r in await cursor.fetchall()
     ]
@@ -1145,7 +1192,7 @@ async def get_verify_commits(
     cursor = await conn.execute(
         """
         SELECT id, nonce, payload_json, payload_hash, symbol, verdict,
-               created_at, signature
+               created_at, signature, memo_signature, memo_slot
         FROM decision_commits ORDER BY created_at DESC LIMIT ?
         """,
         (limit,),

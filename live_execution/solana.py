@@ -161,3 +161,84 @@ async def get_transaction(sig: str) -> dict | None:
     )
     return res if isinstance(res, dict) else None
 
+
+# ---------------------------------------------------------------------------
+# REF-R11 micro-bootstrap: real on-chain USDC funding check.
+# ---------------------------------------------------------------------------
+
+# Token-program constants for associated-token-account derivation (mainnet
+# program ids are network-wide constants, not configuration).
+_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+_ATA_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+
+
+def _usdc_mint() -> str:
+    """Single source of truth: the backend config USDC mint (no drift)."""
+    import sys
+    from pathlib import Path
+    backend = Path(__file__).resolve().parent.parent / "backend"
+    if str(backend) not in sys.path:
+        sys.path.insert(0, str(backend))
+    from config import USDC_MINT
+    return USDC_MINT
+
+
+def usdc_ata_for(owner: str) -> str:
+    """Derive the owner's associated token account for USDC (PDA)."""
+    from solders.pubkey import Pubkey  # type: ignore
+    owner_pk = Pubkey.from_string(owner)
+    mint_pk = Pubkey.from_string(_usdc_mint())
+    token_pk = Pubkey.from_string(_TOKEN_PROGRAM_ID)
+    ata, _ = Pubkey.find_program_address(
+        [bytes(owner_pk), bytes(token_pk), bytes(mint_pk)],
+        Pubkey.from_string(_ATA_PROGRAM_ID),
+    )
+    return str(ata)
+
+
+async def get_usdc_balance(address: str) -> float | None:
+    """
+    Real USDC balance of the wallet's USDC associated token account.
+
+    Returns a float (a MISSING token account is a 0.0 balance, not an
+    error), or None when the balance cannot be determined at all (every RPC
+    unreachable / unparseable). Callers MUST refuse the order on None —
+    never assume funding that could not be verified (fail closed; with
+    REF-R11 the memo fee is spent before the fill, so an unfunded order
+    would burn a commitment for nothing).
+    """
+    try:
+        ata = usdc_ata_for(address)
+    except Exception as exc:
+        log.info("[solana] usdc ata derivation failed for %s: %s", address[:8], exc)
+        return None
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for endpoint in config.RPC_URLS:
+            try:
+                resp = await client.post(
+                    endpoint,
+                    json={"jsonrpc": "2.0", "id": 1,
+                          "method": "getTokenAccountBalance", "params": [ata]},
+                )
+                if resp.status_code != 200:
+                    continue
+                body = resp.json()
+            except (httpx.HTTPError, ValueError):
+                continue
+            result = body.get("result")
+            if isinstance(result, dict) and isinstance(result.get("value"), dict):
+                value = result["value"]
+                try:
+                    raw_amount = int(value.get("amount"))
+                    decimals = int(value.get("decimals"))
+                except (TypeError, ValueError):
+                    continue
+                return raw_amount / (10 ** decimals)
+            err_msg = str(((body.get("error") or {}).get("message")) or "").lower()
+            if "could not find account" in err_msg or "invalid param" in err_msg:
+                return 0.0   # account does not exist -> zero balance
+            log.info("[solana] usdc balance refused by %s: %s",
+                     endpoint, body.get("error"))
+    return None
+
+

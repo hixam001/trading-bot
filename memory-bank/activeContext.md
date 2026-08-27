@@ -1,7 +1,33 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (fresh scraper keys activated — Firecrawl/ScrapeOps serving real crowd heat; ScrapingDog wired to forward the Privy bearer; dead-provider fail-fast in place).**
+**As of 2026-08-27 (REF-R11 on-chain precommit memo + micro-bootstrap IMPLEMENTED — reference parity now complete for R1–R9 + R11; live execution stays DISARMED, arming is the operator's final task §27).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### REF-R11 — on-chain precommit memo (commit–reveal) + micro-bootstrap (handoff §26) (2026-08-27)
+Operator-approved (the "implement against omotrades/omo" instruction is the
+§13 sign-off). Every armed order now seals `sha256(nonce|canonical_payload)`,
+publishes that hash on-chain as a Solana memo (`commit:v1:` prefix, SPL Memo
+program), and ONLY THEN quotes/builds/broadcasts the fill. Fail-closed: an
+unconfirmed memo BLOCKS the fill (handoff §22 req. 4 — stricter than the
+reference's async publish). New `live_execution/memo.py` (solders build +
+`publish_commit_memo`); `commit_log.py` gains `sealed→published→bound` +
+`record_memo()`/`fail()`; `executor.py` order = guards→wallet→SOL reserve→
+USDC funding→seal→memo→confirm→quote→build→send→confirm→bind, `OrderResult`
+carries seal+memo; `solana.py` gains `get_usdc_balance()`; `run_live_cycle.py`
+uses REAL USDC balance as cash + journals seal+memo into `decision_commits`.
+Verifier surface: `decision_commits` +`memo_signature`/`memo_slot` (SQLite +
+PG self-heal + `003_commit_memos.sql`), `bind_commit_memo()`/
+`get_commit_id_by_hash()` in db.py+db_pg.py, `/api/verify.json` memo checks
+(hash-on-chain + slot ordering; unknown never pass), `/api/disclosure.json`
+`commit_memo` block. Micro-bootstrap: `MIN_SOL_RESERVE` env-tunable (default
+0.01 SOL), `MIN_LIVE_TICKET_USD=0.5`, `compute_ticket`/`compute_risk_budget`
+optional `min_ticket_usd` floor (paper bit-identical). Devnet drill now sends
+a real memo. **41 new tests (379 combined passing)**; isolation grep clean;
+live smoke disarmed: verify/binding/disclosure all 200, `armed=False`.
+Deviations documented: fail-closed blocking, immediate reveal, single signer
+(trading wallet), de-branded prefix. solders 0.29.0 installed; fixed a latent
+`Hash.from_string` bug in drill.py. REF-R10 stays deferred — arming is §27.
 
 ## DONE
 ### Dead-provider fail-fast + reference fomo-path audit (handoff §24) (2026-08-27)
@@ -429,8 +455,10 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - ⚠ TERMINAL: login shell is FISH — no `$?`, no heredocs; `bash -c` quoting
   breaks silently. Write bash scripts to files; read outputs from /tmp files.
 - pytest canonical: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- Suite now: backend 290, combined root 338 (root pytest.ini asyncio_mode)
-- isolation grep (backend must not mention live_execution) must stay clean
+- Suite now: backend 308, live_execution 71, combined root 379 (root pytest.ini asyncio_mode)
+- isolation grep (backend must not mention live_execution) must stay clean —
+  the only backend references are function-local optional imports (REF-R1/R11 pattern)
+- solders 0.29.0 is a live_execution dependency (memo/drill tx build); installed in .venv
 - .env.example documents ALL env fields incl. crowd-feed keys; user has
   FOMO_PRIVY_REFRESH_TOKEN + FIRECRAWL_API_KEY filled
 - ⚠ CROWD HEAT: fresh keys added 2026-08-27 (handoff §25) — Firecrawl (primary)

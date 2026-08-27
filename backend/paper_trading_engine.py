@@ -138,12 +138,13 @@ def _round_half_up(x: float) -> int:
     return int(math.floor(float(x) + 0.5))
 
 
-def _fail_closed_budget() -> RiskBudget:
+def _fail_closed_budget(min_ticket_usd: Optional[float] = None) -> RiskBudget:
     """Minimum-ticket budget: an unreadable book may never authorise size."""
-    min_t = float(config.MIN_TICKET_USD)
+    min_t = (config.MIN_TICKET_USD if min_ticket_usd is None
+             else float(min_ticket_usd))
     max_daily = float(_round_half_up(min(
         config.HARD_DAILY_CEILING_USD,
-        max(config.MIN_TICKET_USD, min_t * config.DAY_MULTIPLE))))
+        max(min_t, min_t * config.DAY_MULTIPLE))))
     return RiskBudget(
         equity_usd=0.0, drawdown_factor=1.0, max_order_usd=min_t,
         max_daily_usd=max_daily,
@@ -152,23 +153,31 @@ def _fail_closed_budget() -> RiskBudget:
     )
 
 
-def compute_risk_budget(equity_usd: float, unrealized_usd: float) -> RiskBudget:
+def compute_risk_budget(equity_usd: float, unrealized_usd: float,
+                        min_ticket_usd: Optional[float] = None) -> RiskBudget:
     """
     Verbatim port of the reference computeBudget(equityUsd, unrealizedUsd):
 
         open_drawdown_pct = min(0, unrealized) / equity      (0 if equity <= 0)
         drawdown_factor   = clamp(1 + open_drawdown_pct * 2.5, 0.5, 1.0)
         max_order_usd     = round(clamp(equity * PER_ORDER_FRACTION *
-                                        drawdown_factor, MIN_TICKET_USD,
+                                        drawdown_factor, floor,
                                         HARD_ORDER_CEILING_USD))
-                            (equity <= 0 -> MIN_TICKET_USD: fail closed, never open)
+                            (equity <= 0 -> floor: fail closed, never open)
         max_daily_usd     = round(clamp(max_order_usd * DAY_MULTIPLE,
-                                        MIN_TICKET_USD, HARD_DAILY_CEILING_USD))
+                                        floor, HARD_DAILY_CEILING_USD))
+
+    floor = min_ticket_usd when given, else config.MIN_TICKET_USD. The
+    optional floor exists so the LIVE path (REF-R11 micro-bootstrap, handoff
+    §26) can size a $3-5 book without touching the paper $25 floor; default
+    None keeps every paper expectation bit-identical (frozen for calibration).
 
     -20% of equity in open losses halves the ticket; flat or green = full size.
     Never raises: malformed inputs fail CLOSED to the minimum-ticket budget
     (a skipped opportunity costs nothing; a guessed size corrupts the book).
     """
+    floor = (config.MIN_TICKET_USD if min_ticket_usd is None
+             else float(min_ticket_usd))
     try:
         equity = (float(equity_usd)
                   if math.isfinite(equity_usd) and equity_usd > 0 else 0.0)
@@ -183,20 +192,20 @@ def compute_risk_budget(equity_usd: float, unrealized_usd: float) -> RiskBudget:
         if equity > 0:
             max_order = float(_round_half_up(min(
                 config.HARD_ORDER_CEILING_USD,
-                max(config.MIN_TICKET_USD,
+                max(floor,
                     equity * config.PER_ORDER_FRACTION * df_raw))))
         else:
-            max_order = float(config.MIN_TICKET_USD)
+            max_order = float(floor)
         max_daily = float(_round_half_up(min(
             config.HARD_DAILY_CEILING_USD,
-            max(config.MIN_TICKET_USD,
+            max(floor,
                 max_order * config.DAY_MULTIPLE))))
         equity_display = _round_half_up(equity)
         formula = (
             "per order = equity %d * %s * drawdown factor %.3f, clamped to "
             "[%g, %g]; per day = per order * %d, clamped to %g" % (
                 equity_display, config.PER_ORDER_FRACTION, df_display,
-                config.MIN_TICKET_USD, config.HARD_ORDER_CEILING_USD,
+                floor, config.HARD_ORDER_CEILING_USD,
                 config.DAY_MULTIPLE, config.HARD_DAILY_CEILING_USD)
         )
         return RiskBudget(
@@ -207,7 +216,7 @@ def compute_risk_budget(equity_usd: float, unrealized_usd: float) -> RiskBudget:
     except Exception:
         log.warning("compute_risk_budget failed closed (equity=%r unrealized=%r)",
                     equity_usd, unrealized_usd, exc_info=True)
-        return _fail_closed_budget()
+        return _fail_closed_budget(min_ticket_usd)
 
 
 def portfolio_equity_and_unrealized(portfolio: PortfolioState,
@@ -245,7 +254,8 @@ def portfolio_equity_and_unrealized(portfolio: PortfolioState,
 def compute_ticket(cash_usd: float, heat: Optional[int],
                    equity_usd: Optional[float] = None,
                    unrealized_usd: Optional[float] = None,
-                   conviction_factor: Optional[float] = None) -> float:
+                   conviction_factor: Optional[float] = None,
+                   min_ticket_usd: Optional[float] = None) -> float:
     """
     Ticket sizing, three modes keyed on SIZING_MODE:
 
@@ -257,29 +267,35 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
     "risk_budget" - REF-R8 drawdown-adaptive sizing (reference computeBudget
         parity) times the REF-R9 conviction factor:
         ticket = risk_budget.max_order_usd * conviction_factor,
-        clamped to [MIN_TICKET_USD, HARD_ORDER_CEILING_USD].
+        clamped to [floor, HARD_ORDER_CEILING_USD].
         Missing equity/unrealized default to (0, 0) -> the budget fails closed
-        to MIN_TICKET_USD; a malformed conviction factor is treated as 1.0.
+        to the floor; a malformed conviction factor is treated as 1.0.
 
-    fixed and conviction outputs are frozen for calibration comparability.
+    floor = min_ticket_usd when given, else config.MIN_TICKET_USD. The
+    optional floor exists so the LIVE path (REF-R11 micro-bootstrap, handoff
+    §26) can apply its own MIN_LIVE_TICKET_USD without touching the paper
+    floor; default None keeps paper output bit-identical (frozen for
+    calibration comparability).
     """
+    floor = config.MIN_TICKET_USD if min_ticket_usd is None else float(min_ticket_usd)
     if config.SIZING_MODE == "fixed":
         return float(config.INTENDED_POSITION_SIZE_USD)
     if config.SIZING_MODE == "risk_budget":
         budget = compute_risk_budget(
             0.0 if equity_usd is None else equity_usd,
             0.0 if unrealized_usd is None else unrealized_usd,
+            min_ticket_usd=min_ticket_usd,
         )
         cf = conviction_factor
         if cf is None or not math.isfinite(cf) or cf <= 0:
             cf = 1.0      # fail closed: never scale on a malformed factor
         ticket = budget.max_order_usd * cf
         return float(min(config.HARD_ORDER_CEILING_USD,
-                         max(config.MIN_TICKET_USD, _round_half_up(ticket))))
+                         max(floor, _round_half_up(ticket))))
     heat_val = config.CROWD_HEAT_MIN + 14 if heat is None else heat  # ~50 neutral
     conviction = min(1.0, max(0.0, heat_val / 100.0 + 0.3))
     base = min(cash_usd * config.TICKET_CASH_FRACTION, config.TICKET_MAX_USD)
-    return max(config.MIN_TICKET_USD, round(base * conviction))
+    return max(floor, round(base * conviction))
 
 
 def compute_entry_cost(size_usd: float) -> float:

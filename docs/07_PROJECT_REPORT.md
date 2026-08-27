@@ -5,10 +5,13 @@ Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
-risk budget × closed-loop conviction) implemented 2026-08-27; dead-provider
-fail-fast (handoff §24) + fresh scraper keys & ScrapingDog bearer-forwarding
-(handoff §25) shipped 2026-08-27.** Tests:
-**338 passing**.
+risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
+precommit memo, commit–reveal) + micro-bootstrap implemented 2026-08-27
+(handoff §26); dead-provider fail-fast (handoff §24) + fresh scraper keys &
+ScrapingDog bearer-forwarding (handoff §25) shipped 2026-08-27. R10 (live
+execution) remains deferred-by-design — arming is the operator's final manual
+task (handoff §27).** Tests:
+**379 passing**.
 
 ---
 
@@ -450,6 +453,10 @@ All seven approved Reference parity items are now implemented:
 | REF-R5 | Events + memory system | ✅ | `db.py` `insert_event/recall_memories`, routes `/api/events.json` |
 | REF-R6 | Public disclosure + reasoning feeds | ✅ | `disclosure.py` `/api/disclosure.json` + `/api/reasoning.json` |
 | REF-R7 | Retro audit-log signature matching | ✅ | `retro_matcher.py`, `db.py` `bind_commit_signature` |
+| REF-R8 | Drawdown-adaptive risk budget | ✅ | `paper_trading_engine.py` `compute_risk_budget` (2026-08-27) |
+| REF-R9 | Closed-loop conviction factor | ✅ | `calibration.py`, `patch_daily_stats` (2026-08-27) |
+| REF-R11 | On-chain precommit memo (commit–reveal) | ✅ | `live_execution/memo.py`, `proof.py` `/api/verify.json` memo checks (2026-08-27) |
+| REF-R10 | Live execution (promotion path) | ⏸ deferred-by-design | operator's final manual task (handoff §27) |
 
 ### REF-R4 bug fix (2026-08-26)
 
@@ -594,8 +601,9 @@ reference repository at implementation time.
 - Parity note: the reference clamps the order size LOW at `MIN_TICKET_USD`,
   so a $1000 book at −20% open sizes $25 (floored) — our port matches exactly
   (verified against the reference source, not assumed).
-- REF-R10 (live promotion) and REF-R11 (on-chain memo) remain gated /
-  documented-only pending operator approval.
+- REF-R10 (live promotion) remains deferred-by-design (operator's final manual
+  task, handoff §27). REF-R11 (on-chain memo) was approved + implemented
+  2026-08-27 — see the REF-R11 section below.
 
 ---
 
@@ -651,4 +659,69 @@ Verbatim from its source — nothing exotic, and we already had both paths:
 - ScrapOps 401 (key rejected) and the direct-403 firewall remain as-is; both
   fail fast and are harmless now. Jupiter `lite-api` 429s in the exit loop are
   a separate pre-existing rate-limit, unrelated to this fix.
+
+
+---
+
+## 13. REF-R11 — On-chain precommit memo (commit–reveal) + micro-bootstrap (2026-08-27)
+
+Operator-approved against the reference (`omotrades/omo`,
+`precommit.server.ts` / `verify.server.ts`). Ships **DISARMED** — the memo path
+is unreachable until `LIVE_TRADING_ENABLED` is hand-flipped (handoff §27).
+
+### Mechanism
+Every armed order seals `sha256(nonce | canonical_payload)` locally, publishes
+that hash on-chain as a Solana memo (`commit:v1:` prefix, SPL Memo program
+`MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr`), and **only then** quotes,
+builds, and broadcasts the fill. The memo precedes the quote, so the
+quote→fill window is unchanged. Anyone can later recompute the hash from the
+revealed payload+nonce and check it matches the memo that was already on-chain
+**before** the fill landed (slot ordering).
+
+### Fail-closed guarantee
+A memo that cannot be published and confirmed **blocks the fill** — the fill
+send is never attempted (handoff §22 req. 4; stricter than the reference's
+async publish). USDC insufficient/unreadable and SOL below the reserve floor
+all refuse **before** any on-chain commitment is made, so no orphan memo fee is
+ever burned.
+
+### Code
+- `live_execution/memo.py` (NEW): memo build (solders) + `publish_commit_memo`
+  (blockhash → sign → send → confirm across rotating RPCs; any failure raises
+  `MemoPublishError`).
+- `commit_log.py`: `sealed → published → bound` + `record_memo()`/`fail()`.
+- `executor.py`: memo-before-quote ordering; `OrderResult` carries seal+memo.
+- `solana.py`: `get_usdc_balance()` (missing account = 0.0; unreadable = None).
+- `run_live_cycle.py`: real-USDC cash; journals seal+memo into `decision_commits`.
+- Verifier: `decision_commits` +`memo_signature`/`memo_slot` (SQLite + PG
+  self-heal + `003_commit_memos.sql`), `bind_commit_memo()`/
+  `get_commit_id_by_hash()`, `/api/verify.json` memo checks (hash-on-chain +
+  slot ordering; RPC unavailable → `unknown`, never `pass`),
+  `/api/disclosure.json` `commit_memo` block.
+- `drill.py`: devnet drill now sends a real memo (airdrop-funded).
+
+### Micro-bootstrap (start from $3–5 and compound)
+- `MIN_SOL_RESERVE` env-tunable (default **0.01 SOL**); `MIN_LIVE_TICKET_USD=0.5`.
+- `compute_ticket`/`compute_risk_budget` gained an optional `min_ticket_usd`
+  floor (default = paper `MIN_TICKET_USD`, so paper output is bit-identical).
+- Funding model: **0.03 SOL = fee reserve** (memo + fill = 2×5,000 lamports per
+  order; token-account rent ~0.002 SOL per new mint) and **$3–5 USDC = trading
+  capital** (buys are USDC→token). The pre-commit USDC check blocks entries when
+  capital runs dry.
+
+### Deviations from the reference (documented, handoff §26)
+Fail-closed blocking (reference publishes async); immediate reveal; single
+signer = the trading wallet; de-branded `commit:v1:` prefix.
+
+### Verification
+- 41 new tests (all offline/hermetic, hand-computed hash fixtures); combined
+  suite **379 passed**; isolation grep clean. Live smoke (disarmed):
+  `/api/verify.json`, `/api/binding.json`, `/api/disclosure.json` all 200,
+  `armed=False`, `paper_only=True`, 0 tracebacks. solders 0.29.0 installed; a
+  latent `Hash.from_string` bug in `drill.py` was found and fixed.
+
+### Cost / performance (live path only; $0 while disarmed)
++1 minimum-fee tx (~0.000005 SOL) per executed order; no rent on the memo.
++~3–8s ordering latency per order (memo must confirm before the fill) —
+irrelevant at one-decision-per-cycle cadence.
 

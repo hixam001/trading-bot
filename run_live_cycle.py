@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import logging
 import sys
 from datetime import datetime, timezone
@@ -55,7 +56,7 @@ from paper_trading_engine import (                # noqa: E402
 )
 
 from live_execution import config as live_config  # noqa: E402
-from live_execution import solana                 # noqa: E402
+from live_execution import solana, wallet         # noqa: E402
 from live_execution.executor import place_order   # noqa: E402
 from live_execution.models import ExecutionLedger  # noqa: E402
 
@@ -66,8 +67,56 @@ def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict]:
+async def _journal_live_commit(conn, symbol: str, mint_address: str,
+                               verdict: str, entry_allowed: bool,
+                               result) -> None:
+    """REF-R11: journal a filled live order's seal + on-chain memo into the
+    public decision record (decision_commits).
+
+    The nonce/payload/hash are taken VERBATIM from the executor's seal
+    (carried on the OrderResult), so /api/verify.json recomputes exactly
+    what the live CommitLog sealed and matches it against the memo on chain.
+    Never raises: journaling failure must not take down the cycle — the fill
+    itself is already journalled in the execution ledger."""
+    if not getattr(result, "commit_hash", ""):
+        return
+    try:
+        now_iso = datetime.now(timezone.utc).isoformat()
+        await db.insert_decision_commit(
+            conn,
+            created_at=now_iso,
+            tick_ts=now_iso,
+            symbol=symbol,
+            mint_address=mint_address,
+            verdict=verdict,
+            entry_allowed=entry_allowed,
+            nonce=result.commit_nonce,
+            payload_json=json.dumps(result.commit_payload, sort_keys=True),
+            payload_hash=result.commit_hash,
+        )
+        commit_id = await db.get_commit_id_by_hash(conn, result.commit_hash)
+        if commit_id is None:
+            log.warning("live commit %s not found after insert",
+                        result.commit_hash[:16])
+            return
+        if result.memo_signature:
+            await db.bind_commit_memo(conn, commit_id, result.memo_signature,
+                                      result.memo_slot)
+        if result.signature:
+            await db.bind_commit_signature(conn, commit_id, result.signature,
+                                           "filled", "exact")
+    except Exception:
+        log.warning("live commit journaling failed (fill unaffected)",
+                    exc_info=True)
+
+
+async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict]:
     """PortfolioState for the gate built from the LIVE ledger (read-only).
+
+    REF-R11 micro-bootstrap: cash is the REAL on-chain USDC balance, not a
+    cap-derived phantom — the book starts from $3-5 USDC and must compound
+    from the truth. Fail closed: an unreadable balance (or missing wallet
+    config) means cash 0.0 — no entries this cycle; exits still run.
     Returns (portfolio, {mint: {price_usd, tokens, opened_ts}} metadata).
     """
     positions: list[Trade] = []
@@ -103,8 +152,18 @@ def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict]:
             thesis="live book", 
             is_open=True,
         ))
-    exposure = sum(p.position_size_usd for p in positions)
-    cash = max(live_config.MAX_TOTAL_EXPOSURE_USD - exposure, 0.0)
+    cash = 0.0
+    try:
+        payer = wallet.load_keypair()
+        usdc_bal = await solana.get_usdc_balance(wallet.pubkey_string(payer))
+        if usdc_bal is not None:
+            cash = max(usdc_bal, 0.0)
+        else:
+            log.warning("live USDC balance unreadable - cash=0 "
+                        "(no entries this cycle)")
+    except Exception as exc:
+        log.warning("live USDC balance unavailable (%s) - cash=0 "
+                    "(no entries this cycle)", exc)
     return PortfolioState(cash_usd=cash, open_positions=positions), meta
 
 
@@ -141,6 +200,12 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
             fraction=decision.fraction,
         )
         log.info("sell -> %s %s", result.status, result.reason)
+        if result.status == "filled":
+            # REF-R11: journal the sell's seal + memo into the public record.
+            async with db.get_db() as conn:
+                await _journal_live_commit(
+                    conn, symbol=mint[:6], mint_address=mint,
+                    verdict="sell", entry_allowed=False, result=result)
         if result.status == "filled" and decision.action == "close_full":
             hwm.pop(mint, None)
             async with db.get_db() as conn:
@@ -156,7 +221,7 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
 async def run_cycle(once: bool = False) -> dict:
     """One full cycle. Returns a step-by-step outcome record, refusals included."""
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
-    portfolio, meta = _live_portfolio(ledger)
+    portfolio, meta = await _live_portfolio(ledger)
     hwm: dict = getattr(run_cycle, "_hwm", {})
     jupiter = JupiterProvider()
 
@@ -227,8 +292,10 @@ async def run_cycle(once: bool = False) -> dict:
                             "to 1.0", exc_info=True)
                 cf = 1.0
             usd = compute_ticket(cash, None, equity_usd=eq,
-                                 unrealized_usd=unrl, conviction_factor=cf)
-            budget = compute_risk_budget(eq, unrl)
+                                 unrealized_usd=unrl, conviction_factor=cf,
+                                 min_ticket_usd=live_config.MIN_LIVE_TICKET_USD)
+            budget = compute_risk_budget(
+                eq, unrl, min_ticket_usd=live_config.MIN_LIVE_TICKET_USD)
             deployed_today = ledger.deployed_today_usd()
             if deployed_today + usd > budget.max_daily_usd:
                 log.info("%s refused: daily risk budget reached "
@@ -241,7 +308,9 @@ async def run_cycle(once: bool = False) -> dict:
         else:
             usd = min(cash * paper_config.TICKET_CASH_FRACTION,
                       paper_config.TICKET_MAX_USD)
-        if usd < paper_config.MIN_TICKET_USD:
+        if usd < live_config.MIN_LIVE_TICKET_USD:
+            log.info("%s refused: ticket $%.2f below live floor $%.2f",
+                     c.symbol, usd, live_config.MIN_LIVE_TICKET_USD)
             continue
         result = await place_order(
             side="buy", mint=c.mint_address, symbol=c.symbol, usd=usd,
@@ -260,6 +329,12 @@ async def run_cycle(once: bool = False) -> dict:
                     thesis=think.thesis + (f" | invalidates if: {think.invalidation}" if think.invalidation else ""),
                     created_at=datetime.now(timezone.utc).isoformat(),
                 )
+                # REF-R11: journal the EXACT seal + on-chain memo into the
+                # public decision record so /api/verify.json can re-verify
+                # the commitment from chain data alone.
+                await _journal_live_commit(
+                    conn, symbol=c.symbol, mint_address=c.mint_address,
+                    verdict="buy", entry_allowed=True, result=result)
         outcome["entries"].append({"symbol": c.symbol, "status": result.status,
                                    "reason": result.reason})
         break   # one decision per cycle (the reference cadence parity)

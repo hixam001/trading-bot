@@ -39,8 +39,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 192 tests
-.venv/bin/python -m pytest -q                           # full suite: 222 tests, ~1.5s
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 308 tests
+.venv/bin/python -m pytest -q                           # full suite: 379 tests, ~2s
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -67,10 +67,11 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 192 test
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
-| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. Ships DISARMED: hardcoded `LIVE_TRADING_ENABLED=False`, `REQUIRE_MANUAL_CONFIRMATION=True`, kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, and decimals guards. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Offline/mock wiring tests pass; a funded throwaway-keypair devnet drill is still REQUIRED before any mainnet use. |
+| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Ships DISARMED: hardcoded `LIVE_TRADING_ENABLED=False`, `REQUIRE_MANUAL_CONFIRMATION=True`, kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Offline/mock wiring tests pass; a funded throwaway-keypair devnet drill (now incl. a memo step) is still REQUIRED before any mainnet use. |
+| `live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
 | `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats [equity/spend/realized/unrealized/cash], regime, gate, status); no knowledge tab, no paper-trading banner (removed 2026-08-25) |
-| `backend/api/routes/proof.py` | REF-R1 binding report (`/api/binding.json`), `/api/verify.json`, `/api/refusals.json`, `/api/theses.json`, `/api/proof.json`, `/api/exits.json` |
-| `backend/api/routes/disclosure.py` | REF-R6 public machine-truth feeds: `/api/disclosure.json` (armed/break/config state) + `/api/reasoning.json` (per-decision provenance) |
+| `backend/api/routes/proof.py` | REF-R1 binding report (`/api/binding.json`), `/api/verify.json` (REF-R11: also re-verifies the on-chain commit memo hash + slot ordering), `/api/refusals.json`, `/api/theses.json`, `/api/proof.json`, `/api/exits.json` |
+| `backend/api/routes/disclosure.py` | REF-R6 public machine-truth feeds: `/api/disclosure.json` (armed/break/config state + REF-R11 `commit_memo` block) + `/api/reasoning.json` (per-decision provenance) |
 | `backend/retro_matcher.py` | REF-R7 retro audit-log signature matching: attributes out-of-pipeline fills to decision commit rows using the reference's exact algorithm (symbol+side match, 12h window, earliest fill wins, taken set) |
 | `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, the reference bot comparison, project report |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
@@ -258,7 +259,11 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
    Next stage: main/narration model → DeepSeek V4 Flash (social stays Groq)
    — full plan in section 18, gated on a funded DeepSeek key + shadow replay.
 6. No automatic learning, threshold changes, prompt changes, model changes,
-  or live-trading promotion is permitted.
+   or live-trading promotion is permitted.
+7. **Reference parity is complete (REF-R1–R9 + R11).** The ONLY remaining item
+   is **§27 — Enable live execution**, the operator's final manual task (fund
+   wallet → devnet drill → hand-flip the two hardcoded flags). No session may
+   arm before every other task is done.
 
 ## 9. Invariants checklist (before any change)
 
@@ -1040,15 +1045,15 @@ inert). Every degradation logged with a reason. Keys only in server `.env`.
 
 (redaction verified in logs); no raw SQL outside api/db*.py.
 
-## 22. Reference-parity roadmap batch 2 — capability gaps from the 2026-08-27 audit (✅ R8+R9 IMPLEMENTED 2026-08-27 — see §23)
+## 22. Reference-parity roadmap batch 2 — capability gaps from the 2026-08-27 audit (✅ R8+R9 IMPLEMENTED §23 · ✅ R11 IMPLEMENTED §26 · R10 deferred-by-design)
 
 Source: the feature-by-feature audit of this repo vs the reference repository
 (2026-08-27). Batch 1 (§13, REF-R1–R7) is fully implemented. This batch records
 the four capabilities the reference has that we still lack, each with a stable ID
-(**REF-R8 … REF-R11**) and concrete implementation detail. Two are genuine,
-safe, paper-compatible gaps approved to build now (R8, R9). Two are gated /
-re-opened items documented for planning only (R10, R11) — they carry explicit
-approval gates and MUST NOT be implemented without operator sign-off.
+(**REF-R8 … REF-R11**) and concrete implementation detail. R8 + R9 were built
+(§23). **REF-R11 (on-chain precommit memo) was APPROVED by the operator on
+2026-08-27 and IMPLEMENTED — see §26.** REF-R10 remains deferred-by-design: it
+is a *promotion path* (devnet drill → human arming), not an implementation task.
 
 Implementation order for the approved pair: **R8 first, then R9** (R9's
 conviction factor multiplies the R8 risk budget, so R8's sizing surface must
@@ -1175,37 +1180,34 @@ exist first).
 - Invariant that does not move: the LLM stays veto/input-only; deterministic
   rules + manual approval retain authority over every execution path.
 
-### REF-R11 — On-chain precommit memo (commit–reveal) 🔁 RE-OPENED FOR PLANNING — REQUIRES OPERATOR APPROVAL
+### REF-R11 — On-chain precommit memo (commit–reveal) ✅ IMPLEMENTED (2026-08-27 — see §26)
+
+> **STATUS: APPROVED by the operator (2026-08-27) and IMPLEMENTED in §26.**
+> The operator's instruction to "implement the task… use omotrades/omo as
+> reference" is the explicit sign-off this item required (§13 rule). It ships
+> DISARMED — the memo path is unreachable until `LIVE_TRADING_ENABLED` is
+> hand-flipped (see §27, the final task).
+
 - reference: `precommit.server.ts` (~481 lines) — writes a precommit memo
   ON-CHAIN before a fill, then reveals it later, so the decision is timestamped
   on-chain ahead of execution.
 - History: this was **REJECTED on 2026-08-26** (§13 "REJECTED / DEFERRED") on
   the rationale that local `CommitLog` seal-before-broadcast is a sufficient
   sealing mechanism while disarmed, and REF-R1 was scoped to work WITHOUT
-  on-chain memos. It is re-opened here ONLY as a planning item because the
-  2026-08-27 audit lists it as a capability the reference has that we lack.
-  **Do NOT implement without explicit operator approval** — re-litigating a
-  rejected item needs sign-off (§13 rule).
-- Current state (what we have instead): local tamper-evident `decision_commits`
-  trail — `sha256(nonce | canonical_payload)` stored with plaintext, plus
-  `retro_matcher.py` (REF-R7) and the REF-R1 binding report. No on-chain memo.
-- What implementation would require (if approved):
-    1. A memo write step that posts the decision hash to-chain BEFORE broadcast
-       (the commit), and a reveal step mapping the memo to the executed fill.
-    2. Integration with `commit_log.py` so the on-chain memo and the local seal
-       agree on the same canonical payload + nonce.
-    3. A verifier extension (REF-R1 surface) that checks the on-chain memo
-       exists, predates the fill, and matches the committed hash.
-    4. Fail-closed: any memo-write failure must block the fill (a decision that
-       cannot be committed on-chain is not executed), never silently skip.
-- Only matters when armed (REF-R10 gates apply first). While disarmed, the local
-  seal remains the chosen mechanism and this stays a planning entry.
+  on-chain memos. It was re-opened by the 2026-08-27 audit, then **approved and
+  implemented on 2026-08-27 (§26)**.
+- What was delivered (full detail in §26): a memo write step that posts the
+  decision hash on-chain BEFORE the fill (fail-closed — a memo that cannot be
+  confirmed blocks the fill); `commit_log.py` carries the memo signature/slot so
+  the local seal and the on-chain commitment stay one record; and a REF-R1-surface
+  verifier (`/api/verify.json`) that re-checks the memo hash + slot ordering from
+  public RPC.
 
 ### Batch-2 implementation order + standing conditions
-- Build now (paper-compatible, no arming involved): **REF-R8 → REF-R9**.
-- Documented-only, gated: **REF-R10** (promotion path) and **REF-R11**
-  (on-chain memo, re-opened from a 2026-08-26 rejection) — both require explicit
-  operator approval before any code is written.
+- Built (paper-compatible, no arming involved): **REF-R8 → REF-R9** (§23), then
+  **REF-R11** (§26, operator-approved 2026-08-27).
+- Documented-only, gated: **REF-R10** (promotion path) — requires the operator's
+  manual arming checklist; it is deliberately the LAST task (§27).
 - Standing safety conditions from §15 apply unchanged: `PAPER_TRADING_ONLY=True`
   and `LIVE_TRADING_ENABLED=False` stay hardcoded; deterministic rules, exits,
   cash guards, kill switches, and manual approval retain authority over every
@@ -1392,6 +1394,133 @@ test (`test_scrapingdog_forwards_privy_bearer`).
 - Real crowd heat is LIVE again via Firecrawl (+ ScrapeOps backup).
 - If ScrapingDog's 403 persists and you want it as a usable hop: confirm the
   key includes the Web-Scraping API, or add a premium-proxy param (costs more
+
+
+---
+
+## 26. REF-R11 — On-chain precommit memo (commit–reveal) + micro-bootstrap ✅ IMPLEMENTED (2026-08-27)
+
+Operator-approved 2026-08-27 (the instruction to implement against
+`omotrades/omo` is the §13 sign-off). Reference sources: `precommit.server.ts`,
+`verify.server.ts`. Ships **DISARMED** — the memo path is unreachable until
+`LIVE_TRADING_ENABLED` is hand-flipped (§27). Backend stays paper-only; all
+transaction construction lives in `live_execution/`.
+
+### What was built
+- `live_execution/memo.py` (NEW): `MEMO_PROGRAM_ID` (reference-parity SPL Memo
+  constant), de-branded prefix `commit:v1:`, `build_memo_transaction()` (solders:
+  one memo ix, payer = key 0, `VersionedTransaction`), and
+  `publish_commit_memo()` (blockhash → sign → send → confirm across rotating
+  RPCs). Any failure raises `MemoPublishError` — never a partial success.
+- `live_execution/commit_log.py`: statuses `sealed → published → bound`; new
+  `memo_signature`/`memo_slot`/`memo_published_at` fields + `record_memo()` and
+  `fail()` (a skipped trade stays visible, never silently dropped).
+- `live_execution/executor.py`: armed order flow is now
+  `guards → confirm → wallet → SOL reserve → USDC funding → SEAL → publish memo
+  → CONFIRM memo → quote → build → sign → send → confirm → bind`. The memo goes
+  out **before** the quote so the quote→fill window stays as tight as ever.
+  `OrderResult` carries `commit_hash/nonce/payload` + `memo_signature/memo_slot`
+  so the bridge journals the exact seal.
+- `live_execution/solana.py`: `get_usdc_balance()` (real on-chain USDC ATA
+  balance; missing account = 0.0; unreadable = None → refuse).
+- `run_live_cycle.py`: cash is now the REAL USDC balance (fail-closed to 0 on
+  unreadable); filled live orders journal their seal + memo into
+  `decision_commits` via `_journal_live_commit()`; live ticket floor applied.
+- Verifier surface (REF-R1): `decision_commits` +`memo_signature`/`memo_slot`
+  (SQLite + PG self-heal + `migrations/supabase/003_commit_memos.sql`),
+  `bind_commit_memo()` + `get_commit_id_by_hash()` in both `db.py`/`db_pg.py`,
+  and `/api/verify.json` memo checks (memo confirmed, on-chain hash matches the
+  recomputed seal, memo slot < fill slot). RPC unavailable → `unknown`, never
+  `pass`; no memo → `not_published` honestly. `/api/disclosure.json` gains a
+  `commit_memo` block (program id, scheme, fail-closed semantics, fee model).
+- `live_execution/drill.py`: devnet drill now also sends a REAL memo tx
+  (airdrop-funded) — the memo path is exercised end-to-end before any arming.
+
+### Micro-bootstrap accommodations (operator: start from $3–5 and compound)
+- `live_execution/config.py`: `MIN_SOL_RESERVE` now env-tunable
+  (`SOLANA_MIN_SOL_RESERVE`, default **0.01 SOL** — the old 0.05 floor would
+  brick a 0.03–0.05 SOL fee wallet after one order); new hardcoded
+  `MIN_LIVE_TICKET_USD = 0.5`.
+- `paper_trading_engine.compute_ticket()` / `compute_risk_budget()` gained an
+  optional `min_ticket_usd` floor (default None → `config.MIN_TICKET_USD`, so
+  every paper expectation stays bit-identical). The live path threads
+  `MIN_LIVE_TICKET_USD` through both. Without this, a $4 book in `risk_budget`
+  mode would size $25 tickets forever and never trade.
+- Funding model: **0.03 SOL = fee reserve** (memo 5,000 lamports + fill
+  5,000 lamports per order; token-account rent ~0.002 SOL per new mint), and
+  **$3–5 USDC = trading capital** (buys are USDC→token). The pre-commit USDC
+  check blocks entries before any memo fee is spent when capital runs dry.
+
+### Deliberate deviations from the reference (documented, not accidental)
+1. **Fail-closed blocking** — a memo that cannot be confirmed BLOCKS the fill.
+   The reference publishes asynchronously and shows un-publishable commits as
+   "unpublished"; §22 req. 4 chose the stricter behavior.
+2. **Immediate reveal** — payload+nonce are already public in the decision
+   record; the ordering proof is the on-chain hash timestamp.
+3. **Single signer** — the memo is signed by the configured trading wallet (no
+   separate burner memo key at this book scale).
+4. **De-branded prefix** `commit:v1:` (our scheme was never branded).
+
+### Verification
+- **41 new tests**, all offline/hermetic, hand-computed hash fixtures:
+  `live_execution/tests/test_memo.py` (7), `test_commit_log.py` (6),
+  `test_executor_memo_flow.py` (6, incl. memo-before-fill ordering + memo-
+  failure-blocks-fill), `test_solana_usdc.py` (3); `backend/tests/
+  test_ref_r11_memo_verify.py` (12), `test_live_ticket_floor.py` (7).
+- Full suite: **379 passed** (baseline 338 + 41), ~2s. Isolation grep clean —
+  backend's only `live_execution` references are function-local optional imports
+  (same sanctioned pattern as REF-R1's `get_transaction`).
+- Live smoke (disarmed): `/api/verify.json`, `/api/binding.json`,
+  `/api/disclosure.json` all 200; `commit_memo.active=False`, `armed=False`,
+  `paper_only=True`; 0 tracebacks.
+- `solders` 0.29.0 installed into `.venv` (memo/drill tx construction). A latent
+  `Hash.from_string` incompatibility in `drill.py` was found and fixed (drill had
+  never run because solders was absent).
+
+### Cost / performance (live path only; $0 while disarmed)
+- +1 minimum-fee tx (5,000 lamports ≈ $0.002) per executed order; no rent on the
+  memo (writes no state). +~3–8s ordering latency per order (memo must confirm
+  before the fill) — irrelevant at one-decision-per-cycle cadence. Reliability is
+  strictly lower only under degraded RPC (two landings required, fail-closed) —
+  the explicit price of a tamper-proof on-chain ordering proof.
+
   credits/req). Not required — Firecrawl + ScrapeOps already cover it.
 - ZenRows stays exhausted until renewed (optional).
+
+
+---
+
+## 27. FINAL TASK: Enable live execution (operator-only, last of all)
+
+**Sequencing rule:** every other handoff task completes FIRST. Arming is the
+operator's last manual act. No session may arm, or propose arming, before then.
+This is REF-R10's promotion path — it is a human checklist, not code.
+
+### Preconditions (all must be true before arming)
+- [ ] All preceding handoff tasks implemented, tested, committed.
+- [ ] REF-R11 memo layer + micro-bootstrap shipped and test-green (§26).
+- [ ] Full suite passing (379+); isolation grep clean.
+
+### Operator checklist (human-only steps, in order)
+1. **Fund the wallet:** 0.03 SOL (fee reserve) + $3–5 USDC (trading capital).
+   The USDC transfer creates the needed associated token account.
+2. **`.env`:** set `WALLET_KEYPAIR_PATH` (+ recommended `EXPECTED_WALLET_ADDRESS`
+   identity pin). Optionally tune `SOLANA_MIN_SOL_RESERVE` (default 0.01).
+3. **Devnet drill** with a throwaway funded keypair:
+   `python run_live_cycle.py --drill` — must pass **including the new memo step**.
+4. **Hand-edit `live_execution/config.py`:** `LIVE_TRADING_ENABLED = True`, then
+   `REQUIRE_MANUAL_CONFIRMATION = False` (autonomous cycles). Deliberately no env
+   bypass exists for either flag.
+5. **Supervise one cycle:** `python run_live_cycle.py --once` before continuous.
+
+### Budget facts to remember
+- 0.03 SOL ≈ 200 memo+fill pairs or ~5–9 new token-account rents. The reserve
+  floor (`SOLANA_MIN_SOL_RESERVE`, default 0.01) blocks entries fail-closed when
+  the fee budget runs low. The USDC balance check blocks entries before any memo
+  is published. `MIN_LIVE_TICKET_USD = 0.5`.
+
+### Rollback
+Set `LIVE_TRADING_ENABLED = False` again — one line, instant disarm. Open
+positions remain managed/journalled. Backend is unaffected
+(`PAPER_TRADING_ONLY` stays `True` always).
 

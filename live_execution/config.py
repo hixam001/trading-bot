@@ -107,7 +107,22 @@ EXPECTED_WALLET_ADDRESS: str = os.getenv("EXPECTED_WALLET_ADDRESS", "")
 
 # Quote guards (the reference EXECUTION_LIMITS parity).
 MAX_PRICE_IMPACT_PCT: float = 2.5      # block quotes above this impact
-MIN_SOL_RESERVE: float = 0.05          # keep this much SOL for fees/rent
+
+# SOL reserve floor — fee-budget protection (REF-R11 micro-bootstrap, handoff
+# §26). The live wallet is operator-funded with a small SOL fee reserve
+# (0.03 SOL at bootstrap) plus separate USDC trading capital; a floor sized
+# for a large wallet would brick a micro wallet after one order's fees.
+# Operator-tunable via env because it is infrastructure, NOT a safety flag —
+# arming still requires the hardcoded switches above. Fail-closed as ever:
+# at or below the floor every order blocks BEFORE any network call.
+MIN_SOL_RESERVE: float = float(os.getenv("SOLANA_MIN_SOL_RESERVE", "0.01"))
+
+# Micro-bootstrap minimum live ticket (handoff §26). The live book starts
+# from $3-5 USDC and must compound from there; the paper side's $25 floor
+# (backend config.MIN_TICKET_USD, frozen for calibration comparability) would
+# permanently skip every live entry at this scale. Hardcoded like the other
+# risk numbers in this file — deliberately never env-settable.
+MIN_LIVE_TICKET_USD: float = 0.5
 
 # Rolling UTC-day notional cap on NEW deployments (the reference maxDailyUsd parity,
 # scaled to this book). Checked against the execution ledger.

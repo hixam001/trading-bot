@@ -1,6 +1,21 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] REF-R11 on-chain precommit memo (commit–reveal) + micro-bootstrap (handoff
+      §26): every armed order seals `sha256(nonce|canonical_payload)`, publishes
+      the hash on-chain as a Solana memo (`commit:v1:`, SPL Memo program) BEFORE
+      the fill, fail-closed (unconfirmed memo blocks the fill). New
+      `live_execution/memo.py`; `commit_log.py` `sealed→published→bound`;
+      `executor.py` memo-before-quote ordering + `OrderResult` carries seal+memo;
+      `solana.get_usdc_balance()`; `run_live_cycle.py` real-USDC cash + journals
+      seal+memo into `decision_commits`. Verifier: `memo_signature`/`memo_slot`
+      columns (SQLite + PG self-heal + `003_commit_memos.sql`),
+      `bind_commit_memo()`/`get_commit_id_by_hash()`, `/api/verify.json` memo
+      checks, `/api/disclosure.json` `commit_memo` block. Micro-bootstrap:
+      `MIN_SOL_RESERVE` env (default 0.01 SOL), `MIN_LIVE_TICKET_USD=0.5`,
+      sizing floor threading (paper bit-identical). Devnet drill sends a real
+      memo. 41 new tests; **379 combined passing**; isolation grep clean; live
+      smoke disarmed all endpoints 200. Ships DISARMED — arming is §27 (2026-08-27)
 - [x] Fresh scraper keys activated + ScrapingDog bearer-forwarding (handoff
       §25): new Firecrawl/ScrapingBee/ScrapingDog/ScrapeOps keys in root .env
       (ZenRows unchanged/exhausted); backend restarted to load them + clear
@@ -119,7 +134,6 @@
 ## Deliberately not built (per spec sequencing)
 - E8/E9 partial scaling + rolling history (post-calibration)
 - D7 advisory LLM layer (post-calibration)
-- Commit-reveal proof mechanism (only if public real-capital track record)
 - crowd_heat rule (needs a fomo-index source)
 
 ## Known issues / watch items
@@ -141,9 +155,11 @@
       shadow-replay-gated 8/8); Groq remains the rollback main provider and
       powers the evidence-only social reads. Usage/outcome accounting,
       shadow replay, and canary gates are implemented.
-- Live execution is wired but remains disarmed; no mainnet execution is
-      authorized. Run the funded throwaway-keypair devnet drill before any
-      future arming discussion.
+- Live execution is wired (now incl. the REF-R11 on-chain commit memo) but
+      remains DISARMED; no mainnet execution is authorized. Arming is the
+      operator's FINAL task (handoff §27): fund wallet (0.03 SOL + $3–5 USDC) →
+      funded throwaway-keypair devnet drill (incl. memo step) → hand-flip the two
+      hardcoded flags. No session may arm before every other task is done.
 
 ## Status
 Live calibration day ~2. Dead-provider fail-fast shipped (2026-08-27, handoff
@@ -167,5 +183,5 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 338 combined passing** (backend 290 + live_execution 48; +1 ScrapingDog
-bearer-forwarding this batch).
+**Tests: 379 combined passing** (backend 308 + live_execution 71; +41 REF-R11
+memo/micro-bootstrap this batch).

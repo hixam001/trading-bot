@@ -7,10 +7,16 @@ buys AND sells with the reference bot execute.server.ts result statuses:
   failed  - network phase attempted but no confirmed fill
   filled  - confirmed on-chain and journalled (only then)
 
-No memo/commit layer (deliberately omitted per operator decision). Everything
-else is reference parity at this book scale: local signing, multi-RPC broadcast,
-confirmation-before-journal, price-impact floor, SOL reserve, daily deploy
-cap, idempotent buys, fraction-of-position sells with chain-read decimals.
+REF-R11 commit–reveal (operator-approved 2026-08-27, handoff §26): every
+armed order seals sha256(nonce|canonical_payload) locally, publishes that
+hash on-chain as a Solana memo, and ONLY THEN quotes/builds/broadcasts the
+fill. A memo that cannot be published and confirmed BLOCKS the fill (fail
+closed — a decision that cannot be committed on-chain is not executed). The
+memo precedes the quote so the quote→fill window stays as tight as ever.
+Everything else is reference parity at this book scale: local signing,
+multi-RPC broadcast, confirmation-before-journal, price-impact floor, SOL
+reserve, USDC funding check, daily deploy cap, idempotent buys,
+fraction-of-position sells with chain-read decimals.
 
 ZERO live-network test coverage (same honesty rule as jupiter_executor):
 exercise the full flow on devnet with a throwaway keypair BEFORE mainnet.
@@ -19,10 +25,10 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from typing import Optional
 
-from live_execution import config, kill_switch, solana, wallet
+from live_execution import config, kill_switch, memo, solana, wallet
 from live_execution.confirmation_queue import ConfirmationError
 from live_execution.jupiter_executor import (
     Refusal,
@@ -66,6 +72,14 @@ class OrderResult:
     signature: str = ""
     slot: Optional[int] = None
     price_impact_pct: float = 0.0
+    # REF-R11: the sealed decision behind this order + its on-chain memo.
+    # Empty until the armed flow runs; carried so the bridge can journal the
+    # EXACT seal (nonce/payload/hash) into the public decision record.
+    commit_hash: str = ""
+    commit_nonce: str = ""
+    commit_payload: dict = field(default_factory=dict)
+    memo_signature: str = ""
+    memo_slot: Optional[int] = None
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -79,10 +93,13 @@ def quote_impact_pct(quote: dict) -> float:
         return 0.0
 
 
-async def _broadcast_and_confirm(swap_b64: str, payer, logc=None, intent=None) -> OrderResult:
-    """Sign locally, broadcast across RPCs, confirm. Journal is the CALLER job."""
+async def _broadcast_and_confirm(swap_b64: str, payer, logc=None, sealed=None) -> OrderResult:
+    """Sign locally, broadcast across RPCs, confirm. Journal is the CALLER job.
+
+    REF-R11: sealing + memo publication already happened in the caller
+    BEFORE this runs; on confirmation the fill signature is bound to the
+    sealed (and already on-chain) commit."""
     signature, raw_signed = _sign_transaction(swap_b64, payer)
-    sealed = logc.seal(intent.get("kind", "order"), intent) if (logc is not None and intent) else None
     sent = await solana.send_raw_transaction(raw_signed)
     if not sent:
         return OrderResult(status="failed", reason="every rpc refused the transaction", signature=signature)
@@ -151,28 +168,66 @@ async def place_buy(
     logc = CommitLog(config.STATE_DIR / "commits.json")
     addr = wallet.pubkey_string(payer)
     sol_bal = await solana.get_sol_balance(addr)
-    if sol_bal is not None and sol_bal < config.MIN_SOL_RESERVE:
+    if sol_bal is None or sol_bal < config.MIN_SOL_RESERVE:
+        detail = "unreadable" if sol_bal is None else f"{sol_bal:.4f}"
         return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": f"SOL reserve {sol_bal:.4f} below floor {config.MIN_SOL_RESERVE}"})
+                              "reason": f"SOL reserve {detail} below floor {config.MIN_SOL_RESERVE}"})
+
+    # REF-R11 micro-bootstrap: verify REAL funding before committing anything
+    # on-chain. Fail closed: an unreadable balance refuses the order, and a
+    # balance below the ticket refuses it BEFORE the memo fee can be spent.
+    usdc_bal = await solana.get_usdc_balance(addr)
+    if usdc_bal is None:
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": "USDC balance unreadable from any rpc - refusing"})
+    if usdc_bal < usd:
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": f"insufficient USDC: {usdc_bal:.2f} < {usd:.2f}"})
+
+    # REF-R11 commit-reveal, fail-closed ordering:
+    #   seal -> publish memo -> CONFIRM memo -> quote -> build -> broadcast.
+    # The memo goes out BEFORE the quote so the quote->fill window stays as
+    # tight as ever; a memo that cannot be confirmed blocks the fill entirely
+    # (handoff §22 requirement 4).
+    intent = dict(kind="buy", mint=mint, symbol=symbol, usd=usd)
+    sealed = logc.seal("buy", intent)
+    try:
+        memo_res = await memo.publish_commit_memo(payer, sealed["hash"])
+    except memo.MemoPublishError as exc:
+        logc.fail(sealed["hash"], f"memo: {exc}")
+        log.warning("commit memo failed for %s: %s (fill NOT broadcast)",
+                    mint[:8], exc)
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": f"commit memo failed: {exc}",
+                              "commit_hash": sealed["hash"],
+                              "commit_nonce": sealed["nonce"],
+                              "commit_payload": intent})
+    logc.record_memo(sealed["hash"], memo_res["signature"], memo_res["slot"])
+    commit_fields = dict(commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
+                         commit_payload=intent, memo_signature=memo_res["signature"],
+                         memo_slot=memo_res["slot"])
 
     try:
         q = await get_jupiter_quote(mint, output_decimals, usd, ledger=ledger)
     except Refusal as exc:
-        return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": str(exc), **commit_fields})
     except ExecutionError as exc:
-        return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc)})
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": str(exc), **commit_fields})
 
-    intent = dict(kind="buy", mint=mint, symbol=symbol, usd=usd)
     impact = quote_impact_pct(q["quote"])
     if impact > config.MAX_PRICE_IMPACT_PCT:
         return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"})
+                              "reason": f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%",
+                              **commit_fields})
 
     try:
         swap_b64 = await _build_swap_transaction(q["quote"], addr)
-        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, intent=intent)
+        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed)
     except ExecutionError as exc:
-        return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc), "price_impact_pct": impact})
+        return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
+                              "price_impact_pct": impact, **commit_fields})
 
     if outcome.status == "filled":
         rec = ledger.record_buy(
@@ -183,6 +238,11 @@ async def place_buy(
         outcome.tokens = q["tokens_out"]
         outcome.price_impact_pct = impact
         log.info("FILLED buy %s $%.2f -> %.6f tokens sig %s", mint[:8], usd, q["tokens_out"], outcome.signature)
+    outcome.commit_hash = sealed["hash"]
+    outcome.commit_nonce = sealed["nonce"]
+    outcome.commit_payload = intent
+    outcome.memo_signature = memo_res["signature"]
+    outcome.memo_slot = memo_res["slot"]
     return outcome
 
 
@@ -230,10 +290,46 @@ async def place_sell(
     except Exception as exc:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"wallet: {exc}"})
 
+    # Human approval is consumed BEFORE any irreversible step (the memo is an
+    # on-chain commitment; it must not precede the operator's sign-off).
+    if config.REQUIRE_MANUAL_CONFIRMATION:
+        try:
+            queue.consume(confirmation_id)
+        except ConfirmationError as exc:
+            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"confirmation refused: {exc}"})
+
+    addr = wallet.pubkey_string(payer)
+    sol_bal = await solana.get_sol_balance(addr)
+    if sol_bal is None or sol_bal < config.MIN_SOL_RESERVE:
+        detail = "unreadable" if sol_bal is None else f"{sol_bal:.4f}"
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": f"SOL reserve {detail} below floor {config.MIN_SOL_RESERVE}"})
+
     logc = CommitLog(config.STATE_DIR / "commits.json")
     amount_raw = int(sell_amount * raw_units(decimals))
     if amount_raw <= 0:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": "raw sell size rounds to zero"})
+
+    # REF-R11 commit-reveal (fail closed): seal -> memo -> CONFIRM memo ->
+    # quote -> build -> broadcast. A sell decision that cannot be committed
+    # on-chain is not executed (handoff §22 requirement 4).
+    intent = dict(kind="sell", mint=mint, symbol=symbol, fraction=frac)
+    sealed = logc.seal("sell", intent)
+    try:
+        memo_res = await memo.publish_commit_memo(payer, sealed["hash"])
+    except memo.MemoPublishError as exc:
+        logc.fail(sealed["hash"], f"memo: {exc}")
+        log.warning("commit memo failed for sell %s: %s (fill NOT broadcast)",
+                    mint[:8], exc)
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": f"commit memo failed: {exc}",
+                              "commit_hash": sealed["hash"],
+                              "commit_nonce": sealed["nonce"],
+                              "commit_payload": intent})
+    logc.record_memo(sealed["hash"], memo_res["signature"], memo_res["slot"])
+    commit_fields = dict(commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
+                         commit_payload=intent, memo_signature=memo_res["signature"],
+                         memo_slot=memo_res["slot"])
 
     try:
         quote = await _post_json(_BACKEND_QUOTE_URL, {
@@ -243,29 +339,26 @@ async def place_sell(
             "slippageBps": str(config.SLIPPAGE_BPS),
         })
     except ExecutionError as exc:
-        return OrderResult(**{**base.to_json(), "status": "failed", "reason": f"quote: {exc}"})
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": f"quote: {exc}", **commit_fields})
     out_raw = quote.get("outAmount")
     if out_raw is None:
-        return OrderResult(**{**base.to_json(), "status": "failed", "reason": "no route quoted for this mint"})
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": "no route quoted for this mint", **commit_fields})
 
-    intent = dict(kind="sell", mint=mint, symbol=symbol, fraction=frac)
     impact = quote_impact_pct(quote)
     if impact > config.MAX_PRICE_IMPACT_PCT:
         return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"})
+                              "reason": f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%",
+                              **commit_fields})
     proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
 
-    if config.REQUIRE_MANUAL_CONFIRMATION:
-        try:
-            queue.consume(confirmation_id)
-        except ConfirmationError as exc:
-            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"confirmation refused: {exc}"})
-
     try:
-        swap_b64 = await _build_swap_transaction(quote, wallet.pubkey_string(payer))
-        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, intent=intent)
+        swap_b64 = await _build_swap_transaction(quote, addr)
+        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed)
     except ExecutionError as exc:
-        return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc), "price_impact_pct": impact})
+        return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
+                              "price_impact_pct": impact, **commit_fields})
 
     if outcome.status == "filled":
         try:
@@ -276,6 +369,11 @@ async def place_sell(
         outcome.tokens = sell_amount
         outcome.price_impact_pct = impact
         log.info("FILLED sell %s %.4f tokens -> $%.2f sig %s", mint[:8], sell_amount, proceeds_usd, outcome.signature)
+    outcome.commit_hash = sealed["hash"]
+    outcome.commit_nonce = sealed["nonce"]
+    outcome.commit_payload = intent
+    outcome.memo_signature = memo_res["signature"]
+    outcome.memo_slot = memo_res["slot"]
     return outcome
 
 

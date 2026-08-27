@@ -165,6 +165,38 @@ async def get_disclosure():
     # recomputes them from the DB at cost-basis equity (no external calls).
     risk_budget, calibration = await _sizing_truths()
 
+    # REF-R11: commit-memo truths (on-chain precommit, fail-closed). The
+    # constants live in live_execution (the only package allowed to build
+    # transactions); read them if importable, else surface the documented
+    # values. Memo publishing only ever runs when the live path is armed.
+    memo_program_id = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+    memo_prefix = "commit:v1:"
+    try:
+        from live_execution.memo import MEMO_PROGRAM_ID as _mp, MEMO_PREFIX as _mpx
+        memo_program_id, memo_prefix = _mp, _mpx
+    except ImportError:
+        pass
+    commit_memo = {
+        "implemented": True,
+        "memo_program_id": memo_program_id,
+        "memo_prefix": memo_prefix,
+        "scheme": "sha256(nonce|canonical_payload_json) — the SAME hash as "
+                  "the local seal, written on-chain as a Solana memo BEFORE "
+                  "the fill is broadcast",
+        "fail_closed": "a fill is never broadcast unless its commit memo is "
+                       "confirmed on-chain first; memo failure blocks the "
+                       "order and is journaled",
+        "reveal": "immediate — payload+nonce are public in /api/proof.json; "
+                  "the ordering proof is the on-chain hash timestamp",
+        "signer": "the configured trading wallet keypair (no separate memo "
+                  "key at this book scale)",
+        "fee_model": "one base-fee transaction (5000 lamports) per order on "
+                     "top of the fill; no rent (memo writes no state); "
+                     "token-account rent ~0.002 SOL per new mint is paid by "
+                     "the fill, not the memo",
+        "active": bool(armed),
+    }
+
     return {
         "generated_at_utc": _now_iso(),
         "armed": armed,
@@ -174,6 +206,7 @@ async def get_disclosure():
         "config_truths": config_truths,
         "risk_budget": risk_budget,
         "calibration": calibration,
+        "commit_memo": commit_memo,
     }
 
 

@@ -69,6 +69,7 @@ async def run_drill() -> list:
     from solders.system_program import TransferParams, transfer
     from solders.message import Message
     from solders.transaction import VersionedTransaction
+    from solders.hash import Hash as _Hash
     blockhash = await latest_blockhash(config.DRILL_RPC_URL)
     if not blockhash:
         step(False, "blockhash", "could not fetch blockhash")
@@ -77,7 +78,8 @@ async def run_drill() -> list:
         ix = transfer(TransferParams(
             from_pubkey=payer.pubkey(), to_pubkey=payer.pubkey(),
             lamports=config.DRILL_TRANSFER_LAMPORTS))
-        msg = Message.new_with_blockhash([ix], payer.pubkey(), blockhash)
+        msg = Message.new_with_blockhash([ix], payer.pubkey(),
+                                         _Hash.from_string(blockhash))
         vtx = VersionedTransaction(msg, [payer])
         raw = bytes(vtx)
     except Exception as exc:
@@ -88,8 +90,25 @@ async def run_drill() -> list:
         step(False, "broadcast", "every rpc refused")
         return steps
     conf = await confirm_signature(sig, endpoints=[config.DRILL_RPC_URL])
-    step(bool(conf.get("confirmed")), "confirm",
-         conf.get("err") or ("slot %s" % conf.get("slot")))
+    if not step(bool(conf.get("confirmed")), "confirm",
+                conf.get("err") or ("slot %s" % conf.get("slot"))):
+        return steps
+
+    # 5. REF-R11 commit memo — build/sign/send/confirm a REAL memo tx on
+    # devnet (airdrop-funded). This exercises the exact publish_commit_memo
+    # path the armed flow uses, BEFORE mainnet is ever considered.
+    import hashlib as _hashlib
+    from live_execution import memo as _memo
+    drill_hash = _hashlib.sha256(b"drill-commit").hexdigest()
+    try:
+        memo_res = await _memo.publish_commit_memo(
+            payer, drill_hash, endpoints=[config.DRILL_RPC_URL])
+        step(True, "commit-memo", "sig %s slot %s" % (
+            memo_res["signature"][:16], memo_res.get("slot")))
+    except _memo.MemoPublishError as exc:
+        step(False, "commit-memo", str(exc))
+        return steps
+
     log.info("DRILL COMPLETE: %s of %s steps passed",
              sum(1 for s in steps if s["ok"]), len(steps))
     return steps

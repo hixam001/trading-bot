@@ -1,9 +1,19 @@
 """live_execution/commit_log.py - local pre-broadcast intent log.
 
-the reference precommit parity without the memo layer: before an order is broadcast,
+the reference precommit parity: before an order is broadcast,
 sha256(nonce + | + canonical_payload) is recorded here together with the
 plaintext payload, so any later claim can be recomputed and checked.
-After confirmation the signature is bound to the same row.
+
+REF-R11: when armed, the same hash is ALSO written on-chain as a Solana
+memo BEFORE the fill is broadcast (live_execution/memo.py). The memo
+signature/slot are attached here so the local seal and the on-chain
+commitment stay one auditable record:
+
+    sealed -> published (memo confirmed on-chain) -> bound (fill confirmed)
+
+A commit whose memo could not be published is marked "failed" with the
+reason — the fill never runs (fail closed, handoff §22 requirement 4), and
+the refusal stays visible in the record instead of disappearing.
 """
 
 from __future__ import annotations
@@ -48,16 +58,54 @@ class CommitLog:
         rec["sealed_at"] = self.now_fn()
         rec["signature"] = None
         rec["status"] = "sealed"
+        # REF-R11: on-chain memo fields (null until published).
+        rec["memo_signature"] = None
+        rec["memo_slot"] = None
+        rec["memo_published_at"] = None
         commits = self._load()
         commits.append(rec)
         self._save(commits)
         return rec
 
-    def bind(self, digest: str, signature: str) -> bool:
-        """Attach the confirmed signature to the sealed intent."""
+    def record_memo(self, digest: str, memo_signature: str,
+                    memo_slot: Optional[int]) -> bool:
+        """Attach the confirmed on-chain memo (sealed -> published).
+
+        Only a row still in "sealed" state can be published — a failed or
+        already-bound commit is never relabelled."""
         commits = self._load()
         for rec in commits:
             if rec.get("hash") == digest and rec.get("status") == "sealed":
+                rec["memo_signature"] = memo_signature
+                rec["memo_slot"] = memo_slot
+                rec["memo_published_at"] = self.now_fn()
+                rec["status"] = "published"
+                self._save(commits)
+                return True
+        return False
+
+    def fail(self, digest: str, reason: str) -> bool:
+        """Mark a commit that could not be published/executed (honest record).
+
+        The row keeps its payload+nonce+hash so the refusal is auditable —
+        a skipped trade must be as visible as an executed one."""
+        commits = self._load()
+        for rec in commits:
+            if rec.get("hash") == digest and rec.get("status") in ("sealed", "published"):
+                rec["status"] = "failed"
+                rec["fail_reason"] = reason
+                self._save(commits)
+                return True
+        return False
+
+    def bind(self, digest: str, signature: str) -> bool:
+        """Attach the confirmed fill signature to the sealed intent.
+
+        Normal armed flow binds from "published" (memo first, always); the
+        "sealed" path is kept so a local-only seal can still be bound."""
+        commits = self._load()
+        for rec in commits:
+            if rec.get("hash") == digest and rec.get("status") in ("sealed", "published"):
                 rec["signature"] = signature
                 rec["status"] = "bound"
                 self._save(commits)

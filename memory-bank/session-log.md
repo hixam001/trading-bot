@@ -1,3 +1,44 @@
+## Memory-bank update - 2026-08-27 (REF-R11 on-chain precommit memo + micro-bootstrap session)
+
+- **Task**: implement the last implementable reference-parity gap — REF-R11
+  on-chain precommit memo (commit–reveal) — operator-approved, using
+  `omotrades/omo` (`precommit.server.ts`/`verify.server.ts`) as reference. Also
+  folded in the micro-bootstrap accommodations so the live book can start from
+  0.03 SOL (fee reserve) + $3–5 USDC (capital) and compound.
+- **What shipped**: `live_execution/memo.py` (memo build + fail-closed
+  `publish_commit_memo`); `commit_log.py` `sealed→published→bound` +
+  `record_memo()`/`fail()`; `executor.py` order = guards→wallet→SOL reserve→
+  USDC funding→seal→memo→CONFIRM memo→quote→build→send→confirm→bind (memo
+  precedes the quote so the quote→fill window is unchanged); `solana.py`
+  `get_usdc_balance()`; `run_live_cycle.py` real-USDC cash + journals seal+memo
+  into `decision_commits`. Verifier surface: `memo_signature`/`memo_slot`
+  columns (SQLite + PG self-heal + `migrations/supabase/003_commit_memos.sql`),
+  `bind_commit_memo()`/`get_commit_id_by_hash()` in db.py+db_pg.py,
+  `/api/verify.json` memo checks (hash-on-chain + slot ordering; unknown never
+  pass), `/api/disclosure.json` `commit_memo` block. Sizing floor threaded
+  through `compute_ticket`/`compute_risk_budget` (paper bit-identical). Devnet
+  drill now sends a real memo.
+- **Fail-closed guarantee (tested)**: a memo that cannot be confirmed BLOCKS the
+  fill — the fill send is never attempted. USDC insufficient/unreadable and SOL
+  below reserve all refuse BEFORE any on-chain commitment.
+- **Deviations from the reference (documented handoff §26)**: fail-closed
+  blocking (reference publishes async), immediate reveal, single signer = the
+  trading wallet, de-branded `commit:v1:` prefix.
+- **Bug found + fixed**: solders 0.29 requires `Hash.from_string()`; `drill.py`
+  had a latent incompatibility (it had never run because solders was absent).
+  Installed solders 0.29.0 into `.venv`.
+- **Tests: 379 combined passing** (backend 308 + live_execution 71; +41 new,
+  all offline/hermetic with hand-computed hash fixtures). Isolation grep clean.
+  Live smoke (disarmed): verify/binding/disclosure all 200, `armed=False`,
+  `paper_only=True`, 0 tracebacks.
+- **Docs**: handoff §26 (implementation) + §27 (FINAL TASK: enable live
+  execution — operator-only arming checklist); §22 status flipped; §8 next-steps
+  points to §27; file map + test counts updated. memory-bank activeContext /
+  progress / decisionLog (#41) / session-log updated.
+- **Still DISARMED**: `LIVE_TRADING_ENABLED=False` + `REQUIRE_MANUAL_CONFIRMATION=True`
+  untouched. Arming is the operator's final manual task (§27) — no session may
+  arm before every other task is done.
+
 ## Memory-bank update - 2026-08-27 (fresh scraper keys session)
 
 - **Operator added new keys** to the repo-root `.env` (what `load_dotenv()`
