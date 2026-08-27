@@ -83,6 +83,26 @@ GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "192"))
 MAIN_LLM_PROVIDER: str = os.getenv("MAIN_LLM_PROVIDER", "groq").strip().lower()
 
 # ---------------------------------------------------------------------------
+# Omo-style brain (2026-08-27). When True AND DATA_BACKEND=live, the tick runs
+# a single omo-faithful reasoning call (role-routed, wallet-aware, rich
+# verdicts/checks/watchlist) instead of one minimal per-candidate verdict.
+# Fail-closed: any malformed/missing output degrades to the deterministic
+# template pass. Mock mode ALWAYS uses the template thinker (hermetic tests).
+# This changes ONLY the reasoning layer — the deterministic entry gate
+# (verdict AND all rules) and PAPER_TRADING_ONLY are untouched.
+# ---------------------------------------------------------------------------
+OMO_BRAIN: bool = os.getenv("OMO_BRAIN", "1").strip().lower() in ("1", "true", "yes", "on")
+# Output-token budget for the single omo tick call. It emits a full JSON tick
+# (6-9 thoughts + one 5-7-check verdict per graded candidate + watchlist), which
+# runs ~1.5-2k tokens for a small board; 4000 leaves headroom so the JSON is not
+# truncated mid-object (a truncated body fails closed, so bigger is safer).
+OMO_BRAIN_MAX_TOKENS: int = int(os.getenv("OMO_BRAIN_MAX_TOKENS", "4000"))
+# The brain emits a much larger completion than the per-candidate thinker, so it
+# needs a longer read timeout than DEEPSEEK_TIMEOUT_SECONDS (12s). On timeout the
+# brain fails closed (template), never a bad buy.
+OMO_BRAIN_TIMEOUT_SECONDS: float = float(os.getenv("OMO_BRAIN_TIMEOUT_SECONDS", "60"))
+
+# ---------------------------------------------------------------------------
 # DeepSeek direct API (main-provider candidate per docs/08 §1). Non-thinking
 # mode only in the hot path. Model id + prices verified against
 # api-docs.deepseek.com on 2026-08-27 (pricing snapshot id in llm/client.py).

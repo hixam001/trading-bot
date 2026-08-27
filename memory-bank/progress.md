@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] Omo-style brain (handoff §21): ported omotrades/omo's LLM *reasoning layer*
+      into `backend/llm/omo_brain.py` — role-based router (honest resolution +
+      fallback + unsupported-model bench), omo tick prompt (decision buckets,
+      ground-truth + price-talk rules, minified-JSON contract), wallet mimicry,
+      strict parse/validate, `OmoBrain.tick()` grades ≤8 candidates fail-closed.
+      `main.py` uses brain verdicts in live mode (per-candidate thinker fallback);
+      omo `buying`→`buy` is NECESSARY only (gate still ANDs). Fixed pre-existing
+      `reused_if_stable` `KeyError: 'stats'` tick-crash (writer stores stats +
+      reuse fails closed). Live-verified: brain ping 8/10 graded (`DELTA=buying`,
+      2268 tokens, no truncation). 27 new tests, 289 total (2026-08-27)
 - [x] DeepSeek main-provider swap (handoff §18→§19): `MAIN_LLM_PROVIDER`
       selector + `DeepSeekClient` + `build_main_client()` factory;
       peak/off-peak/cache cost model; provider-aware timeouts;
@@ -108,4 +118,4 @@ OMO-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 262 passing** (was 231; +30 provider-swap, +1 stealth 429/402 split).
+**Tests: 289 passing** (was 262; +23 omo-brain, +4 reuse fail-closed regression).

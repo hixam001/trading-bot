@@ -1,7 +1,28 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (DeepSeek main-provider swap executed + live-verified).**
+**As of 2026-08-27 (omo-style brain ported + live-verified; DeepSeek main-provider swap executed).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### Omo-style brain — ported omotrades/omo's LLM reasoning layer (handoff §21) (2026-08-27)
+New `backend/llm/omo_brain.py`: `run_role()` role-based router (omo
+`models.server.ts` — honest resolution, ordered fallback chain, unsupported-model
+benches the provider for the process); `OMO_SYSTEM`+`OMO_OUTPUT_CONTRACT` (the omo
+tick prompt: hard filters, 6 decision buckets, ground-truth + price-talk rules,
+minified-JSON contract — persona lore dropped); wallet mimicry (`build_wallet_block`)
++ None-safe snapshot builder; `parse_omo_tick()` strict validation (invented symbols
+/ invalid calls dropped, malformed → None); `OmoBrain.tick()` grades up to 8
+highest-volume candidates, fail-closed to empty verdicts on any error. Config:
+`OMO_BRAIN` (on), `OMO_BRAIN_MAX_TOKENS=4000`, `OMO_BRAIN_TIMEOUT_SECONDS=60`.
+`main.py` runs the brain in live mode; each candidate uses the brain's verdict if
+valid else falls back to the per-candidate thinker; `_think_from_omo()` maps omo
+`buying`→our `buy` (NECESSARY only — the deterministic gate still ANDs). Fixed a
+pre-existing tick-crashing bug: `reused_if_stable()` required `prior["stats"]` but
+the thesis writer never stored it → `KeyError` killed the tick; writer now stores
+stats AND reuse fails closed on malformed prior. Live-verified: brain ping graded
+8/10 candidates (`DELTA=buying`, 6 checks + invalidation, 2268 tokens, no
+truncation), fail-closed proven on a truncated response, backend clean. 27 new
+tests → **289 passing**. The LLM stays a veto/input only; `live_execution` untouched.
 
 ## DONE
 ### Main LLM Groq → DeepSeek V4 Flash (handoff §18 → §19) (2026-08-27)

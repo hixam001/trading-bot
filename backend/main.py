@@ -30,7 +30,8 @@ from blocklist import filter_candidates
 from data_providers import build_provider
 from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
-from llm.thinker import Thinker
+from llm.thinker import Thinker, ThinkResult
+from llm.omo_brain import OmoBrain, OmoVerdict, OmoBrainResult
 from models import FeedEvent
 from paper_trading_engine import (
     compute_ticket,
@@ -57,7 +58,27 @@ def _rule_summary(gate) -> str:
     return "; ".join(f"{r.rule_id}:{'PASS' if r.passed else 'FAIL'}" for r in gate.rules)
 
 
-async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dict:
+def _think_from_omo(ov: "OmoVerdict", brain_result: "OmoBrainResult") -> ThinkResult:
+    """Map a validated omo verdict onto our ThinkResult. The verdict is 'buy' only
+    for a valid 'buying' call; the deterministic gate still must pass before any
+    entry. llm_usage is None because the single brain call is recorded once up
+    front (not per candidate). Thesis uses ONLY the model's own reason/checks."""
+    verdict = "buy" if ov.wants_entry else "pass"
+    thesis = ov.reason or (ov.checks[0] if ov.checks else "omo brain verdict")
+    return ThinkResult(
+        thesis=thesis,
+        invalidation=ov.invalidation or "",
+        verdict=verdict,
+        source=brain_result.source,
+        break_taking=brain_result.break_taking,
+        break_minutes=brain_result.break_minutes,
+        break_reason=brain_result.break_reason,
+        llm_usage=None,
+    )
+
+
+async def run_tick(provider, thinker: Thinker, state: dict | None = None,
+                   brain: "OmoBrain | None" = None) -> dict:
     """
     The omo-style cycle (operator decision 2026-08-23):
 
@@ -66,6 +87,13 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
     state: optional dict persisted ACROSS ticks by the caller (main()):
       {"tick": int, "theses": {mint: {...}}} — enables short-term think/thesis
       reuse. A fresh empty state means no reuse (tests).
+
+    brain: optional OmoBrain (2026-08-27). When provided AND DATA_BACKEND=live
+      AND config.OMO_BRAIN, ONE role-routed omo-style reasoning call grades every
+      candidate; each candidate then uses the brain's verdict if it produced a
+      valid one, else falls back to the per-candidate thinker. The deterministic
+      gate below still authorizes every entry (brain verdict is necessary, not
+      sufficient). Mock mode and tests are unaffected (brain stays inert).
     """
     t0 = time.monotonic()
     tick_ts = datetime.now(timezone.utc).isoformat()
@@ -159,6 +187,46 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                     degradation_reason=su.degradation_reason,
                 )
 
+        # --- OMO BRAIN (live + OMO_BRAIN only): ONE role-routed omo-style call
+        # grades every candidate. Fail-closed: an empty/invalid result leaves
+        # brain_result with no verdicts, so each candidate below falls back to
+        # the per-candidate thinker. The single call's usage is recorded once.
+        use_brain = (brain is not None and config.DATA_BACKEND == "live"
+                     and config.OMO_BRAIN)
+        brain_result = None
+        if use_brain:
+            portfolio_now = await load_portfolio_state(conn)
+            brain_result = await brain.tick(candidates, portfolio_now)
+            if brain_result.llm_usage is not None:
+                bu = brain_result.llm_usage
+                await db.insert_llm_call_usage(
+                    conn,
+                    ts=tick_ts,
+                    task=bu.task,
+                    provider=bu.provider,
+                    model=bu.model,
+                    status="success" if not bu.degradation_reason else "error",
+                    tick_ts=tick_ts,
+                    mint_address=None,
+                    latency_ms=int(bu.latency_ms),
+                    input_tokens=bu.input_tokens,
+                    cache_hit_tokens=bu.cache_hit_tokens,
+                    output_tokens=bu.output_tokens,
+                    total_tokens=bu.total_tokens,
+                    estimated_cost_usd=bu.estimated_cost_usd,
+                    is_peak_window=bu.is_peak_window,
+                    degradation_reason=bu.degradation_reason,
+                )
+            if brain_result.break_taking:
+                from rule_engine import liveness
+                liveness.set_break(True, brain_result.break_minutes,
+                                   brain_result.break_reason)
+                log.warning("omo_brain self-regulating break: %d mins (%s)",
+                            brain_result.break_minutes, brain_result.break_reason)
+            log.info("omo_brain tick: %d verdict(s) | source=%s%s",
+                     len(brain_result.verdicts), brain_result.source,
+                     " (degraded)" if brain_result.degraded else "")
+
         for c in candidates:
             # --- THINK (omo order): the model writes its assessment BEFORE
             # any rule is evaluated. Its verdict is a necessary veto layer.
@@ -167,12 +235,19 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
             if memories:
                 memory_line = "Memory (context only): " + " | ".join(
                     f"{m['topic']}: {m['note']}" for m in memories)
-            try:
-                think = await thinker.think(c, memory_line)
-            except Exception as e:
-                log.error("thinker error on %s: %s", c.symbol, e, exc_info=True)
-                from llm.thinker import template_think
-                think = template_think(c)
+            # OMO BRAIN verdict if the brain produced a valid one for this
+            # candidate; otherwise the per-candidate thinker (fail-closed path).
+            ov = (brain_result.verdict_for(c.symbol)
+                  if (use_brain and brain_result is not None) else None)
+            if ov is not None:
+                think = _think_from_omo(ov, brain_result)
+            else:
+                try:
+                    think = await thinker.think(c, memory_line)
+                except Exception as e:
+                    log.error("thinker error on %s: %s", c.symbol, e, exc_info=True)
+                    from llm.thinker import template_think
+                    think = template_think(c)
 
             # Record thinker LLM usage
             if getattr(think, "llm_usage", None):
@@ -328,7 +403,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None) -> dic
                 state.setdefault("theses", {})[c.mint_address] = {
                     "tick": state["tick"],
                     "decision": {"all_passed": gate.all_passed,
-                                 "failed_rule_ids": list(gate.failed_rule_ids)},
+                                 "failed_rule_ids": list(gate.failed_rule_ids),
+                                 "stats": stats_signature(c)},
                     "think_verdict": think.verdict,
                     "invalidation": think.invalidation,
                     "thesis": think.thesis,
@@ -426,6 +502,9 @@ async def main() -> None:
     await db.init_db()
     provider = build_provider()
     thinker = Thinker()
+    # Omo-style brain (2026-08-27): one role-routed reasoning call per tick in
+    # live mode. Inert in mock/tests; the deterministic gate still authorizes.
+    brain = OmoBrain()
     # Cross-tick state: tick counter + per-mint think/thesis reuse cache.
     # REUSE_TICK_WINDOW bounds how old a reused thesis may be.
     state: dict = {"tick": 0, "theses": {}}
@@ -436,7 +515,7 @@ async def main() -> None:
         exit_task = asyncio.create_task(_exit_loop(provider))
         while True:
             try:
-                await run_tick(provider, thinker, state)
+                await run_tick(provider, thinker, state, brain=brain)
             except Exception:
                 log.exception("tick failed — continuing next interval (fail-closed)")
             today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

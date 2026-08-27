@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-27 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 262 passing (full suite incl. live_execution)
+**Tests:** 289 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -935,5 +935,88 @@ Live diagnosis (keys never printed) found the real story:
 ### Invariants held
 Read-only fail-soft path; no money logic touched; `live_execution` untouched;
 keys only in server `.env` (diagnostic script redacted them).
+
+
+
+---
+
+## 21. Omo-style brain — ported the LLM *reasoning layer* of omotrades/omo (2026-08-27, DONE)
+
+Operator decision: "compare how the LLM thinker works in omotrades/omo and in our
+repo — clone that to ours." We ported omo's **reasoning layer only** (never its
+execution posture), so the bot now *thinks* like omo while every safety gate stays.
+
+### What omo does that we cloned
+omo is "not one model": each stage declares the mind it was designed around plus an
+ordered fallback chain, and resolution is **honest** (it reports the model it
+actually used and whether it ran degraded — it never claims an unreachable model).
+Each tick is ONE richly-prompted call that reads the whole book + tape + crowd +
+web and emits a structured JSON tick: `thoughts / actions / verdicts / theses /
+watchlist / remember / fomo / break`. Every verdict carries 5–7 checks from
+DIFFERENT research buckets (tape / people / crowd / smart-money / outside read /
+counter-case), an entry condition, and an invalidation. Ground-truth rules force
+every number to be copied from the snapshot (never invented). The wallet is fed in
+as context (omo's `positionBlock`) so the brain reasons over live positions + pnl.
+
+### What shipped (code)
+- **`backend/llm/omo_brain.py`** (new, ~530 lines):
+  - `run_role()` — role-based router (port of omo `models.server.ts`). Roles
+    `reasoning`/`realtime`/`narration`, each a provider chain (`main`→`groq`).
+    An unsupported-model error benches that provider for the process; any other
+    failure just falls through for the call. Returns honest `ResolvedRole`.
+  - `OMO_SYSTEM` + `OMO_OUTPUT_CONTRACT` — the omo tick prompt (hard filters,
+    decision buckets, ground-truth + price-talk rules, minified-JSON contract),
+    with omo's persona lore deliberately dropped.
+  - `build_wallet_block()` / `build_snapshot_block()` / `build_tick_prompt()` —
+    wallet mimicry + the screener rows the model may cite (None-safe).
+  - `parse_omo_tick()` — strict schema/type/range validation. Invented symbols and
+    invalid calls are **dropped**; malformed body → `None` (caller fails closed).
+  - `OmoBrain.tick()` — one role-routed call grades up to 8 highest-volume
+    candidates; fail-closed to an empty verdict map on any error.
+- **`backend/config.py`**: `OMO_BRAIN` (default on), `OMO_BRAIN_MAX_TOKENS=4000`,
+  `OMO_BRAIN_TIMEOUT_SECONDS=60` (the brain's large output needs a longer read
+  timeout than the 12s per-candidate thinker).
+- **`backend/main.py`**: `run_tick(..., brain=)` runs the brain in live mode; each
+  candidate uses the brain's verdict if it produced a valid one, else falls back to
+  the per-candidate thinker. `_think_from_omo()` maps omo `call:"buying"`→our
+  `verdict:"buy"` (only a NECESSARY input — the deterministic gate still ANDs).
+  The single brain call's usage is recorded once in `llm_call_usage`.
+
+### Pre-existing bug found + fixed (crashed the tick)
+`reused_if_stable()` (`llm/reuse.py`) always required `prior["stats"]`, but the
+cross-tick thesis writer in `main.py` stored the `decision` dict **without** a
+`"stats"` key. So any time a mint reappeared within the reuse window it raised
+`KeyError: 'stats'` and killed the whole tick. Fixed both ways (defense-first):
+- writer now stores `"stats": stats_signature(c)` (reuse works as designed);
+- `reused_if_stable()` fails CLOSED (returns False, never raises) on a
+  malformed/legacy prior missing any required key.
+
+### Live verification (2026-08-27)
+- **Brain ping (real DeepSeek V4 Flash, 10 synthetic candidates):** cap applied
+  (10→8 graded), `DELTA=buying` (6 checks + concrete invalidation), `ETA/ALPHA=
+  stalking`, rest `pass`; fomo 40, 9 thoughts, 3 watchlist; **2268 output tokens,
+  15s, $0.003, no truncation, no timeout**. All numbers copied from the snapshot.
+- **Fail-closed proven live:** an early run where the response truncated at the old
+  1500-token budget degraded to 0 verdicts and every candidate safely fell back to
+  the per-candidate thinker — 0 tracebacks, no bad buys. (Fixed by raising the
+  budget to 4000 + capping graded candidates at 8.)
+- Backend restarted clean on the new code: `PAPER_TRADING_ONLY=True | backend=live`,
+  Supabase synced, 0 tracebacks.
+
+### Tests
+- New `tests/test_omo_brain.py` (23 tests): parse/validate (invented symbols and
+  invalid calls dropped; malformed → None), call mapping (only `buying`→wants_entry),
+  role routing (honest label, fallback labelled degraded, unsupported-model benches,
+  timeout is NOT unsupported-model), wallet/snapshot builders (None-safe), and
+  `OmoBrain.tick` fail-closed paths (mock hermetic, unparsable, empty candidates).
+- New reuse regression tests (4): malformed/legacy prior fails closed, never raises.
+- **Total: 289 passing** (was 262): backend 241, live_execution 48.
+
+### Invariants held
+The LLM remains a VETO/INPUT only — `wants_entry` is necessary, never sufficient;
+entry still requires `gate.all_passed AND wants_entry`. The brain never opens,
+closes, sizes, or touches execution. `PAPER_TRADING_ONLY=True` still hardcoded +
+asserted; `live_execution/` untouched and disarmed. Mock mode is hermetic (brain
+inert). Every degradation logged with a reason. Keys only in server `.env`.
 
 (redaction verified in logs); no raw SQL outside api/db*.py.

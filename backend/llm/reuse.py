@@ -61,9 +61,18 @@ def reused_if_stable(prior: dict | None,
 
     prior: {"all_passed": bool, "failed_rule_ids": [str], "stats": tuple}
     stats: stats_signature(candidate) for THIS tick.
+
+    Defense-first: a malformed/legacy prior (missing any required key, e.g. the
+    pre-2026-08-27 writer that omitted "stats") fails CLOSED to "do not reuse"
+    instead of raising — a crash here would kill the whole tick.
     """
     if not prior:
         return False
+    if not isinstance(prior, dict):
+        return False
+    for key in ("all_passed", "failed_rule_ids", "stats"):
+        if key not in prior:
+            return False
     if prior["all_passed"] != all_passed:
         return False
     if set(prior["failed_rule_ids"]) != set(failed_rule_ids):

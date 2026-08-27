@@ -78,3 +78,28 @@ def test_stats_signature_matches_field_order():
     assert stats_signature(c) == (
         c.liquidity_usd, c.volume_1h_usd, c.market_cap_usd,
         c.buys_1h, c.sells_1h, c.price_change_1h_pct)
+
+
+# --- malformed / legacy prior must fail CLOSED (never raise) ----------------
+# Regression for the pre-2026-08-27 writer that stored the decision dict without
+# a "stats" key: reused_if_stable used to KeyError and kill the whole tick.
+
+def test_prior_missing_stats_fails_closed_not_raises():
+    legacy = {"all_passed": False, "failed_rule_ids": BASE["failed_rule_ids"]}
+    assert reused_if_stable(legacy, False, BASE["failed_rule_ids"], sig()) is False
+
+
+def test_prior_missing_all_passed_fails_closed():
+    bad = {"failed_rule_ids": BASE["failed_rule_ids"], "stats": sig()}
+    assert reused_if_stable(bad, False, BASE["failed_rule_ids"], sig()) is False
+
+
+def test_prior_missing_failed_rule_ids_fails_closed():
+    bad = {"all_passed": False, "stats": sig()}
+    assert reused_if_stable(bad, False, BASE["failed_rule_ids"], sig()) is False
+
+
+def test_prior_not_a_dict_fails_closed():
+    assert reused_if_stable("garbage", False, BASE["failed_rule_ids"], sig()) is False
+    assert reused_if_stable(["a", "b"], False, BASE["failed_rule_ids"], sig()) is False
+

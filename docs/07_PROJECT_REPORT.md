@@ -18,9 +18,12 @@ positions are checked against **three fixed numeric exit conditions** every
 tick. The main thinker/narrator LLM is provider-selectable via
 `MAIN_LLM_PROVIDER` — DeepSeek V4 Flash (direct API, non-thinking mode) or
 Groq (`qwen/qwen3.8-27b`) — with a fail-closed template fallback; Groq also
-powers the evidence-only social reads. The model does exactly two things: narrate
-decisions that were already made, and (later phase) add advisory flags that
-can never override a verdict. Every decision — pass or fail — is persisted
+powers the evidence-only social reads. In live mode an **omo-style brain**
+(ported from the reference system's reasoning layer) runs one role-routed call
+per tick that grades the board and emits rich verdicts/checks/watchlist, but
+its `buy` call is only a *necessary input* — the deterministic gate still
+authorizes every entry. The model never sizes, opens, closes, or overrides a
+verdict. Every decision — pass or fail — is persisted
 with its full rule breakdown, narrated thesis, and grounding-check results,
 and is visible in a real-time dashboard.
 
@@ -44,7 +47,7 @@ position-opening function.
   the backend itself at http://localhost:8000 (single origin, one process).
 - **Launcher**: `./start.sh` (ollama serve if needed → backend + tick loop →
   browser), `./stop.sh`, `trading-bot.desktop` app-menu entry.
-- **LLM**: Groq via direct API for Thinker/Narrator and evidence-only social reads, with comprehensive usage logging (latency, tokens, cost).
+- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections + the omo-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost).
 - **Data**: Birdeye memepool trending (discovery + decimals + security),
   Dexscreener pairs (all rule numerics + age + socials), Jupiter lite-api
   (execution-quality price for open positions).
@@ -258,6 +261,18 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
   writes `{thesis, invalidation, verdict}` before any rule runs. Verdict
   must be `"buy"` AND every rule must pass for entry. Fail-closed: any
   provider failure degrades to a deterministic template `pass` refusal.
+- **Omo-style brain** (live mode, `OMO_BRAIN`, `backend/llm/omo_brain.py`):
+  ports the reference system's *reasoning layer*. One role-routed call per tick
+  (`run_role()` — honest resolution, ordered fallback, unsupported-model bench)
+  grades up to 8 highest-volume candidates against the omo tick prompt (hard
+  filters, 6 decision buckets, ground-truth + price-talk rules) and emits
+  `{thoughts, actions, verdicts[checks/entry/invalidation], theses, watchlist,
+  remember, fomo, break}` with the wallet fed in as context. Strict
+  `parse_omo_tick()` validation drops invented symbols/invalid calls; any
+  malformed/unreachable answer fails closed to empty verdicts (each candidate
+  then falls back to the per-candidate thinker). The brain's `buying` maps to
+  our `buy` as a NECESSARY input only — the deterministic gate still ANDs. It
+  never opens/closes/sizes; `live_execution` is untouched.
 - **Narration** (every decision): verdict pre-decided; prompt contains only
   rule results; output validated for emptiness + groundedness (rule-derived
   vocabulary check, invented-rule check, numeric echo check). Flags are
@@ -304,7 +319,7 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 11. Testing & verification
 
-**213 backend tests passing** (<2s, fully hermetic): both branches of all
+**241 backend tests passing** (<2s, fully hermetic): both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
@@ -313,8 +328,12 @@ Jupiter decimals regression tests pinning the 1000× fabrication bug;
 LLM provider-swap suite (DeepSeek/Groq factory selection, peak/off-peak +
 cache-hit cost branches against hand-computed values, mocked
 `/chat/completions` usage parsing, fail-closed degradation never buying,
-`narration_mode` labels).
-48 live_execution tests (**262 combined** via root pytest.ini). The live
+`narration_mode` labels);
+omo-brain suite (role routing honest-label/fallback/unsupported-model-bench,
+parse/validate dropping invented symbols + invalid calls, call mapping,
+fail-closed tick paths, None-safe wallet/snapshot builders);
+reuse fail-closed regression (malformed/legacy prior never raises).
+48 live_execution tests (**289 combined** via root pytest.ini). The live
 execution bridge is wired
 and remains disarmed; its offline/mock flow covers execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.
