@@ -4,7 +4,7 @@
 Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
-**Reference parity: ALL R1–R7 features implemented.** Tests: **262 passing**.
+**Reference parity: ALL R1–R7 features implemented.** Tests: **289 passing**.
 
 ---
 
