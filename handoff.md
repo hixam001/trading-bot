@@ -264,6 +264,9 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
    is **§27 — Enable live execution**, the operator's final manual task (fund
    wallet → devnet drill → hand-flip the two hardcoded flags). No session may
    arm before every other task is done.
+8. **Full remaining-task list lives in §28** (grouped: final gating task,
+   in-progress calibration, post-calibration, optional upgrades, deferred,
+   and never-to-build invariants). Read §28 before picking up any new work.
 
 ## 9. Invariants checklist (before any change)
 
@@ -496,9 +499,9 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
   side/symbol mismatch rejection, exact-bind precedence over retro.
 
 ### REJECTED / DEFERRED — do not re-litigate without operator approval
-- ❌ **On-chain memo commitments + reveal protocol** (the reference precommit memo layer)
-  — REJECTED 2026-08-26. Local CommitLog seal-before-broadcast stands as the
-  sealing mechanism; REF-R1 is scoped to work WITHOUT on-chain memos.
+- ✅ **On-chain memo commitments + reveal protocol** (the reference precommit memo layer)
+  — was REJECTED 2026-08-26, then RE-OPENED by the 2026-08-27 audit and
+  **APPROVED + IMPLEMENTED 2026-08-27 as REF-R11 (§26)**. No longer a gap.
 - ⏸ **Off-book multi-chain tracking** (BNB/other-chain positions marked and
   repriced into equity) — DEFERRED temporarily. Revisit only after the Solana
   side is armed and has a live track record.
@@ -1523,4 +1526,52 @@ This is REF-R10's promotion path — it is a human checklist, not code.
 Set `LIVE_TRADING_ENABLED = False` again — one line, instant disarm. Open
 positions remain managed/journalled. Backend is unaffected
 (`PAPER_TRADING_ONLY` stays `True` always).
+
+
+---
+
+## 28. Tasks yet to be implemented (roadmap snapshot, 2026-08-27)
+
+Reference parity for the implementable items is COMPLETE (REF-R1–R9 + R11).
+What remains is either operator-gated, post-calibration, or needs external
+credits/keys. Grouped by kind so a future session knows what is code, what is a
+human action, and what is deliberately out of scope.
+
+### A. Final gating task — operator-only, NO code (handoff §27)
+- [ ] **REF-R10 — Enable live execution.** The promotion path. Fund the wallet
+      (0.03 SOL fee reserve + $3–5 USDC capital) → funded throwaway-keypair
+      devnet drill (now incl. the memo step) → hand-flip
+      `LIVE_TRADING_ENABLED=True` then `REQUIRE_MANUAL_CONFIRMATION=False` →
+      supervise one `--once` cycle. Deliberately the LAST task; no session may
+      arm before every other task is done.
+
+### B. In progress
+- [ ] **Calibration window (~10 days).** Let the paper book run; review daily
+      via dashboard + learning-loop logs; tune ONE threshold at a time from
+      rejection-breakdown evidence (manual edits to `config.py`). Regime/rule
+      thresholds are placeholders until this completes.
+
+### C. Post-calibration (deliberately unbuilt until then)
+- [ ] **E8/E9 partial scaling + rolling history.**
+- [ ] **D7 advisory LLM layer** (advisory only — never decision authority).
+- [ ] **`crowd_heat` rule** — needs a fomo-index data source first.
+- [ ] **Full multi-wallet management.**
+
+### D. Optional upgrades (need operator action / credits / keys, not code-only)
+- [ ] **Birdeye paid tier with `token_security`** — free tier 401s, so security
+      fields are UNKNOWN; upgrading auto re-enables on restart.
+- [ ] **A fomo-index source** to power the `crowd_heat`-style rule.
+- [ ] **ZenRows renewal** — 402 credit-exhausted (optional backup scraper).
+- [ ] **ScrapingDog 403** — confirm the key includes the Web-Scraping API or add
+      a premium-proxy param (optional backup; Firecrawl + ScrapeOps already cover it).
+
+### E. Deferred pending a live track record
+- [ ] **Off-book multi-chain tracking** (BNB/other-chain positions marked and
+      repriced into equity) — revisit only after the Solana side is armed and
+      has a live track record.
+
+### Never to be built (invariants, not tasks)
+- Automatic learning, automatic threshold/prompt/model changes, or any
+  automatic live-trading promotion (§15 / §8 rule 6). The LLM stays veto/input
+  only; deterministic code decides. Arming is always a manual human act.
 
