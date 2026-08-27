@@ -255,6 +255,8 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 5. **LLM API migration:** implemented in section 14.
   docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. Target Groq for the thinker (qwen3.8-27b), Groq for evidence-only social reads, and
   measured usage/outcome instrumentation before switching models.
+   Next stage: main/narration model → DeepSeek V4 Flash (social stays Groq)
+   — full plan in section 18, gated on a funded DeepSeek key + shadow replay.
 6. No automatic learning, threshold changes, prompt changes, model changes,
   or live-trading promotion is permitted.
 
@@ -526,7 +528,8 @@ Shadow replay and delayed outcome label scripts are in `backend/scripts/`.
   V4 Flash API key is available, swap `MainGroqClient` for `DeepSeekClient`
   by adding `DEEPSEEK_API_KEY` back to config and updating thinker/narrator
   to use it. Shadow replay should gate the swap. No code changes beyond the
-  client swap and a one-line config change.
+  client swap and a one-line config change. **Full implementation plan: §18
+  (main model → DeepSeek; social model stays Groq).**
 
 ### Cost and feedback controls
 
@@ -696,3 +699,99 @@ missing-table errors.
 Never edit an applied migration file in place again. New schema = new
 numbered migration file, AND mirror it into `_SCHEMA_SYNC_SQL` so older
 books heal on boot.
+
+## 18. NEXT TASK: main/narration LLM Groq → DeepSeek (2026-08-27) — PLANNED, NO CODE YET
+
+**Status:** planned; blocked only on a funded DeepSeek API key.
+**Scope (operator decision 2026-08-27):** the MAIN model path — Thinker,
+Narrator, and post-close reflections — moves to DeepSeek V4 Flash. The
+SOCIAL model stays exactly as it is (Groq via `SOCIAL_LLM_*`). This executes
+the "recommended production arrangement" of docs/08 §1 and the "Planned next
+step" of §14 above.
+
+### What changes and what does not
+
+| Role | Today | After swap |
+|---|---|---|
+| Thinker (pre-trade verdict) | Groq `qwen/qwen3.8-27b` via `MainGroqClient` | **DeepSeek V4 Flash** (direct API, non-thinking mode) |
+| Narrator (thesis text on feed) | same `MainGroqClient` | **DeepSeek V4 Flash** |
+| Post-close reflections | same `MainGroqClient` | **DeepSeek V4 Flash** (off-peak preferred) |
+| Social evidence read | Groq via `GroqClient` / `SOCIAL_LLM_*` | **UNCHANGED — stays on Groq** |
+| Deterministic gate / rules / exits | authoritative | UNCHANGED |
+
+### Why this is a small change (§14 built for it)
+
+- `llm/client.py` is already the provider-neutral `LLMClient.complete_json()`
+  boundary (docs/08 §6); DeepSeek speaks the same OpenAI-compatible
+  `/chat/completions`, including `response_format: {"type": "json_object"}`.
+- DeepSeek-specific plumbing already exists in `LLMClient`: peak-window flag
+  (01:00–04:00 + 06:00–10:00 UTC weekdays), `prompt_cache_hit_tokens` cache
+  parsing, `is_peak_window` persisted on every result.
+- `llm_call_usage` already records provider/model/tokens/cost/latency/
+  degradation per call, and `model_version`/`prompt_version` stamp feed
+  events + decision commits — Groq-vs-DeepSeek is queryable from day one.
+- `backend/scripts/shadow_replay.py` + `outcome_labels.py` already exist to
+  gate the swap.
+
+### Implementation steps (when the funded key arrives)
+
+1. **Config** (`backend/config.py` + `.env.example`) — re-add the DeepSeek
+   block removed in the 2026-08-27 bug audit: `DEEPSEEK_API_KEY`,
+   `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`), `DEEPSEEK_MODEL`
+   (V4 Flash id — read the exact id + current prices from DeepSeek's pricing
+   page at implementation time, per docs/08 §1), `DEEPSEEK_TIMEOUT_SECONDS`
+   (12), `DEEPSEEK_MAX_TOKENS` (192). Add a `MAIN_LLM_PROVIDER` selector
+   (`groq` | `deepseek`, default `groq`) so the swap is a reversible .env
+   flip; keep `GROQ_*` as the warm rollback path.
+2. **Client** (`backend/llm/client.py`) — add `DeepSeekClient(LLMClient)`
+   (provider="deepseek", `is_main=True`) mirroring `MainGroqClient`, plus a
+   `build_main_client()` factory keyed on `MAIN_LLM_PROVIDER`. Extend
+   `_estimate_cost()` with a DeepSeek branch (peak/off-peak rates plus the
+   discounted cached-input rate; cache-token plumbing already exists). Make
+   the main-client timeout in `complete_json` provider-aware (today it is
+   hardcoded to `GROQ_TIMEOUT_SECONDS`). Non-thinking mode only — no
+   reasoning mode in the hot path until an offline benchmark proves a
+   measurable gain (docs/08 §1).
+3. **Thinker** (`backend/llm/thinker.py`) — `Thinker.__init__` takes
+   `build_main_client()`; replace the hardcoded `groq:{GROQ_MODEL}` source
+   label with `f"{provider}:{model}"`. Fail-closed fallback untouched: any
+   failure still degrades to a template `pass` that may explain but never
+   approve.
+4. **Narrator + reflections** (`backend/llm/narrator.py`) — same client swap
+   for `Narrator._main_llm` and `generate_reflection()`; same source-label
+   treatment. Optional refinement per docs/08 §5: skip non-urgent reflections
+   during DeepSeek peak windows.
+5. **Dashboard** (`backend/api/routes/system_status.py`) — `narration_mode`
+   reports the active main provider (`deepseek` | `groq` | `template`)
+   instead of the hardcoded `"groq"`.
+6. **Social** (`backend/llm/social.py`) — ZERO changes.
+7. **Tests** — the 231-test suite stays green untouched (pytest forces mock →
+   template path, no provider calls); add unit tests for `DeepSeekClient`
+   construction, the peak/off-peak + cache cost branches, factory selection,
+   and the `narration_mode` label.
+
+### Gate before flipping the default (docs/08 §8–§9)
+
+1. Run `shadow_replay.py` over sealed snapshots, DeepSeek vs Groq: ≥99%
+   valid structured JSON, p95 latency inside the tick budget, verdict
+   agreement, per-call cost.
+2. Prove the fallbacks: provider down / timeout / malformed JSON / 429 /
+   quota exhaustion → template degradation, zero trading-state effect.
+3. Verify every `llm_call_usage` row carries tokens + estimated cost and
+   daily spend stays under budget.
+4. Only then set `MAIN_LLM_PROVIDER=deepseek` in `.env` and restart. Groq
+   stays warm as rollback.
+
+### Invariants that do not move
+
+- DeepSeek `buy` remains a veto/input only: entry still requires
+  `think.verdict == "buy"` AND all ten rules. The LLM never opens, closes,
+  or sizes anything; no API failure can move money.
+- Social reads stay evidence-only on Groq and can never flip a verdict.
+- `PAPER_TRADING_ONLY=True` hardcoded; `live_execution` stays disarmed.
+- Keys live only in the server `.env`; never in the repo, logs, or frontend.
+
+### After the swap
+
+Update §14 status, memory-bank (decisionLog / activeContext / progress),
+docs/07_PROJECT_REPORT.md LLM section, and any doc still saying Groq-is-main.
