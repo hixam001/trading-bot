@@ -4,22 +4,23 @@
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
-### De-brand + rename brain module `omo_brain.py` → `llm_brain.py` (2026-08-27)
-Operator directive: "omobrain.py should be llmbrain.py, remove any references to
-omo from the whole repo." Renamed `backend/llm/omo_brain.py`→`llm_brain.py` and
-de-branded every identifier (`OmoBrain`→`LLMBrain`, `OmoVerdict`→`LLMVerdict`,
-`parse_omo_tick`→`parse_llm_tick`, `OMO_SYSTEM`→`LLM_SYSTEM`,
-config `OMO_BRAIN*`→`LLM_BRAIN*`), test files (`test_omo_*`→`test_llm_brain` /
-`test_ref_r*`), and requirement ids (`OMO-R#`→`REF-R#`). Repo-wide replaced
-omo/omotrades branding with neutral "the reference"/"reference" prose across 54
-files (pure find/replace, 407/407 balanced). Removed the scratch
+### De-brand + rename brain module to `llm_brain.py` (2026-08-27)
+Operator directive: rename the brain module to `llmbrain.py` and remove any
+references to the upstream project's name from the whole repo. Renamed the brain
+module to `backend/llm/llm_brain.py` and de-branded every identifier (brain class
+→ `LLMBrain`, verdict type → `LLMVerdict`, parser → `parse_llm_tick`, system
+prompt → `LLM_SYSTEM`, config → `LLM_BRAIN*`), the test files (→ `test_llm_brain`
+/ `test_ref_r*`), and the requirement ids (→ `REF-R#`). Repo-wide replaced the
+upstream project's branding with neutral "the reference"/"reference" prose across
+54 files (pure find/replace, 407/407 balanced). Removed the scratch
 `backend/scripts/verify_reference_commit.py` (only verified the reference's
 external on-chain preimages; not imported anywhere). KEPT `fomo`/`FOMO` (the
 crowd-board product), `promotion`/`promotion_gate`, and token tickers
-(BLOSSOM/SEAL) — all unrelated to the brand. `omo-commit-v1` was never our commit
-scheme (we hash `sha256(nonce|canonical)` with no prefix), so it only lived in the
-removed verifier + two reference docs. All **289 tests pass**; backend restarted
-clean on the renamed module (0 import errors, 0 tracebacks).
+(BLOSSOM/SEAL) — all unrelated to the brand. The reference's `commit-v1` memo
+prefix was never our commit scheme (we hash `sha256(nonce|canonical)` with no
+prefix), so it only lived in the removed verifier + two reference docs. All
+**289 tests pass**; backend restarted clean on the renamed module (0 import
+errors, 0 tracebacks).
 
 ## DONE
 ### Reference-style brain — ported the reference repository's LLM reasoning layer (handoff §21) (2026-08-27)

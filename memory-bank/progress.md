@@ -1,13 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
-- [x] De-brand + rename brain module (2026-08-27): `backend/llm/omo_brain.py`→`llm_brain.py`
-      and every identifier de-branded (`OmoBrain`→`LLMBrain`, `parse_omo_tick`→`parse_llm_tick`,
-      `OMO_SYSTEM`→`LLM_SYSTEM`, config `OMO_BRAIN*`→`LLM_BRAIN*`, `OMO-R#`→`REF-R#`);
-      test files `test_omo_*`→`test_llm_brain`/`test_ref_r*`; removed scratch
-      `verify_reference_commit.py`. Repo-wide omo/omotrades→"the reference"/"reference"
-      across 54 files (407/407 balanced). Kept `fomo`/`promotion`/token tickers (not the brand).
-      289 tests pass; backend restarted clean on the renamed module (0 import errors).
+- [x] De-brand + rename brain module (2026-08-27): brain module renamed to
+      `backend/llm/llm_brain.py` and every identifier de-branded (brain class → `LLMBrain`,
+      parser → `parse_llm_tick`, system prompt → `LLM_SYSTEM`, config → `LLM_BRAIN*`,
+      requirement ids → `REF-R#`); test files → `test_llm_brain`/`test_ref_r*`; removed
+      scratch `verify_reference_commit.py`. Repo-wide upstream-branding → "the
+      reference"/"reference" across 54 files (407/407 balanced). Kept `fomo`/`promotion`/
+      token tickers (not the brand). 289 tests pass; backend restarted clean on the
+      renamed module (0 import errors).
 - [x] Reference-style brain (handoff §21): ported the reference repository's LLM *reasoning layer*
       into `backend/llm/llm_brain.py` — role-based router (honest resolution +
       fallback + unsupported-model bench), brain tick prompt (decision buckets,
