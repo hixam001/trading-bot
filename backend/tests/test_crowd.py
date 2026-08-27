@@ -530,3 +530,30 @@ def test_stealth_timeout_matches_reference_budget():
     # what let one dead provider stall a whole tick for ~15 minutes
     assert crowd._STEALTH_TIMEOUT.read == 25.0
     assert crowd._STEALTH_TIMEOUT.connect == 25.0
+
+
+async def test_scrapingdog_forwards_privy_bearer(monkeypatch):
+    """ScrapingDog custom_headers=true must forward the Privy bearer to the
+    origin (ScrapingDog docs: pass the headers on the request + custom_headers
+    =true, no extra cost). Mirrors the ScrapeOps keep_headers pattern that is
+    verified live to carry the bearer through prod-api Cloudflare."""
+    monkeypatch.setattr(config, "SCRAPINGDOG_API_KEY", "sd-key")
+    seen = {}
+
+    class CaptureClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            seen["url"] = url
+            seen["headers"] = headers or {}
+            return FakeResponse(200, text='{"responseObject": {"items": []}}')
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", CaptureClient)
+
+    out = await crowd._scrape_scrapingdog(
+        "https://prod-api.fomo.family/x",
+        {"authorization": "Bearer privy-token", "user-agent": "ua"})
+    assert out is not None
+    assert "custom_headers=true" in seen["url"]
+    assert "api_key=sd-key" in seen["url"]
+    # the bearer is forwarded as a request header to the provider
+    assert seen["headers"].get("authorization") == "Bearer privy-token"
+

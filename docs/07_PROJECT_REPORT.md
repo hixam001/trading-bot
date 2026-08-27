@@ -6,8 +6,9 @@ Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
 risk budget × closed-loop conviction) implemented 2026-08-27; dead-provider
-fail-fast shipped 2026-08-27 (handoff §24).** Tests:
-**337 passing**.
+fail-fast (handoff §24) + fresh scraper keys & ScrapingDog bearer-forwarding
+(handoff §25) shipped 2026-08-27.** Tests:
+**338 passing**.
 
 ---
 
@@ -232,7 +233,7 @@ cash writes, cap refusal, and flag assertion.
 | Birdeye | memepool trending discovery; decimals; token_security | free tier 401s on security → session auto-disable, fields stay UNKNOWN |
 | Dexscreener | all rule numerics per mint: 1h volume/change, buys/sells, liquidity, mcap, pair age, socials | deepest pair chosen; field names confirmed against real payloads |
 | Jupiter (lite-api) | execution-quality price for exits/holdings | decimals-aware; fails closed without them |
-| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); the last two forward the Privy bearer through Cloudflare (verified live); a credit-exhausted provider (HTTP 402) is benched 30 min while a merely rate-limited one (HTTP 429) takes only a short ~75s backoff, and the provider's own error reason is logged; a provider that fails transport (timeout/connect) twice in a row is benched like a 402 so a dead scraper can never stall a tick (handoff §24) |
+| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → scrapingdog(custom_headers) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); all except scrapingbee forward the Privy bearer through Cloudflare (firecrawl/scrapeops verified live); a credit-exhausted provider (HTTP 402) is benched 30 min while a merely rate-limited one (HTTP 429) takes only a short ~75s backoff, and the provider's own error reason is logged; a provider that fails transport (timeout/connect) twice in a row is benched like a 402 so a dead scraper can never stall a tick (handoff §24); fresh Firecrawl/ScrapeOps keys restored real crowd heat 2026-08-27 (§25) |
 | Mock | full offline parity incl. threshold edge cases | default backend |
 
 All external calls: 15s timeout, ≤3 retries with backoff, distinct longer
@@ -326,7 +327,7 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 11. Testing & verification
 
-**289 backend tests passing** (<2s, fully hermetic): both branches of all
+**290 backend tests passing** (<2s, fully hermetic): both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
@@ -346,11 +347,12 @@ inputs, at-cost marking, ticket clamps, derived daily-ceiling refusal
 through a real tick, stats_json merge persistence, disclosure blocks);
 REF-R9 calibration suite (12 tests: FLAT/caps/floors/confidence pull/
 hand-computed mixed book, never-raises on garbage);
-crowd dead-provider fail-fast suite (6 tests: 2-consecutive-timeout bench,
+crowd dead-provider fail-fast suite (7 tests: 2-consecutive-timeout bench,
 single-timeout transient, success resets streak, firecrawl transport error
 fails soft + benches, direct-get retries transport once but never a 403,
-stealth timeout == 25s reference budget).
-48 live_execution tests (**337 combined** via root pytest.ini). The live
+stealth timeout == 25s reference budget, ScrapingDog custom_headers forwards
+the Privy bearer).
+48 live_execution tests (**338 combined** via root pytest.ini). The live
 execution bridge is wired
 and remains disarmed; its offline/mock flow covers execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.

@@ -1,6 +1,6 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (dead-provider fail-fast shipped: transport-error benching + 25s stealth-timeout parity; REF-R8 + REF-R9 reference-parity batch 2 complete).**
+**As of 2026-08-27 (fresh scraper keys activated — Firecrawl/ScrapeOps serving real crowd heat; ScrapingDog wired to forward the Privy bearer; dead-provider fail-fast in place).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
@@ -429,14 +429,15 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
 - ⚠ TERMINAL: login shell is FISH — no `$?`, no heredocs; `bash -c` quoting
   breaks silently. Write bash scripts to files; read outputs from /tmp files.
 - pytest canonical: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- Suite now: backend 289, combined root 337 (root pytest.ini asyncio_mode)
+- Suite now: backend 290, combined root 338 (root pytest.ini asyncio_mode)
 - isolation grep (backend must not mention live_execution) must stay clean
 - .env.example documents ALL env fields incl. crowd-feed keys; user has
   FOMO_PRIVY_REFRESH_TOKEN + FIRECRAWL_API_KEY filled
-- ⚠ CROWD HEAT: Firecrawl + ZenRows are 402 credit-exhausted (benched). REAL
-  crowd heat needs a Firecrawl top-up — the chain self-heals, no code change.
-  Dead providers now bench after 2 consecutive transport errors (handoff §24),
-  so a dead scraper can never stall a tick again.
+- ⚠ CROWD HEAT: fresh keys added 2026-08-27 (handoff §25) — Firecrawl (primary)
+  + ScrapeOps (failover) now serve REAL crowd heat. ZenRows still 402-exhausted
+  (optional renewal). ScrapingBee ReadTimeouts (can't forward bearer) and
+  ScrapingDog 403 (plan/Cloudflare) are harmless backups. Dead providers bench
+  after 2 consecutive transport errors (handoff §24), so none can stall a tick.
 
 
 ### Security audit + Supabase prep (this batch)

@@ -1,3 +1,22 @@
+## Memory-bank update - 2026-08-27 (fresh scraper keys session)
+
+- **Operator added new keys** to the repo-root `.env` (what `load_dotenv()`
+  resolves from `backend/`): Firecrawl, ScrapingBee, ScrapingDog, ScrapeOps.
+  ZenRows unchanged (still 402-exhausted). Backend restarted to load keys +
+  clear in-memory benches.
+- **Code**: `_scrape_scrapingdog` was wired but did NOT forward the Privy
+  bearer (prod-api requires it). ScrapingDog docs confirm `custom_headers=true`
+  + headers-on-request (same as ScrapeOps keep_headers, no extra cost). Now
+  appends `&custom_headers=true` and passes `fwd_headers=dict(headers)`.
+- **Live-verified**: Firecrawl (new key) 15× 200 OK = real crowd heat restored;
+  ScrapeOps (new key) 1× 200 OK failover (caught a transient firecrawl 500);
+  0 tracebacks; no 15-min stalls.
+- **Per-provider**: Firecrawl ✅ primary · ScrapeOps ✅ failover · ScrapingBee
+  ⚠ ReadTimeout (can't forward bearer) · ScrapingDog ⚠ 403 (plan/Cloudflare;
+  backup, fails soft) · ZenRows ❌ 402 exhausted.
+- **Tests: 338 combined passing** (backend 290 + live_execution 48; +1
+  `test_scrapingdog_forwards_privy_bearer`).
+
 ## Memory-bank update - 2026-08-27 (dead-provider fail-fast session)
 
 - **Reference fomo-path audit** (verbatim from its source): primary = Privy

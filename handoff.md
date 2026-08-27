@@ -1351,3 +1351,47 @@ Verbatim from its source — nothing exotic, and we already had both paths:
 - Jupiter `lite-api` 429s in the exit loop are a separate pre-existing
   rate-limit, unrelated to this fix.
 
+
+## 25. Fresh scraper keys activated + ScrapingDog bearer-forwarding (2026-08-27)
+
+### Operator action
+New API keys added to the **repo-root `.env`** (the file `config.py`'s
+`load_dotenv()` resolves by walking up from `backend/`) for **Firecrawl,
+ScrapingBee, ScrapingDog, and ScrapeOps**. ZenRows key left unchanged (still
+at its usage limit). Backend restarted to load the new keys and clear the
+in-memory bench state.
+
+### Code change — ScrapingDog now forwards the Privy bearer
+`_scrape_scrapingdog` was wired into the chain but did NOT forward headers, so
+even a fresh key could not read `prod-api` (which requires the Privy bearer).
+ScrapingDog's docs confirm the mechanism is identical to ScrapeOps: enable
+`custom_headers=true` and pass the headers on the request (no extra cost). So
+the template now appends `&custom_headers=true` and passes
+`fwd_headers=dict(headers)` — mirroring the ScrapeOps `keep_headers` pattern
+that is verified live to carry the bearer through Cloudflare. +1 regression
+test (`test_scrapingdog_forwards_privy_bearer`).
+
+### Live verification (after restart)
+- **Firecrawl (new key): 15× `200 OK`** — real crowd heat restored, primary path.
+- **ScrapeOps (new key): 1× `200 OK`** — caught the one candidate where
+  Firecrawl returned a transient `500`; the failover chain cascaded
+  firecrawl→scrapingbee→scrapingdog→zenrows→scrapeops exactly as designed.
+- **0 tracebacks**; no 15-min stalls (dead providers bench fast per §24).
+- Direct `prod-api` GETs all `403` (Cloudflare firewall — expected).
+
+### Per-provider status
+| Provider | Key | Result | Note |
+|---|---|---|---|
+| Firecrawl | new | ✅ 200 OK | primary; occasional transient 500 (fails over) |
+| ScrapingBee | new | ⚠ ReadTimeout | can't forward bearer anyway; benches after 2 |
+| ScrapingDog | new | ⚠ 403 | `custom_headers=true` now wired; 403 = either the key's plan excludes the Web-Scraping API or the base proxy can't pass Cloudflare (may need premium proxy). Backup hop; fails soft |
+| ZenRows | unchanged | ❌ 402 | usage limit; benched 30 min |
+| ScrapeOps | new | ✅ 200 OK | verified failover |
+
+### Status / next
+- Real crowd heat is LIVE again via Firecrawl (+ ScrapeOps backup).
+- If ScrapingDog's 403 persists and you want it as a usable hop: confirm the
+  key includes the Web-Scraping API, or add a premium-proxy param (costs more
+  credits/req). Not required — Firecrawl + ScrapeOps already cover it.
+- ZenRows stays exhausted until renewed (optional).
+

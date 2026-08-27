@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] Fresh scraper keys activated + ScrapingDog bearer-forwarding (handoff
+      §25): new Firecrawl/ScrapingBee/ScrapingDog/ScrapeOps keys in root .env
+      (ZenRows unchanged/exhausted); backend restarted to load them + clear
+      benches. `_scrape_scrapingdog` now appends `custom_headers=true` and
+      forwards the Privy bearer (ScrapingDog docs: same mechanism as ScrapeOps
+      keep_headers, no extra cost). Live-verified: Firecrawl 15× 200 OK (real
+      crowd heat restored), ScrapeOps 1× 200 OK failover, 0 tracebacks. +1 test
+      (2026-08-27)
 - [x] Dead-provider fail-fast + reference fomo-path audit (handoff §24):
       transport-error benching (`_CONSECUTIVE_ERRORS`, 2-in-a-row → bench like
       a 402, any response resets the streak) so a dead scraper can never stall
@@ -122,8 +130,9 @@
   it also ReadTimeouts on stealth reads — now benched after 2 consecutive
   transport errors so it can't stall ticks (handoff §24)
 - ZenRows premium tier costs ~10–25 credits/request (required for prod-api)
-- ⚠ Firecrawl + ZenRows are 402 credit-exhausted (benched). REAL crowd heat
-  needs a Firecrawl top-up — the stealth chain self-heals, no code change.
+- ⚠ ZenRows is 402 credit-exhausted (benched; optional renewal). Firecrawl +
+  ScrapeOps got fresh keys 2026-08-27 and now serve REAL crowd heat (handoff
+  §25). ScrapingBee ReadTimeouts and ScrapingDog 403 are harmless backups.
 - Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
   delete the file to re-pin after a legitimate cert rotation
 
@@ -158,5 +167,5 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 337 combined passing** (backend 289 + live_execution 48; +6 crowd
-dead-provider fail-fast this batch).
+**Tests: 338 combined passing** (backend 290 + live_execution 48; +1 ScrapingDog
+bearer-forwarding this batch).

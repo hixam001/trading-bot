@@ -494,11 +494,17 @@ async def _scrape_scrapingbee(url: str, headers: dict) -> Optional[dict]:
 
 
 async def _scrape_scrapingdog(url: str, headers: dict) -> Optional[dict]:
+    """custom_headers=true forwards our caller headers (incl. the Privy
+    bearer) to the origin — ScrapingDog docs: enable with custom_headers=true,
+    pass the headers on the request, no extra cost. Same mechanism as ScrapeOps
+    keep_headers, which is verified live to carry the bearer through
+    Cloudflare. dynamic=false stays: prod-api returns JSON, no JS render needed
+    (cheaper)."""
     return await _scrape_get_template(
         "scrapingdog",
         "https://api.scrapingdog.com/scrape?api_key={api_key}&url={url}"
-        "&dynamic=false",
-        config.SCRAPINGDOG_API_KEY, url)
+        "&dynamic=false&custom_headers=true",
+        config.SCRAPINGDOG_API_KEY, url, fwd_headers=dict(headers))
 
 
 async def _scrape_zenrows(url: str, headers: dict) -> Optional[dict]:
