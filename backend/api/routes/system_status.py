@@ -24,7 +24,7 @@ async def get_system_status(request: Request):
         "data_backend": config.DATA_BACKEND,
         "ollama_reachable": ollama_ok,
         "model": config.MODEL_NAME,
-        "narration_mode": "deepseek" if config.DATA_BACKEND == "live" else "template",
+        "narration_mode": "groq" if config.DATA_BACKEND == "live" else "template",
         "provider_calls_today": providers,
         "llm_usage_recent": llm_usage,
         "tick_interval_seconds": config.TICK_INTERVAL_SECONDS,

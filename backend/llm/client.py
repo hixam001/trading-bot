@@ -1,4 +1,4 @@
-"""Shared OpenAI-compatible JSON client with DeepSeek, Groq, and Template adapters."""
+"""Shared OpenAI-compatible JSON client with Groq (main) and Groq (social) adapters."""
 from __future__ import annotations
 
 import hashlib
@@ -47,18 +47,9 @@ def _is_peak_window() -> bool:
     return False
 
 def _estimate_cost(provider: str, input_tokens: int, output_tokens: int, cache_tokens: int, is_peak: bool) -> float:
-    if provider == "deepseek":
-        # $0.22 / 1M cache-miss input, $0.66 / 1M output (off-peak)
-        # cache-hit input is $0.007 / 1M
-        # Peak rates are double
-        mult = 2.0 if is_peak else 1.0
-        in_cost = (input_tokens / 1_000_000.0) * 0.59 * mult
-        out_cost = (output_tokens / 1_000_000.0) * 0.79 * mult
-        cache_cost = (cache_tokens / 1_000_000.0) * 0.0 * mult
-        return in_cost + out_cost + cache_cost
-    elif provider == "groq":
-        # Groq Llama 3 70B: ~$0.59/1M input, $0.79/1M output
-        return (input_tokens / 1_000_000.0) * 0.59 + (output_tokens / 1_000_000.0) * 0.79
+    # Groq qwen3.8-27b pricing: ~$0.80/1M input, $4.00/1M output (approximate)
+    if provider == "groq":
+        return (input_tokens / 1_000_000.0) * 0.80 + (output_tokens / 1_000_000.0) * 4.00
     return 0.0
 
 

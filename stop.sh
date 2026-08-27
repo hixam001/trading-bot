@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ============================================================================
-# Stops what start.sh launched: backend (+ tick loop), the frontend build is
+# Stops what start.sh launched: backend (+ tick loop). The frontend build is
 # served by the backend so nothing separate to stop there.
 # ============================================================================
 set -u
@@ -28,7 +28,6 @@ stop_pidfile() {
 }
 
 stop_pidfile "$RUN/backend.pid" "backend + tick loop"
-
 
 # Sweep any stray backend of ours (e.g. after an unclean reboot).
 if pgrep -f "uvicorn api.main:app" >/dev/null 2>&1; then

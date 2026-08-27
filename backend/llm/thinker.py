@@ -11,7 +11,7 @@ think→gate intersection omotrades runs. Either side alone refuses, and the
 refusal is journalled as loudly as an entry.
 
 Fail-closed by design:
-    * DeepSeek unreachable / unparsable output -> deterministic template
+    * Groq unreachable / unparsable output -> deterministic template
         explanation with verdict forced to 'pass'.
   * DATA_BACKEND=mock always uses the template thinker — tests never touch
     Ollama.
@@ -62,7 +62,7 @@ class ThinkResult:
     thesis: str
     invalidation: str
     verdict: str                     # "buy" | "pass"
-    source: str                      # "deepseek:<model>" | "template" | "degraded:*"
+    source: str                      # "groq:<model>" | "template" | "degraded:*"
     grounding_flags: list[str] = field(default_factory=list)
     break_taking: bool = False
     break_minutes: int = 0
@@ -165,7 +165,7 @@ def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str, dict]]:
 
 
 class Thinker:
-    """OMO think stage using DeepSeek with a fail-closed fallback."""
+    """OMO think stage using Groq with a fail-closed fallback."""
 
     def __init__(self) -> None:
         self._main_llm = MainGroqClient()
@@ -192,7 +192,7 @@ class Thinker:
             thesis, invalidation, verdict, break_obj = parsed
             return ThinkResult(
                 thesis, invalidation, verdict,
-                source=f"deepseek:{config.DEEPSEEK_MODEL}",
+                source=f"groq:{config.GROQ_MODEL}",
                 break_taking=bool(break_obj.get("taking")),
                 break_minutes=int(break_obj.get("minutes") or 0),
                 break_reason=str(break_obj.get("reason") or ""),

@@ -11,7 +11,7 @@ Hard rules for this module:
     rule list; flags are recorded on the feed event, never silently dropped.
 
 Two backends:
-    - deepseek — direct API JSON completion via a persistent client. Live mode
+    - groq — direct API JSON completion via a persistent client. Live mode
                              only. The model narrates an already-decided result.
   - template — deterministic synthesizer used in mock mode or when Ollama is
                unreachable. Grounded BY CONSTRUCTION (it only formats the
@@ -50,7 +50,7 @@ Do not mention any check not listed above. /no_think"""
 class NarrationResult:
     def __init__(self, thesis: str, source: str, grounding_flags: list[str], llm_usage: Optional[LLMResult] = None):
         self.thesis = thesis
-        self.source = source                    # "ollama:<model>" | "template"
+        self.source = source                    # "groq:<model>" | "template"
         self.grounding_flags = grounding_flags
         self.llm_usage = llm_usage
 
@@ -145,7 +145,7 @@ class Narrator:
     async def narrate(self, gate: GateDecision) -> NarrationResult:
         """
         Mock mode: template only (fully offline, deterministic).
-        Live mode: DeepSeek first, template fallback when unreachable/empty.
+        Live mode: Groq first, template fallback when unreachable/empty.
         """
         detail_strings = [r.detail for r in gate.rules]
         rule_ids = [r.rule_id for r in gate.rules]
@@ -160,7 +160,7 @@ class Narrator:
                 json_mode=False,
             )
             thesis = result.text if result else None
-            source = f"deepseek:{config.DEEPSEEK_MODEL}" if thesis else ""
+            source = f"groq:{config.GROQ_MODEL}" if thesis else ""
             llm_usage = result
 
         if not thesis:

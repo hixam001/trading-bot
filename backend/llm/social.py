@@ -138,7 +138,8 @@ async def enrich_social(
         if isinstance(res, Exception) or res is None:
             continue
         cand.social_interest, cand.social_note, usage = res
-        usage.mint_address = cand.mint_address # Attach mint to LLMResult
+        # Store mint alongside the usage for the DB insert in main.py
+        setattr(usage, "mint_address", cand.mint_address)
         usages.append(usage)
         applied += 1
     if applied:
