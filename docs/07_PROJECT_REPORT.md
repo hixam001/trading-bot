@@ -245,13 +245,25 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 8. LLM layer
 
+- **Provider:** Groq API (`qwen/qwen3.8-27b`) via the shared `MainGroqClient`
+  (OpenAI-compatible). No local Ollama required.
+- **Thinker** (pre-trade, every candidate): reads the candidate tape and
+  writes `{thesis, invalidation, verdict}` before any rule runs. Verdict
+  must be `"buy"` AND every rule must pass for entry. Fail-closed: any
+  provider failure degrades to a deterministic template `pass` refusal.
 - **Narration** (every decision): verdict pre-decided; prompt contains only
-  rule results; qwen3 thinking disabled; output validated for emptiness +
-  groundedness (rule-derived vocabulary check, invented-rule check, numeric
-  echo check). Flags are recorded on the feed event — never dropped.
+  rule results; output validated for emptiness + groundedness (rule-derived
+  vocabulary check, invented-rule check, numeric echo check). Flags are
+  recorded on the feed event — never dropped.
+- **Social reads** (evidence only, `GroqClient`): classifies attention as
+  `organic|peaked|unclear` and returns one grounded sentence per candidate.
+  Never produces a verdict; only the thinker+gate decide.
 - **Reflection** (after close): fire-and-forget async task, stored on the
   trade, shown in the journal.
-- **Advisory deep-dive**: later phase by design; may lower confidence,
+- **Instrumentation:** every LLM call records provider, model, task, latency
+  (ms), input/output/total tokens, estimated cost (USD), peak-window flag,
+  and degradation reason into the `llm_call_usage` table.
+- **Advisory deep-dive:** later phase by design; may lower confidence,
   never flip a verdict.
 
 ## 9. Knowledge base, learning loop, promotion gate

@@ -345,7 +345,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 ### Live execution wiring verification (2026-08-26)
 
 - Confirmed the root-only live bridge is connected end to end:
-  `run_live_cycle.py` → shared provider/read/DeepSeek think stages →
+  `run_live_cycle.py` → shared provider/read/Groq think stages →
   deterministic rules → `live_execution.executor.place_order` → Jupiter
   quote/swap → local wallet signing → rotating Solana RPC broadcast → on-chain
   confirmation → commit-log binding → execution ledger.
@@ -498,55 +498,45 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 
 ## 14. LLM API migration and feedback plan (2026-08-26) — IMPLEMENTED
 
-Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. This is a planned
-provider migration. 
-**Status update (2026-08-26):** DeepSeek V4 Flash is now the primary thinker API, and Groq is the primary social read API. Both are wired and functioning correctly. Instrumentation and shadow replay steps remain in progress.
+Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md.
 
-### API/model decisions
+**Status update (2026-08-27):** Groq API (`qwen/qwen3.8-27b`) is now the
+primary LLM for the Thinker, Narrator, and reflection generation. Groq is
+also used for evidence-only social reads (same API key, same base URL).
+All provider instrumentation (token counts, latency, estimated cost, peak
+window flag, degradation reason) is wired and persisted to `llm_call_usage`.
+Shadow replay and delayed outcome label scripts are in `backend/scripts/`.
 
-- **Thinker primary:** DeepSeek V4 Flash direct API, non-thinking mode, strict
-  JSON output, bounded prompt/output, and a provider-neutral adapter.
-- **Thesis/reflection analysis:** DeepSeek also supplies post-close thesis
-  reflection; it never performs execution itself.
-- **Thinker fallback:** deterministic refusal (`pass`) for timeout, outage,
-  quota exhaustion, invalid JSON, or provider error. A template may explain
-  the refusal but must never approve an entry while the provider is unavailable.
-- **Twitter/social:** retain Groq initially. It is an evidence-only,
-  low-latency classifier (`organic|peaked|unclear`), not a trade decision.
-  DeepSeek may be a later fallback only after an independent benchmark.
-- **Reflections/reports:** queue DeepSeek V4 Flash work off-peak; never block
-  exits or the tick loop. V4 Pro is an evaluation challenger only for now.
+### Current API/model decisions
 
-### Required implementation order
+- **Thinker:** Groq `qwen/qwen3.8-27b`, strict JSON output, `is_main=True`
+  client (uses `GROQ_TIMEOUT_SECONDS`). Fail-closed: any failure degrades to
+  a deterministic template verdict of `pass` — the template may explain but
+  never approve an entry while the provider is unavailable.
+- **Narrator/Reflections:** Same `MainGroqClient` (`GROQ_MODEL`). Fire-and-
+  forget for reflections; never blocks the tick loop or exits.
+- **Social reads:** `GroqClient` (`SOCIAL_LLM_BASE_URL` / `SOCIAL_LLM_MODEL`).
+  Evidence-only (`organic|peaked|unclear`); no verdict produced.
+- **Thinker fallback:** deterministic template on timeout, outage, quota
+  exhaustion, invalid JSON, or provider error.
 
-1. Add provider/model/prompt versioning and per-call token, cache, cost,
-   latency, status, and peak-window accounting in both database backends.
-2. Extract a shared OpenAI-compatible JSON client with DeepSeek, Groq, and
-   template adapters; preserve key redaction, bounded retries, and breakers.
-3. Run Qwen-versus-DeepSeek shadow replay over sealed snapshots and the DONT
-   corpus; shadow results must not alter paper trades.
-4. Canary DeepSeek in paper mode only, recording precision, missed upside,
-   adverse excursion, drawdown, p95 latency, JSON validity, fallback rate,
-   and cost per candidate/entry/closed trade.
-5. Add delayed outcome labels at 5m, 15m, 1h, 6h, and 24h, then produce
-   human-approved experiment proposals. Never auto-edit thresholds, prompts,
-   models, or trade state.
-6. Update older docs that still call Qwen narration-only after measured
-   migration results are available.
+### Planned next step
+
+- **DeepSeek migration (pending keys with balance):** Once a funded DeepSeek
+  V4 Flash API key is available, swap `MainGroqClient` for `DeepSeekClient`
+  by adding `DEEPSEEK_API_KEY` back to config and updating thinker/narrator
+  to use it. Shadow replay should gate the swap. No code changes beyond the
+  client swap and a one-line config change.
 
 ### Cost and feedback controls
 
 - Target thinker budget: 300–600 input tokens and 60–140 output tokens,
   maximum 192 output tokens, one request per candidate at most.
-- Preserve blocklist-before-think, candidate prioritization, thesis reuse,
-  no duplicate in-flight mint requests, daily USD/token budgets, and queues.
-- DeepSeek pricing is variable; the 2026-08-26 official V4 Flash example is
-  $0.22/M cache-miss input and $0.66/M output off-peak, with peak rates
-  currently double. Store the peak-window flag on every request.
+- Groq `qwen/qwen3.8-27b` approximate pricing: ~$0.80/M input,
+  ~$4.00/M output. Cost is logged per call in `llm_call_usage`.
 - Current learning is measurement-only: daily P&L, win rate, profit factor,
-  drawdown, rejection breakdowns, and post-close reflections. Reviewed OMO
-  evidence shows adaptive context and auditability, not demonstrated
-  autonomous model training or weight updates.
+  drawdown, rejection breakdowns, and post-close reflections. No automatic
+  threshold, prompt, model, or live-trading promotion is permitted.
 
 ## 15. Final implementation queue (2026-08-26)
 

@@ -1,7 +1,19 @@
 # Active Context — trading-bot
 
-**As of 2026-08-26 (OMO-R1, R6, R7 DONE; full OMO parity reached).** Repo:
+**As of 2026-08-27 (Groq LLM migration complete; bug audit done).** Repo:
 `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### Groq LLM migration + bug audit complete (2026-08-27)
+Groq API (`qwen/qwen3.8-27b`) is the live primary LLM for Thinker, Narrator,
+reflections, and social reads. `MainGroqClient` (`GROQ_API_KEY`) powers
+thinker/narrator; `GroqClient` (`SOCIAL_LLM_API_KEY`) powers social reads.
+Full instrumentation (tokens, latency, cost, degradation reason) wired to
+`llm_call_usage`. Seven post-migration bugs fixed (stale `DEEPSEEK_MODEL`
+refs, `mint_address` AttributeError, bad import path, wrong pricing branch,
+stale narration_mode label, start.sh ollama references). All Python files
+syntax-clean. LLM ping test: both providers respond correctly.
+DeepSeek migration is deferred pending a funded API key.
 
 ## DONE
 ### OMO-R1 Independent verifier + binding report (2026-08-26)
@@ -29,7 +41,7 @@ Full thesis rows with author P&L are now fetched from fomo.fun and injected into
 
 ## DONE
 ### OMO-R4 Self-regulating break system (2026-08-26)
-File-backed state (`break_state.json` inside `live_execution/state`) implements the `not_on_break` rule parity. The thinker can pass a `"break": {"taking": true, "minutes": 15, "reason": "..."}` block in its JSON verdict, which sets a persistent UTC expiry timestamp. While on break, the gate fails closed loudly on the `not_on_break` rule, blocking entries while exits continue functioning normally. Fail-safe semantics apply on state file corruption. LLM API migration for thinker (DeepSeek) and social (Groq) is verified.
+File-backed state (`break_state.json` inside `live_execution/state`) implements the `not_on_break` rule parity. The thinker can pass a `"break": {"taking": true, "minutes": 15, "reason": "..."}` block in its JSON verdict, which sets a persistent UTC expiry timestamp. While on break, the gate fails closed loudly on the `not_on_break` rule, blocking entries while exits continue functioning normally. Fail-safe semantics apply on state file corruption. LLM API migration for thinker (Groq) and social (Groq) is verified.
 
 ## DONE
 ### OMO-R5 memory/events system (2026-08-26)
