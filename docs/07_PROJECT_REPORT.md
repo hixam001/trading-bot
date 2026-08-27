@@ -4,7 +4,7 @@
 Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
-**OMO parity: ALL R1–R7 features implemented.** Tests: **231 passing**.
+**OMO parity: ALL R1–R7 features implemented.** Tests: **261 passing**.
 
 ---
 
@@ -15,9 +15,10 @@ assembles a candidate batch from real market data, computes a market-wide
 regime snapshot, and evaluates every candidate against **ten deterministic
 rules**. The AND of those rules is the *entire* entry decision. Open
 positions are checked against **three fixed numeric exit conditions** every
-tick. A Groq-hosted thinker (`qwen/qwen3.8-27b`) supplies pre-trade analysis
-with a fail-closed template fallback; Groq is also used for evidence-only
-social reads. The model does exactly two things: narrate
+tick. The main thinker/narrator LLM is provider-selectable via
+`MAIN_LLM_PROVIDER` — DeepSeek V4 Flash (direct API, non-thinking mode) or
+Groq (`qwen/qwen3.8-27b`) — with a fail-closed template fallback; Groq also
+powers the evidence-only social reads. The model does exactly two things: narrate
 decisions that were already made, and (later phase) add advisory flags that
 can never override a verdict. Every decision — pass or fail — is persisted
 with its full rule breakdown, narrated thesis, and grounding-check results,
@@ -245,8 +246,14 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 8. LLM layer
 
-- **Provider:** Groq API (`qwen/qwen3.8-27b`) via the shared `MainGroqClient`
-  (OpenAI-compatible). No local Ollama required.
+- **Provider:** the MAIN path (thinker, narrator, post-close reflections) is
+  a reversible `.env` flip via `MAIN_LLM_PROVIDER` (`groq` | `deepseek`,
+  default `groq`): `DeepSeekClient` (DeepSeek V4 Flash direct API,
+  non-thinking mode, JSON output, peak/off-peak + cache-aware cost model)
+  or `MainGroqClient` (`qwen/qwen3.8-27b`, warm rollback path). Both are
+  adapters of the shared provider-neutral `LLMClient` boundary
+  (`build_main_client()` factory; unrecognized values fail closed to Groq).
+  No local Ollama required.
 - **Thinker** (pre-trade, every candidate): reads the candidate tape and
   writes `{thesis, invalidation, verdict}` before any rule runs. Verdict
   must be `"buy"` AND every rule must pass for entry. Fail-closed: any
@@ -259,9 +266,13 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
   `organic|peaked|unclear` and returns one grounded sentence per candidate.
   Never produces a verdict; only the thinker+gate decide.
 - **Reflection** (after close): fire-and-forget async task, stored on the
-  trade, shown in the journal.
+  trade, shown in the journal. Never time-critical: when the main provider
+  is DeepSeek, reflections during peak windows (01:00–04:00 / 06:00–10:00
+  UTC weekdays) are skipped to the deterministic template instead of paying
+  2× peak rates (logged, never silent).
 - **Instrumentation:** every LLM call records provider, model, task, latency
-  (ms), input/output/total tokens, estimated cost (USD), peak-window flag,
+  (ms), input/output/total/cache-hit tokens, estimated cost (USD;
+  per-provider pricing snapshot id), peak-window flag,
   and degradation reason into the `llm_call_usage` table.
 - **Advisory deep-dive:** later phase by design; may lower confidence,
   never flip a verdict.
@@ -293,13 +304,18 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 11. Testing & verification
 
-**158 backend tests passing** (<2s, fully hermetic): both branches of all
+**213 backend tests passing** (<2s, fully hermetic): both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
 tick cycle with forced exits and exact cash-conservation arithmetic;
-Jupiter decimals regression tests pinning the 1000× fabrication bug.
-54 live_execution tests (212 combined). The live execution bridge is wired
+Jupiter decimals regression tests pinning the 1000× fabrication bug;
+LLM provider-swap suite (DeepSeek/Groq factory selection, peak/off-peak +
+cache-hit cost branches against hand-computed values, mocked
+`/chat/completions` usage parsing, fail-closed degradation never buying,
+`narration_mode` labels).
+48 live_execution tests (**261 combined** via root pytest.ini). The live
+execution bridge is wired
 and remains disarmed; its offline/mock flow covers execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.
 Live-verified separately: providers

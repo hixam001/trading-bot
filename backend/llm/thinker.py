@@ -1,8 +1,9 @@
 """
 llm/thinker.py — the omo-style THINK stage (operator decision 2026-08-23).
 
-Before any rule evaluation, qwen3 reads a candidate's tape and writes a
-structured pre-trade assessment:
+Before any rule evaluation, the main LLM (Groq or DeepSeek per
+MAIN_LLM_PROVIDER) reads a candidate's tape and writes a structured
+pre-trade assessment:
 
     {"thesis": "...", "invalidation": "...", "verdict": "buy" | "pass"}
 
@@ -11,7 +12,7 @@ think→gate intersection omotrades runs. Either side alone refuses, and the
 refusal is journalled as loudly as an entry.
 
 Fail-closed by design:
-    * Groq unreachable / unparsable output -> deterministic template
+    * Main provider unreachable / unparsable output -> deterministic template
         explanation with verdict forced to 'pass'.
   * DATA_BACKEND=mock always uses the template thinker — tests never touch
     Ollama.
@@ -29,7 +30,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 import config
-from llm.client import MainGroqClient, LLMResult
+from llm.client import build_main_client, LLMResult
 from models import Candidate
 
 log = logging.getLogger(__name__)
@@ -165,10 +166,11 @@ def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str, dict]]:
 
 
 class Thinker:
-    """OMO think stage using Groq with a fail-closed fallback."""
+    """OMO think stage using the configured main provider (Groq or DeepSeek,
+    selected by MAIN_LLM_PROVIDER) with a fail-closed fallback."""
 
     def __init__(self) -> None:
-        self._main_llm = MainGroqClient()
+        self._main_llm = build_main_client()
 
     async def aclose(self) -> None:
         await self._main_llm.aclose()
@@ -176,8 +178,8 @@ class Thinker:
     async def think(self, c: Candidate, memory_line: str = "") -> ThinkResult:
         """
         The pre-trade verdict. Mock mode -> template thinker (offline,
-        deterministic). Live mode -> MainGroqClient; any failure degrades to a
-        deterministic pass.
+        deterministic). Live mode -> the configured main client; any failure
+        degrades to a deterministic pass.
         """
         if config.DATA_BACKEND != "live":
             return template_think(c)
@@ -192,7 +194,7 @@ class Thinker:
             thesis, invalidation, verdict, break_obj = parsed
             return ThinkResult(
                 thesis, invalidation, verdict,
-                source=f"groq:{config.GROQ_MODEL}",
+                source=f"{self._main_llm.provider}:{self._main_llm.model}",
                 break_taking=bool(break_obj.get("taking")),
                 break_minutes=int(break_obj.get("minutes") or 0),
                 break_reason=str(break_obj.get("reason") or ""),

@@ -24,7 +24,9 @@ async def get_system_status(request: Request):
         "data_backend": config.DATA_BACKEND,
         "ollama_reachable": ollama_ok,
         "model": config.MODEL_NAME,
-        "narration_mode": "groq" if config.DATA_BACKEND == "live" else "template",
+        # Live mode narrates via whichever main provider is configured
+        # (MAIN_LLM_PROVIDER: deepseek | groq); mock mode is template-only.
+        "narration_mode": config.MAIN_LLM_PROVIDER if config.DATA_BACKEND == "live" else "template",
         "provider_calls_today": providers,
         "llm_usage_recent": llm_usage,
         "tick_interval_seconds": config.TICK_INTERVAL_SECONDS,

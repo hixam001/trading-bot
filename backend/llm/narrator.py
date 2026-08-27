@@ -11,11 +11,12 @@ Hard rules for this module:
     rule list; flags are recorded on the feed event, never silently dropped.
 
 Two backends:
-    - groq — direct API JSON completion via a persistent client. Live mode
-                             only. The model narrates an already-decided result.
-  - template — deterministic synthesizer used in mock mode or when Ollama is
-               unreachable. Grounded BY CONSTRUCTION (it only formats the
-               rule details it was handed).
+    - main provider — direct API JSON completion via a persistent client
+                (Groq or DeepSeek per MAIN_LLM_PROVIDER). Live mode only.
+                The model narrates an already-decided result.
+    - template — deterministic synthesizer used in mock mode or when the
+                provider is unreachable. Grounded BY CONSTRUCTION (it only
+                formats the rule details it was handed).
 """
 from __future__ import annotations
 
@@ -26,7 +27,7 @@ from typing import Optional
 import httpx
 
 import config
-from llm.client import MainGroqClient, LLMResult
+from llm.client import build_main_client, main_max_tokens, LLMResult, _is_peak_window
 from llm.grounding import validate_numbers, validate_thesis
 from models import GateDecision
 
@@ -50,7 +51,7 @@ Do not mention any check not listed above. /no_think"""
 class NarrationResult:
     def __init__(self, thesis: str, source: str, grounding_flags: list[str], llm_usage: Optional[LLMResult] = None):
         self.thesis = thesis
-        self.source = source                    # "groq:<model>" | "template"
+        self.source = source                    # "<provider>:<model>" | "template" | "degraded:*"
         self.grounding_flags = grounding_flags
         self.llm_usage = llm_usage
 
@@ -81,7 +82,7 @@ class Narrator:
 
     def __init__(self) -> None:
         self._client: Optional[httpx.AsyncClient] = None
-        self._main_llm = MainGroqClient()
+        self._main_llm = build_main_client()
         self._ollama_ok: Optional[bool] = None   # None = unchecked
 
     @property
@@ -145,7 +146,8 @@ class Narrator:
     async def narrate(self, gate: GateDecision) -> NarrationResult:
         """
         Mock mode: template only (fully offline, deterministic).
-        Live mode: Groq first, template fallback when unreachable/empty.
+        Live mode: the configured main provider first, template fallback when
+        unreachable/empty.
         """
         detail_strings = [r.detail for r in gate.rules]
         rule_ids = [r.rule_id for r in gate.rules]
@@ -160,7 +162,7 @@ class Narrator:
                 json_mode=False,
             )
             thesis = result.text if result else None
-            source = f"groq:{config.GROQ_MODEL}" if thesis else ""
+            source = f"{self._main_llm.provider}:{self._main_llm.model}" if thesis else ""
             llm_usage = result
 
         if not thesis:
@@ -207,19 +209,28 @@ async def generate_reflection(trade, rule_summary: str) -> str:
         pnl_pct=trade.realized_pnl_pct or 0.0,
     )
     if config.DATA_BACKEND == "live":
-        n = Narrator()
-        try:
-            result = await n._main_llm.complete_json(
-                task="reflection",
-                system_prompt="Reflect on the closed paper trade using only the supplied data.",
-                user_prompt=prompt,
-                budget=config.GROQ_MAX_TOKENS,
-                json_mode=False,
+        # Reflections are never time-critical (docs/08 §5): when the main
+        # provider is DeepSeek, skip non-urgent reflections during peak
+        # windows instead of paying 2x rates. Logged, never silent.
+        if config.MAIN_LLM_PROVIDER == "deepseek" and _is_peak_window():
+            log.info(
+                "reflection for %s skipped to template: deepseek peak window",
+                trade.symbol,
             )
-            if result and result.text:
-                return result.text
-        finally:
-            await n.aclose()
+        else:
+            n = Narrator()
+            try:
+                result = await n._main_llm.complete_json(
+                    task="reflection",
+                    system_prompt="Reflect on the closed paper trade using only the supplied data.",
+                    user_prompt=prompt,
+                    budget=main_max_tokens(),
+                    json_mode=False,
+                )
+                if result and result.text:
+                    return result.text
+            finally:
+                await n.aclose()
     pnl_pct = trade.realized_pnl_pct or 0.0
     return (
         f"[template reflection] Exited {trade.symbol} via {trade.exit_reason} "

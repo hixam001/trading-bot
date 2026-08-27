@@ -6,8 +6,9 @@
 # the browser. Idempotent: safe to click twice; already-running parts are
 # reused. Use ./stop.sh to stop what this script started.
 #
-# LLM: Groq API (qwen/qwen3.8-27b) for Thinker, Narrator, and Social reads.
-#      Set GROQ_API_KEY and SOCIAL_LLM_API_KEY in .env before starting.
+# LLM: main provider (Thinker/Narrator/reflections) is selected by
+#      MAIN_LLM_PROVIDER in .env: "deepseek" (DeepSeek V4 Flash direct API)
+#      or "groq" (qwen/qwen3.8-27b). Social reads always use SOCIAL_LLM_*.
 #      No local Ollama required.
 # ============================================================================
 set -u
@@ -25,10 +26,16 @@ if [ ! -x "$ROOT/.venv/bin/python" ]; then
   "$ROOT/.venv/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
 fi
 
-# --- 2) Verify Groq API keys are set ----------------------------------------
-GROQ_KEY="$(grep -E '^GROQ_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
-if [ -z "$GROQ_KEY" ]; then
-  echo "[WARNING] GROQ_API_KEY is not set in .env — Thinker/Narrator will fall back to templates."
+# --- 2) Verify the MAIN LLM provider key is set ------------------------------
+MAIN_PROVIDER="$(grep -E '^MAIN_LLM_PROVIDER=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+MAIN_PROVIDER="${MAIN_PROVIDER:-groq}"
+if [ "$MAIN_PROVIDER" = "deepseek" ]; then
+  MAIN_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+else
+  MAIN_KEY="$(grep -E '^GROQ_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+fi
+if [ -z "$MAIN_KEY" ]; then
+  echo "[WARNING] main LLM provider '$MAIN_PROVIDER' has no API key in .env — Thinker/Narrator will fall back to templates (fail-closed)."
 fi
 
 # --- 3) Frontend build (served by the backend on :8000) ----------------------
@@ -74,7 +81,7 @@ echo ""
 echo "==========================================================="
 echo " trading-bot is live   (PAPER TRADING — NO REAL FUNDS)"
 echo " dashboard : http://localhost:8000"
-echo " LLM       : Groq API (qwen/qwen3.8-27b)"
+echo " LLM main  : $MAIN_PROVIDER (social: SOCIAL_LLM_*)"
 echo " logs      : $LOGS/"
 echo " stop      : $ROOT/stop.sh"
 echo "==========================================================="

@@ -1,7 +1,28 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (DB maintenance + OMO-R1–R7 audit done).** Repo:
-`/home/hixam/Downloads/Projects/trading-bot/`.
+**As of 2026-08-27 (DeepSeek main-provider swap executed + live-verified).**
+Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### Main LLM Groq → DeepSeek V4 Flash (handoff §18 → §19) (2026-08-27)
+`MAIN_LLM_PROVIDER` selector (`groq`|`deepseek`, code default groq; live
+`.env` flipped to `deepseek`). `DeepSeekClient` + `build_main_client()`
+factory + `main_max_tokens()` in `llm/client.py`; provider-aware timeouts;
+DeepSeek cost branch (off-peak $0.22/$0.007-cache/$0.66 per 1M; peak 2×,
+window 01:00–04:00 + 06:00–10:00 UTC Mon–Fri); pricing snapshot ids per
+provider. Thinker/Narrator/reflections use the factory with
+`provider:model` source labels; reflections skip to template in DeepSeek
+peak windows. `narration_mode` reports the active provider. Social reads
+UNCHANGED (Groq). Two latent bugs fixed + regression-tested: `is_peak`
+was never computed (always off-peak), and V4 Flash defaults to THINKING
+mode which emptied `content` → every DeepSeek request now sends
+`thinking:{type:disabled}`. `shadow_replay.py` rebuilt on the repository
+layer (SQLite+Supabase). Live-verified: ping OK, shadow replay 8/8 verdict
+agreement (100% valid JSON, p95 2.6s), first full DeepSeek tick completed
+(20 candidates, all thinker calls success with peak cost ~$0.001), zero
+tracebacks. 30 new tests → **261 passing**. Rollback = `MAIN_LLM_PROVIDER=groq`
++ restart (note: GROQ_API_KEY currently empty in .env → fail-closed
+template passes until re-added).
 
 ## DONE
 ### DB maintenance: prune + reset + OMO audit (2026-08-27)
@@ -92,7 +113,7 @@ execute.server.ts, blocklist.ts, PROCESS.md.
 ## Completed phase: LLM API migration continuation (2026-08-26)
 
 See `docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md` and handoff section 14.
-Groq direct API is configured for the thinker in strict non-thinking JSON mode; Groq is also configured for evidence-only Twitter/social reads.
+Groq direct API is configured for the thinker in strict non-thinking JSON mode; Groq is also configured for evidence-only Twitter/social reads. (Superseded 2026-08-27: main path now DeepSeek V4 Flash via MAIN_LLM_PROVIDER — see top DONE block; social reads remain Groq.)
 Instrumentation of tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes have been implemented. Provider failure must return thinker `pass` for entry; a template may explain but cannot approve an entry.
 
 Current learning is measurement-only: daily aggregates, rejection breakdowns,

@@ -73,6 +73,31 @@ GROQ_MODEL: str = os.getenv("GROQ_MODEL", "qwen/qwen3.8-27b")
 GROQ_TIMEOUT_SECONDS: float = float(os.getenv("GROQ_TIMEOUT_SECONDS", "12"))
 GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "192"))
 
+# ---------------------------------------------------------------------------
+# Main-provider selection (handoff §18): the MAIN LLM path (thinker,
+# narrator, post-close reflections) is a reversible .env flip between
+# "groq" and "deepseek". Groq stays the warm rollback path. The SOCIAL
+# read is NOT affected — it stays on SOCIAL_LLM_* (Groq) regardless.
+# Unrecognized values fail closed to groq (see build_main_client()).
+# ---------------------------------------------------------------------------
+MAIN_LLM_PROVIDER: str = os.getenv("MAIN_LLM_PROVIDER", "groq").strip().lower()
+
+# ---------------------------------------------------------------------------
+# DeepSeek direct API (main-provider candidate per docs/08 §1). Non-thinking
+# mode only in the hot path. Model id + prices verified against
+# api-docs.deepseek.com on 2026-08-27 (pricing snapshot id in llm/client.py).
+#   deepseek-v4-flash (DeepSeek-V4-Flash-0731), 1M context, JSON output:
+#     input  cache-miss: $0.22/1M off-peak, $0.44/1M peak
+#     input  cache-hit : $0.007/1M off-peak, $0.014/1M peak
+#     output          : $0.66/1M off-peak, $1.32/1M peak
+#   Peak = 01:00-04:00 + 06:00-10:00 UTC Mon-Fri (llm/client._is_peak_window).
+# ---------------------------------------------------------------------------
+DEEPSEEK_API_KEY: str = os.getenv("DEEPSEEK_API_KEY", "")
+DEEPSEEK_BASE_URL: str = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL: str = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+DEEPSEEK_TIMEOUT_SECONDS: float = float(os.getenv("DEEPSEEK_TIMEOUT_SECONDS", "12"))
+DEEPSEEK_MAX_TOKENS: int = int(os.getenv("DEEPSEEK_MAX_TOKENS", "192"))
+
 # Legacy local provider settings remain available for explicit offline use.
 OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
 MODEL_NAME: str = os.getenv("MODEL_NAME", "qwen3:8b")

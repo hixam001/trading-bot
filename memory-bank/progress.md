@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] DeepSeek main-provider swap (handoff §18→§19): `MAIN_LLM_PROVIDER`
+      selector + `DeepSeekClient` + `build_main_client()` factory;
+      peak/off-peak/cache cost model; provider-aware timeouts;
+      non-thinking mode enforced; thinker/narrator/reflections live on
+      `deepseek-v4-flash`; shadow replay gate 8/8; first full DeepSeek
+      tick verified; 30 new tests (2026-08-27)
 - [x] Supabase schema-drift fix: self-healing `_SCHEMA_SYNC_SQL` in `db_pg.init_db()` (events/memories/theses/llm_call_usage + versioning columns + RLS + migration bookkeeping); db_pg surface fixes (`status` param, `::text` casts, feed-event versioning parity); live-verified: first full tick completed, all endpoints 200 (2026-08-27)
 - [x] DB maintenance: prune_feed_events/prune_market_regime + reset_book in both db.py + db_pg.py (2026-08-27)
 - [x] POST /api/admin/reset (confirm=yes required; reset_book + prune_only modes) (2026-08-27)
@@ -73,13 +79,20 @@
 - Supabase pooler cert self-signed → fingerprint pin (.supabase_fp.txt);
   delete the file to re-pin after a legitimate cert rotation
 
-- LLM API migration: Groq thinker (qwen3.8-27b) and Groq social reads are wired and verified. Usage/outcome accounting, shadow replay, and canary gates are implemented.
+- LLM API migration: DONE — main path (thinker/narrator/reflections) live
+      on DeepSeek V4 Flash (`MAIN_LLM_PROVIDER=deepseek`, non-thinking mode,
+      shadow-replay-gated 8/8); Groq remains the rollback main provider and
+      powers the evidence-only social reads. Usage/outcome accounting,
+      shadow replay, and canary gates are implemented.
 - Live execution is wired but remains disarmed; no mainnet execution is
       authorized. Run the funded throwaway-keypair devnet drill before any
       future arming discussion.
 
 ## Status
-Live calibration day ~2. Fresh $1,000 book. Supabase schema-drift incident
+Live calibration day ~2. Main LLM now DeepSeek V4 Flash (2026-08-27,
+handoff §19): shadow-replay-gated, flipped via MAIN_LLM_PROVIDER, first
+full tick verified (all thinker calls success, peak-window cost accounting
+correct, zero tracebacks). Fresh $1,000 book. Supabase schema-drift incident
 FIXED (2026-08-27): live book was missing events/memories/theses/llm_call_usage
 (every tick died, system-status 500'd); `db_pg.init_db()` now self-heals via
 idempotent `_SCHEMA_SYNC_SQL` — verified live: first full tick completed, all
@@ -89,4 +102,4 @@ OMO-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 231 passing** (was 222; +9 new admin/reset tests).
+**Tests: 261 passing** (was 231; +30 new provider-swap tests).

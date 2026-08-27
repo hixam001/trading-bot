@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-27 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 231 passing (full suite incl. live_execution)
+**Tests:** 261 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -502,21 +502,27 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 
 Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md.
 
-**Status update (2026-08-27):** Groq API (`qwen/qwen3.8-27b`) is now the
-primary LLM for the Thinker, Narrator, and reflection generation. Groq is
-also used for evidence-only social reads (same API key, same base URL).
-All provider instrumentation (token counts, latency, estimated cost, peak
-window flag, degradation reason) is wired and persisted to `llm_call_usage`.
-Shadow replay and delayed outcome label scripts are in `backend/scripts/`.
+**Status update (2026-08-27):** the MAIN LLM path (Thinker, Narrator,
+post-close reflections) now runs on **DeepSeek V4 Flash** (direct API,
+non-thinking mode) — see §18/§19. Groq (`qwen/qwen3.8-27b`) remains the
+warm rollback main provider via `MAIN_LLM_PROVIDER` and still powers the
+evidence-only social reads. All provider instrumentation (token counts,
+latency, estimated cost, peak window flag, degradation reason) is wired and
+persisted to `llm_call_usage`. Shadow replay and delayed outcome label
+scripts are in `backend/scripts/`.
 
 ### Current API/model decisions
 
-- **Thinker:** Groq `qwen/qwen3.8-27b`, strict JSON output, `is_main=True`
-  client (uses `GROQ_TIMEOUT_SECONDS`). Fail-closed: any failure degrades to
-  a deterministic template verdict of `pass` — the template may explain but
-  never approve an entry while the provider is unavailable.
-- **Narrator/Reflections:** Same `MainGroqClient` (`GROQ_MODEL`). Fire-and-
-  forget for reflections; never blocks the tick loop or exits.
+- **Thinker:** `build_main_client()` factory → `DeepSeekClient`
+  (`deepseek-v4-flash`, non-thinking mode, JSON output) when
+  `MAIN_LLM_PROVIDER=deepseek`, else `MainGroqClient`
+  (`qwen/qwen3.8-27b`). Unrecognized values fail closed to Groq.
+  Fail-closed: any failure degrades to a deterministic template verdict of
+  `pass` — the template may explain but never approve an entry while the
+  provider is unavailable.
+- **Narrator/Reflections:** same main client. Fire-and-forget for
+  reflections; never blocks the tick loop or exits. Reflections skip to the
+  template during DeepSeek peak windows (logged, never silent).
 - **Social reads:** `GroqClient` (`SOCIAL_LLM_BASE_URL` / `SOCIAL_LLM_MODEL`).
   Evidence-only (`organic|peaked|unclear`); no verdict produced.
 - **Thinker fallback:** deterministic template on timeout, outage, quota
@@ -524,12 +530,9 @@ Shadow replay and delayed outcome label scripts are in `backend/scripts/`.
 
 ### Planned next step
 
-- **DeepSeek migration (pending keys with balance):** Once a funded DeepSeek
-  V4 Flash API key is available, swap `MainGroqClient` for `DeepSeekClient`
-  by adding `DEEPSEEK_API_KEY` back to config and updating thinker/narrator
-  to use it. Shadow replay should gate the swap. No code changes beyond the
-  client swap and a one-line config change. **Full implementation plan: §18
-  (main model → DeepSeek; social model stays Groq).**
+- ~~DeepSeek migration (pending keys with balance)~~ **DONE (2026-08-27) —
+  see §18/§19.** Funded key arrived; swap implemented, shadow-replay-gated,
+  flipped live to `MAIN_LLM_PROVIDER=deepseek`.
 
 ### Cost and feedback controls
 
@@ -700,9 +703,10 @@ Never edit an applied migration file in place again. New schema = new
 numbered migration file, AND mirror it into `_SCHEMA_SYNC_SQL` so older
 books heal on boot.
 
-## 18. NEXT TASK: main/narration LLM Groq → DeepSeek (2026-08-27) — PLANNED, NO CODE YET
+## 18. NEXT TASK: main/narration LLM Groq → DeepSeek (2026-08-27) — ✅ DONE (see §19)
 
-**Status:** planned; blocked only on a funded DeepSeek API key.
+**Status:** IMPLEMENTED, SHADOW-GATED, AND FLIPPED LIVE (2026-08-27).
+Funded key arrived; execution record in §19. Plan kept below as built.
 **Scope (operator decision 2026-08-27):** the MAIN model path — Thinker,
 Narrator, and post-close reflections — moves to DeepSeek V4 Flash. The
 SOCIAL model stays exactly as it is (Groq via `SOCIAL_LLM_*`). This executes
@@ -795,3 +799,101 @@ step" of §14 above.
 
 Update §14 status, memory-bank (decisionLog / activeContext / progress),
 docs/07_PROJECT_REPORT.md LLM section, and any doc still saying Groq-is-main.
+✅ All done 2026-08-27 (§19).
+
+## 19. DeepSeek main-provider swap — EXECUTED (2026-08-27)
+
+§18 shipped end-to-end in one session: implemented, unit-tested,
+shadow-replay-gated, flipped live, and verified on the live book.
+
+### What shipped (code)
+
+- **Config** (`backend/config.py`, `.env.example`): `DEEPSEEK_API_KEY`,
+  `DEEPSEEK_BASE_URL` (https://api.deepseek.com), `DEEPSEEK_MODEL`
+  (`deepseek-v4-flash` = DeepSeek-V4-Flash-0731, verified against
+  api-docs.deepseek.com 2026-08-27), `DEEPSEEK_TIMEOUT_SECONDS=12`,
+  `DEEPSEEK_MAX_TOKENS=192`, plus `MAIN_LLM_PROVIDER` (`groq`|`deepseek`,
+  default `groq` in code; the live `.env` is flipped to `deepseek`).
+- **Client** (`backend/llm/client.py`): `DeepSeekClient(LLMClient)`
+  (`is_main=True`); `build_main_client()` factory (unknown value → loud
+  warning + fail-closed to Groq); `main_max_tokens()` budget helper;
+  provider-aware timeout attribute (was hardcoded `GROQ_TIMEOUT_SECONDS`);
+  DeepSeek branch in `_estimate_cost()` — off-peak $0.22/1M cache-miss
+  input, $0.007/1M cache-hit input, $0.66/1M output; peak = exactly 2×
+  (01:00–04:00 + 06:00–10:00 UTC Mon–Fri); per-provider pricing snapshot
+  ids (`groq_20260826`, `deepseek_20260827`).
+- **Thinker / Narrator / reflections**: use the factory; source labels are
+  now `f"{provider}:{model}"` (no hardcoded `groq:` strings); reflections
+  skip to the template during DeepSeek peak windows (docs/08 §5; logged).
+- **Dashboard**: `/api/system-status.narration_mode` reports the active
+  main provider (`deepseek`|`groq`|`template`).
+- **Social**: ZERO changes (verified).
+- **Ops**: `start.sh` key check + banner are now provider-aware;
+  `backend/test_llm.py` pings factory main + explicit DeepSeek + social
+  with usage/cost/peak readouts; `scripts/shadow_replay.py` rebuilt on the
+  repository layer (works on SQLite AND Supabase; replays sealed
+  feed-event candidate snapshots and compares against the commit's
+  original think verdict; reports agreement/degradation/latency p95).
+
+### Bugs found and fixed during the swap (all regression-tested)
+
+1. **`is_peak_window` was never computed** — `complete_json` initialized
+   `is_peak = False` and never called `_is_peak_window()`, so every call
+   was stamped off-peak and DeepSeek cost would have been understated 2×
+   during peak hours. Fixed: computed per call for the deepseek provider
+   (Groq has no peak pricing and stays False). Proven live: 08:57 UTC
+   calls now stamp `peak=1` with exact 2× cost.
+2. **DeepSeek thinking mode emptied `content`** — V4 Flash DEFAULTS to
+   thinking mode; reasoning burned the 192-token budget and returned empty
+   `content` (HTTP 200!), degrading every thinker call to a template pass.
+   First live tick showed 20/20 `degraded:empty_content`. Fixed by sending
+   `"thinking": {"type": "disabled"}` on every DeepSeek request
+   (non-thinking mode per docs/08 §1). Shadow replay went 0/8 → 8/8.
+3. **`shadow_replay.py` raw SQL** — SQLite `?` placeholders broke on
+   Supabase (asyncpg syntax error) and it assumed a `candidate` key the
+   commit payload doesn't carry. Rewritten on `get_recent_decision_commits`
+   + `get_feed_events` (no raw SQL outside api/db*.py rule restored).
+
+### Live verification (2026-08-27)
+
+- Ping: DeepSeek `/models` health OK; completion OK with usage parsing
+  (peak-window flag + 2× peak cost verified against the machine clock).
+- Shadow replay (Supabase book): **8/8 verdict agreement, 0 degraded,
+  100% valid structured JSON, latency p95 2629ms** (budget: 12s timeout).
+- Flipped `.env` to `MAIN_LLM_PROVIDER=deepseek`, restarted via
+  stop.sh/start.sh (port-free wait honored): `/api/system-status` →
+  `narration_mode: "deepseek"`; first full tick completed
+  (`tick done … 20 candidates, 0 entries`); every thinker row in
+  `llm_call_usage` is `status=success` with tokens + peak cost
+  (~$0.001/candidate at peak; ~1800 in / ~140 out typical); feed events
+  carry `narration_source: deepseek:deepseek-v4-flash` and
+  `model_version: deepseek-v4-flash`; zero tracebacks.
+- Fail-closed proven live (unintentional experiment): the brief pre-fix
+  window recorded 20 `degraded:empty_content` thinker calls → template
+  passes, zero entries opened, zero money moved.
+
+### Tests
+
+- **30 new tests** in `backend/tests/test_llm_provider_swap.py`
+  (httpx.MockTransport; no new deps): construction + provider-aware
+  timeouts, factory selection incl. fail-closed unknown value,
+  `main_max_tokens`, cost branches vs hand-computed values (docs/08 §3
+  anchor $0.000176), peak flag + 2× peak cost, Groq-never-peak,
+  thinking-disabled payload, usage/cache parsing, degradation paths,
+  thinker/narrator source labels, fail-closed never-buy, reflection
+  peak-skip, `narration_mode` endpoint labels.
+- **Total: 261 passing** (was 231): backend 213, live_execution 48.
+
+### Rollback
+
+`MAIN_LLM_PROVIDER=groq` in `.env` + restart. NOTE: `GROQ_API_KEY` is
+currently EMPTY in the live `.env` — rolling back today degrades the main
+path fail-closed to template passes (safe, no entries) until the Groq key
+is re-added. DeepSeek key stays in `.env` either way.
+
+### Invariants held
+
+Entry still requires `think.verdict == "buy"` AND all ten rules; the LLM
+never opens/closes/sizes; `PAPER_TRADING_ONLY=True` untouched;
+`live_execution` untouched and disarmed; keys only in server `.env`
+(redaction verified in logs); no raw SQL outside api/db*.py.
