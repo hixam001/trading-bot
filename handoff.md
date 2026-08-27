@@ -16,7 +16,9 @@ A local **paper-trading research system** for Solana memecoins. Every tick
 (Dexscreener pairs), computes a market-wide regime snapshot, and evaluates
 each candidate against **ten deterministic rules**. The AND of all rules is
 the entire entry decision. Exits come only from three fixed numeric checks.
-A local LLM (currently qwen3:8b via Ollama) performs a pre-trade **think/veto
+A cloud LLM (DeepSeek V4 Flash by default via `MAIN_LLM_PROVIDER`; Groq as
+warm rollback — no local model, Ollama retired 2026-08-28) performs a
+pre-trade **think/veto
   stage** and narrates decisions; entry still requires the model's buy verdict
   AND every deterministic rule to pass. The model never sizes, opens, closes,
   or overrides numeric exits. Everything is logged to SQLite
@@ -36,18 +38,18 @@ seems to require real execution inside backend/ — stop and flag it.
 ## 2. How to run / stop / test
 
 ```bash
-./start.sh        # one click: builds frontend, starts ollama serve IF not
-                  # already up, starts backend+tick loop on :8000 (serves
-                  # dashboard), opens browser. Idempotent.
-./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 370 tests
+./start.sh        # one click: builds frontend, starts backend+tick loop on
+                  # :8000 (serves dashboard), opens browser. Idempotent.
+                  # No local model: LLM = DeepSeek/Groq cloud APIs via .env.
+./stop.sh         # stops the backend (+ tick loop)
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 379 tests
 .venv/bin/python -m pytest -q                           # full suite: 486 tests, ~2s
                                                         # (485 while armed — §32 canary)
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
   built frontend from `frontend/dist`)
-- Logs: `logs/{backend,ollama,frontend-build}.log`; pids in `.run/`
+- Logs: `logs/{backend,frontend-build}.log`; pids in `.run/`
 - Dev frontend hot-reload: `cd frontend && npm run dev` (:5173, proxies /api,/ws)
 - Knowledge ingest: `cd backend && ../.venv/bin/python scripts/ingest_directory.py <dir>`
 
@@ -148,9 +150,11 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
     mechanism verified byte-for-byte locally
     (scripts/verify_reference_commit.py, both hashes MATCH), documented in
     docs/05 — deliberately NOT built.
-11. **One-click app**: start.sh/stop.sh/trading-bot.desktop; backend serves
-    built frontend (SPA catch-all registered AFTER api routes); ollama
-    started only if not already up; stop.sh never kills pre-existing ollama.
+11. **One-click app**: start.sh/stop.sh; backend serves
+    built frontend (SPA catch-all registered AFTER api routes). Ollama was
+    retired from the stack 2026-08-28 (DeepSeek is the main model) — the
+    scripts no longer start or manage it and clean up the old `.run/ollama*`
+    markers on launch.
 12. **Test hermeticity**: tests pin DATA_BACKEND=mock and tmp DB paths so
     operator .env (live) can't leak into them (bit us twice).
 13. **Supabase Postgres backend (optional)**: db_pg.py mirrors db.py's whole
@@ -176,9 +180,10 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
     get_recent_fills, get_open_position_marks, get_verify_commits,
     set_trade_thesis, delete_trade_row). Stale default_ledger import
     (500 on /api/exits.json) removed.
-18. **Process management**: backend + ollama launch via `setsid` (own
-    session — Konsole Ctrl+C / tab-close cannot kill them; nohup alone only
-    blocks SIGHUP); `timeout 10 ollama list` guards the launch path. API
+18. **Process management**: backend launch via `setsid` (own
+    session — Konsole Ctrl+C / tab-close cannot kill it; nohup alone only
+    blocks SIGHUP). (Historical: the old ollama launch path used
+    `timeout 10 ollama list` guards; ollama retired 2026-08-28.) API
     keys in URLs are redacted from logs by a crowd.py log filter (installed
     at import — setup_logging() never runs under uvicorn).
 19. **Dashboard overhaul (2026-08-25, user-requested)**: feed rows read

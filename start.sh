@@ -7,15 +7,20 @@
 # reused. Use ./stop.sh to stop what this script started.
 #
 # LLM: main provider (Thinker/Narrator/reflections) is selected by
-#      MAIN_LLM_PROVIDER in .env: "deepseek" (DeepSeek V4 Flash direct API)
-#      or "groq" (qwen/qwen3.8-27b). Social reads always use SOCIAL_LLM_*.
-#      No local Ollama required.
+#      MAIN_LLM_PROVIDER in .env: "deepseek" (DeepSeek V4 Flash direct API,
+#      the default main model) or "groq" (qwen/qwen3.8-27b, warm rollback).
+#      Social reads always use SOCIAL_LLM_*. No local model is started —
+#      Ollama is no longer part of the stack.
 # ============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$ROOT/.run"
 LOGS="$ROOT/logs"
 mkdir -p "$RUN" "$LOGS"
+
+# --- 0) One-time migration: Ollama was retired from the stack (DeepSeek is
+#        the main model). Remove stale marker files left by old launches. ---
+rm -f "$RUN/ollama.pid" "$RUN/ollama_started_by_us"
 
 up() { curl -s -o /dev/null --max-time 2 "$1"; }
 

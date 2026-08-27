@@ -1,11 +1,17 @@
 #!/usr/bin/env bash
 # ============================================================================
 # Stops what start.sh launched: backend (+ tick loop). The frontend build is
-# served by the backend so nothing separate to stop there.
+# served by the backend so nothing separate to stop there. Ollama is no
+# longer part of the stack (DeepSeek is the main model) — nothing here
+# starts, stops, or manages it; stale marker files from old launches are
+# removed for good measure.
 # ============================================================================
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$ROOT/.run"
+
+# One-time migration: drop obsolete ollama markers (pre-DeepSeek launches).
+rm -f "$RUN/ollama.pid" "$RUN/ollama_started_by_us"
 
 stop_pidfile() {
   local file="$1" name="$2"
