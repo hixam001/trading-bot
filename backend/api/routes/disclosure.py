@@ -63,6 +63,54 @@ def _break_state() -> dict:
         return {"on_break": False, "reason": f"state unavailable: {exc}", "break_until_epoch": 0.0}
 
 
+async def _sizing_truths() -> tuple[dict, dict]:
+    """
+    REF-R8/R9 public sizing truths: the risk budget + calibration the sizing
+    actually used, persisted by the tick into the daily-stats row for today.
+    A fresh book (no tick yet) recomputes them from the DB at cost-basis
+    equity (no external calls). Any failure degrades to the fail-closed
+    minimums: minimum-ticket budget and FLAT calibration (factor 1.0).
+    Never raises.
+    """
+    from calibration import FLAT_CALIBRATION, compute_calibration
+    from paper_trading_engine import compute_risk_budget
+
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    budget_block = None
+    cal_block = None
+    try:
+        async with db.get_db() as conn:
+            row = await db.get_daily_stats(conn, today)
+        if row is not None:
+            sj = row.get("stats_json") or {}
+            budget_block = sj.get("risk_budget")
+            cal_block = sj.get("calibration")
+    except Exception:
+        log.warning("disclosure: persisted sizing truths unreadable",
+                    exc_info=True)
+
+    if budget_block is None or cal_block is None:
+        try:
+            async with db.get_db() as conn:
+                cash = await db.get_cash_balance(conn)
+                open_trades = await db.get_open_trades(conn)
+                closed = await db.get_all_closed_trades(conn)
+            equity = float(cash) + sum(
+                float(t.position_size_usd) for t in open_trades)
+            if budget_block is None:
+                budget_block = compute_risk_budget(equity, 0.0).to_dict()
+            if cal_block is None:
+                cal_block = compute_calibration(closed).to_dict()
+        except Exception:
+            log.warning("disclosure: sizing truths unavailable - fail-closed "
+                        "minimums", exc_info=True)
+            if budget_block is None:
+                budget_block = compute_risk_budget(0.0, 0.0).to_dict()
+            if cal_block is None:
+                cal_block = FLAT_CALIBRATION.to_dict()
+    return budget_block, cal_block
+
+
 @router.get("/api/disclosure.json")
 async def get_disclosure():
     """
@@ -74,6 +122,9 @@ async def get_disclosure():
       kill_switch    — state from live_execution/state/kill_switch.json
       break          — state from live_execution/state/break_state.json
       config_truths  — numeric caps/floors (no keys, no wallet address)
+      risk_budget    — REF-R8 derived sizing budget (equity, drawdown factor,
+                       max order/day, formula) the sizing used
+      calibration    — REF-R9 conviction factor + formula from closed outcomes
       generated_at_utc
     """
     # Safety fields — both hardcoded constants; surface them for auditability.
@@ -109,6 +160,11 @@ async def get_disclosure():
         "regime_min_median_vol_usd": getattr(config, "REGIME_MIN_MEDIAN_VOL_USD", None),
     }
 
+    # REF-R8/R9: the computed risk budget + calibration the sizing used.
+    # Persisted by the tick into the daily-stats row for today; a fresh book
+    # recomputes them from the DB at cost-basis equity (no external calls).
+    risk_budget, calibration = await _sizing_truths()
+
     return {
         "generated_at_utc": _now_iso(),
         "armed": armed,
@@ -116,6 +172,8 @@ async def get_disclosure():
         "kill_switch": kill,
         "break": brk,
         "config_truths": config_truths,
+        "risk_budget": risk_budget,
+        "calibration": calibration,
     }
 
 

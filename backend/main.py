@@ -33,10 +33,13 @@ from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
 from llm.thinker import Thinker, ThinkResult
 from llm.llm_brain import LLMBrain, LLMVerdict, LLMBrainResult
 from models import FeedEvent
+from calibration import FLAT_CALIBRATION, compute_calibration
 from paper_trading_engine import (
+    compute_risk_budget,
     compute_ticket,
     load_portfolio_state,
     open_position,
+    portfolio_equity_and_unrealized,
     scan_and_execute_exits,
 )
 from rule_engine.gate import evaluate_gate
@@ -227,6 +230,56 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                      len(brain_result.verdicts), brain_result.source,
                      " (degraded)" if brain_result.degraded else "")
 
+        # --- REF-R8/R9: risk budget + calibration for this tick --------------
+        # equity = cash + open position value; unrealized = open pnl. Marks
+        # that fail to price are held at cost (never fabricated). Fail-closed:
+        # any error leaves (0, 0) -> the budget collapses to MIN_TICKET_USD and
+        # conviction to 1.0. Sizing stays pure code; the model never sizes.
+        price_map: dict = {}
+        equity_usd = 0.0
+        unrealized_usd = 0.0
+        try:
+            book = await load_portfolio_state(conn)
+            for t in book.open_positions:
+                try:
+                    decimals = (t.candidate_snapshot or {}).get("decimals")
+                    px = await provider.get_current_price(t.mint_address,
+                                                          decimals)
+                    if px is not None and px > 0:
+                        price_map[t.mint_address] = px
+                except Exception:
+                    continue   # unpriced mark -> held at cost below
+            equity_usd, unrealized_usd = portfolio_equity_and_unrealized(
+                book, price_map)
+        except Exception:
+            log.warning("risk budget inputs unreadable - sizing fails closed "
+                        "to minimum ticket", exc_info=True)
+            equity_usd = 0.0
+            unrealized_usd = 0.0
+        risk_budget = compute_risk_budget(equity_usd, unrealized_usd)
+        try:
+            calibration = compute_calibration(
+                await db.get_all_closed_trades(conn))
+        except Exception:
+            log.warning("calibration unreadable - failing closed to 1.0",
+                        exc_info=True)
+            calibration = FLAT_CALIBRATION
+        log.info("risk budget: equity $%.2f, dd factor %.3f, max order $%.0f, "
+                 "max daily $%.0f | calibration: %d sample(s), conviction %.3f",
+                 risk_budget.equity_usd, risk_budget.drawdown_factor,
+                 risk_budget.max_order_usd, risk_budget.max_daily_usd,
+                 calibration.samples, calibration.conviction_factor)
+        # Persist so the public surfaces (disclosure.json) read the same
+        # numbers the sizing used. Fail-soft: persistence never kills a tick.
+        try:
+            await db.patch_daily_stats(
+                conn, datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+                {"risk_budget": risk_budget.to_dict(),
+                 "calibration": calibration.to_dict()})
+        except Exception:
+            log.warning("risk budget/calibration persistence failed "
+                        "(non-fatal)", exc_info=True)
+
         for c in candidates:
             # --- THINK (the reference order): the model writes its assessment BEFORE
             # any rule is evaluated. Its verdict is a necessary veto layer.
@@ -291,12 +344,25 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
             entry_allowed = gate.all_passed and think.wants_entry
 
             # --- SIZING + daily deploy cap -----------------------------------
-            ticket = compute_ticket(portfolio.cash_usd, c.fomo_heat)
+            # REF-R8/R9: risk-budget mode sizes from live equity x drawdown
+            # factor x conviction; the daily ceiling is the derived
+            # max_daily_usd. Other modes keep the static cap (unchanged).
+            cand_equity, cand_unrealized = portfolio_equity_and_unrealized(
+                portfolio, price_map)
+            ticket = compute_ticket(
+                portfolio.cash_usd, c.fomo_heat,
+                equity_usd=cand_equity, unrealized_usd=cand_unrealized,
+                conviction_factor=calibration.conviction_factor)
             deployed = await db.deployed_today(conn)
+            if config.SIZING_MODE == "risk_budget":
+                daily_ceiling = compute_risk_budget(
+                    cand_equity, cand_unrealized).max_daily_usd
+            else:
+                daily_ceiling = config.DAILY_DEPLOY_CAP_USD
             refusal_reasons: list[str] = []
             if ticket < config.MIN_TICKET_USD:
                 refusal_reasons.append("[ticket below minimum]")
-            if deployed + ticket > config.DAILY_DEPLOY_CAP_USD:
+            if deployed + ticket > daily_ceiling:
                 refusal_reasons.append("[daily deploy cap reached]")
             if entry_allowed and refusal_reasons:
                 entry_allowed = False

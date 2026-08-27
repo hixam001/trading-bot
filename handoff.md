@@ -1040,7 +1040,7 @@ inert). Every degradation logged with a reason. Keys only in server `.env`.
 
 (redaction verified in logs); no raw SQL outside api/db*.py.
 
-## 22. Reference-parity roadmap batch 2 — capability gaps from the 2026-08-27 audit (TO BE IMPLEMENTED)
+## 22. Reference-parity roadmap batch 2 — capability gaps from the 2026-08-27 audit (✅ R8+R9 IMPLEMENTED 2026-08-27 — see §23)
 
 Source: the feature-by-feature audit of this repo vs the reference repository
 (2026-08-27). Batch 1 (§13, REF-R1–R7) is fully implemented. This batch records
@@ -1054,7 +1054,7 @@ Implementation order for the approved pair: **R8 first, then R9** (R9's
 conviction factor multiplies the R8 risk budget, so R8's sizing surface must
 exist first).
 
-### REF-R8 — Drawdown-adaptive position sizing ✅ APPROVED — TO BE IMPLEMENTED
+### REF-R8 — Drawdown-adaptive position sizing ✅ IMPLEMENTED (2026-08-27 — see §23)
 - reference: `computeBudget()` in `src/lib/risk.server.ts`.
 - Gap: our `compute_ticket()` (`backend/paper_trading_engine.py`) sizes from
   cash × crowd-heat conviction only. It never shrinks when the book is under
@@ -1106,7 +1106,7 @@ exist first).
   string is stable + recomputable. Hand-compute every expectation (defense-first
   rule 4).
 
-### REF-R9 — Closed-loop learning → conviction factor ✅ APPROVED — TO BE IMPLEMENTED
+### REF-R9 — Closed-loop learning → conviction factor ✅ IMPLEMENTED (2026-08-27 — see §23)
 - reference: `computeCalibration()` in `src/lib/learn.server.ts`.
 - Gap: our `learning_loop.py` already computes win rate / profit factor / max
   drawdown from closed trades, but only LOGS advisory recommendations — nothing
@@ -1212,4 +1212,80 @@ exist first).
   execution path; no automatic threshold/prompt/model/live-trading promotion.
 
 
+
+## 23. REF-R8 + REF-R9 — IMPLEMENTED: drawdown-adaptive risk budget × closed-loop conviction (2026-08-27)
+
+The approved pair from §22 is built, tested, and live-verified. Reference parity
+is verbatim against `computeBudget()` (`src/lib/risk.server.ts`) and
+`computeCalibration()` (`src/lib/learn.server.ts`), re-fetched from the reference
+repository at implementation time. REF-R10/R11 remain gated / documented-only.
+
+### What was built
+1. **config.py** — `SIZING_MODE` gains a third value `"risk_budget"` (default
+   stays `"fixed"`: nothing changes live until an operator flips it). New
+   HARDCODED reference constants (never env-overridable, same philosophy as
+   SLIPPAGE/FEE): `PER_ORDER_FRACTION=0.035`, `DAY_MULTIPLE=4`,
+   `HARD_ORDER_CEILING_USD=3000`, `HARD_DAILY_CEILING_USD=12000`.
+2. **paper_trading_engine.py** — `RiskBudget` dataclass + pure
+   `compute_risk_budget(equity, unrealized)` (verbatim port incl. the
+   `MIN_TICKET_USD` clamp low bound and Math.round half-up parity via
+   `_round_half_up`); `portfolio_equity_and_unrealized(portfolio, price_map)`
+   (unpriced/degenerate marks held AT COST, never fabricated);
+   `compute_ticket()` gains the `risk_budget` branch:
+   `ticket = budget.max_order_usd × conviction_factor` clamped to
+   `[MIN_TICKET_USD, HARD_ORDER_CEILING_USD]`. `fixed`/`conviction` outputs
+   frozen for calibration comparability.
+3. **calibration.py** (NEW) — pure `compute_calibration(closed_trades)`
+   (verbatim port): winners pnl>0 / losers ≤0, expectancy, raw scale
+   (+10% exp → +20% ticket, −10% exp → −40%), confidence `min(n/12, 1)`,
+   factor clamped [0.6, 1.2]; no usable trades → FLAT 1.0; any exception → FLAT.
+4. **api/db.py + api/db_pg.py** (lockstep) — `get_daily_stats()` +
+   `patch_daily_stats()` (key-merge into `daily_stats.stats_json`; PG uses
+   JSONB `||` merge; SQLite read-modify-write). No schema migration — reuses
+   the existing table, mirroring the reference `omo_meta` pattern.
+5. **main.py** — once per tick: price open positions (fail-soft per mint),
+   equity/unrealized → budget + calibration → logged + persisted into today's
+   daily-stats row (fail-soft, never kills the tick). Per candidate: fresh
+   portfolio → equity recompute → `compute_ticket(..., conviction_factor)`;
+   daily ceiling = derived `max_daily_usd` in risk_budget mode (static
+   `DAILY_DEPLOY_CAP_USD` unchanged in other modes), refusal journaled.
+6. **learning_loop.py** — computes + persists calibration into the daily stats
+   (merges, never clobbers sibling keys), logs the factor — advisory only,
+   never a threshold change.
+7. **api/routes/disclosure.py** — `/api/disclosure.json` gains `risk_budget`
+   + `calibration` blocks: persisted-first, recomputed-from-DB at cost-basis
+   equity as fallback (no external calls), fail-closed minimums on any error.
+8. **run_live_cycle.py** (still DISARMED) — `_manage` now records the freshest
+   mark per mint; sizing uses equity/unrealized from the live ledger and, in
+   risk_budget mode only, `budget × conviction` + derived daily ceiling vs
+   `ledger.deployed_today_usd()`. Legacy cash-fraction path unchanged otherwise.
+
+### Fail-closed invariants (all tested)
+- Unreadable equity (0/negative/NaN/inf) or NaN unrealized → minimum-ticket
+  budget, `derived=False`.
+- Malformed conviction factor (None/NaN/≤0) → treated as 1.0.
+- Unpriced marks → held at cost; degenerate positions → at cost, never crash.
+- Budget/calibration persistence failure → logged, never kills a tick.
+- Reference parity detail confirmed against source: the clamp LOW bound is
+  `MIN_TICKET_USD` — a $1000 book at −20% open sizes $25 (floored), exactly as
+  the reference does; the drawdown factor bites above ~$715 equity.
+
+### Verification
+- 42 new tests (`tests/test_risk_budget.py` 30, `tests/test_calibration.py` 12),
+  every expectation hand-computed from the published formulas.
+- Full combined suite: **331 passed** (backend 283 + live_execution 48).
+- Isolation grep: no new backend→live_execution references (pre-existing
+  sanctioned state-file reads only).
+- Live smoke: backend restarted clean; `/api/disclosure.json` serves both new
+  blocks; the in-process tick persisted a real budget (equity $991, df 1.0,
+  max order $35, max daily $140) and FLAT calibration (0 closed trades) —
+  persisted-first path proven end-to-end. 0 errors / 0 tracebacks in log.
+
+### Status / next
+- `SIZING_MODE="fixed"` remains the live default — R8/R9 are opt-in via a
+  one-line config edit (operator decision, log it when flipped).
+- R9's factor multiplies sizing in risk_budget mode; in fixed/conviction modes
+  the factor is computed + published but not applied (frozen baseline).
+- This builds the §22 gate-3 artifact: a paper track record where sizing
+  behaves as specified under real outcomes. REF-R10/R11 stay gated.
 

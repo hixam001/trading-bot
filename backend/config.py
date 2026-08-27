@@ -28,11 +28,28 @@ BLOCKLIST_STATE_FILE: str = os.getenv(
 )
 AUTO_BLOCK_CONSECUTIVE_STOPS: int = 2
 # Conviction ticket sizing + daily deploy cap.
-SIZING_MODE: str = "fixed"                 # "fixed" | "conviction"
+SIZING_MODE: str = "fixed"                 # "fixed" | "conviction" | "risk_budget"
 TICKET_CASH_FRACTION: float = 0.15         # base = cash * 0.15
 TICKET_MAX_USD: float = 150.0              # hard per-trade ceiling
 MIN_TICKET_USD: float = 25.0               # below this, don't bother
 DAILY_DEPLOY_CAP_USD: float = 300.0        # max new deployments / UTC day
+
+# ---------------------------------------------------------------------------
+# REF-R8 risk-budget sizing (reference computeBudget() parity). HARDCODED -
+# sizing arithmetic is safety-critical and never env-overridable (same
+# philosophy as SLIPPAGE_PCT / FEE_PCT). Active only when SIZING_MODE is
+# "risk_budget":
+#   per order = equity * PER_ORDER_FRACTION * drawdown_factor,
+#               clamped to [MIN_TICKET_USD, HARD_ORDER_CEILING_USD]
+#   per day   = per order * DAY_MULTIPLE, clamped to HARD_DAILY_CEILING_USD
+# The drawdown factor is the only adaptive term: a book under water on open
+# risk trades smaller until that risk is off. Plain arithmetic, never model
+# output - the model decides WHETHER to enter, never the size.
+# ---------------------------------------------------------------------------
+PER_ORDER_FRACTION: float = 0.035          # 3.5% of equity at full conviction
+DAY_MULTIPLE: int = 4                      # a day may contain 4 full-size tickets
+HARD_ORDER_CEILING_USD: float = 3000.0     # absolute stop per order
+HARD_DAILY_CEILING_USD: float = 12000.0    # absolute stop per UTC day
 
 # ---------------------------------------------------------------------------
 # SAFETY FLAG — HARDCODED, NEVER READ FROM ENV, NEVER CHANGED BY CODE.

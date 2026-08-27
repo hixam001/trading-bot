@@ -1021,6 +1021,46 @@ async def upsert_daily_stats(conn: asyncpg.Connection, stats: DailyStats) -> Non
     )
 
 
+async def get_daily_stats(
+    conn: asyncpg.Connection, date: str
+) -> Optional[dict]:
+    """Daily-stats row for date (YYYY-MM-DD UTC) as a dict, None when absent.
+    stats_json is JSONB; read as ::text and json.loads per the translation
+    rules so consumers get the same dict shape as the SQLite backend."""
+    row = await conn.fetchrow(
+        "SELECT date, open_positions, closed_trades, "
+        "stats_json::text AS stats_json "
+        "FROM daily_stats WHERE date = $1",
+        date,
+    )
+    if row is None:
+        return None
+    return {
+        "date": row["date"],
+        "open_positions": row["open_positions"],
+        "closed_trades": row["closed_trades"],
+        "stats_json": json.loads(row["stats_json"] or "{}"),
+    }
+
+
+async def patch_daily_stats(
+    conn: asyncpg.Connection, date: str, patch: dict
+) -> None:
+    """Merge patch keys into stats_json (JSONB || merge); creates the row when
+    absent. Sibling keys written by other stages are preserved, never
+    clobbered. Mirrors api/db.py patch_daily_stats semantics."""
+    await conn.execute(
+        """
+        INSERT INTO daily_stats (date, open_positions, closed_trades, stats_json)
+        VALUES ($1, 0, 0, $2)
+        ON CONFLICT (date) DO UPDATE SET
+            stats_json = COALESCE(daily_stats.stats_json, jsonb_build_object())
+                         || EXCLUDED.stats_json
+        """,
+        date, json.dumps(patch),
+    )
+
+
 # ===========================================================================
 # Theses (REF-R3) - Durable Thesis Book
 # ===========================================================================

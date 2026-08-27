@@ -997,6 +997,50 @@ async def upsert_daily_stats(conn: aiosqlite.Connection, stats: DailyStats) -> N
     await conn.commit()
 
 
+async def get_daily_stats(
+    conn: aiosqlite.Connection, date: str
+) -> Optional[dict]:
+    """Daily-stats row for date (YYYY-MM-DD UTC) as a dict, None when absent."""
+    cursor = await conn.execute(
+        "SELECT date, open_positions, closed_trades, stats_json "
+        "FROM daily_stats WHERE date = ?",
+        (date,),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+    return {
+        "date": row["date"],
+        "open_positions": row["open_positions"],
+        "closed_trades": row["closed_trades"],
+        "stats_json": json.loads(row["stats_json"] or "{}"),
+    }
+
+
+async def patch_daily_stats(
+    conn: aiosqlite.Connection, date: str, patch: dict
+) -> None:
+    """
+    Merge patch keys into stats_json of the daily-stats row (REF-R8/R9:
+    risk_budget + calibration persistence). Creates the row when absent.
+    Sibling keys written by other stages are preserved, never clobbered.
+    """
+    existing = await get_daily_stats(conn, date)
+    if existing is None:
+        await upsert_daily_stats(conn, DailyStats(
+            date=date, open_positions=0, closed_trades=0,
+            stats_json=dict(patch),
+        ))
+        return
+    merged = dict(existing.get("stats_json") or {})
+    merged.update(patch)
+    await conn.execute(
+        "UPDATE daily_stats SET stats_json = ? WHERE date = ?",
+        (json.dumps(merged), date),
+    )
+    await conn.commit()
+
+
 # ===========================================================================
 # Proof/journal helpers — formerly raw SQL in routes; MUST live here so the
 # Postgres backend (db_pg.py) can override them with dialect-correct SQL.

@@ -47,6 +47,12 @@ from rule_engine.gate import evaluate_gate        # noqa: E402
 from rule_engine.regime import compute_market_regime  # noqa: E402
 from rule_engine.rules import ACTIVE_RULES        # noqa: E402
 from api import db                                # noqa: E402
+from calibration import compute_calibration       # noqa: E402
+from paper_trading_engine import (                # noqa: E402
+    compute_risk_budget,
+    compute_ticket,
+    portfolio_equity_and_unrealized,
+)
 
 from live_execution import config as live_config  # noqa: E402
 from live_execution import solana                 # noqa: E402
@@ -118,6 +124,7 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
             continue
         prev = hwm.get(mint, m["price_usd"])
         hwm[mint] = max(prev, price)
+        m["last_price_usd"] = price   # REF-R8: freshest mark for the risk budget
         trade = Trade(
             trade_id=f"live-{mint[:8]}", symbol=mint[:6], mint_address=mint,
             opened_at=_iso(m["opened_ts"]), entry_price_usd=m["price_usd"],
@@ -202,7 +209,38 @@ async def run_cycle(once: bool = False) -> dict:
         if not entry_allowed:
             continue
         cash = portfolio.cash_usd
-        usd = min(cash * paper_config.TICKET_CASH_FRACTION, paper_config.TICKET_MAX_USD)
+        # REF-R8/R9: risk-budget sizing when enabled; otherwise the legacy
+        # cash-fraction ticket (unchanged). Equity/unrealized come from the
+        # live ledger marked with this cycle freshest prices (at cost when
+        # unpriced - never fabricated). Still DISARMED: place_order refuses
+        # every order while LIVE_TRADING_ENABLED is False.
+        price_map = {mint: m["last_price_usd"] for mint, m in meta.items()
+                     if m.get("last_price_usd")}
+        eq, unrl = portfolio_equity_and_unrealized(portfolio, price_map)
+        if paper_config.SIZING_MODE == "risk_budget":
+            try:
+                async with db.get_db() as conn:
+                    cf = compute_calibration(
+                        await db.get_all_closed_trades(conn)).conviction_factor
+            except Exception:
+                log.warning("live calibration unreadable - failing closed "
+                            "to 1.0", exc_info=True)
+                cf = 1.0
+            usd = compute_ticket(cash, None, equity_usd=eq,
+                                 unrealized_usd=unrl, conviction_factor=cf)
+            budget = compute_risk_budget(eq, unrl)
+            deployed_today = ledger.deployed_today_usd()
+            if deployed_today + usd > budget.max_daily_usd:
+                log.info("%s refused: daily risk budget reached "
+                         "($%.0f deployed today, $%.0f ceiling)",
+                         c.symbol, deployed_today, budget.max_daily_usd)
+                outcome["entries"].append(
+                    {"symbol": c.symbol, "status": "refused",
+                     "reason": "daily risk budget reached"})
+                continue
+        else:
+            usd = min(cash * paper_config.TICKET_CASH_FRACTION,
+                      paper_config.TICKET_MAX_USD)
         if usd < paper_config.MIN_TICKET_USD:
             continue
         result = await place_order(

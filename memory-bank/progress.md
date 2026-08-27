@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] REF-R8 + REF-R9 reference-parity batch 2 (handoff §22→§23): drawdown-
+      adaptive risk budget (`compute_risk_budget`, verbatim reference port,
+      fail-closed to $25, published formula) × closed-loop conviction factor
+      (`calibration.py`, bounded 0.6–1.2, confidence-pulled, FLAT on no data);
+      `SIZING_MODE="risk_budget"` opt-in branch (default `"fixed"` unchanged);
+      derived daily ceiling enforced + journaled; `patch_daily_stats()`
+      key-merge persistence in db.py + db_pg.py; disclosure.json surfaces both
+      blocks; learning_loop + disarmed run_live_cycle wired. 42 new hand-
+      computed tests; 331 combined passing; live smoke verified (tick persists
+      real budget, endpoint serves it, 0 tracebacks) (2026-08-27)
 - [x] De-brand + rename brain module (2026-08-27): brain module renamed to
       `backend/llm/llm_brain.py` and every identifier de-branded (brain class → `LLMBrain`,
       parser → `parse_llm_tick`, system prompt → `LLM_SYSTEM`, config → `LLM_BRAIN*`,

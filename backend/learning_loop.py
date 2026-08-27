@@ -76,7 +76,25 @@ async def run_daily_learning() -> dict:
         )
         stats["recommendations"] = [rid for rid, _ in top_rules]
 
+    # REF-R9: calibration from the closed book - the feedback term that
+    # multiplies the REF-R8 risk budget at sizing time. Persisted with the
+    # daily stats so public surfaces read the same numbers sizing used.
+    from calibration import compute_calibration
+    cal = compute_calibration(closed)
+    stats["calibration"] = cal.to_dict()
+    log.info("calibration: %d closed sample(s), conviction factor %.3f "
+             "(advisory arithmetic - never a threshold change)",
+             cal.samples, cal.conviction_factor)
+
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    # Preserve sibling keys already on the row for today (e.g. risk_budget
+    # written by the tick) - merge, never clobber.
+    async with db.get_db() as conn:
+        existing = await db.get_daily_stats(conn, today)
+    if existing is not None:
+        merged = dict(existing.get("stats_json") or {})
+        merged.update(stats)
+        stats = merged
     ds = DailyStats(
         date=today,
         open_positions=0,   # recomputed on read; historical snapshot value

@@ -1,7 +1,34 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (repo de-branded + brain module renamed; reference-style brain ported + live-verified; DeepSeek main-provider swap executed).**
+**As of 2026-08-27 (REF-R8 + REF-R9 implemented: drawdown-adaptive risk budget × closed-loop conviction; reference-parity batch 2 complete for the approved pair).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### REF-R8 + REF-R9 — risk budget × conviction factor (handoff §22 → §23) (2026-08-27)
+Verbatim ports of the reference `computeBudget()` / `computeCalibration()`
+(re-fetched from the reference repo at implementation time). NEW
+`backend/calibration.py` (pure, fail-closed FLAT=1.0, factor clamped
+[0.6, 1.2], confidence `min(n/12,1)`); `paper_trading_engine.py` gains
+`RiskBudget` + `compute_risk_budget()` (df = clamp(1 + min(0,unrl)/eq×2.5,
+0.5, 1); order = round(clamp(eq×0.035×df, 25, 3000)); daily = ×4 clamped
+12000; Math.round half-up parity) + `portfolio_equity_and_unrealized()`
+(unpriced marks at cost, never fabricated) + `compute_ticket()`
+`risk_budget` branch (budget × conviction, clamped; fixed/conviction
+frozen). Config: `SIZING_MODE` gains `"risk_budget"` (default stays
+`"fixed"` — opt-in) + hardcoded `PER_ORDER_FRACTION=0.035`, `DAY_MULTIPLE=4`,
+`HARD_ORDER_CEILING_USD=3000`, `HARD_DAILY_CEILING_USD=12000`. Persistence:
+`patch_daily_stats()`/`get_daily_stats()` in db.py + db_pg.py (JSONB `||`
+merge; no schema migration; mirrors reference `omo_meta`). Tick computes +
+persists budget + calibration once, sizes per candidate, enforces the
+DERIVED daily ceiling in risk_budget mode (journaled refusal);
+`learning_loop.py` persists calibration (advisory); `run_live_cycle.py`
+(disarmed) wired for risk_budget mode only; `/api/disclosure.json` surfaces
+both blocks (persisted-first, cost-basis recompute fallback, fail-closed).
+Parity detail confirmed against source: clamp low bound IS `MIN_TICKET_USD`
+($1000 book at −20% sizes $25, as the reference does). 42 new tests
+hand-computed; **331 combined passing**; isolation grep clean; live smoke:
+tick persisted real budget (equity $991, $35/$140) + FLAT calibration,
+endpoint serves both blocks, 0 tracebacks. REF-R10/R11 remain gated.
 
 ## DONE
 ### De-brand + rename brain module to `llm_brain.py` (2026-08-27)

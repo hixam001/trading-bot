@@ -1,3 +1,30 @@
+## Memory-bank update - 2026-08-27 (REF-R8 + REF-R9 session)
+
+- **config.py**: SIZING_MODE gains "risk_budget" (default stays "fixed");
+  hardcoded PER_ORDER_FRACTION=0.035, DAY_MULTIPLE=4,
+  HARD_ORDER_CEILING_USD=3000, HARD_DAILY_CEILING_USD=12000 (never
+  env-overridable).
+- **paper_trading_engine.py**: RiskBudget + compute_risk_budget() (verbatim
+  computeBudget() port, Math.round half-up parity, fail-closed min ticket);
+  portfolio_equity_and_unrealized() (at-cost marks when unpriced);
+  compute_ticket() risk_budget branch = budget x conviction clamped [25,3000].
+- **calibration.py** (NEW): compute_calibration() verbatim computeCalibration()
+  port - expectancy, raw scale (+10%->+20% / -10%->-40%), confidence
+  min(n/12,1), factor clamp [0.6,1.2], FLAT 1.0 fail-closed.
+- **api/db.py + api/db_pg.py**: get_daily_stats() + patch_daily_stats()
+  key-merge into daily_stats.stats_json (JSONB || on PG); no migration.
+- **main.py**: per-tick budget+calibration compute -> log -> persist; per-
+  candidate equity recompute, conviction-scaled ticket, derived daily-ceiling
+  refusal (risk_budget mode only; static cap unchanged otherwise).
+- **learning_loop.py**: calibration computed + persisted (merge, advisory log).
+- **api/routes/disclosure.py**: risk_budget + calibration blocks
+  (persisted-first, cost-basis recompute fallback, fail-closed minimums).
+- **run_live_cycle.py** (DISARMED): freshest marks captured in _manage;
+  risk_budget-mode sizing + derived daily ceiling vs deployed_today_usd().
+- **Tests: 331 passing** (backend 283 incl. 42 new hand-computed +
+  live_execution 48). Live smoke: disclosure serves both blocks; tick
+  persisted real budget (equity $991, $35/$140) + FLAT calibration.
+
 ## Memory-bank update - 2026-08-25 (session 3)
 
 - **Rules**: gate now uses EXACTLY the reference bot 9 rules

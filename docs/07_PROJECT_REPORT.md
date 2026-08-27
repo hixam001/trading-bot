@@ -4,7 +4,9 @@
 Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
-**Reference parity: ALL R1–R7 features implemented.** Tests: **289 passing**.
+**Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
+risk budget × closed-loop conviction) implemented 2026-08-27.** Tests:
+**331 passing**.
 
 ---
 
@@ -299,7 +301,11 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
   whole documents; dynamic win-rate-by-bucket stats from real trades.
 - **Learning loop** (daily): win rate, profit factor, max drawdown, total
   P&L, per-rule rejection breakdown; threshold recommendations are logged
-  advisory-only.
+  advisory-only. Since REF-R9 it also computes and persists the **calibration
+  conviction factor** (bounded 0.6–1.2, sample-confidence pulled to 1) that
+  multiplies the REF-R8 risk budget when `SIZING_MODE="risk_budget"` — the
+  feedback term that closes the loop. Still arithmetic only: never a
+  threshold change, never model output.
 - **Promotion gate** (read-only): 5 criteria — ≥40 closed trades, ≥10 days
   elapsed, ≥55% win rate, ≥1.5 profit factor, ≤20% max drawdown. Meeting
   them triggers nothing; live trading remains a manual human decision
@@ -319,7 +325,7 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 11. Testing & verification
 
-**241 backend tests passing** (<2s, fully hermetic): both branches of all
+**283 backend tests passing** (<2s, fully hermetic): both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
@@ -332,8 +338,14 @@ cache-hit cost branches against hand-computed values, mocked
 llm-brain suite (role routing honest-label/fallback/unsupported-model-bench,
 parse/validate dropping invented symbols + invalid calls, call mapping,
 fail-closed tick paths, None-safe wallet/snapshot builders);
-reuse fail-closed regression (malformed/legacy prior never raises).
-48 live_execution tests (**289 combined** via root pytest.ini). The live
+reuse fail-closed regression (malformed/legacy prior never raises);
+REF-R8 risk-budget suite (30 tests: budget math hand-computed from the
+published formula incl. Math.round half-up parity, fail-closed unreadable
+inputs, at-cost marking, ticket clamps, derived daily-ceiling refusal
+through a real tick, stats_json merge persistence, disclosure blocks);
+REF-R9 calibration suite (12 tests: FLAT/caps/floors/confidence pull/
+hand-computed mixed book, never-raises on garbage).
+48 live_execution tests (**331 combined** via root pytest.ini). The live
 execution bridge is wired
 and remains disarmed; its offline/mock flow covers execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.
@@ -522,3 +534,58 @@ All seven Reference parity features verified correct and well-tested:
 
 - 9 new tests in `tests/test_admin_reset.py`
 - **Total: 231 passing** (was 222 before this session)
+
+## §11. REF-R8 + REF-R9 — drawdown-adaptive sizing × closed-loop conviction (2026-08-27)
+
+Batch 2 of the reference-parity roadmap (handoff §22 → §23). Verbatim ports of
+the reference `computeBudget()` and `computeCalibration()`, re-fetched from the
+reference repository at implementation time.
+
+### REF-R8 — risk budget (`paper_trading_engine.py`)
+- `compute_risk_budget(equity, unrealized)` pure + deterministic:
+  `drawdown_factor = clamp(1 + min(0, unrealized)/equity × 2.5, 0.5, 1.0)`;
+  `max_order = round(clamp(equity × 0.035 × df, 25, 3000))`;
+  `max_daily = round(clamp(max_order × 4, 25, 12000))`; published `formula`
+  string so the numbers are recomputable from public inputs.
+- −20% of equity in open losses halves the ticket; flat/green = full size;
+  unreadable book (equity ≤0/NaN/inf, NaN unrealized) fails CLOSED to the
+  $25 minimum ticket (`derived=False`).
+- `portfolio_equity_and_unrealized()`: equity = cash + open value, unrealized
+  = open pnl; unpriced/degenerate marks held AT COST (never fabricated).
+- `SIZING_MODE="risk_budget"` branch in `compute_ticket()`:
+  `budget.max_order_usd × conviction_factor` clamped to `[25, 3000]`.
+  `"fixed"` (default) and `"conviction"` outputs frozen for comparability.
+- Derived DAILY ceiling enforced at entry (refusal journaled) in risk_budget
+  mode; other modes keep the static `DAILY_DEPLOY_CAP_USD`.
+- Constants hardcoded in `config.py` (never env-overridable):
+  `PER_ORDER_FRACTION=0.035`, `DAY_MULTIPLE=4`, `HARD_ORDER_CEILING_USD=3000`,
+  `HARD_DAILY_CEILING_USD=12000`.
+
+### REF-R9 — calibration (`calibration.py`, NEW)
+- `compute_calibration(closed_trades)` pure: expectancy from realized
+  `pnl_pct`; `raw = 1 + min(exp/50, 0.2)` (exp ≥ 0) or `1 + max(exp/25, −0.4)`;
+  `confidence = min(n/12, 1)`; `factor = clamp(1 + (raw−1)×confidence, 0.6, 1.2)`.
+  No usable trades → FLAT 1.0; any exception → FLAT.
+- Persisted into `daily_stats.stats_json` (new `patch_daily_stats()` key-merge
+  in both `db.py` and `db_pg.py` — JSONB `||` on Postgres; sibling keys never
+  clobbered), mirroring the reference `omo_meta` pattern.
+- Wired: the tick computes budget + calibration once, persists both, and sizes
+  each candidate with the factor; `learning_loop.py` persists it too (advisory
+  log line, never a threshold change); `run_live_cycle.py` (disarmed) uses the
+  same math in risk_budget mode only.
+
+### Public surface
+- `/api/disclosure.json` now carries `risk_budget` + `calibration` blocks —
+  persisted-first, recomputed-from-DB at cost-basis equity as fallback,
+  fail-closed minimums on any error. Live-verified: the running tick persists
+  its real budget (equity $991, df 1.0, $35/$140) and the endpoint serves it.
+
+### Verification
+- 42 new tests (30 risk-budget + 12 calibration), every expectation
+  hand-computed; combined suite **331 passed**; isolation grep clean; backend
+  restarted with 0 errors / 0 tracebacks.
+- Parity note: the reference clamps the order size LOW at `MIN_TICKET_USD`,
+  so a $1000 book at −20% open sizes $25 (floored) — our port matches exactly
+  (verified against the reference source, not assumed).
+- REF-R10 (live promotion) and REF-R11 (on-chain memo) remain gated /
+  documented-only pending operator approval.

@@ -22,6 +22,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -104,19 +105,177 @@ def compute_position_size(price_usd: float,
     return size, quantity
 
 
-def compute_ticket(cash_usd: float, heat: Optional[int]) -> float:
-    """
-    Conviction ticket sizing (the reference bot parity, capped hard):
+# ---------------------------------------------------------------------------
+# REF-R8 - drawdown-adaptive risk budget (reference computeBudget() parity).
+# Pure + deterministic: the published numbers are recomputable from the same
+# public inputs. The model decides WHETHER to enter, never the size.
+# ---------------------------------------------------------------------------
 
+@dataclass(frozen=True)
+class RiskBudget:
+    equity_usd: float
+    drawdown_factor: float      # 0.5 .. 1.0; shrinks while open risk is under water
+    max_order_usd: float
+    max_daily_usd: float
+    formula: str                # the arithmetic, published so numbers are reproducible
+    derived: bool               # False when the budget failed closed to the floor
+
+    def to_dict(self) -> dict:
+        return {
+            "equity_usd": self.equity_usd,
+            "drawdown_factor": self.drawdown_factor,
+            "max_order_usd": self.max_order_usd,
+            "max_daily_usd": self.max_daily_usd,
+            "formula": self.formula,
+            "derived": self.derived,
+        }
+
+
+def _round_half_up(x: float) -> int:
+    """JS Math.round parity (half up) - the reference rounds ticket sizes with
+    Math.round; the Python builtin round() uses banker rounding and would
+    diverge on .5 boundaries. Money math must match the published formula."""
+    return int(math.floor(float(x) + 0.5))
+
+
+def _fail_closed_budget() -> RiskBudget:
+    """Minimum-ticket budget: an unreadable book may never authorise size."""
+    min_t = float(config.MIN_TICKET_USD)
+    max_daily = float(_round_half_up(min(
+        config.HARD_DAILY_CEILING_USD,
+        max(config.MIN_TICKET_USD, min_t * config.DAY_MULTIPLE))))
+    return RiskBudget(
+        equity_usd=0.0, drawdown_factor=1.0, max_order_usd=min_t,
+        max_daily_usd=max_daily,
+        formula="fail closed: unreadable book -> minimum ticket",
+        derived=False,
+    )
+
+
+def compute_risk_budget(equity_usd: float, unrealized_usd: float) -> RiskBudget:
+    """
+    Verbatim port of the reference computeBudget(equityUsd, unrealizedUsd):
+
+        open_drawdown_pct = min(0, unrealized) / equity      (0 if equity <= 0)
+        drawdown_factor   = clamp(1 + open_drawdown_pct * 2.5, 0.5, 1.0)
+        max_order_usd     = round(clamp(equity * PER_ORDER_FRACTION *
+                                        drawdown_factor, MIN_TICKET_USD,
+                                        HARD_ORDER_CEILING_USD))
+                            (equity <= 0 -> MIN_TICKET_USD: fail closed, never open)
+        max_daily_usd     = round(clamp(max_order_usd * DAY_MULTIPLE,
+                                        MIN_TICKET_USD, HARD_DAILY_CEILING_USD))
+
+    -20% of equity in open losses halves the ticket; flat or green = full size.
+    Never raises: malformed inputs fail CLOSED to the minimum-ticket budget
+    (a skipped opportunity costs nothing; a guessed size corrupts the book).
+    """
+    try:
+        equity = (float(equity_usd)
+                  if math.isfinite(equity_usd) and equity_usd > 0 else 0.0)
+        # A non-finite unrealized mark is unreadable -> refuse to guess (the
+        # JS original lets NaN propagate into the factor; we fail closed).
+        if equity > 0 and not math.isfinite(unrealized_usd):
+            equity = 0.0
+        open_dd_pct = (min(0.0, float(unrealized_usd)) / equity
+                       if equity > 0 else 0.0)
+        df_raw = min(1.0, max(0.5, 1.0 + open_dd_pct * 2.5))
+        df_display = round(df_raw, 3)
+        if equity > 0:
+            max_order = float(_round_half_up(min(
+                config.HARD_ORDER_CEILING_USD,
+                max(config.MIN_TICKET_USD,
+                    equity * config.PER_ORDER_FRACTION * df_raw))))
+        else:
+            max_order = float(config.MIN_TICKET_USD)
+        max_daily = float(_round_half_up(min(
+            config.HARD_DAILY_CEILING_USD,
+            max(config.MIN_TICKET_USD,
+                max_order * config.DAY_MULTIPLE))))
+        equity_display = _round_half_up(equity)
+        formula = (
+            "per order = equity %d * %s * drawdown factor %.3f, clamped to "
+            "[%g, %g]; per day = per order * %d, clamped to %g" % (
+                equity_display, config.PER_ORDER_FRACTION, df_display,
+                config.MIN_TICKET_USD, config.HARD_ORDER_CEILING_USD,
+                config.DAY_MULTIPLE, config.HARD_DAILY_CEILING_USD)
+        )
+        return RiskBudget(
+            equity_usd=float(equity_display), drawdown_factor=df_display,
+            max_order_usd=max_order, max_daily_usd=max_daily,
+            formula=formula, derived=equity > 0,
+        )
+    except Exception:
+        log.warning("compute_risk_budget failed closed (equity=%r unrealized=%r)",
+                    equity_usd, unrealized_usd, exc_info=True)
+        return _fail_closed_budget()
+
+
+def portfolio_equity_and_unrealized(portfolio: PortfolioState,
+                                    price_map: dict) -> tuple[float, float]:
+    """
+    Risk-budget inputs from the live book:
+
+        equity     = cash + sum(position value over open positions)
+        unrealized = sum(unrealized pnl over open positions)
+
+    price_map: {mint_address: current_price}. A position missing from the map
+    (or with degenerate inputs) is marked AT COST - value = position_size_usd,
+    unrealized 0. Conservative and never fabricated: an unreadable mark can
+    neither inflate nor deflate the budget. Raises nothing on bad marks.
+    """
+    equity = float(portfolio.cash_usd)
+    unrealized = 0.0
+    for t in portfolio.open_positions:
+        pnl = 0.0
+        price = price_map.get(t.mint_address)
+        if price is not None and price > 0:
+            try:
+                pnl, _ = compute_unrealized_pnl(t, float(price))
+                if not math.isfinite(pnl):
+                    pnl = 0.0
+            except (ValueError, TypeError):
+                pnl = 0.0     # degenerate position -> mark at cost
+        equity += float(t.position_size_usd) + pnl
+        unrealized += pnl
+    if not math.isfinite(equity):
+        return 0.0, 0.0       # unreadable book -> caller fails closed
+    return equity, unrealized
+
+
+def compute_ticket(cash_usd: float, heat: Optional[int],
+                   equity_usd: Optional[float] = None,
+                   unrealized_usd: Optional[float] = None,
+                   conviction_factor: Optional[float] = None) -> float:
+    """
+    Ticket sizing, three modes keyed on SIZING_MODE:
+
+    "fixed"      - INTENDED_POSITION_SIZE_USD unchanged (calibration baseline).
+    "conviction" - cash x crowd-heat conviction, capped hard:
         base       = min(cash * TICKET_CASH_FRACTION, TICKET_MAX_USD)
         conviction = min(1, heat/100 + 0.3)      (heat None -> 50 neutral)
         ticket     = base * conviction
+    "risk_budget" - REF-R8 drawdown-adaptive sizing (reference computeBudget
+        parity) times the REF-R9 conviction factor:
+        ticket = risk_budget.max_order_usd * conviction_factor,
+        clamped to [MIN_TICKET_USD, HARD_ORDER_CEILING_USD].
+        Missing equity/unrealized default to (0, 0) -> the budget fails closed
+        to MIN_TICKET_USD; a malformed conviction factor is treated as 1.0.
 
-    SIZING_MODE="fixed" returns INTENDED_POSITION_SIZE_USD unchanged (kept
-    for calibration comparability until conviction mode is switched on).
+    fixed and conviction outputs are frozen for calibration comparability.
     """
     if config.SIZING_MODE == "fixed":
         return float(config.INTENDED_POSITION_SIZE_USD)
+    if config.SIZING_MODE == "risk_budget":
+        budget = compute_risk_budget(
+            0.0 if equity_usd is None else equity_usd,
+            0.0 if unrealized_usd is None else unrealized_usd,
+        )
+        cf = conviction_factor
+        if cf is None or not math.isfinite(cf) or cf <= 0:
+            cf = 1.0      # fail closed: never scale on a malformed factor
+        ticket = budget.max_order_usd * cf
+        return float(min(config.HARD_ORDER_CEILING_USD,
+                         max(config.MIN_TICKET_USD, _round_half_up(ticket))))
     heat_val = config.CROWD_HEAT_MIN + 14 if heat is None else heat  # ~50 neutral
     conviction = min(1.0, max(0.0, heat_val / 100.0 + 0.3))
     base = min(cash_usd * config.TICKET_CASH_FRACTION, config.TICKET_MAX_USD)
