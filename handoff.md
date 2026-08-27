@@ -59,8 +59,8 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 192 test
 | `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens) → feeds crowd_heat. Stealth fallback chain: firecrawl (forwards auth headers) → scrapingbee (keyless-only: platform consumes Authorization) → zenrows `custom_headers=true&premium_proxy=true` → scrapeops `keep_headers=true` — the last two carry the Privy bearer through Cloudflare (verified live). `_json_from_body` rejects only statusCode≥400 envelopes (prod-api sends statusCode:200 on success) |
 | `backend/paper_trading_engine.py` | money math + atomic open/close/scale_in + exits + decide_and_act |
 | `backend/api/db.py` | schema + repository (SQLite default); when `USE_SUPABASE_DB=1` + `SUPABASE_DB_URL` set, transparently delegates every public function to `db_pg.py`; pytest forces SQLite |
-| `backend/api/db_pg.py` | asyncpg/Supabase Postgres twin of db.py — identical surface incl. §5.1 atomicity (rowcount from execute status); TLS via SHA-256 cert-fingerprint pinning (TOFU, `.supabase_fp.txt` gitignored) |
-| `migrations/supabase/001_init.sql` | run ONCE in Supabase SQL editor: 9 tables, JSONB/TIMESTAMPTZ, one-open-position exclusion constraint, RLS locked |
+| `backend/api/db_pg.py` | asyncpg/Supabase Postgres twin of db.py — identical surface incl. §5.1 atomicity (rowcount from execute status); TLS via SHA-256 cert-fingerprint pinning (TOFU, `.supabase_fp.txt` gitignored); `init_db()` self-heals schema drift via `_SCHEMA_SYNC_SQL` (§17) |
+| `migrations/supabase/001_init.sql` | run ONCE in Supabase SQL editor: 12 tables, JSONB/TIMESTAMPTZ, one-open-position exclusion constraint, RLS locked. `002_llm_usage.sql` adds `llm_call_usage` + versioning columns; `db_pg.init_db()` auto-heals older books so neither has to be re-run manually (§17) |
 | `backend/api/main.py` | FastAPI app; serves built frontend; TICK_LOOP_IN_PROCESS env runs tick loop in-process |
 | `backend/data_providers/` | base(protocol,retry,counters), birdeye, dexscreener, jupiter, live(stack), mock |
 | `backend/llm/` | narrator.py (prompt, Ollama client, template fallback, reflection), grounding.py |
@@ -634,3 +634,65 @@ All seven OMO parity routes were reviewed for code quality and correctness:
   restores cash), and endpoint (confirm=yes required, unknown mode=400,
   both modes return correct summary).
 - **Total: 231 passing** (was 222).
+
+## 17. Supabase schema-drift incident + self-healing sync (2026-08-27)
+
+### Incident
+
+After the LLM observability work (§14) shipped, the LIVE Supabase book
+started failing:
+
+- **Every tick died** at `db.insert_event` — `UndefinedTableError: relation
+  "events" does not exist` (0 completed ticks, 9 consecutive failures).
+- **`GET /api/system-status` 500'd** on every dashboard poll —
+  `UndefinedTableError: relation "llm_call_usage" does not exist` (265×).
+- **Daily learning failed** on the same missing table.
+
+**Root cause:** schema drift. The operator ran `001_init.sql` back when it
+created 9 tables. Afterwards `events`/`memories` (OMO-R5) and `theses`
+(OMO-R3) were added to that same file IN PLACE, and `002_llm_usage.sql`
+(`llm_call_usage` + `model_version`/`prompt_version` columns) was added as a
+new file — none of those updates ever reached the remote DB.
+`db_pg.init_db()` only checked that the `'001_init'` row existed in
+`schema_migrations`, so the backend booted "verified" straight into the
+missing-table errors.
+
+### Fix (self-healing schema sync)
+
+- `db_pg.init_db()` now runs `_SCHEMA_SYNC_SQL` after the base-migration
+  check: idempotent `CREATE TABLE IF NOT EXISTS` for `events`, `memories`,
+  `theses`, `llm_call_usage` (+ their indexes), `ADD COLUMN IF NOT EXISTS`
+  for the four versioning columns, `ENABLE ROW LEVEL SECURITY` on
+  `llm_call_usage`, and records `'002_llm_usage'` in `schema_migrations`.
+  Every statement is a no-op on an up-to-date book; a sync failure refuses
+  boot (loud, fail-closed — never limp on a broken schema).
+- `migrations/supabase/002_llm_usage.sql` gained the same RLS + bookkeeping
+  statements so manual runs stay consistent. Migration files remain the
+  source of truth for fresh installs.
+
+### Surface-identity bugs fixed alongside (db_pg vs db.py)
+
+- `insert_llm_call_usage` parameter renamed `status_str` → `status`
+  (callers pass `status=`; would have been a guaranteed TypeError on PG).
+- `get_llm_call_usage` now casts `ts`/`tick_ts` with `::text` — consumers
+  (system-status route, `learning_loop`'s `.startswith(today)`) get ISO
+  strings, not datetime objects, per the db_pg translation rules.
+- `insert_feed_event` / `_FEED_COLS` / `_row_to_feed_dict` now carry
+  `model_version` + `prompt_version` exactly like the SQLite surface.
+
+### Verification (live)
+
+- Full suite: **231 passing** (pytest forces SQLite — regression-only).
+- Restart: boot log shows `db_pg: Supabase schema verified + synced`;
+  **zero** new `UndefinedTableError`.
+- `/api/system-status` → 200 with `llm_usage_recent` (28 rows after one
+  tick: ISO-string `ts`, `status` success/error, degradation reasons).
+- First full tick completed: `tick done … 20 candidates, 0 entries` —
+  feed_events, OMO-R5 events (`thought`/`refused`), and decision commits
+  all persisting to Supabase; every dashboard endpoint 200.
+
+### Lesson
+
+Never edit an applied migration file in place again. New schema = new
+numbered migration file, AND mirror it into `_SCHEMA_SYNC_SQL` so older
+books heal on boot.

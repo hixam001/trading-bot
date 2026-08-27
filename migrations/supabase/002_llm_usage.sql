@@ -30,3 +30,11 @@ CREATE TABLE IF NOT EXISTS llm_call_usage (
 );
 
 CREATE INDEX IF NOT EXISTS idx_llm_call_usage_ts ON llm_call_usage(ts);
+
+-- 4. RLS lockdown (same posture as 001_init.sql §11): the backend connects
+-- with the service role and bypasses RLS; anon/authenticated keys get nothing.
+ALTER TABLE llm_call_usage ENABLE ROW LEVEL SECURITY;
+
+-- 5. Migration bookkeeping (matches 001_init.sql §0).
+INSERT INTO schema_migrations (version) VALUES ('002_llm_usage')
+ON CONFLICT (version) DO NOTHING;

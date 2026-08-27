@@ -1,6 +1,7 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] Supabase schema-drift fix: self-healing `_SCHEMA_SYNC_SQL` in `db_pg.init_db()` (events/memories/theses/llm_call_usage + versioning columns + RLS + migration bookkeeping); db_pg surface fixes (`status` param, `::text` casts, feed-event versioning parity); live-verified: first full tick completed, all endpoints 200 (2026-08-27)
 - [x] DB maintenance: prune_feed_events/prune_market_regime + reset_book in both db.py + db_pg.py (2026-08-27)
 - [x] POST /api/admin/reset (confirm=yes required; reset_book + prune_only modes) (2026-08-27)
 - [x] OMO-R1–R7 audit: all routes confirmed correct and well-tested (2026-08-27)
@@ -78,7 +79,11 @@
       future arming discussion.
 
 ## Status
-Live calibration day ~2. Fresh $1,000 book. DB maintenance endpoint added
+Live calibration day ~2. Fresh $1,000 book. Supabase schema-drift incident
+FIXED (2026-08-27): live book was missing events/memories/theses/llm_call_usage
+(every tick died, system-status 500'd); `db_pg.init_db()` now self-heals via
+idempotent `_SCHEMA_SYNC_SQL` — verified live: first full tick completed, all
+endpoints 200. DB maintenance endpoint added
 (2026-08-27): prune_feed_events, prune_market_regime, reset_book, POST /api/admin/reset.
 OMO-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
