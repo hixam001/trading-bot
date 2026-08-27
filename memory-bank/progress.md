@@ -1,6 +1,9 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] DB maintenance: prune_feed_events/prune_market_regime + reset_book in both db.py + db_pg.py (2026-08-27)
+- [x] POST /api/admin/reset (confirm=yes required; reset_book + prune_only modes) (2026-08-27)
+- [x] OMO-R1–R7 audit: all routes confirmed correct and well-tested (2026-08-27)
 - [x] OMO-R1 Independent verifier + binding report: `/api/binding.json`, 4-check binding (2026-08-26)
 - [x] OMO-R6 Public disclosure + reasoning: `/api/disclosure.json` + `/api/reasoning.json` (2026-08-26)
 - [x] OMO-R7 Retro audit-log signature matching: `retro_matcher.py` post-cycle (2026-08-26)
@@ -75,7 +78,10 @@
       future arming discussion.
 
 ## Status
-Live calibration day ~2. Fresh $1,000 book. Dashboard v2 shipped
+Live calibration day ~2. Fresh $1,000 book. DB maintenance endpoint added
+(2026-08-27): prune_feed_events, prune_market_regime, reset_book, POST /api/admin/reset.
+OMO-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
+**Tests: 231 passing** (was 222; +9 new admin/reset tests).

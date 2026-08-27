@@ -1110,3 +1110,96 @@ async def delete_trade_row(conn: asyncpg.Connection, trade_id: str) -> int:
         "DELETE FROM trades WHERE trade_id = $1 AND is_open = TRUE", trade_id
     )
     return _rowcount(status)
+
+
+# ===========================================================================
+# DB maintenance — prune + reset (operator-only, called by /api/admin/reset)
+# Postgres dialect: identical surface to db.py, translated for asyncpg.
+# ===========================================================================
+
+async def prune_feed_events(conn: asyncpg.Connection, keep_rows: int) -> int:
+    """Delete all but the newest `keep_rows` feed_events rows.
+
+    Returns the number of rows deleted.
+
+    Defense note: `keep_rows` is supplied from config, never from the HTTP
+    request directly.
+    """
+    status = await conn.execute(
+        """
+        DELETE FROM feed_events
+        WHERE id NOT IN (
+            SELECT id FROM feed_events ORDER BY id DESC LIMIT $1
+        )
+        """,
+        keep_rows,
+    )
+    return _rowcount(status)
+
+
+async def prune_market_regime(conn: asyncpg.Connection, keep_rows: int) -> int:
+    """Delete all but the newest `keep_rows` market_regime rows.
+
+    Returns the number of rows deleted.
+    """
+    status = await conn.execute(
+        """
+        DELETE FROM market_regime
+        WHERE id NOT IN (
+            SELECT id FROM market_regime ORDER BY id DESC LIMIT $1
+        )
+        """,
+        keep_rows,
+    )
+    return _rowcount(status)
+
+
+async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
+    """Full operator reset: wipe all operational tables and restore the
+    starting balance. This is a paper-trading maintenance function — it
+    touches only the remote DB book, never any wallet or on-chain state.
+
+    Wipes (in safe foreign-key order via TRUNCATE CASCADE):
+      feed_events, market_regime, decision_commits, events, memories,
+      theses, daily_stats, llm_call_usage, trades
+
+    Then resets portfolio_state.cash_usd = initial_cash_usd.
+
+    Returns a summary dict for the operator log.
+    """
+    # TRUNCATE with RESTART IDENTITY CASCADE is the idiomatic Postgres reset.
+    # We issue individual TRUNCATEs (not a multi-table one) to get per-table
+    # confirmation in the return dict; each is effectively instantaneous on
+    # small tables.
+    tables = [
+        "feed_events",
+        "market_regime",
+        "decision_commits",
+        "events",
+        "memories",
+        "theses",
+        "daily_stats",
+        "llm_call_usage",
+        "trades",
+    ]
+    counts: dict[str, int] = {}
+    for table in tables:
+        # Fetch the count before truncating so we can report it.
+        row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
+        counts[table] = int(row["n"]) if row else 0
+        await conn.execute(
+            f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"
+        )
+
+    # Restore the starting balance.
+    await conn.execute(
+        "UPDATE portfolio_state SET cash_usd = $1, updated_at = $2 WHERE id = 1",
+        initial_cash_usd, _now_iso(),
+    )
+
+    return {
+        "reset": True,
+        "initial_cash_usd": initial_cash_usd,
+        "rows_deleted": counts,
+        "total_deleted": sum(counts.values()),
+    }

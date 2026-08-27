@@ -323,3 +323,11 @@ SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
 # tbs=qdr:d limits results to the last 24h like omo recent=true.
 WEB_SEARCH_PER_TICK: int = int(os.getenv("WEB_SEARCH_PER_TICK", "8"))
 WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "20"))
+
+# ---------------------------------------------------------------------------
+# DB maintenance — row retention limits for append-only tables.
+# Prune functions keep the newest KEEP rows and delete everything older.
+# Adjust via env if you want to keep more/less history before resetting.
+# ---------------------------------------------------------------------------
+FEED_PRUNE_KEEP: int = int(os.getenv("FEED_PRUNE_KEEP", "2000"))
+REGIME_PRUNE_KEEP: int = int(os.getenv("REGIME_PRUNE_KEEP", "500"))

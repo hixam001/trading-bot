@@ -1173,6 +1173,7 @@ async def retire_thesis(
     await conn.commit()
 
 
+
 async def get_theses(
     conn: aiosqlite.Connection, limit: int = 100, offset: int = 0
 ) -> list[dict[str, Any]]:
@@ -1182,6 +1183,100 @@ async def get_theses(
     )
     rows = await cursor.fetchall()
     return [dict(r) for r in rows]
+
+
+# ===========================================================================
+# DB maintenance — prune + reset (operator-only, called by /api/admin/reset)
+# ===========================================================================
+
+async def prune_feed_events(conn: aiosqlite.Connection, keep_rows: int) -> int:
+    """Delete all but the newest `keep_rows` feed_events rows.
+
+    Returns the number of rows deleted. A DELETE on an already-small table
+    (rowcount < keep_rows) returns 0 without touching anything.
+
+    Defense note: `keep_rows` is supplied from config (not from the HTTP
+    request) — the endpoint passes the pre-validated config constant, never
+    a caller-supplied integer.
+    """
+    cursor = await conn.execute(
+        """
+        DELETE FROM feed_events
+        WHERE id NOT IN (
+            SELECT id FROM feed_events ORDER BY id DESC LIMIT ?
+        )
+        """,
+        (keep_rows,),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
+async def prune_market_regime(conn: aiosqlite.Connection, keep_rows: int) -> int:
+    """Delete all but the newest `keep_rows` market_regime rows.
+
+    Returns the number of rows deleted.
+    """
+    cursor = await conn.execute(
+        """
+        DELETE FROM market_regime
+        WHERE id NOT IN (
+            SELECT id FROM market_regime ORDER BY id DESC LIMIT ?
+        )
+        """,
+        (keep_rows,),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
+async def reset_book(conn: aiosqlite.Connection, initial_cash_usd: float) -> dict:
+    """Full operator reset: wipe all operational tables and restore the
+    starting balance. This is a paper-trading maintenance function — it
+    touches only the local DB book, never any wallet or on-chain state.
+
+    Wipes (in safe foreign-key order):
+      feed_events, market_regime, decision_commits, events, memories,
+      theses, daily_stats, llm_call_usage, trades
+
+    Then resets portfolio_state.cash_usd = initial_cash_usd.
+
+    Returns a summary dict for the operator log.
+
+    SAFETY: assert_paper_trading_only() is NOT needed here (this function
+    never touches live execution or wallet state), but the endpoint that
+    calls it MUST be locally accessible only and require explicit
+    confirmation — see api/routes/admin.py.
+    """
+    counts: dict[str, int] = {}
+
+    async def _del(table: str) -> int:
+        cur = await conn.execute(f"DELETE FROM {table}")
+        return max(cur.rowcount, 0)
+
+    counts["feed_events"]      = await _del("feed_events")
+    counts["market_regime"]    = await _del("market_regime")
+    counts["decision_commits"] = await _del("decision_commits")
+    counts["events"]           = await _del("events")
+    counts["memories"]         = await _del("memories")
+    counts["theses"]           = await _del("theses")
+    counts["daily_stats"]      = await _del("daily_stats")
+    counts["llm_call_usage"]   = await _del("llm_call_usage")
+    counts["trades"]           = await _del("trades")
+
+    # Restore the starting balance — UPDATE the singleton row.
+    await conn.execute(
+        "UPDATE portfolio_state SET cash_usd = ?, updated_at = ? WHERE id = 1",
+        (initial_cash_usd, _now_iso()),
+    )
+    await conn.commit()
+
+    return {
+        "reset": True,
+        "initial_cash_usd": initial_cash_usd,
+        "rows_deleted": counts,
+        "total_deleted": sum(counts.values()),
+    }
 
 
 # ===========================================================================
@@ -1203,8 +1298,4 @@ if config.USE_SUPABASE_DB and config.SUPABASE_DB_URL and "pytest" not in sys.mod
     log.info("DB backend: Supabase Postgres")
 else:
     log.info("DB backend: local SQLite at %s", config.DB_PATH)
-
-
-
-
 

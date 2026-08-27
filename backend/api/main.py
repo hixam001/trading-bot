@@ -87,6 +87,12 @@ try:
 except ImportError:
     pass  # OMO-R6 disclosure endpoints
 
+try:
+    from api.routes.admin import router as admin_router
+    app.include_router(admin_router)
+except ImportError:
+    pass  # operator admin/reset endpoint
+
 
 @app.websocket("/ws/feed")
 async def ws_feed(ws: WebSocket):

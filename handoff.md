@@ -1,7 +1,7 @@
-**Last updated:** 2026-08-26 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-08-27 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 222 passing (full suite incl. live_execution)
+**Tests:** 231 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -574,3 +574,63 @@ and 14 above.
 - Deterministic rules, exits, cash guards, kill switches, and manual approval
   retain authority over every execution path.
 - No automatic threshold, prompt, model, or live-trading promotion changes.
+
+## 16. DB maintenance (2026-08-27)
+
+### Feed and regime pruning
+
+- **`prune_feed_events(conn, keep_rows)`** — deletes all but the newest
+  `keep_rows` rows from `feed_events`. Returns count deleted. Config:
+  `FEED_PRUNE_KEEP` (default 2000, overridable via env).
+- **`prune_market_regime(conn, keep_rows)`** — same for `market_regime`.
+  Config: `REGIME_PRUNE_KEEP` (default 500).
+- Both functions exist in **both** `api/db.py` (SQLite) and `api/db_pg.py`
+  (Postgres) with identical surfaces. The Postgres version uses a
+  `DELETE ... NOT IN (SELECT id ... LIMIT $1)` subquery.
+
+### Full book reset
+
+- **`reset_book(conn, initial_cash_usd)`** — wipes all nine operational
+  tables (`feed_events`, `market_regime`, `decision_commits`, `events`,
+  `memories`, `theses`, `daily_stats`, `llm_call_usage`, `trades`) in
+  order and resets `portfolio_state.cash_usd` to the given amount.
+  Returns a summary dict with per-table row counts.
+  **Paper-only** — never touches wallet, live_execution, or on-chain state.
+  Postgres version uses `TRUNCATE TABLE ... RESTART IDENTITY CASCADE`.
+
+### Admin endpoint
+
+- **`POST /api/admin/reset`** (not in schema; operator console only)
+  - `?confirm=yes` — required; returns 400 without it
+  - `?mode=reset_book` (default) — full wipe + $1,000 restore
+  - `?mode=prune_only` — trim feed/regime to configured limits, trades/cash
+    untouched
+  - Logged at WARNING level; returns JSON summary
+  - Source: `api/routes/admin.py`, registered via `api/main.py`
+
+### OMO-R1–R7 audit (2026-08-27)
+
+All seven OMO parity routes were reviewed for code quality and correctness:
+- **R1** (`/api/binding.json`, `/api/verify.json`): four-check binding
+  (`tx_confirmed`, `time_ordering`, `fee_payer`, `mint_present`); all
+  unknown-data paths return `unknown`, never `pass`. ✅ correct.
+- **R2** (`crowd.py` → thinker `{crowd_line}`): fomo theses with author P&L
+  formatted as omo-style evidence lines, injected into thinker prompt. ✅ wired.
+- **R3** (`/api/theses.json`, `api/db.py:upsert_thesis/retire_thesis`):
+  per-position write-up stored, retired at close with realized PnL. ✅ correct.
+- **R4** (`rule_engine/liveness.py`): file-backed break state with atomic
+  tmp-rename write, fail-closed on corrupt file, expiry-aware. ✅ correct.
+- **R5** (`events`/`memories` tables, `/api/events.json`): append-only event
+  stream + weighted memory recall with hit accounting. ✅ correct.
+- **R6** (`/api/disclosure.json`, `/api/reasoning.json`): armed/break/config
+  truths surfaced; zero secrets; per-decision inputs hash. ✅ correct.
+- **R7** (`retro_matcher.py`): omo-exact algorithm; double-claim protection
+  via `taken` set; exact-bind rows never overwritten. ✅ correct.
+
+### Tests
+
+- **9 new tests** in `backend/tests/test_admin_reset.py` covering prune
+  (keeps newest N, no-op when under limit), reset (clears all tables,
+  restores cash), and endpoint (confirm=yes required, unknown mode=400,
+  both modes return correct summary).
+- **Total: 231 passing** (was 222).

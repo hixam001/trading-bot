@@ -1,10 +1,10 @@
 # 07 — Project Report
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
-Solana memecoins. Report updated 2026-08-26 from the current main branch.
+Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
-**OMO parity: ALL R1–R7 features implemented.** Tests: **222 passing**.
+**OMO parity: ALL R1–R7 features implemented.** Tests: **231 passing**.
 
 ---
 
@@ -15,9 +15,9 @@ assembles a candidate batch from real market data, computes a market-wide
 regime snapshot, and evaluates every candidate against **ten deterministic
 rules**. The AND of those rules is the *entire* entry decision. Open
 positions are checked against **three fixed numeric exit conditions** every
-tick. A DeepSeek-compatible thinker path supplies pre-trade analysis with a
-fail-closed template fallback; Groq remains evidence-only for social reads.
-The model does exactly two things: narrate
+tick. A Groq-hosted thinker (`qwen/qwen3.8-27b`) supplies pre-trade analysis
+with a fail-closed template fallback; Groq is also used for evidence-only
+social reads. The model does exactly two things: narrate
 decisions that were already made, and (later phase) add advisory flags that
 can never override a verdict. Every decision — pass or fail — is persisted
 with its full rule breakdown, narrated thesis, and grounding-check results,
@@ -425,3 +425,65 @@ Three nullable columns added to `decision_commits` via idempotent ALTER TABLE:
 A partial index on `(signature) WHERE signature IS NOT NULL` keeps the binding
 lookup O(1). Both SQLite (db.py) and Postgres (db_pg.py) backends apply the
 same migrations idempotently on `init_db()`.
+
+---
+
+## §10. DB maintenance (2026-08-27)
+
+### Feed and regime pruning
+
+As the system runs 24/7, the `feed_events` and `market_regime` tables grow
+unboundedly at ~1 row per candidate per tick. New repository functions trim
+these tables while leaving all trade/financial state intact:
+
+| Function | Table | Config | Default |
+|---|---|---|---|
+| `prune_feed_events(conn, keep_rows)` | `feed_events` | `FEED_PRUNE_KEEP` | 2,000 rows |
+| `prune_market_regime(conn, keep_rows)` | `market_regime` | `REGIME_PRUNE_KEEP` | 500 rows |
+
+Both functions keep the **newest N rows** (by `id DESC`) and delete the rest.
+Return value is the count of rows deleted (0 if the table is already small
+enough). Both backends (SQLite `DELETE ... NOT IN (... LIMIT ?)` and Postgres
+`DELETE ... NOT IN (... LIMIT $1)`) are implemented with identical surfaces.
+
+### Full book reset
+
+`reset_book(conn, initial_cash_usd)` wipes all nine operational tables and
+restores `portfolio_state.cash_usd` to the given amount:
+
+```
+feed_events  market_regime  decision_commits  events  memories
+theses  daily_stats  llm_call_usage  trades
+```
+
+The Postgres version uses `TRUNCATE TABLE ... RESTART IDENTITY CASCADE` for
+each table (faster and avoids row-level lock contention). The function is
+**paper-only** — it touches no wallet, live_execution, or on-chain state.
+
+### Operator endpoint
+
+`POST /api/admin/reset` (hidden from schema, operator console only):
+
+- `?confirm=yes` required; returns 400 otherwise
+- `?mode=reset_book` (default): full wipe + cash restore
+- `?mode=prune_only`: trims feed/regime only; trades/cash untouched
+- Logged at WARNING level; returns JSON summary with per-table counts
+
+### OMO-R1–R7 audit results (2026-08-27)
+
+All seven OMO parity features verified correct and well-tested:
+
+| Feature | Route / Module | Status |
+|---|---|---|
+| R1 Independent verifier | `/api/binding.json`, `/api/verify.json` | ✅ 4-check binding, fail-closed |
+| R2 FOMO crowd intel | `crowd.py` → `{crowd_line}` in thinker | ✅ author P&L injected |
+| R3 Durable thesis book | `/api/theses.json`, db upsert/retire | ✅ lifecycle hooks wired |
+| R4 Self-regulating break | `rule_engine/liveness.py` | ✅ atomic write, fail-closed |
+| R5 Memory/events | `events`/`memories` tables, `/api/events.json` | ✅ hits accounting correct |
+| R6 Disclosure feeds | `/api/disclosure.json`, `/api/reasoning.json` | ✅ zero secrets surfaced |
+| R7 Retro signature match | `retro_matcher.py` | ✅ double-claim blocked |
+
+### Test count
+
+- 9 new tests in `tests/test_admin_reset.py`
+- **Total: 231 passing** (was 222 before this session)

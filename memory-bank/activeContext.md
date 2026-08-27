@@ -1,7 +1,18 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (Groq LLM migration complete; bug audit done).** Repo:
+**As of 2026-08-27 (DB maintenance + OMO-R1–R7 audit done).** Repo:
 `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### DB maintenance: prune + reset + OMO audit (2026-08-27)
+Added `prune_feed_events(conn, keep_rows)`, `prune_market_regime(conn, keep_rows)`,
+and `reset_book(conn, initial_cash_usd)` to both `api/db.py` (SQLite DELETE NOT IN)
+and `api/db_pg.py` (TRUNCATE RESTART IDENTITY CASCADE). New operator-only endpoint
+`POST /api/admin/reset` in `api/routes/admin.py` (requires `?confirm=yes`,
+`mode=reset_book` or `mode=prune_only`; logged at WARNING; never touches wallet or
+live_execution). Config knobs `FEED_PRUNE_KEEP=2000` and `REGIME_PRUNE_KEEP=500`
+added to `config.py`. 9 new tests in `tests/test_admin_reset.py`. Full suite now
+**231 passing**. All OMO-R1–R7 routes audited and confirmed correct.
 
 ## DONE
 ### Groq LLM migration + bug audit complete (2026-08-27)
