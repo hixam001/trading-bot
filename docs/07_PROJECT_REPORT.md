@@ -4,7 +4,7 @@
 Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
-**OMO parity: ALL R1–R7 features implemented.** Tests: **262 passing**.
+**Reference parity: ALL R1–R7 features implemented.** Tests: **262 passing**.
 
 ---
 
@@ -18,7 +18,7 @@ positions are checked against **three fixed numeric exit conditions** every
 tick. The main thinker/narrator LLM is provider-selectable via
 `MAIN_LLM_PROVIDER` — DeepSeek V4 Flash (direct API, non-thinking mode) or
 Groq (`qwen/qwen3.8-27b`) — with a fail-closed template fallback; Groq also
-powers the evidence-only social reads. In live mode an **omo-style brain**
+powers the evidence-only social reads. In live mode an **reference-style brain**
 (ported from the reference system's reasoning layer) runs one role-routed call
 per tick that grades the board and emits rich verdicts/checks/watchlist, but
 its `buy` call is only a *necessary input* — the deterministic gate still
@@ -29,7 +29,7 @@ and is visible in a real-time dashboard.
 
 **The one governing idea:** decisions are made by deterministic, tested
 code. The LLM never decides, never scores, never overrides. This was
-validated against the reference system (omotrades.com — see
+validated against the reference system (the reference site — see
 `06_REFERENCE_COMPARISON.md`), whose live payloads show an agent layer
 deciding *between* rules and action; this project deliberately closes that
 gap.
@@ -47,7 +47,7 @@ position-opening function.
   the backend itself at http://localhost:8000 (single origin, one process).
 - **Launcher**: `./start.sh` (ollama serve if needed → backend + tick loop →
   browser), `./stop.sh`, `trading-bot.desktop` app-menu entry.
-- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections + the omo-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost).
+- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections + the reference-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost).
 - **Data**: Birdeye memepool trending (discovery + decimals + security),
   Dexscreener pairs (all rule numerics + age + socials), Jupiter lite-api
   (execution-quality price for open positions).
@@ -261,14 +261,14 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
   writes `{thesis, invalidation, verdict}` before any rule runs. Verdict
   must be `"buy"` AND every rule must pass for entry. Fail-closed: any
   provider failure degrades to a deterministic template `pass` refusal.
-- **Omo-style brain** (live mode, `OMO_BRAIN`, `backend/llm/omo_brain.py`):
+- **Reference-style brain** (live mode, `LLM_BRAIN`, `backend/llm/llm_brain.py`):
   ports the reference system's *reasoning layer*. One role-routed call per tick
   (`run_role()` — honest resolution, ordered fallback, unsupported-model bench)
-  grades up to 8 highest-volume candidates against the omo tick prompt (hard
+  grades up to 8 highest-volume candidates against the brain tick prompt (hard
   filters, 6 decision buckets, ground-truth + price-talk rules) and emits
   `{thoughts, actions, verdicts[checks/entry/invalidation], theses, watchlist,
   remember, fomo, break}` with the wallet fed in as context. Strict
-  `parse_omo_tick()` validation drops invented symbols/invalid calls; any
+  `parse_llm_tick()` validation drops invented symbols/invalid calls; any
   malformed/unreachable answer fails closed to empty verdicts (each candidate
   then falls back to the per-candidate thinker). The brain's `buying` maps to
   our `buy` as a NECESSARY input only — the deterministic gate still ANDs. It
@@ -329,7 +329,7 @@ LLM provider-swap suite (DeepSeek/Groq factory selection, peak/off-peak +
 cache-hit cost branches against hand-computed values, mocked
 `/chat/completions` usage parsing, fail-closed degradation never buying,
 `narration_mode` labels);
-omo-brain suite (role routing honest-label/fallback/unsupported-model-bench,
+llm-brain suite (role routing honest-label/fallback/unsupported-model-bench,
 parse/validate dropping invented symbols + invalid calls, call mapping,
 fail-closed tick paths, None-safe wallet/snapshot builders);
 reuse fail-closed regression (malformed/legacy prior never raises).
@@ -356,7 +356,7 @@ byte-for-byte, one-click launcher start/stop cycle.
   (D7), and the commit-reveal proof (appendix) are deliberately
   post-calibration scope.
 
-## 13. OMO-R5 memory and events
+## 13. REF-R5 memory and events
 
 Implemented 2026-08-26. Both database backends persist an append-only event
 stream with kinds `thought`, `did`, `refused`, `read`, and `trade`, plus
@@ -368,11 +368,11 @@ events are available through the read-only `/api/events.json` endpoint.
 Regression tests cover validation, persistence, hit increments, prompt
 injection, and mock-tick stage events.
 
-## 14. OMO-R4 Self-regulating break system
+## 14. REF-R4 Self-regulating break system
 
 Implemented 2026-08-26. The `not_on_break` rule was updated to use a persistent JSON state file that fail-closes if corrupted. The thinker can pass a `break` block (minutes and reason) in its JSON verdict, which triggers a persistent UTC expiry timestamp. While on break, the gate fails closed on the `not_on_break` rule, preventing new entries but allowing exits to continue uninterrupted.
 
-## 15. OMO-R2 FOMO crowd intel upgrade
+## 15. REF-R2 FOMO crowd intel upgrade
 
 Implemented 2026-08-26. Full thesis rows with author P&L are fetched from the fomo.fun feed and injected as evidence lines into the LLM thinker prompt. The prompt is instructed to weigh claims by whether the author is actually up on their position, providing a richer, performance-backed crowd conviction signal.
 
@@ -383,7 +383,7 @@ P0 implementation and verification record.
 
 ### 14.1 Gate rules
 
-Gate: exactly omotrades 9 entry rules: `liquidity_floor`, `volume_alive`,
+Gate: exactly the reference bot 9 entry rules: `liquidity_floor`, `volume_alive`,
 `buy_pressure`, `not_newborn_fade`, `public_presence`, `crowd_heat`,
 `cash_available`, `already_held`, and `not_on_break`.
 
@@ -403,8 +403,8 @@ Gate: exactly omotrades 9 entry rules: `liquidity_floor`, `volume_alive`,
 
 ### 14.3 Risk and verification record
 
-The omo-parity swap retired `security_clear` from the active nine-rule gate;
-authority fields remain logged for post-hoc audit. This is an accepted omo
+The reference-parity swap retired `security_clear` from the active nine-rule gate;
+authority fields remain logged for post-hoc audit. This is an accepted the reference
 parity risk and can only be changed by an explicit operator decision.
 
 The verification record contains 222 tests at the time of the current report
@@ -412,27 +412,27 @@ The verification record contains 222 tests at the time of the current report
 authority parsing, social and web evidence contracts, research/discovery
 coverage, refusal API shape, sell sealing, ledger reductions, executor guards,
 wallet identity checks, a mocked devnet self-transfer drill, and — as of
-2026-08-26 — the full OMO-R1/R6/R7 test suites (binding verification, disclosure
+2026-08-26 — the full REF-R1/R6/R7 test suites (binding verification, disclosure
 no-secrets, reasoning provenance, and retro-match safety properties).
 
 The funded throwaway-keypair devnet drill remains mandatory before any mainnet
 consideration; no mainnet execution has occurred.
 
-## 17. OMO parity completion (2026-08-26)
+## 17. Reference parity completion (2026-08-26)
 
-All seven approved OMO parity items are now implemented:
+All seven approved Reference parity items are now implemented:
 
 | ID | Feature | Status | Key files |
 |---|---|---|---|
-| OMO-R1 | Independent verifier + binding report | ✅ | `proof.py` `/api/binding.json`, `solana.py` `get_transaction()` |
-| OMO-R2 | FOMO crowd intel with author P&L | ✅ | `crowd.py`, `thinker.py` `crowd_line` |
-| OMO-R3 | Durable thesis book | ✅ | `db.py` `upsert_thesis/retire_thesis`, `proof.py` `/api/theses.json` |
-| OMO-R4 | Self-regulating break system | ✅ | `liveness.py`, `rules.py` `not_on_break` |
-| OMO-R5 | Events + memory system | ✅ | `db.py` `insert_event/recall_memories`, routes `/api/events.json` |
-| OMO-R6 | Public disclosure + reasoning feeds | ✅ | `disclosure.py` `/api/disclosure.json` + `/api/reasoning.json` |
-| OMO-R7 | Retro audit-log signature matching | ✅ | `retro_matcher.py`, `db.py` `bind_commit_signature` |
+| REF-R1 | Independent verifier + binding report | ✅ | `proof.py` `/api/binding.json`, `solana.py` `get_transaction()` |
+| REF-R2 | FOMO crowd intel with author P&L | ✅ | `crowd.py`, `thinker.py` `crowd_line` |
+| REF-R3 | Durable thesis book | ✅ | `db.py` `upsert_thesis/retire_thesis`, `proof.py` `/api/theses.json` |
+| REF-R4 | Self-regulating break system | ✅ | `liveness.py`, `rules.py` `not_on_break` |
+| REF-R5 | Events + memory system | ✅ | `db.py` `insert_event/recall_memories`, routes `/api/events.json` |
+| REF-R6 | Public disclosure + reasoning feeds | ✅ | `disclosure.py` `/api/disclosure.json` + `/api/reasoning.json` |
+| REF-R7 | Retro audit-log signature matching | ✅ | `retro_matcher.py`, `db.py` `bind_commit_signature` |
 
-### OMO-R4 bug fix (2026-08-26)
+### REF-R4 bug fix (2026-08-26)
 
 `liveness.set_break(think.break_minutes, think.break_reason)` in `main.py`
 was silently passing the wrong types to positional slots: `break_minutes`
@@ -450,7 +450,7 @@ the repo root. Restored with `testpaths = backend/tests live_execution/tests`
 so the canonical combined run `python -m pytest -q` produces a clean 222-test
 result.
 
-### schema additions for OMO-R1/R7
+### schema additions for REF-R1/R7
 
 Three nullable columns added to `decision_commits` via idempotent ALTER TABLE:
 - `signature TEXT` — Solana tx signature bound at exact-fill or retro attribution
@@ -504,9 +504,9 @@ each table (faster and avoids row-level lock contention). The function is
 - `?mode=prune_only`: trims feed/regime only; trades/cash untouched
 - Logged at WARNING level; returns JSON summary with per-table counts
 
-### OMO-R1–R7 audit results (2026-08-27)
+### REF-R1–R7 audit results (2026-08-27)
 
-All seven OMO parity features verified correct and well-tested:
+All seven Reference parity features verified correct and well-tested:
 
 | Feature | Route / Module | Status |
 |---|---|---|

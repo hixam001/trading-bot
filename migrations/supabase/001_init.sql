@@ -123,7 +123,7 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     stats_json        JSONB   NOT NULL DEFAULT '{}'::jsonb
 );
 
--- 7. decision_commits — omo 'seal' parity audit trail --------------------------
+-- 7. decision_commits — the reference 'seal' parity audit trail --------------------------
 -- sha256(nonce|canonical payload) written BEFORE the bot acts on a decision;
 -- plaintext payload stored alongside so anyone can recompute the hash.
 CREATE TABLE IF NOT EXISTS decision_commits (
@@ -141,7 +141,7 @@ CREATE TABLE IF NOT EXISTS decision_commits (
 CREATE INDEX IF NOT EXISTS idx_decision_commits_created
     ON decision_commits (created_at DESC);
 
--- 8. OMO-R5 durable event stream and weighted memories ----------------------
+-- 8. REF-R5 durable event stream and weighted memories ----------------------
 CREATE TABLE IF NOT EXISTS events (
     id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     ts           TIMESTAMPTZ NOT NULL,
@@ -173,7 +173,7 @@ INSERT INTO portfolio_state (id, cash_usd)
 VALUES (1, 1000.0)
 ON CONFLICT (id) DO NOTHING;
 
--- 10. theses — durable write-up for each position (OMO-R3) -----------------
+-- 10. theses — durable write-up for each position (REF-R3) -----------------
 CREATE TABLE IF NOT EXISTS theses (
     trade_id          TEXT PRIMARY KEY,
     mint_address      TEXT NOT NULL,

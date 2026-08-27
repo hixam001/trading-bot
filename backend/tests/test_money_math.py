@@ -103,7 +103,7 @@ def test_sizing_invalid_price_raises():
         compute_position_size(0.0)
 
 
-# --- check_exit_conditions (E6 — omotrades-model engine, price-only probe) ---
+# --- check_exit_conditions (E6 — the reference bot-model engine, price-only probe) ---
 
 def test_exit_stop_loss():
     trade = make_trade()
@@ -113,7 +113,7 @@ def test_exit_stop_loss():
 
 def test_exit_below_first_tranche_holds():
     """+60% net is BELOW the first ladder tranche (+100%): the old +50%
-    take-profit is gone — winners now run on the trail + ladder (omotrades
+    take-profit is gone — winners now run on the trail + ladder (the reference bot
     model). The single-price probe must hold here."""
     trade = make_trade()
     price = trade.entry_price_usd * 1.62   # ~+60% net

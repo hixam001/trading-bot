@@ -26,5 +26,5 @@ window that tunes thresholds from evidence.
 
 ## Authoritative docs
 docs/00_BLUEPRINT → 01_ARCHITECTURE → 02_FEATURE_LIST(status) →
-03_GANTT → 05_VERIFICATION_APPENDIX → 06_REFERENCE_COMPARISON(omotrades) →
+03_GANTT → 05_VERIFICATION_APPENDIX → 06_REFERENCE_COMPARISON(the reference bot) →
 07_PROJECT_REPORT. Living state: handoff.md (root) + memory-bank/.

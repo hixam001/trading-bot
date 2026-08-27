@@ -1,7 +1,7 @@
 """
-rule_engine/exits.py — the omotrades-model exit engine (§5.2 rebuild).
+rule_engine/exits.py — the the reference bot-model exit engine (§5.2 rebuild).
 
-Ported from omotrades' documented exit set (PROCESS.md §5), adapted to the
+Ported from the reference bot' documented exit set (PROCESS.md §5), adapted to the
 paper engine's money math. Evaluation order is fixed and RISK-OFF BEATS
 PROFIT: a stop, trail, liquidity break, invalidation or stale timer closes
 the position FULLY; only the take-profit ladder trims.
@@ -195,7 +195,7 @@ def sell_risk_gate(
     now: datetime,
 ) -> tuple[ExitDecision, str]:
     """
-    Applies omo's narrow sell gate: minimum $25 clip, 30-minute per-mint
+    Applies the reference's narrow sell gate: minimum $25 clip, 30-minute per-mint
     cooldown, tranche-taken-once (enforced upstream by the counter), and a
     ceiling of 8 exits per rolling 24h.
 

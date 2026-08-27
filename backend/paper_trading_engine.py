@@ -13,7 +13,7 @@ trim_position):
   3. treats rowcount == 0 as "already happened" — logs and touches NOTHING,
   4. only after rowcount == 1 is confirmed, adjusts cash (guarded).
 
-The old scale-in path was REMOVED in the omotrades-model rebuild: the
+The old scale-in path was REMOVED in the the reference bot-model rebuild: the
 `already_held` gate rule forbids any size on a held name ("one position per
 name"), so pyramiding into a ticket is structurally impossible.
 """
@@ -106,7 +106,7 @@ def compute_position_size(price_usd: float,
 
 def compute_ticket(cash_usd: float, heat: Optional[int]) -> float:
     """
-    Conviction ticket sizing (omotrades parity, capped hard):
+    Conviction ticket sizing (the reference bot parity, capped hard):
 
         base       = min(cash * TICKET_CASH_FRACTION, TICKET_MAX_USD)
         conviction = min(1, heat/100 + 0.3)      (heat None -> 50 neutral)
@@ -270,7 +270,7 @@ async def close_position(
 def check_exit_conditions(trade: Trade, current_price: float) -> Optional[str]:
     """
     Backward-compatible single-price exit probe. Delegates to the
-    omotrades-model engine (rule_engine.exits) with price-only inputs —
+    the reference bot-model engine (rule_engine.exits) with price-only inputs —
     rules needing richer market data (liquidity break, invalidation, stale
     volume) evaluate only in scan_and_execute_exits where that data exists.
     Returns the fired rule_id or None. These are the SOLE decision-makers
@@ -294,7 +294,7 @@ async def decide_and_act(
     conn: aiosqlite.Connection,
 ) -> GateDecision:
     """
-    Unified entry point (§5, omotrades model): evaluate the gate; on pass
+    Unified entry point (§5, the reference bot model): evaluate the gate; on pass
     with NO existing position, open. The `already_held` rule already fails
     any held name, so this branch is belt-and-suspenders — a pass against a
     held mint is logged loudly instead of silently pyramiding.
@@ -317,7 +317,7 @@ async def decide_and_act(
 
 
 # ---------------------------------------------------------------------------
-# omotrades-model exit machinery (E8/E9 + §5.2 rebuild)
+# the reference bot-model exit machinery (E8/E9 + §5.2 rebuild)
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -334,7 +334,7 @@ async def trim_position(
     exit_price: float,
 ) -> TrimResult:
     """
-    ATOMIC PARTIAL CLOSE — a take-profit ladder tranche (omotrades model).
+    ATOMIC PARTIAL CLOSE — a take-profit ladder tranche (the reference bot model).
     Reduces quantity/cost basis by `fraction`, credits net proceeds, and
     bumps the tranche counter. Same discipline as every state change here:
     conditional row write FIRST, rowcount is the authority, cash only after.
@@ -392,7 +392,7 @@ async def scan_and_execute_exits(
     on_close=None,
 ) -> int:
     """
-    The omotrades 'manage' step: re-price EVERY open position and run it
+    The the reference bot 'manage' step: re-price EVERY open position and run it
     through the exit rule set, then the sell risk gate, then execute.
 
     Runs on its own fast loop (config.EXIT_SCAN_INTERVAL_SECONDS) in main()

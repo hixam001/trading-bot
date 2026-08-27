@@ -1,5 +1,5 @@
 """
-run_live_cycle.py - ONE autonomous omo-style decision cycle (root bridge).
+run_live_cycle.py - ONE autonomous reference-style decision cycle (root bridge).
 
 Option-A arming: after a human edits live_execution/config.py to flip
 LIVE_TRADING_ENABLED (and, for fully autonomous flow,
@@ -103,7 +103,7 @@ def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict]:
 
 
 async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, meta: dict) -> None:
-    """Re-price every open position, run the omo exit rule set, route sells."""
+    """Re-price every open position, run the the reference exit rule set, route sells."""
     for mint, m in meta.items():
         try:
             dec = await solana.get_mint_decimals(mint)
@@ -224,9 +224,9 @@ async def run_cycle(once: bool = False) -> dict:
                 )
         outcome["entries"].append({"symbol": c.symbol, "status": result.status,
                                    "reason": result.reason})
-        break   # one decision per cycle (omo cadence parity)
+        break   # one decision per cycle (the reference cadence parity)
 
-    # --- OMO-R7: retro audit-log signature matching (post-cycle) ----------
+    # --- REF-R7: retro audit-log signature matching (post-cycle) ----------
     # Only runs from the paper-side DB; the live book has its own CommitLog.
     try:
         from retro_matcher import run_retro_match
@@ -240,7 +240,7 @@ async def run_cycle(once: bool = False) -> dict:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="omo-style live decision cycle")
+    parser = argparse.ArgumentParser(description="reference-style live decision cycle")
     parser.add_argument("--once", action="store_true", help="run one cycle and exit")
     parser.add_argument("--drill", action="store_true", help="DEVNET drill: exercise sign/send/confirm without Jupiter or tokens")
     args = parser.parse_args()
@@ -258,7 +258,7 @@ def main() -> None:
         log.error("Set DATA_BACKEND=live in .env, then re-run.")
         sys.exit(2)
 
-    # omo disclosure parity: report the signing state unedited.
+    # the reference disclosure parity: report the signing state unedited.
     if live_config.LIVE_TRADING_ENABLED:
         log.info("ARMED (manual confirmation %s)", "ON" if live_config.REQUIRE_MANUAL_CONFIRMATION else "OFF - fully autonomous")
     else:

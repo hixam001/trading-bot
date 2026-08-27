@@ -1,9 +1,9 @@
 # FOMO Integration — wiring a real crowd_heat source
 
 This document is the implementation path for replacing `crowd_heat`'s proxy
-with a real conviction feed, mirroring how omotrades does it.
+with a real conviction feed, mirroring how the reference bot does it.
 
-## 1. What omotrades' crowd_heat actually is
+## 1. What the reference bot' crowd_heat actually is
 
 From their published source (`src/lib/pipeline.server.ts`):
 
@@ -63,11 +63,11 @@ channels (twitter / telegram / website) as the conviction proxy, and
 
 ## 3. Implementation options, in order of fidelity
 
-### Option A — read the fomo.fun board directly (what omo does)
+### Option A — read the fomo.fun board directly (what the reference does)
 
-fomo.fun has **no public API** (omo states this explicitly: "fomo has no api
+fomo.fun has **no public API** (the reference states this explicitly: "fomo has no api
 and does not need one" — it's a read layer over a Solana wallet). But its
-web app obviously fetches theses from somewhere. omo's `fomo.server.ts`
+web app obviously fetches theses from somewhere. the reference's `fomo.server.ts`
 reads that same board server-side.
 
 Steps:
@@ -93,7 +93,7 @@ heat = min(100, config.CROWD_HEAT_BASE + config.CROWD_HEAT_PER_SIGNAL * len(inte
 
 — the formula is already identical; only the input source changes.
 
-5. **Degradation semantics** (match omo's "degraded stage" honesty): if the
+5. **Degradation semantics** (match the reference's "degraded stage" honesty): if the
    feed is unreachable, fall back to the presence proxy AND tag the rule
    detail with `(degraded: fomo feed down)` so the journal shows it. Do NOT
    silently pretend the board was read.
@@ -115,7 +115,7 @@ reusable as-is) and extend `_heat_for_mint()` with a second branch.
 
 We already read DexScreener. `token-boosts/top/v1` gives paid-boost counts.
 Boosts are *paid*, so they measure marketing more than conviction — use as
-a secondary input (omo explicitly flags boosted tokens and often refuses
+a secondary input (the reference explicitly flags boosted tokens and often refuses
 them), never as the primary heat source.
 
 ### Option D — build our own conviction metric
@@ -127,7 +127,7 @@ feed. Weakest signal (self-referential), but zero external dependencies.
 ## 4. Recommendation
 
 Start with **Option A** (it's what makes our crowd_heat semantically equal
-to omo's), keep the presence proxy as the automatic degraded fallback, and
+to the reference's), keep the presence proxy as the automatic degraded fallback, and
 add Option B as a secondary input only if A proves fragile. The act band
 (`CROWD_HEAT_MIN/MAX`) is where calibration happens — tune it from the
 rejection breakdown in the dashboard after a week of real data, one

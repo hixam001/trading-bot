@@ -1,5 +1,5 @@
 """
-api/routes/disclosure.py — OMO-R6 public machine-truth feeds (read-only).
+api/routes/disclosure.py — REF-R6 public machine-truth feeds (read-only).
 
 Two endpoints:
   /api/disclosure.json  live machine state: armed/disarmed, kill-switch,
@@ -9,7 +9,7 @@ Two endpoints:
                         thesis, stage timings, inputs snapshot hash,
                         linked commit hash. Read from recent decision_commits.
 
-omo reference: src/lib/disclosure.server.ts, /api/public/disclosure.json,
+reference: src/lib/disclosure.server.ts, /api/public/disclosure.json,
                /api/public/reasoning.json.
 Full web UI terminal is explicitly OUT OF SCOPE — JSON endpoints first.
 """
@@ -66,7 +66,7 @@ def _break_state() -> dict:
 @router.get("/api/disclosure.json")
 async def get_disclosure():
     """
-    OMO-R6: live machine state for public auditability.
+    REF-R6: live machine state for public auditability.
 
     Fields:
       armed          — LIVE_TRADING_ENABLED (always False; hardcoded disarmed)
@@ -122,7 +122,7 @@ async def get_disclosure():
 @router.get("/api/reasoning.json")
 async def get_reasoning(limit: int = 50):
     """
-    OMO-R6: per-decision provenance — model, inputs hash, commit hash.
+    REF-R6: per-decision provenance — model, inputs hash, commit hash.
 
     For each recent decision commit, surfaces:
       - which model/source produced the thesis (from payload.think_source)

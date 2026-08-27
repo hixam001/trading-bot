@@ -112,7 +112,7 @@ def test_buy_pressure_none_fails_closed():
 # --- not_newborn_fade: joint condition (B5) --------------------------------
 
 def test_not_newborn_fade_pass_old_and_fading():
-    # 30h old: outside the omotrades 24h newborn window even while dumping.
+    # 30h old: outside the the reference bot 24h newborn window even while dumping.
     r = rules_mod.not_newborn_fade(
         make_candidate(age_hours=30.0, price_change_1h_pct=-50.0), make_portfolio(), REGIME)
     assert r.passed
@@ -188,7 +188,7 @@ def test_cash_available_fail():
     assert not r.passed
 
 
-# --- already_held (omotrades parity: strictly ONE position per name) ----------
+# --- already_held (the reference bot parity: strictly ONE position per name) ----------
 
 def test_already_held_pass_no_size():
     r = rules_mod.already_held(make_candidate(), make_portfolio(), REGIME)
@@ -231,8 +231,8 @@ def test_crowd_heat_max_never_exceeded_by_proxy():
     assert r.passed and r.value == 44
 
 
-def test_compute_crowd_heat_matches_omo_formula_shape():
-    # omotrades: heat = 20 + 8 x conviction sources, clamped 0..100.
+def test_compute_crowd_heat_matches_reference_formula_shape():
+    # the reference bot: heat = 20 + 8 x conviction sources, clamped 0..100.
     assert rules_mod.compute_crowd_heat(make_candidate()) == 36
     assert rules_mod.compute_crowd_heat(
         make_candidate(has_website=True)) == 44
@@ -310,7 +310,7 @@ def test_gate_full_decision_sample_all_pass(capsys):
 
 
 def test_gate_already_held_blocks_pyramiding():
-    """omotrades parity: any size on the name fails the gate (no scale-ins)."""
+    """the reference bot parity: any size on the name fails the gate (no scale-ins)."""
     pos = Trade(mint_address=MINT, position_size_usd=10.0)
     decision = evaluate_gate(make_candidate(), make_portfolio(positions=[pos]),
                              REGIME, ACTIVE_RULES)
@@ -321,7 +321,7 @@ def test_gate_already_held_blocks_pyramiding():
 
 
 
-def test_active_rules_are_exactly_omo_nine():
+def test_active_rules_are_exactly_reference_nine():
     from rule_engine.rules import ACTIVE_RULES
     expected = ["liquidity_floor", "volume_alive", "buy_pressure", "not_newborn_fade", "public_presence", "crowd_heat", "cash_available", "already_held", "not_on_break"]
     assert [r.__name__ for r in ACTIVE_RULES] == expected

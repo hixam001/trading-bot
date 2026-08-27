@@ -1,10 +1,10 @@
 """
 live_execution/solana.py - Solana RPC plumbing with rotating failover.
 
-omo solana.server.ts parity: try every configured endpoint in order until
+the reference solana.server.ts parity: try every configured endpoint in order until
 one answers; a send is only journalled AFTER on-chain confirmation; nothing
 here holds or logs secrets. Preflight stays ON (deliberately stricter than
-omos skipPreflight=True - a rejected tx costs nothing, a surprise fill does).
+the reference's skipPreflight=True - a rejected tx costs nothing, a surprise fill does).
 """
 from __future__ import annotations
 
@@ -144,7 +144,7 @@ async def latest_blockhash(endpoint: str) -> str | None:
 
 async def get_transaction(sig: str) -> dict | None:
     """
-    OMO-R1: fetch a confirmed transaction by signature for binding verification.
+    REF-R1: fetch a confirmed transaction by signature for binding verification.
 
     Returns the raw RPC result dict on success (callers must inspect
     `meta.err == null` for confirmation and extract `blockTime` /

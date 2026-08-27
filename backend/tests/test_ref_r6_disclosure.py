@@ -1,5 +1,5 @@
 """
-tests/test_omo_r6_disclosure.py — OMO-R6 public disclosure endpoint tests.
+tests/test_ref_r6_disclosure.py — REF-R6 public disclosure endpoint tests.
 
 Properties verified:
   1. /api/disclosure.json returns required fields with correct types

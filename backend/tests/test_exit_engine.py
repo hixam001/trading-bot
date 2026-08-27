@@ -1,5 +1,5 @@
 """
-tests/test_exit_engine.py — the omotrades-model exit engine (§5.2 rebuild).
+tests/test_exit_engine.py — the the reference bot-model exit engine (§5.2 rebuild).
 
 Covers every exit rule's fire/hold branches, the take-profit ladder with
 tranche bookkeeping, the sell risk gate (cooldown / daily cap / min clip /

@@ -1,11 +1,11 @@
 """
-llm/omo_brain.py — the omo-style brain (operator decision 2026-08-27).
+llm/llm_brain.py — the reference-style brain (operator decision 2026-08-27).
 
-Ports the LLM *reasoning layer* of omotrades/omo onto our infra so the bot
-thinks like omo: role-routed models, a richly-prompted single tick that reads
+Ports the LLM *reasoning layer* of the reference repository onto our infra so the bot
+thinks like the reference: role-routed models, a richly-prompted single tick that reads
 the whole book + tape + crowd + web, and a structured JSON output (thoughts /
 actions / verdicts / theses / watchlist / remember / fomo / break). The wallet
-is fed in as context exactly like omo's positionBlock, which is what makes the
+is fed in as context exactly like the reference's positionBlock, which is what makes the
 brain identical whether the book is paper or (later) live — the execution layer
 is the only thing that changes at the switch.
 
@@ -20,10 +20,10 @@ Defense-first invariants this module UPHELDS (see .clinerules):
     This module never opens, closes, sizes, or touches execution (rule 3).
   * Every degradation is logged with a reason (rule 6).
 
-What this module deliberately does NOT port from omo: omo's persona lore
-(blossom/cate/the cabin) and its "positions only exist on-chain" wallet model —
-our book of record stays the paper/live engine; omo's execution posture is not
-cloned, only its reasoning.
+What this module deliberately does NOT port from the reference: its persona lore
+and its "positions only exist on-chain" wallet model — our book of record stays
+the paper/live engine; the reference's execution posture is not cloned, only its
+reasoning.
 """
 from __future__ import annotations
 
@@ -46,13 +46,13 @@ from models import Candidate
 
 
 # ---------------------------------------------------------------------------
-# Role-based model routing — port of omo's models.server.ts.
+# Role-based model routing — port of the reference's models.server.ts.
 #
-# omo is "not one model": each stage declares the mind it was designed around
+# the reference is "not one model": each stage declares the mind it was designed around
 # plus an ordered fallback chain, and resolution is HONEST — the router returns
 # the model it actually used and whether the stage ran degraded, and never
 # claims a model it could not reach. We map that onto our two real providers
-# (DeepSeek main + Groq) instead of omo's claude/grok/gemini gateway ids.
+# (DeepSeek main + Groq) instead of the reference's claude/grok/gemini gateway ids.
 # ---------------------------------------------------------------------------
 
 MODEL_ROLES = ("reasoning", "realtime", "narration")
@@ -79,12 +79,12 @@ _ROLE_CHAINS: dict[str, tuple[str, ...]] = {
     "narration": ("main", "groq"),
 }
 
-# Providers the gateway has already rejected this process. Not retried (omo).
+# Providers the gateway has already rejected this process. Not retried (the reference).
 _UNAVAILABLE: set[str] = set()
 
 
 def _is_unsupported_model_error(result: Optional[LLMResult]) -> bool:
-    """True when a failure means 'this model is not served here' (omo's
+    """True when a failure means 'this model is not served here' (the reference's
     isUnsupportedModelError) — as opposed to a transient rate-limit/timeout,
     which is NOT a reason to permanently downgrade the mind."""
     if result is None:
@@ -124,7 +124,7 @@ async def run_role(
     json_mode: bool = True,
     timeout_seconds: Optional[float] = None,
 ) -> tuple[Optional[LLMResult], ResolvedRole]:
-    """Run one stage against its role's provider chain (omo runRole). Tries each
+    """Run one stage against its role's provider chain (runRole). Tries each
     provider in order; an unsupported-model error benches that provider for the
     process; any other failure just falls through for this call. Returns the
     first valid result + honest resolution (never claims an unreachable model).
@@ -151,7 +151,7 @@ async def run_role(
         if _is_unsupported_model_error(result):
             _UNAVAILABLE.add(pid)
         if result is not None:
-            log.warning("omo_brain role=%s provider=%s degraded: %s",
+            log.warning("llm_brain role=%s provider=%s degraded: %s",
                         role, pid, result.degradation_reason)
         await client.aclose()
 
@@ -159,13 +159,13 @@ async def run_role(
 
 
 # ---------------------------------------------------------------------------
-# The omo tick prompt — port of omo-brain.server.ts SYSTEM, adapted: we keep the
+# The brain tick prompt — port of brain.server.ts SYSTEM, adapted: we keep the
 # trading discipline (hard filters, decision buckets, ground truth, price-talk
-# rules, output contract) and drop omo's persona lore. Ground-truth rules are
+# rules, output contract) and drop the reference's persona lore. Ground-truth rules are
 # what make the output auditable: every number must be copied from the snapshot.
 # ---------------------------------------------------------------------------
 
-OMO_SYSTEM = """You are an autonomous memecoin trader for a Solana paper book.
+LLM_SYSTEM = """You are an autonomous memecoin trader for a Solana paper book.
 You trade SOLANA MEMECOINS, reading a live screener, the crowd board, the web,
 and your own open positions. Your job each tick is to grade the screener rows
 you are given and show your work. You are a memecoin trader, not an analyst and
@@ -227,8 +227,8 @@ losers as well as winners. The remaining thoughts are about names you do NOT
 hold: a contender, a name you passed on, a crowd thesis you disagree with.
 """
 
-# The omo output contract (minified JSON), appended to the system prompt.
-OMO_OUTPUT_CONTRACT = """
+# The brain output contract (minified JSON), appended to the system prompt.
+LLM_OUTPUT_CONTRACT = """
 Return ONLY minified JSON with EXACTLY this shape:
 {"thoughts":["..."],
  "actions":[{"kind":"read|did|refused","text":"..."}],
@@ -259,7 +259,7 @@ def _fmt_usd(v) -> str:
 
 
 def build_wallet_block(portfolio, recent_fills: Optional[list] = None) -> str:
-    """The wallet mimicry: format the book like omo's positionBlock so the
+    """The wallet mimicry: format the book like the reference's positionBlock so the
     brain reasons over live positions. `portfolio` is our PortfolioState (paper
     or live — the brain cannot tell, by design). Numbers come from the engine,
     never from the model: we cite cash, deployed size, entry price and thesis."""
@@ -320,7 +320,7 @@ def build_snapshot_block(candidates: list[Candidate]) -> str:
 def build_tick_prompt(snapshot_block: str, wallet_block: str,
                       crowd_block: str = "", web_block: str = "",
                       social_block: str = "", memory_block: str = "") -> str:
-    """Assemble the omo tick user prompt: snapshot + wallet + optional intel."""
+    """Assemble the brain tick user prompt: snapshot + wallet + optional intel."""
     parts = [
         "SCREENER SNAPSHOT (the only numbers you may cite):",
         snapshot_block or "- (no rows)",
@@ -361,7 +361,7 @@ _MAX_BRAIN_CANDIDATES = 8
 
 
 @dataclass
-class OmoVerdict:
+class LLMVerdict:
     symbol: str
     call: str                      # buying | stalking | pass | holding
     checks: list = field(default_factory=list)
@@ -377,8 +377,8 @@ class OmoVerdict:
 
 
 @dataclass
-class OmoBrainResult:
-    verdicts: dict                 # symbol(upper) -> OmoVerdict
+class LLMBrainResult:
+    verdicts: dict                 # symbol(upper) -> LLMVerdict
     thoughts: list = field(default_factory=list)
     actions: list = field(default_factory=list)
     theses: list = field(default_factory=list)
@@ -392,7 +392,7 @@ class OmoBrainResult:
     degraded: bool = True
     llm_usage: Optional[LLMResult] = None
 
-    def verdict_for(self, symbol: str) -> Optional[OmoVerdict]:
+    def verdict_for(self, symbol: str) -> Optional[LLMVerdict]:
         return self.verdicts.get(symbol.upper())
 
 
@@ -403,8 +403,8 @@ def _str_list(v, cap: int) -> list:
             and str(x).strip()][:cap]
 
 
-def parse_omo_tick(raw: str, valid_symbols: set) -> Optional[dict]:
-    """Extract + validate the omo tick JSON. Returns a normalized dict or None
+def parse_llm_tick(raw: str, valid_symbols: set) -> Optional[dict]:
+    """Extract + validate the brain tick JSON. Returns a normalized dict or None
     (None => caller fails closed). `valid_symbols` is the UPPER-cased ticker set
     actually passed to the model."""
     if not raw:
@@ -432,7 +432,7 @@ def parse_omo_tick(raw: str, valid_symbols: set) -> Optional[dict]:
                 continue                      # invented/unknown name -> drop
             if call not in _VALID_CALLS:
                 continue                      # invalid call -> drop (fail closed)
-            verdicts[symbol] = OmoVerdict(
+            verdicts[symbol] = LLMVerdict(
                 symbol=symbol,
                 call=call,
                 checks=_str_list(v.get("checks"), _MAX_CHECKS),
@@ -469,15 +469,15 @@ def parse_omo_tick(raw: str, valid_symbols: set) -> Optional[dict]:
     }
 
 
-class OmoBrain:
-    """The omo-style tick brain. One role-routed reasoning call per tick grades
-    every candidate and emits the full omo output. Fail-closed: mock mode, a
+class LLMBrain:
+    """The reference-style tick brain. One role-routed reasoning call per tick grades
+    every candidate and emits the full brain output. Fail-closed: mock mode, a
     keyless/unreachable provider, or any unparsable answer yields an EMPTY
     verdict map tagged degraded — main.py then falls back to the deterministic
     template per candidate, so a bad model answer can never become a buy."""
 
     def __init__(self) -> None:
-        self._system = OMO_SYSTEM + OMO_OUTPUT_CONTRACT
+        self._system = LLM_SYSTEM + LLM_OUTPUT_CONTRACT
 
     async def tick(
         self,
@@ -488,14 +488,14 @@ class OmoBrain:
         social_block: str = "",
         memory_block: str = "",
         recent_fills: Optional[list] = None,
-    ) -> OmoBrainResult:
+    ) -> LLMBrainResult:
         valid_symbols = {c.symbol.upper() for c in candidates}
 
         # Hermetic: mock mode never touches a provider (defense-first + tests).
-        if config.DATA_BACKEND != "live" or not config.OMO_BRAIN:
-            return OmoBrainResult(verdicts={}, source="template", degraded=True)
+        if config.DATA_BACKEND != "live" or not config.LLM_BRAIN:
+            return LLMBrainResult(verdicts={}, source="template", degraded=True)
         if not candidates:
-            return OmoBrainResult(verdicts={}, source="template", degraded=True)
+            return LLMBrainResult(verdicts={}, source="template", degraded=True)
 
         # Bound the board the brain grades so the single JSON output stays within
         # the token budget (a truncated body fails closed). Highest 1h-volume rows
@@ -517,28 +517,28 @@ class OmoBrain:
 
         result, resolved = await run_role(
             role="reasoning",
-            task="omo_brain",
+            task="llm_brain",
             system_prompt=self._system,
             user_prompt=user_prompt,
-            budget=config.OMO_BRAIN_MAX_TOKENS,
+            budget=config.LLM_BRAIN_MAX_TOKENS,
             json_mode=True,
-            timeout_seconds=config.OMO_BRAIN_TIMEOUT_SECONDS,
+            timeout_seconds=config.LLM_BRAIN_TIMEOUT_SECONDS,
         )
         if result is None or not result.text:
-            log.warning("omo_brain degraded (no result): %s", resolved.label)
-            return OmoBrainResult(verdicts={}, source=resolved.label,
+            log.warning("llm_brain degraded (no result): %s", resolved.label)
+            return LLMBrainResult(verdicts={}, source=resolved.label,
                                   degraded=True, llm_usage=result)
 
-        parsed = parse_omo_tick(result.text, valid_symbols)
+        parsed = parse_llm_tick(result.text, valid_symbols)
         if parsed is None:
-            log.warning("omo_brain unparsable tick -> fail closed "
+            log.warning("llm_brain unparsable tick -> fail closed "
                         "(provider=%s finish=%s len=%d) head=%r",
                         resolved.label, result.finish_reason,
                         len(result.text or ""), (result.text or "")[:160])
-            return OmoBrainResult(verdicts={}, source=resolved.label,
+            return LLMBrainResult(verdicts={}, source=resolved.label,
                                   degraded=True, llm_usage=result)
 
-        return OmoBrainResult(
+        return LLMBrainResult(
             verdicts=parsed["verdicts"],
             thoughts=parsed["thoughts"],
             actions=parsed["actions"],

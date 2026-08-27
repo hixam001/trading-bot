@@ -74,7 +74,7 @@ def _extract_pair_fields(pair: dict) -> dict:
     market_cap = require_type(pair.get("marketCap"), (int, float), "marketCap", "dexscreener")
     if market_cap is None:
         market_cap = require_type(pair.get("fdv"), (int, float), "fdv", "dexscreener")
-    # FDV recorded separately from marketCap (omo breadth field).
+    # FDV recorded separately from marketCap (the reference breadth field).
     fdv_usd = require_type(pair.get("fdv"), (int, float), "fdv", "dexscreener")
 
     return {

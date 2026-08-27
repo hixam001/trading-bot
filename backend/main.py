@@ -31,7 +31,7 @@ from data_providers import build_provider
 from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
 from llm.thinker import Thinker, ThinkResult
-from llm.omo_brain import OmoBrain, OmoVerdict, OmoBrainResult
+from llm.llm_brain import LLMBrain, LLMVerdict, LLMBrainResult
 from models import FeedEvent
 from paper_trading_engine import (
     compute_ticket,
@@ -58,13 +58,13 @@ def _rule_summary(gate) -> str:
     return "; ".join(f"{r.rule_id}:{'PASS' if r.passed else 'FAIL'}" for r in gate.rules)
 
 
-def _think_from_omo(ov: "OmoVerdict", brain_result: "OmoBrainResult") -> ThinkResult:
-    """Map a validated omo verdict onto our ThinkResult. The verdict is 'buy' only
+def _think_from_llm(ov: "LLMVerdict", brain_result: "LLMBrainResult") -> ThinkResult:
+    """Map a validated brain verdict onto our ThinkResult. The verdict is 'buy' only
     for a valid 'buying' call; the deterministic gate still must pass before any
     entry. llm_usage is None because the single brain call is recorded once up
     front (not per candidate). Thesis uses ONLY the model's own reason/checks."""
     verdict = "buy" if ov.wants_entry else "pass"
-    thesis = ov.reason or (ov.checks[0] if ov.checks else "omo brain verdict")
+    thesis = ov.reason or (ov.checks[0] if ov.checks else "the reference brain verdict")
     return ThinkResult(
         thesis=thesis,
         invalidation=ov.invalidation or "",
@@ -78,9 +78,9 @@ def _think_from_omo(ov: "OmoVerdict", brain_result: "OmoBrainResult") -> ThinkRe
 
 
 async def run_tick(provider, thinker: Thinker, state: dict | None = None,
-                   brain: "OmoBrain | None" = None) -> dict:
+                   brain: "LLMBrain | None" = None) -> dict:
     """
-    The omo-style cycle (operator decision 2026-08-23):
+    The reference-style cycle (operator decision 2026-08-23):
 
         manage → read → think → gate → journal
 
@@ -88,8 +88,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
       {"tick": int, "theses": {mint: {...}}} — enables short-term think/thesis
       reuse. A fresh empty state means no reuse (tests).
 
-    brain: optional OmoBrain (2026-08-27). When provided AND DATA_BACKEND=live
-      AND config.OMO_BRAIN, ONE role-routed omo-style reasoning call grades every
+    brain: optional LLMBrain (2026-08-27). When provided AND DATA_BACKEND=live
+      AND config.LLM_BRAIN, ONE role-routed reference-style reasoning call grades every
       candidate; each candidate then uses the brain's verdict if it produced a
       valid one, else falls back to the per-candidate thinker. The deterministic
       gate below still authorizes every entry (brain verdict is necessary, not
@@ -120,7 +120,7 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                         exc_info=True)
 
     # --- READ stage part 2: second-pass cross-pool research on the head of
-    # the board (omo researches the names it cares about). Live-only so mock
+    # the board (the reference researches the names it cares about). Live-only so mock
     # runs stay hermetic; fail-soft like every feed.
     if config.DATA_BACKEND == "live":
         try:
@@ -187,12 +187,12 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                     degradation_reason=su.degradation_reason,
                 )
 
-        # --- OMO BRAIN (live + OMO_BRAIN only): ONE role-routed omo-style call
+        # --- LLM BRAIN (live + LLM_BRAIN only): ONE role-routed reference-style call
         # grades every candidate. Fail-closed: an empty/invalid result leaves
         # brain_result with no verdicts, so each candidate below falls back to
         # the per-candidate thinker. The single call's usage is recorded once.
         use_brain = (brain is not None and config.DATA_BACKEND == "live"
-                     and config.OMO_BRAIN)
+                     and config.LLM_BRAIN)
         brain_result = None
         if use_brain:
             portfolio_now = await load_portfolio_state(conn)
@@ -221,26 +221,26 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                 from rule_engine import liveness
                 liveness.set_break(True, brain_result.break_minutes,
                                    brain_result.break_reason)
-                log.warning("omo_brain self-regulating break: %d mins (%s)",
+                log.warning("llm_brain self-regulating break: %d mins (%s)",
                             brain_result.break_minutes, brain_result.break_reason)
-            log.info("omo_brain tick: %d verdict(s) | source=%s%s",
+            log.info("llm_brain tick: %d verdict(s) | source=%s%s",
                      len(brain_result.verdicts), brain_result.source,
                      " (degraded)" if brain_result.degraded else "")
 
         for c in candidates:
-            # --- THINK (omo order): the model writes its assessment BEFORE
+            # --- THINK (the reference order): the model writes its assessment BEFORE
             # any rule is evaluated. Its verdict is a necessary veto layer.
             memories = await db.recall_memories(conn, topic=c.symbol, limit=3)
             memory_line = ""
             if memories:
                 memory_line = "Memory (context only): " + " | ".join(
                     f"{m['topic']}: {m['note']}" for m in memories)
-            # OMO BRAIN verdict if the brain produced a valid one for this
+            # the reference BRAIN verdict if the brain produced a valid one for this
             # candidate; otherwise the per-candidate thinker (fail-closed path).
             ov = (brain_result.verdict_for(c.symbol)
                   if (use_brain and brain_result is not None) else None)
             if ov is not None:
-                think = _think_from_omo(ov, brain_result)
+                think = _think_from_llm(ov, brain_result)
             else:
                 try:
                     think = await thinker.think(c, memory_line)
@@ -344,7 +344,7 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                 narration_source=think.source,
             )
 
-            # --- SEAL (omo parity): tamper-evident audit commit BEFORE any
+            # --- SEAL (reference parity): tamper-evident audit commit BEFORE any
             # action. sha256(nonce|canonical payload) stored with plaintext.
             now_iso = datetime.now(timezone.utc).isoformat()
             nonce = uuid.uuid4().hex
@@ -423,14 +423,14 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                  "model_verdict": think.verdict},
             )
 
-        # --- manage: omotrades-model exit engine (§5.2 rebuild) -------------
+        # --- manage: the reference bot-model exit engine (§5.2 rebuild) -------------
         # Full rule set + sell risk gate; runs here AND on the dedicated fast
         # loop (_exit_loop), because stops gap badly when checked once/minute.
         closed += await scan_and_execute_exits(
             provider, conn, on_close=_on_closed_trade
         )
 
-        # --- OMO-R7: retro audit-log signature matching (post-cycle) --------
+        # --- REF-R7: retro audit-log signature matching (post-cycle) --------
         # Attributes out-of-pipeline fills to decision rows when a fill
         # bypasses the tick. Fail-soft; never blocks the tick.
         try:
@@ -462,7 +462,7 @@ async def _on_closed_trade(closed_trade) -> None:
 
 async def _exit_loop(provider) -> None:
     """
-    Dedicated fast exit scanner (omotrades 'manage' cadence). Memecoins move
+    Dedicated fast exit scanner (the reference bot 'manage' cadence). Memecoins move
     faster than the 60s tick; risk checks run every EXIT_SCAN_INTERVAL_SECONDS
     with price-only HTTP and zero LLM in the path. Failures are logged and the
     loop continues (fail-closed: missing a scan never opens risk, it only
@@ -502,9 +502,9 @@ async def main() -> None:
     await db.init_db()
     provider = build_provider()
     thinker = Thinker()
-    # Omo-style brain (2026-08-27): one role-routed reasoning call per tick in
+    # Reference-style brain (2026-08-27): one role-routed reasoning call per tick in
     # live mode. Inert in mock/tests; the deterministic gate still authorizes.
-    brain = OmoBrain()
+    brain = LLMBrain()
     # Cross-tick state: tick counter + per-mint think/thesis reuse cache.
     # REUSE_TICK_WINDOW bounds how old a reused thesis may be.
     state: dict = {"tick": 0, "theses": {}}

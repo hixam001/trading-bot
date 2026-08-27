@@ -38,7 +38,7 @@ from models import Candidate, Trade
 
 def make_candidate(mint: str = "Mint1111111111111111111111111111111111111",
                   symbol: str = "TEST") -> Candidate:
-    """Passes every omo-parity rule by default."""
+    """Passes every reference-parity rule by default."""
     return Candidate(
         symbol=symbol,
         mint_address=mint,

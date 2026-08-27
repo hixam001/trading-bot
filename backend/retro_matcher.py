@@ -1,7 +1,7 @@
 """
-retro_matcher.py — OMO-R7 retro audit-log signature matching.
+retro_matcher.py — REF-R7 retro audit-log signature matching.
 
-omo reference: linkAuditToFills() in src/lib/audit.server.ts.
+reference: linkAuditToFills() in src/lib/audit.server.ts.
 
 PURPOSE: attribute fills (opened trades) to decision rows when a fill
 BYPASSES the pipeline (e.g. a hand-placed trade against the live wallet
@@ -9,7 +9,7 @@ once armed). The exact bind-at-execute (CommitLog.bind) stays the PRIMARY
 binding and is NEVER overwritten by this layer — retro matching only ever
 touches rows whose signature is still null.
 
-ALGORITHM (omo's, kept intact):
+ALGORITHM (the reference's, kept intact):
   1. pending = decision rows with entry_allowed=1 AND signature IS NULL
      (newest 60)
   2. candidates = opened trades (newest 120) not already bound
@@ -19,7 +19,7 @@ ALGORITHM (omo's, kept intact):
      the run so nothing is claimed twice
   5. write back signature=trade_id, phase='filled', matched_by='retro'
 
-SAFEGUARDS (beyond omo):
+SAFEGUARDS (beyond the reference):
   - Exact-bind rows (signature IS NOT NULL) are never overwritten; the
     WHERE clause in bind_commit_signature enforces this atomically.
   - Matched rows carry matched_by='retro' so exact vs retro bindings are

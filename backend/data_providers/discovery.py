@@ -1,10 +1,10 @@
 """
-data_providers/discovery.py - omotrades-model rotating keyword scanner.
+data_providers/discovery.py - the reference bot-model rotating keyword scanner.
 
-Two guarantees ported from omo market.server.ts:
+Two guarantees ported from the reference market.server.ts:
 1. ROTATION - ~45 DexScreener search queries, QUERIES_PER_TICK per tick, so
    different market slices are visible on different ticks.
-2. SLOT COMPOSITION - the board is not just flow-ranked. omo reserves:
+2. SLOT COMPOSITION - the board is not just flow-ranked. the reference reserves:
      - up to 3 newborn slots (young tape + real socials/site)
      - up to 2 mover slots (top 1h change with real volume)
      - 5 guaranteed rotating slots from the unranked remainder
@@ -45,7 +45,7 @@ BOOSTS_TOP_URL = "https://api.dexscreener.com/token-boosts/top/v1"
 LATEST_BOOSTS_URL = "https://api.dexscreener.com/token-boosts/latest/v1"
 MAX_VOL_TO_LIQ_RATIO = 50.0
 
-# Slot allocation (omo board composition).
+# Slot allocation (the reference board composition).
 NEWBORN_SLOTS = 3      # young tape worth looking at (needs socials or site)
 MOVER_SLOTS = 2        # top 1h movers that flow ranking may have buried
 RESERVED_ROTATION_SLOTS = 5   # guaranteed rotation from the remainder
@@ -149,7 +149,7 @@ class KeywordScanner:
                 for i in range(QUERIES_PER_TICK)]
 
     def _build_board(self, all_pairs: list[dict], boosted_mints: set) -> list[Candidate]:
-        """Dedupe + fake-chart filter + omo slot composition (capped)."""
+        """Dedupe + fake-chart filter + the reference slot composition (capped)."""
         best: dict[str, dict] = {}
         for pair in all_pairs:
             base = pair.get("baseToken") or {}
@@ -197,7 +197,7 @@ class KeywordScanner:
 
         by_flow = sorted(best.values(), key=lambda x: -x["liq"])
 
-        # --- omo slot composition ---------------------------------------
+        # --- the reference slot composition ---------------------------------------
         board: list[dict] = []
         seen: set = set()
 

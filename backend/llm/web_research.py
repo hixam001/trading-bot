@@ -1,7 +1,7 @@
 """
 llm/web_research.py - live web search evidence for the think stage.
 
-omo web-research parity via Firecrawl search API: find what is driving a
+the reference web-research parity via Firecrawl search API: find what is driving a
 name attention in the last 24h and condense it to evidence lines for the
 thinker. EVIDENCE ONLY - no verdicts, fail-soft, disabled without key.
 """

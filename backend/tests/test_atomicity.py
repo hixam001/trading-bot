@@ -112,7 +112,7 @@ async def test_crash_simulation_state_row_written_cash_not_debited_replays_clean
 
 
 # ---------------------------------------------------------------------------
-# (Scale-in atomicity tests REMOVED: the omotrades-model rebuild deleted the
+# (Scale-in atomicity tests REMOVED: the the reference bot-model rebuild deleted the
 # scale-in path — `already_held` makes pyramiding structurally impossible.)
 # ---------------------------------------------------------------------------
 

@@ -1,6 +1,6 @@
 """
-live_execution/executor.py - omo-style place_order: ONE entry point for
-buys AND sells with omotrades execute.server.ts result statuses:
+live_execution/executor.py - reference-style place_order: ONE entry point for
+buys AND sells with the reference bot execute.server.ts result statuses:
 
   unarmed - LIVE_TRADING_ENABLED is False (the normal state); nothing runs
   blocked - a risk guard refused BEFORE any network call
@@ -8,7 +8,7 @@ buys AND sells with omotrades execute.server.ts result statuses:
   filled  - confirmed on-chain and journalled (only then)
 
 No memo/commit layer (deliberately omitted per operator decision). Everything
-else is omo parity at this book scale: local signing, multi-RPC broadcast,
+else is reference parity at this book scale: local signing, multi-RPC broadcast,
 confirmation-before-journal, price-impact floor, SOL reserve, daily deploy
 cap, idempotent buys, fraction-of-position sells with chain-read decimals.
 
@@ -104,7 +104,7 @@ async def place_buy(
     queue=None,
     ledger: Optional[ExecutionLedger] = None,
 ) -> OrderResult:
-    """Automated omo-style BUY: every guard fails closed before any network call."""
+    """Automated reference-style BUY: every guard fails closed before any network call."""
     base = OrderResult(side="buy", symbol=symbol, mint=mint)
     ledger = ledger or default_ledger()
     queue = queue or default_queue()
@@ -194,7 +194,7 @@ async def place_sell(
     queue=None,
     ledger: Optional[ExecutionLedger] = None,
 ) -> OrderResult:
-    """omo-style SELL: fraction of the open position, decimals read from chain.
+    """reference-style SELL: fraction of the open position, decimals read from chain.
     UNKNOWN decimals refuse - never a default (the decimals lesson)."""
     base = OrderResult(side="sell", symbol=symbol, mint=mint)
     if not config.LIVE_TRADING_ENABLED:
@@ -289,7 +289,7 @@ async def place_order(
     confirmation_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
 ) -> OrderResult:
-    """omo OrderIntent parity: buys sized in USD, sells as a position fraction."""
+    """the reference OrderIntent parity: buys sized in USD, sells as a position fraction."""
     if side == "buy":
         if not usd or usd <= 0:
             return OrderResult(status="blocked", reason="buy requires a positive usd size",

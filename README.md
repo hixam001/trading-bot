@@ -88,7 +88,7 @@ cd backend && ../.venv/bin/python scripts/ingest_directory.py <directory>
 ```
 
 Calibration reference: `docs/06_REFERENCE_COMPARISON.md` compares our rules
-and proof mechanism against omotrades.com.
+and proof mechanism against the reference site.
 
 ## Provenance note
 

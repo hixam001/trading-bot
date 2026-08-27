@@ -1,7 +1,7 @@
 """
 llm/social.py - realtime social read, provider-agnostic (the Grok stage).
 
-omo runs a realtime model over the social layer because memecoin attention
+the reference runs a realtime model over the social layer because memecoin attention
 forms on the timeline before it shows on the tape. This module is that
 stage - with one rigid rule: the read is EVIDENCE ONLY. It classifies
 interest (organic | peaked | unclear) and returns one grounded sentence.

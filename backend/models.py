@@ -54,7 +54,7 @@ class Candidate:
     buys_1h: Optional[int] = None
     sells_1h: Optional[int] = None
     price_change_1h_pct: Optional[float] = None   # percent, e.g. -12.5
-    # --- omo-parity breadth fields ---------------------------------------
+    # --- reference-parity breadth fields ---------------------------------------
     price_change_5m_pct: Optional[float] = None
     price_change_6h_pct: Optional[float] = None
     price_change_24h_pct: Optional[float] = None
@@ -209,7 +209,7 @@ class Trade:
     realized_pnl_usd: Optional[float] = None
     realized_pnl_pct: Optional[float] = None
     is_open: bool = True
-    # omotrades-style exit machinery:
+    # reference-style exit machinery:
     high_water_usd: Optional[float] = None  # peak price since entry (trail memory)
     tranches_taken: int = 0                 # how many TP-ladder trims fired
     # Populated asynchronously after close (D5/D6) — never blocks the tick loop

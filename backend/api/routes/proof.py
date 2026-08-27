@@ -1,19 +1,19 @@
 """
-api/routes/proof.py — local omo-parity proof endpoints (read-only).
+api/routes/proof.py — local reference-parity proof endpoints (read-only).
 
-Five endpoints mirroring omotrades' public API surface:
+Five endpoints mirroring the reference bot' public API surface:
 
   /api/proof.json    full record: recent decisions (commits), fills, refusals,
-                     unattributed fills (OMO-R7)
+                     unattributed fills (REF-R7)
   /api/exits.json    exit thresholds, stored HWM marks, every sell bound
                      to its seal commit
   /api/verify.json   recompute sha256(nonce|payload) for every decision
                      commit and report pass/fail per row; for rows with a
-                     bound Solana signature also check RPC binding (OMO-R1)
-  /api/binding.json  OMO-R1: committed mint vs mint actually touched,
+                     bound Solana signature also check RPC binding (REF-R1)
+  /api/binding.json  REF-R1: committed mint vs mint actually touched,
                      matched/mismatched counts, unknown when RPC unavailable
   /api/refusals.json every gate/model refusal with full rule breakdown
-  /api/theses.json   OMO-R3 durable thesis book
+  /api/theses.json   REF-R3 durable thesis book
 
 All read-only; no endpoint can change trading state.
 """
@@ -126,13 +126,13 @@ async def get_verify():
 
 
 # ---------------------------------------------------------------------------
-# OMO-R1 — Independent binding report
+# REF-R1 — Independent binding report
 # ---------------------------------------------------------------------------
 
 def _verify_binding_checks(tx: dict, commit_payload: dict,
                             commit_created_at: str, wallet_address: str) -> dict:
     """
-    Run OMO-R1 binding checks against a fetched transaction.
+    Run REF-R1 binding checks against a fetched transaction.
 
     Checks (all must pass for a matched result):
       1. tx exists and confirmed (meta.err == null)
@@ -224,7 +224,7 @@ def _verify_binding_checks(tx: dict, commit_payload: dict,
 @router.get("/api/binding.json")
 async def get_binding():
     """
-    OMO-R1: pair committed mint vs mint actually touched in the fill tx.
+    REF-R1: pair committed mint vs mint actually touched in the fill tx.
 
     For each decision commit that has a bound signature, attempt to verify
     the on-chain transaction against the commit payload. Rows without a
@@ -317,7 +317,7 @@ async def get_binding():
 async def get_refusals(limit: int = 100):
     """Every refusal with its full rule breakdown, newest first.
 
-    omo publishes refusals as loudly as fills: a person faking automation
+    the reference publishes refusals as loudly as fills: a person faking automation
     has no reason to invent hundreds of boring nos, so the refusals are the
     most telling part of the record. Read-only; verdict=fail covers both
     model vetoes and failed gate rules.

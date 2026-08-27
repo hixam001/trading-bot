@@ -1,6 +1,6 @@
 """data_providers/research.py - second-pass cross-pool token research.
 
-Port of omotrades researchToken: for the names the loop actually cares about,
+Port of the reference bot researchToken: for the names the loop actually cares about,
 one extra Dexscreener call aggregates EVERY Solana pool - pool count, total
 liquidity, top-pool share (concentration risk) and 6h windows summed across
 pools. Fills fields the deepest-pair snapshot missed; a failed research leaves
@@ -86,7 +86,7 @@ async def enrich_with_research(
     limit: Optional[int] = None,
     max_concurrency: int = 4,
 ) -> int:
-    """Research the head of the board (omo researches the names it cares about).
+    """Research the head of the board (the reference researches the names it cares about).
 
     Always sets the cross-pool aggregates; fills a missing single-pair field
     from the aggregate without overwriting fresher values. Returns count.

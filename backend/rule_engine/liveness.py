@@ -1,7 +1,7 @@
 """
-rule_engine/liveness.py — operator break state for the not_on_break rule (OMO-R4).
+rule_engine/liveness.py — operator break state for the not_on_break rule (REF-R4).
 
-omotrades' gate includes `not_on_break` ("loop awake, not on a break"): an
+the reference bot' gate includes `not_on_break` ("loop awake, not on a break"): an
 operational liveness flag. The loop may pause itself for a stated reason, persisted
 until a timestamp; while broken, the existing `not_on_break` gate rule fails CLOSED
 and the refusal records "on break" loudly.
@@ -21,7 +21,7 @@ import config
 
 
 def _state_path() -> Path:
-    # As requested by OMO-R4, state file is beside kill_switch.json
+    # As requested by REF-R4, state file is beside kill_switch.json
     return config.BASE_DIR.parent / "live_execution" / "state" / "break_state.json"
 
 

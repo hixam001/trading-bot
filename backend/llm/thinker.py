@@ -1,5 +1,5 @@
 """
-llm/thinker.py — the omo-style THINK stage (operator decision 2026-08-23).
+llm/thinker.py — the reference-style THINK stage (operator decision 2026-08-23).
 
 Before any rule evaluation, the main LLM (Groq or DeepSeek per
 MAIN_LLM_PROVIDER) reads a candidate's tape and writes a structured
@@ -8,7 +8,7 @@ pre-trade assessment:
     {"thesis": "...", "invalidation": "...", "verdict": "buy" | "pass"}
 
 A trade requires **verdict == "buy" AND every rule passes** — the exact
-think→gate intersection omotrades runs. Either side alone refuses, and the
+think→gate intersection the reference bot runs. Either side alone refuses, and the
 refusal is journalled as loudly as an entry.
 
 Fail-closed by design:
@@ -166,7 +166,7 @@ def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str, dict]]:
 
 
 class Thinker:
-    """OMO think stage using the configured main provider (Groq or DeepSeek,
+    """LLM think stage using the configured main provider (Groq or DeepSeek,
     selected by MAIN_LLM_PROVIDER) with a fail-closed fallback."""
 
     def __init__(self) -> None:

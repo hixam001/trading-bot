@@ -126,11 +126,11 @@ def cash_available(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
     )
 
 
-# --- crowd_heat (omotrades parity; proxy source until a FOMO feed lands) -----
+# --- crowd_heat (the reference bot parity; proxy source until a FOMO feed lands) -----
 
 def compute_crowd_heat(c: Candidate) -> int:
     """
-    0-100 conviction index, omotrades' formula: heat = 20 + 8 x conviction
+    0-100 conviction index, the reference bot' formula: heat = 20 + 8 x conviction
     items, clamped 0-100.
 
     Source priority (filled during the read stage by crowd.enrich_crowd_heat):
@@ -162,7 +162,7 @@ def crowd_heat(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     return RuleResult("crowd_heat", ok, detail, value=heat)
 
 
-# --- already_held (omotrades parity: strictly ONE position per name) ---------
+# --- already_held (the reference bot parity: strictly ONE position per name) ---------
 
 def already_held(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     held = p.held_usd_in_mint(c.mint_address)
@@ -176,7 +176,7 @@ def already_held(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult
     return RuleResult("already_held", ok, detail, value=held)
 
 
-# --- not_on_break (omotrades parity: loop liveness/operator break) ------------
+# --- not_on_break (the reference bot parity: loop liveness/operator break) ------------
 
 def not_on_break(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     from rule_engine import liveness
@@ -213,7 +213,7 @@ def security_clear(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
 
 
 # ---------------------------------------------------------------------------
-# The active rule set - EXACTLY omotrades 9 rules, in evaluation order.
+# The active rule set - EXACTLY the reference bot 9 rules, in evaluation order.
 # order. evaluate_gate() runs ALL of them unconditionally (no short-circuiting)
 # so every rejection shows its full profile in the journal.
 # ---------------------------------------------------------------------------

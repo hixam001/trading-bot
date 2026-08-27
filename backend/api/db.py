@@ -121,7 +121,7 @@ CREATE TABLE IF NOT EXISTS daily_stats (
     stats_json              TEXT    NOT NULL DEFAULT '{}'
 );
 
--- Decision commits (omo 'seal' parity): sha256(nonce|canonical payload) of
+-- Decision commits (the reference 'seal' parity): sha256(nonce|canonical payload) of
 -- every candidate decision, written BEFORE the trade acts on it. The
 -- plaintext payload is stored alongside so anyone can recompute the hash.
 CREATE TABLE IF NOT EXISTS decision_commits (
@@ -135,7 +135,7 @@ CREATE TABLE IF NOT EXISTS decision_commits (
     nonce           TEXT    NOT NULL,
     payload_json    TEXT    NOT NULL,   -- canonical reveal payload
     payload_hash    TEXT    NOT NULL UNIQUE,
-    -- OMO-R1/R7: fill binding and retro attribution fields (nullable)
+    -- REF-R1/R7: fill binding and retro attribution fields (nullable)
     signature       TEXT,               -- Solana tx sig when a fill is bound
     phase           TEXT,               -- 'filled' | null
     matched_by      TEXT,               -- 'exact' | 'retro' | null
@@ -168,7 +168,7 @@ CREATE TABLE IF NOT EXISTS llm_call_usage (
 );
 CREATE INDEX IF NOT EXISTS idx_llm_call_usage_ts ON llm_call_usage(ts);
 
--- OMO-R5 durable event stream and weighted lessons recalled by the thinker.
+-- REF-R5 durable event stream and weighted lessons recalled by the thinker.
 CREATE TABLE IF NOT EXISTS events (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     ts           TEXT    NOT NULL,
@@ -203,7 +203,7 @@ CREATE INDEX IF NOT EXISTS idx_trades_is_open     ON trades(is_open);
 CREATE INDEX IF NOT EXISTS idx_trades_closed_at   ON trades(closed_at);
 CREATE INDEX IF NOT EXISTS idx_regime_computed_at ON market_regime(computed_at);
 
--- OMO-R3 Durable thesis book
+-- REF-R3 Durable thesis book
 CREATE TABLE IF NOT EXISTS theses (
     trade_id          TEXT PRIMARY KEY,
     mint_address      TEXT NOT NULL,
@@ -228,7 +228,7 @@ async def init_db() -> None:
         for stmt in (
             "ALTER TABLE trades ADD COLUMN high_water_usd REAL",
             "ALTER TABLE trades ADD COLUMN tranches_taken INTEGER NOT NULL DEFAULT 0",
-            # OMO-R1/R7: binding + retro attribution columns on decision_commits
+            # REF-R1/R7: binding + retro attribution columns on decision_commits
             "ALTER TABLE decision_commits ADD COLUMN signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN phase TEXT",
             "ALTER TABLE decision_commits ADD COLUMN matched_by TEXT",
@@ -328,7 +328,7 @@ async def get_refusal_events(
     conn: aiosqlite.Connection, limit: int = 100
 ) -> list[dict[str, Any]]:
     """Every rejection at full detail - refusals are a first-class public
-    artifact (omo parity). verdict=fail means think or gate refused.
+    artifact (reference parity). verdict=fail means think or gate refused.
     """
     cursor = await conn.execute(
         "SELECT * FROM feed_events WHERE verdict = ? ORDER BY id DESC LIMIT ?",
@@ -339,7 +339,7 @@ async def get_refusal_events(
 
 
 # ===========================================================================
-# OMO-R5 memory/events — append-only observations and weighted lessons
+# REF-R5 memory/events — append-only observations and weighted lessons
 # ===========================================================================
 
 async def insert_event(
@@ -511,7 +511,7 @@ async def trim_position_row(
     size_out_usd: float,
 ) -> int:
     """
-    ATOMIC PARTIAL CLOSE (E8/E9 — omotrades-style TP tranches). Reduces an
+    ATOMIC PARTIAL CLOSE (E8/E9 — reference-style TP tranches). Reduces an
     open position by the given fraction's quantity/cost basis and bumps the
     tranche counter, only while the row is still open and would keep a
     positive remainder. rowcount 0 = already closed or degenerate trim;
@@ -611,7 +611,7 @@ async def deployed_today(
 
 
 # ---------------------------------------------------------------------------
-# Decision commits — tamper-evident local audit trail (omo 'seal' parity)
+# Decision commits — tamper-evident local audit trail (the reference 'seal' parity)
 # ---------------------------------------------------------------------------
 
 async def insert_decision_commit(
@@ -685,7 +685,7 @@ async def get_llm_call_usage(
     rows = await cursor.fetchall()
     return [dict(r) for r in rows]
 
-# OMO-R7 retro attribution helpers -----------------------------------------
+# REF-R7 retro attribution helpers -----------------------------------------
 
 async def get_pending_unsigned_commits(
     conn: aiosqlite.Connection, limit: int = 60
@@ -1130,7 +1130,7 @@ async def delete_trade_row(conn: aiosqlite.Connection, trade_id: str) -> int:
 
 
 # ===========================================================================
-# Theses (OMO-R3) - Durable Thesis Book
+# Theses (REF-R3) - Durable Thesis Book
 # ===========================================================================
 
 async def upsert_thesis(

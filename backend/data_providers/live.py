@@ -166,7 +166,7 @@ def build_provider():
         return MockProvider()
     if config.DATA_BACKEND == "live":
         if not config.BIRDEYE_API_KEY:
-            # Birdeye is now OPTIONAL (omo parity: zero keyed APIs required).
+            # Birdeye is now OPTIONAL (reference parity: zero keyed APIs required).
             # Without a key the trending lens is skipped and security falls
             # back to free on-chain RPC authority reads.
             log.warning(

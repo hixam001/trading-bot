@@ -4,7 +4,7 @@
 
 This documents a cryptographic proof-of-decision mechanism observed in a
 comparable live public system's own published, machine-readable
-specification (`omotrades.com/api/public/verify.json`). It solves a
+specification (`the reference site/api/public/verify.json`). It solves a
 specific problem — proving to an anonymous public audience that a
 decision's reasoning existed, unmodified, before the resulting trade was
 executed — that this project does not currently have, since it runs
@@ -17,7 +17,7 @@ build/calibration plan in `03_GANTT_CHART.md`.**
 ## The mechanism, as published — and independently verified 2026-08-22
 
 The mechanism below was re-checked against the live system and **verified
-byte-for-byte**: two fully revealed decisions from omotrades.com/proof were
+byte-for-byte**: two fully revealed decisions from the reference site/proof were
 hashed locally and matched their published on-chain hashes exactly. See
 `06_REFERENCE_COMPARISON.md` for the check, its evidence, and a full
 rule-by-rule comparison against our implementation.
@@ -26,10 +26,10 @@ rule-by-rule comparison against our implementation.
    representation of the full decision payload (the candidate data, every
    rule result, the verdict, and the narration text) and generates a
    random nonce. Canonical = object keys sorted, undefined dropped.
-2. It computes a hash: `sha256("omo-commit-v1|" + nonce + "|" +
+2. It computes a hash: `sha256("commit-v1|" + nonce + "|" +
    canonical(payload))`.
 3. It writes **only the hash** — not the payload — on-chain, as a Solana
-   memo instruction, in the format `omo:commit:v1:<hash>`. This transaction
+   memo instruction, in the format `commit:v1:<hash>`. This transaction
    is paid for by a separate, dedicated key used only for posting these
    memos (isolating the proof mechanism's costs and permissions from the
    trading wallet itself).
@@ -37,7 +37,7 @@ rule-by-rule comparison against our implementation.
    plaintext payload and nonce revealed publicly.
 5. **Anyone can independently verify**: fetch the on-chain memo
    transaction via a standard Solana RPC `getTransaction` call, recompute
-   `sha256("omo-commit-v1|" + nonce + "|" + canonical(revealed_payload))`
+   `sha256("commit-v1|" + nonce + "|" + canonical(revealed_payload))`
    locally, and confirm it matches the on-chain hash; additionally check
    that the fill transaction's slot is strictly greater than the memo
    slot, that its pre/post token balances contain the committed mint, and

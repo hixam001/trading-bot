@@ -1,7 +1,7 @@
 """
-blocklist.py — mint blocklist with manual + automatic entries (omo parity).
+blocklist.py — mint blocklist with manual + automatic entries (reference parity).
 
-omotrades enforces a blocklist in three places so a rugged name "cannot come
+the reference bot enforces a blocklist in three places so a rugged name "cannot come
 back through a side door". Ours mirrors that:
 
   * MANUAL blocks — operator-added, cleared only explicitly.

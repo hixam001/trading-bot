@@ -85,7 +85,7 @@ try:
     from api.routes.disclosure import router as disclosure_router
     app.include_router(disclosure_router)
 except ImportError:
-    pass  # OMO-R6 disclosure endpoints
+    pass  # REF-R6 disclosure endpoints
 
 try:
     from api.routes.admin import router as admin_router

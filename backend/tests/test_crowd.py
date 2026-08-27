@@ -3,7 +3,7 @@ tests/test_crowd.py — crowd conviction feeds (fomo.fun board, pump.fun
 comments) and their wiring into crowd_heat.
 
 ALL offline: HTTP is faked via a stub AsyncClient; no live network anywhere.
-Covers: omo heat formula + clamps, fail-soft degradation (unconfigured token,
+Covers: the reference heat formula + clamps, fail-soft degradation (unconfigured token,
 HTTP 500), response parsing (responseObject.items / authorTrade fields),
 cache behavior, source priority (fomo > pumpfun > proxy), and the crowd_heat
 rule consuming real feed heat with a tagged detail.
@@ -97,7 +97,7 @@ def install_fake_http(monkeypatch, get=None, post=None):
 
 # --- heat formula ----------------------------------------------------------------
 
-def test_heat_from_count_matches_omo_formula():
+def test_heat_from_count_matches_reference_formula():
     assert crowd.heat_from_count(0) == 20
     assert crowd.heat_from_count(2) == 36
     assert crowd.heat_from_count(5) == 60

@@ -83,24 +83,24 @@ GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "192"))
 MAIN_LLM_PROVIDER: str = os.getenv("MAIN_LLM_PROVIDER", "groq").strip().lower()
 
 # ---------------------------------------------------------------------------
-# Omo-style brain (2026-08-27). When True AND DATA_BACKEND=live, the tick runs
-# a single omo-faithful reasoning call (role-routed, wallet-aware, rich
+# Reference-style brain (2026-08-27). When True AND DATA_BACKEND=live, the tick runs
+# a single reference-faithful reasoning call (role-routed, wallet-aware, rich
 # verdicts/checks/watchlist) instead of one minimal per-candidate verdict.
 # Fail-closed: any malformed/missing output degrades to the deterministic
 # template pass. Mock mode ALWAYS uses the template thinker (hermetic tests).
 # This changes ONLY the reasoning layer — the deterministic entry gate
 # (verdict AND all rules) and PAPER_TRADING_ONLY are untouched.
 # ---------------------------------------------------------------------------
-OMO_BRAIN: bool = os.getenv("OMO_BRAIN", "1").strip().lower() in ("1", "true", "yes", "on")
-# Output-token budget for the single omo tick call. It emits a full JSON tick
+LLM_BRAIN: bool = os.getenv("LLM_BRAIN", "1").strip().lower() in ("1", "true", "yes", "on")
+# Output-token budget for the single brain tick call. It emits a full JSON tick
 # (6-9 thoughts + one 5-7-check verdict per graded candidate + watchlist), which
 # runs ~1.5-2k tokens for a small board; 4000 leaves headroom so the JSON is not
 # truncated mid-object (a truncated body fails closed, so bigger is safer).
-OMO_BRAIN_MAX_TOKENS: int = int(os.getenv("OMO_BRAIN_MAX_TOKENS", "4000"))
+LLM_BRAIN_MAX_TOKENS: int = int(os.getenv("LLM_BRAIN_MAX_TOKENS", "4000"))
 # The brain emits a much larger completion than the per-candidate thinker, so it
 # needs a longer read timeout than DEEPSEEK_TIMEOUT_SECONDS (12s). On timeout the
 # brain fails closed (template), never a bad buy.
-OMO_BRAIN_TIMEOUT_SECONDS: float = float(os.getenv("OMO_BRAIN_TIMEOUT_SECONDS", "60"))
+LLM_BRAIN_TIMEOUT_SECONDS: float = float(os.getenv("LLM_BRAIN_TIMEOUT_SECONDS", "60"))
 
 # ---------------------------------------------------------------------------
 # DeepSeek direct API (main-provider candidate per docs/08 §1). Non-thinking
@@ -188,13 +188,13 @@ INTENDED_POSITION_SIZE_USD: float = 100.0   # fixed per-entry size the cash_avai
 SLIPPAGE_PCT: float = 0.02    # 2% simulated entry/exit slippage
 FEE_PCT: float = 0.01         # 1% simulated DEX fee each way
 
-# Exit conditions — now owned by the omotrades-model exit engine below
+# Exit conditions — now owned by the the reference bot-model exit engine below
 # (the old +50% take-profit and 72h force-close were replaced by
 # EXIT_TP_LADDER + EXIT_STALE_* in that block).
 STOP_LOSS_PCT: float = 0.20      # close if unrealized loss >= -20%
 
 # ---------------------------------------------------------------------------
-# Exit engine (§5.2 rebuilt on the omotrades model — PROCESS.md §5).
+# Exit engine (§5.2 rebuilt on the the reference bot model — PROCESS.md §5).
 # Risk-off rules close FULLY and outrank profit taking; only take-profit
 # tranches are partial. All values hardcoded (non-env-configurable).
 # ---------------------------------------------------------------------------
@@ -231,16 +231,16 @@ EXIT_SCAN_INTERVAL_SECONDS: float = 15.0
 # ---------------------------------------------------------------------------
 # Rule engine thresholds (§2.3). All in USD / percent as labelled.
 # ---------------------------------------------------------------------------
-MIN_LIQUIDITY_USD: float = 15_000.0     # liquidity_floor (omotrades parity)
-MIN_VOLUME_1H_USD: float = 8_000.0      # volume_alive (omotrades parity)
+MIN_LIQUIDITY_USD: float = 15_000.0     # liquidity_floor (the reference bot parity)
+MIN_VOLUME_1H_USD: float = 8_000.0      # volume_alive (the reference bot parity)
 NEWBORN_AGE_HOURS: float = 24.0         # not_newborn_fade: joint condition —
 NEWBORN_FADE_PCT: float = 15.0          #   young AND down >= this % in 1h fails it
-# crowd_heat: 0-100 conviction index. omotrades computes theirs from written
+# crowd_heat: 0-100 conviction index. the reference bot computes theirs from written
 # theses on the FOMO board (heat = 20 + 8 x theses). Until a FOMO feed is
 # wired (see docs/FOMO_INTEGRATION.md), we use the documented proxy:
 # heat = CROWD_HEAT_BASE + CROWD_HEAT_PER_SIGNAL x named-presence signals.
 # The act band is what gates: below MIN the crowd isn't there yet; above MAX
-# it's already a hype peak (omo refuses both extremes).
+# it's already a hype peak (the reference refuses both extremes).
 CROWD_HEAT_BASE: int = 20
 CROWD_HEAT_PER_SIGNAL: int = 8
 CROWD_HEAT_MIN: int = 36                # needs >= 2 of {twitter, telegram, site}
@@ -251,7 +251,7 @@ CROWD_HEAT_MAX: int = 100
 # docs/FOMO_INTEGRATION.md). Both fail SOFT: an unavailable feed degrades
 # crowd_heat to the presence proxy; it never blocks anything else.
 # ---------------------------------------------------------------------------
-# Option 1 — fomo.fun board (omotrades' exact source). Requires the operator's
+# Option 1 — fomo.fun board (the reference bot' exact source). Requires the operator's
 # Privy refresh token, extracted ONCE from a logged-in fomo.family browser
 # session (DevTools -> Application -> Local Storage -> privy-token / refresh
 # token). Exchanged for a ~1h access token automatically.
@@ -353,10 +353,10 @@ RATE_LIMIT_EXTRA_BACKOFF_SECONDS: float = 15.0
 # ---------------------------------------------------------------------------
 TICK_INTERVAL_SECONDS: int = int(os.getenv("TICK_INTERVAL_SECONDS", "60"))
 MAX_CANDIDATES_PER_TICK: int = int(os.getenv("MAX_CANDIDATES_PER_TICK", "20"))
-# Second-pass deep-research budget per tick (omo researches the names it
+# Second-pass deep-research budget per tick (the reference researches the names it
 # actually cares about - one extra Dexscreener call each, capped).
 RESEARCH_PER_TICK: int = int(os.getenv("RESEARCH_PER_TICK", "8"))
-# Realtime social read (omo realtime role) - ANY OpenAI-compatible provider.
+# Realtime social read (the reference realtime role) - ANY OpenAI-compatible provider.
 # Groq today, Grok tomorrow: switching is ONLY these three env values.
 #   groq: https://api.groq.com/openai/v1 + llama-3.3-70b-versatile
 #   xai:  https://api.x.ai/v1           + grok-3-mini (or newer)
@@ -368,9 +368,9 @@ SOCIAL_LLM_MODEL: str = os.getenv("SOCIAL_LLM_MODEL", "qwen/qwen3.8-27b")
 SOCIAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("SOCIAL_LLM_TIMEOUT_SECONDS", "20"))
 SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
 
-# Live web search evidence for the think stage (omo web-research parity).
+# Live web search evidence for the think stage (the reference web-research parity).
 # Uses the existing FIRECRAWL_API_KEY; empty key = stage disabled.
-# tbs=qdr:d limits results to the last 24h like omo recent=true.
+# tbs=qdr:d limits results to the last 24h like the reference recent=true.
 WEB_SEARCH_PER_TICK: int = int(os.getenv("WEB_SEARCH_PER_TICK", "8"))
 WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "20"))
 

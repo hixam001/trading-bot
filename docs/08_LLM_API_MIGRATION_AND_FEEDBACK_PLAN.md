@@ -26,7 +26,7 @@ Use **V4 Pro only as an evaluation challenger**, not as the default trading-path
 
 DeepSeek’s official pricing page, checked 2026-08-26, lists V4 Flash JSON output, a 1M context limit, and separate peak/off-peak prices. The exact price and model version must be read from the provider page at implementation time because DeepSeek states that prices can change.
 
-## 2. Current State and OMO Finding
+## 2. Current State and Reference Finding
 
 The current code is not Qwen-only in the same sense for every task:
 
@@ -40,9 +40,9 @@ The current code is not Qwen-only in the same sense for every task:
 
 The older architecture and project-report sections still describe narration-only Qwen. The current handoff and code are authoritative for this plan: the thinker is a veto layer, but the rules, exits, cash guards, blocklist, and paper-only boundary remain authoritative.
 
-### Does OMO have self-learning?
+### Does the reference have self-learning?
 
-Based on the reviewed public OMO payloads, proof material, and the repository’s comparison, there is **no evidence of autonomous model training, weight updates, or an API-driven self-learning loop**. OMO appears to use a live agent/reasoning layer, market and social inputs, position-management state, and commit/reveal auditability. That is adaptive decision context, not demonstrated self-training.
+Based on the reviewed public reference payloads, proof material, and the repository’s comparison, there is **no evidence of autonomous model training, weight updates, or an API-driven self-learning loop**. The reference appears to use a live agent/reasoning layer, market and social inputs, position-management state, and commit/reveal auditability. That is adaptive decision context, not demonstrated self-training.
 
 This project currently has a narrower feedback loop:
 

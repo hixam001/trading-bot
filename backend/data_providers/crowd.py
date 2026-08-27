@@ -1,7 +1,7 @@
 """
 data_providers/crowd.py — REAL crowd conviction for crowd_heat.
 
-Source: the fomo.fun board — omotrades' exact source
+Source: the fomo.fun board — the reference bot' exact source
 (`prod-api.fomo.family/feed/token/thesis`). FAIL-SOFT: an unavailable feed
 just degrades crowd_heat to the presence proxy; it can never block an exit
 or stall the loop.
@@ -9,12 +9,12 @@ or stall the loop.
 The API sits behind Cloudflare AND firewalls datacenter/residential IPs
 (verified live 2026-08-23: a valid bearer still gets a 403 JS challenge on
 direct calls). Reads therefore go DIRECT first and automatically fall back
-to a FIRECRAWL stealth-proxy scrape when challenged — omotrades' own
+to a FIRECRAWL stealth-proxy scrape when challenged — the reference bot' own
 architecture ("fomo family's API firewalls datacenter IPs, so direct
 fetches from the worker 403"). Needs FOMO_PRIVY_REFRESH_TOKEN (Privy
 session) + FIRECRAWL_API_KEY.
 
-Heat formula is omo's own: heat = clamp(20 + 8 x thesis_count, 0, 100).
+Heat formula is the reference's own: heat = clamp(20 + 8 x thesis_count, 0, 100).
 
 (pump.fun comments were evaluated as a secondary source and DEFERRED —
 their legacy API host is dead and the current one 503s even via stealth
@@ -116,7 +116,7 @@ _fomo_cache = _TtlCache(config.FOMO_CACHE_TTL_SECONDS)
 
 
 def heat_from_count(count: int) -> int:
-    """omo's formula: heat = clamp(20 + 8 x conviction items, 0, 100)."""
+    """the reference's formula: heat = clamp(20 + 8 x conviction items, 0, 100)."""
     return max(0, min(100, config.CROWD_HEAT_BASE
                       + config.CROWD_HEAT_PER_SIGNAL * max(0, count)))
 
@@ -128,7 +128,7 @@ def _looks_like_challenge(raw: str) -> bool:
 
 def _is_substantive(text: str) -> bool:
     """
-    Junk-thesis filter (omo parity): raw invite links, single emojis and
+    Junk-thesis filter (reference parity): raw invite links, single emojis and
     empty noise are not conviction and must not feed crowd_heat.
     """
     t = text.strip()
@@ -280,7 +280,7 @@ def fomo_app() -> Optional[_PrivyApp]:
 
 
 # ---------------------------------------------------------------------------
-# Transport parity with omotrades' fomo.server.ts:
+# Transport parity with the reference bot' fomo.server.ts:
 #   * full browser-like header set on prod-api reads (origin / referer /
 #     x-supported-chains are what Cloudflare keys on — omitting them is what
 #     caused our earlier 403 challenges)
@@ -374,7 +374,7 @@ def _json_from_body(text: str) -> Optional[dict]:
 
 async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
     """
-    omotrades' own fallback: POST api.firecrawl.dev/v1/scrape with
+    the reference bot' own fallback: POST api.firecrawl.dev/v1/scrape with
     proxy:"stealth" — this one FORWARDS our auth headers, which matters
     because prod-api requires the Privy bearer even through a proxy.
     """
@@ -533,7 +533,7 @@ async def fetch_fomo_theses(mint: str) -> Optional[dict]:
     Theses attached to `mint` on the fomo.fun board, or None when the feed
     is unconfigured/unreachable. Returns {"theses": [...], "total": int}
     where total is the board's OWN count for that token
-    (olderThesis + newerThesis + page items — omo's trick, since the page
+    (olderThesis + newerThesis + page items — the reference's trick, since the page
     is capped at 40). Cached per mint.
     Each thesis: {who, text, size_usd, unrealized_usd, realized_usd,
     pnl_pct, closed}.

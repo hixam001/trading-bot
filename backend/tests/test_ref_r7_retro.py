@@ -1,5 +1,5 @@
 """
-tests/test_omo_r7_retro.py — OMO-R7 retro audit-log signature matching.
+tests/test_ref_r7_retro.py — REF-R7 retro audit-log signature matching.
 
 Key properties verified:
   1. Basic match: decision + fill within window → attributed

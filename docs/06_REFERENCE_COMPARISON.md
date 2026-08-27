@@ -1,12 +1,12 @@
-# 06 — Reference Comparison: trading-bot vs omotrades.com
+# 06 — Reference Comparison: trading-bot vs the reference site
 
-Checked 2026-08-22 against https://omotrades.com/, /proof, and its published
+Checked 2026-08-22 against https://the reference site/, /proof, and its published
 `/api/public/verify.json`. Evidence includes independent local recomputation
 of two revealed commit hashes (see §2).
 
 ## 1. Rule set alignment
 
-omotrades' gate (from revealed commit payloads) vs ours:
+the reference bot' gate (from revealed commit payloads) vs ours:
 
 | # | their rule_id | detail example | our rule_id | aligned? |
 |---|---|---|---|---|
@@ -28,17 +28,17 @@ a numeric `socials` list, and the `fomo` index itself.
 ## 2. Commit-reveal proof mechanism — independently verified
 
 From `/proof` we took two fully revealed entries and recomputed their hashes
-locally (`backend/verify_omo.py` during the check):
+locally (`backend/verify_commit.py` during the check):
 
 ```
-sha256("omo-commit-v1|" + <nonce> + "|" + <canonical payload>)
+sha256("commit-v1|" + <nonce> + "|" + <canonical payload>)
   == 0cd102c7…7b0a67ea   MATCH (byte-for-byte)
   == 21fcce86…e765d8fbb  MATCH (byte-for-byte)
 ```
 
 Confirmed mechanics, all matching `05_VERIFICATION_APPENDIX.md`:
 - canonical payload = sorted object keys, undefined dropped
-- memo format `omo:commit:v1:<hash>`, written pre-fill by a **separate burner
+- memo format `commit:v1:<hash>`, written pre-fill by a **separate burner
   key** that never holds the book
 - reveal ~20 minutes later; fill slot must be **greater than** memo slot;
   fill's token balances must contain the committed mint; signer must be the
@@ -52,7 +52,7 @@ status (documented, NOT built — paper trading needs no public proof) stands.
 ## 3. Logic divergences — deliberate or noted
 
 ### 3.1 THE BIG ONE: who decides the final action
-omotrades' revealed payloads show `verdict:"pass"` **with two FAILED rules**
+the reference bot' revealed payloads show `verdict:"pass"` **with two FAILED rules**
 (`buy_pressure`, `crowd_heat`), `side:null`, and a note reading *"refused
 market buy…"*. I.e., in their architecture an agent layer sits between the
 rules and the action: rules are inputs, the model decides whether to trade.
@@ -61,7 +61,7 @@ This project deliberately CLOSES that gap: `evaluate_gate()`'s all_passed is
 the sole entry decision; exits come only from fixed numeric conditions; the
 LLM narrates decisions that were already made (§4.1) and may never flip a
 verdict. This is the project's core principle and stays non-negotiable —
-omotrades demonstrates the alternative, not a defect in ours.
+the reference bot demonstrates the alternative, not a defect in ours.
 
 ### 3.2 `crowd_heat` (fomo index)
 They gate on a 0–100 "fomo index" sourced from the fomo app (failed at

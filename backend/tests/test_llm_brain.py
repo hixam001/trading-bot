@@ -1,5 +1,5 @@
 """
-tests/test_omo_brain.py — the omo-style brain (routing, prompt, parse/validate,
+tests/test_llm_brain.py — the reference-style brain (routing, prompt, parse/validate,
 verdict mapping, wallet mimicry). ALL offline: providers are faked; no network.
 
 Covers the defense-first guarantees that make the brain safe to sit in front of
@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 import config
-import llm.omo_brain as ob
+import llm.llm_brain as ob
 from llm.client import LLMResult
 from models import Candidate, PortfolioState, Trade
 
@@ -61,7 +61,7 @@ class FakeClient:
 @pytest.fixture(autouse=True)
 def fresh(monkeypatch):
     monkeypatch.setattr(ob, "_UNAVAILABLE", set())
-    monkeypatch.setattr(config, "OMO_BRAIN", True)
+    monkeypatch.setattr(config, "LLM_BRAIN", True)
 
 
 GOOD_TICK = (
@@ -77,7 +77,7 @@ GOOD_TICK = (
 # --- parse + validate -------------------------------------------------------
 
 def test_parse_valid_tick_maps_buying():
-    parsed = ob.parse_omo_tick(GOOD_TICK, {"ALPHA"})
+    parsed = ob.parse_llm_tick(GOOD_TICK, {"ALPHA"})
     assert parsed is not None
     v = parsed["verdicts"]["ALPHA"]
     assert v.call == "buying" and v.wants_entry is True
@@ -87,7 +87,7 @@ def test_parse_valid_tick_maps_buying():
 
 def test_parse_drops_invented_symbol():
     raw = GOOD_TICK.replace("ALPHA", "NOTREAL")
-    parsed = ob.parse_omo_tick(raw, {"ALPHA"})
+    parsed = ob.parse_llm_tick(raw, {"ALPHA"})
     assert parsed is not None and parsed["verdicts"] == {}
 
 
@@ -95,26 +95,26 @@ def test_parse_drops_invented_symbol():
     ("buying", True), ("stalking", False), ("pass", False), ("holding", False)])
 def test_parse_call_mapping(call, wants):
     raw = GOOD_TICK.replace('"call":"buying"', f'"call":"{call}"')
-    parsed = ob.parse_omo_tick(raw, {"ALPHA"})
+    parsed = ob.parse_llm_tick(raw, {"ALPHA"})
     v = parsed["verdicts"]["ALPHA"]
     assert v.call == call and v.wants_entry is wants
 
 
 def test_parse_drops_invalid_call_fail_closed():
     raw = GOOD_TICK.replace('"call":"buying"', '"call":"yolo"')
-    parsed = ob.parse_omo_tick(raw, {"ALPHA"})
+    parsed = ob.parse_llm_tick(raw, {"ALPHA"})
     assert parsed["verdicts"] == {}          # invalid call -> dropped, not guessed
 
 
 @pytest.mark.parametrize("bad", ["", "no json here", "{not valid json}", "[1,2]"])
 def test_parse_malformed_returns_none(bad):
-    assert ob.parse_omo_tick(bad, {"ALPHA"}) is None
+    assert ob.parse_llm_tick(bad, {"ALPHA"}) is None
 
 
 def test_parse_clamps_fomo_and_strips_dollar():
     raw = GOOD_TICK.replace('"fomo":62', '"fomo":420').replace(
         '"symbol":"ALPHA"', '"symbol":"$alpha"')
-    parsed = ob.parse_omo_tick(raw, {"ALPHA"})
+    parsed = ob.parse_llm_tick(raw, {"ALPHA"})
     assert parsed["fomo"] == 100
     assert "ALPHA" in parsed["verdicts"]     # $-prefix + case normalized
 
@@ -189,11 +189,11 @@ async def test_run_role_all_fail_returns_none(monkeypatch):
     assert "main" not in ob._UNAVAILABLE      # timeout is NOT unsupported-model
 
 
-# --- OmoBrain.tick fail-closed behaviour ------------------------------------
+# --- LLMBrain.tick fail-closed behaviour ------------------------------------
 
 async def test_tick_mock_mode_is_hermetic_template(monkeypatch):
     monkeypatch.setattr(config, "DATA_BACKEND", "mock")
-    brain = ob.OmoBrain()
+    brain = ob.LLMBrain()
     res = await brain.tick([make_candidate()])
     assert res.verdicts == {} and res.source == "template" and res.degraded
 
@@ -204,7 +204,7 @@ async def test_tick_live_unparsable_fails_closed(monkeypatch):
     def fake(pid, timeout_override=None):
         return FakeClient("deepseek", "m", text="garbage not json")
     monkeypatch.setattr(ob, "_build_provider", fake)
-    res = await ob.OmoBrain().tick([make_candidate()])
+    res = await ob.LLMBrain().tick([make_candidate()])
     assert res.verdicts == {} and res.degraded is True   # never a buy
 
 
@@ -215,7 +215,7 @@ async def test_tick_live_valid_maps_verdicts(monkeypatch):
         return FakeClient("deepseek", "deepseek-v4-flash", text=GOOD_TICK)
     monkeypatch.setattr(ob, "_build_provider", fake)
     cands = [make_candidate("ALPHA")]
-    res = await ob.OmoBrain().tick(cands, PortfolioState(cash_usd=1000.0))
+    res = await ob.LLMBrain().tick(cands, PortfolioState(cash_usd=1000.0))
     v = res.verdict_for("ALPHA")
     assert v is not None and v.wants_entry is True
     assert res.fomo == 62 and res.degraded is False
@@ -224,6 +224,6 @@ async def test_tick_live_valid_maps_verdicts(monkeypatch):
 
 async def test_tick_empty_candidates_fails_closed(monkeypatch):
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
-    res = await ob.OmoBrain().tick([])
+    res = await ob.LLMBrain().tick([])
     assert res.verdicts == {} and res.source == "template"
 

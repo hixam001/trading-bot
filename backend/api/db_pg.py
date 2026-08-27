@@ -207,13 +207,13 @@ _FEED_COLS = """
 # current schema on boot. The files under migrations/supabase/ remain the
 # source of truth for fresh installs; this block exists because 001_init.sql
 # was edited in place after early installs had run it (events / memories /
-# theses added for OMO-R3/R5) and 002_llm_usage.sql was never applied at
+# theses added for REF-R3/R5) and 002_llm_usage.sql was never applied at
 # all — leaving live books missing whole tables (incident 2026-08-27: every
 # tick failed on missing "events"; /api/system-status 500'd on missing
 # "llm_call_usage"). Every statement is IF NOT EXISTS / ON CONFLICT DO
 # NOTHING, so this is a no-op on an up-to-date book.
 _SCHEMA_SYNC_SQL = (
-    # OMO-R5 durable event stream + weighted lessons (001_init.sql §8).
+    # REF-R5 durable event stream + weighted lessons (001_init.sql §8).
     """
     CREATE TABLE IF NOT EXISTS events (
         id           BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -238,7 +238,7 @@ _SCHEMA_SYNC_SQL = (
     """,
     "CREATE INDEX IF NOT EXISTS idx_memories_topic_weight "
     "ON memories (topic, weight DESC)",
-    # OMO-R3 durable thesis book (001_init.sql §10).
+    # REF-R3 durable thesis book (001_init.sql §10).
     """
     CREATE TABLE IF NOT EXISTS theses (
         trade_id          TEXT PRIMARY KEY,
@@ -309,7 +309,7 @@ async def init_db() -> None:
             """,
             float(config.INITIAL_CASH_USD), _now(),
         )
-        # OMO-R1/R7: idempotent column additions for decision_commits
+        # REF-R1/R7: idempotent column additions for decision_commits
         for col_sql in (
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS phase TEXT",
@@ -405,7 +405,7 @@ async def get_refusal_events(
 
 
 # ===========================================================================
-# OMO-R5 memory/events — append-only observations and weighted lessons
+# REF-R5 memory/events — append-only observations and weighted lessons
 # ===========================================================================
 
 async def insert_event(
@@ -638,7 +638,7 @@ async def deployed_today(
 
 
 # ---------------------------------------------------------------------------
-# Decision commits — tamper-evident audit trail (omo 'seal' parity)
+# Decision commits — tamper-evident audit trail (the reference 'seal' parity)
 # ---------------------------------------------------------------------------
 
 async def insert_decision_commit(
@@ -722,7 +722,7 @@ async def get_llm_call_usage(
     return [dict(r) for r in rows]
 
 
-# OMO-R7 retro attribution helpers -----------------------------------------
+# REF-R7 retro attribution helpers -----------------------------------------
 
 async def get_pending_unsigned_commits(
     conn: asyncpg.Connection, limit: int = 60
@@ -1022,7 +1022,7 @@ async def upsert_daily_stats(conn: asyncpg.Connection, stats: DailyStats) -> Non
 
 
 # ===========================================================================
-# Theses (OMO-R3) - Durable Thesis Book
+# Theses (REF-R3) - Durable Thesis Book
 # ===========================================================================
 
 async def upsert_thesis(

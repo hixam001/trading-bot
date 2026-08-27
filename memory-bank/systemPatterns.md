@@ -36,5 +36,5 @@ orchestrates ollama serve (if needed) + this app; `./stop.sh` reverses.
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;
 silent except-pass near money math; short-circuit gates; auto-applied
-threshold changes; agent layers between gate and action (omotrades does
+threshold changes; agent layers between gate and action (the reference bot does
 this — we deliberately don't).

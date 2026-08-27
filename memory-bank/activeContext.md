@@ -1,21 +1,39 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (omo-style brain ported + live-verified; DeepSeek main-provider swap executed).**
+**As of 2026-08-27 (repo de-branded + brain module renamed; reference-style brain ported + live-verified; DeepSeek main-provider swap executed).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
-### Omo-style brain — ported omotrades/omo's LLM reasoning layer (handoff §21) (2026-08-27)
-New `backend/llm/omo_brain.py`: `run_role()` role-based router (omo
+### De-brand + rename brain module `omo_brain.py` → `llm_brain.py` (2026-08-27)
+Operator directive: "omobrain.py should be llmbrain.py, remove any references to
+omo from the whole repo." Renamed `backend/llm/omo_brain.py`→`llm_brain.py` and
+de-branded every identifier (`OmoBrain`→`LLMBrain`, `OmoVerdict`→`LLMVerdict`,
+`parse_omo_tick`→`parse_llm_tick`, `OMO_SYSTEM`→`LLM_SYSTEM`,
+config `OMO_BRAIN*`→`LLM_BRAIN*`), test files (`test_omo_*`→`test_llm_brain` /
+`test_ref_r*`), and requirement ids (`OMO-R#`→`REF-R#`). Repo-wide replaced
+omo/omotrades branding with neutral "the reference"/"reference" prose across 54
+files (pure find/replace, 407/407 balanced). Removed the scratch
+`backend/scripts/verify_reference_commit.py` (only verified the reference's
+external on-chain preimages; not imported anywhere). KEPT `fomo`/`FOMO` (the
+crowd-board product), `promotion`/`promotion_gate`, and token tickers
+(BLOSSOM/SEAL) — all unrelated to the brand. `omo-commit-v1` was never our commit
+scheme (we hash `sha256(nonce|canonical)` with no prefix), so it only lived in the
+removed verifier + two reference docs. All **289 tests pass**; backend restarted
+clean on the renamed module (0 import errors, 0 tracebacks).
+
+## DONE
+### Reference-style brain — ported the reference repository's LLM reasoning layer (handoff §21) (2026-08-27)
+New `backend/llm/llm_brain.py`: `run_role()` role-based router (the reference
 `models.server.ts` — honest resolution, ordered fallback chain, unsupported-model
-benches the provider for the process); `OMO_SYSTEM`+`OMO_OUTPUT_CONTRACT` (the omo
+benches the provider for the process); `LLM_SYSTEM`+`LLM_OUTPUT_CONTRACT` (the reference
 tick prompt: hard filters, 6 decision buckets, ground-truth + price-talk rules,
 minified-JSON contract — persona lore dropped); wallet mimicry (`build_wallet_block`)
-+ None-safe snapshot builder; `parse_omo_tick()` strict validation (invented symbols
-/ invalid calls dropped, malformed → None); `OmoBrain.tick()` grades up to 8
++ None-safe snapshot builder; `parse_llm_tick()` strict validation (invented symbols
+/ invalid calls dropped, malformed → None); `LLMBrain.tick()` grades up to 8
 highest-volume candidates, fail-closed to empty verdicts on any error. Config:
-`OMO_BRAIN` (on), `OMO_BRAIN_MAX_TOKENS=4000`, `OMO_BRAIN_TIMEOUT_SECONDS=60`.
+`LLM_BRAIN` (on), `LLM_BRAIN_MAX_TOKENS=4000`, `LLM_BRAIN_TIMEOUT_SECONDS=60`.
 `main.py` runs the brain in live mode; each candidate uses the brain's verdict if
-valid else falls back to the per-candidate thinker; `_think_from_omo()` maps omo
+valid else falls back to the per-candidate thinker; `_think_from_llm()` maps the reference
 `buying`→our `buy` (NECESSARY only — the deterministic gate still ANDs). Fixed a
 pre-existing tick-crashing bug: `reused_if_stable()` required `prior["stats"]` but
 the thesis writer never stored it → `KeyError` killed the tick; writer now stores
@@ -59,7 +77,7 @@ basic tier answers but its stealth-proxy errors and it can't forward the Privy
 bearer, so it never serves fomo reads. +1 regression test → **262 passing**.
 
 ## DONE
-### DB maintenance: prune + reset + OMO audit (2026-08-27)
+### DB maintenance: prune + reset + the reference audit (2026-08-27)
 Added `prune_feed_events(conn, keep_rows)`, `prune_market_regime(conn, keep_rows)`,
 and `reset_book(conn, initial_cash_usd)` to both `api/db.py` (SQLite DELETE NOT IN)
 and `api/db_pg.py` (TRUNCATE RESTART IDENTITY CASCADE). New operator-only endpoint
@@ -67,7 +85,7 @@ and `api/db_pg.py` (TRUNCATE RESTART IDENTITY CASCADE). New operator-only endpoi
 `mode=reset_book` or `mode=prune_only`; logged at WARNING; never touches wallet or
 live_execution). Config knobs `FEED_PRUNE_KEEP=2000` and `REGIME_PRUNE_KEEP=500`
 added to `config.py`. 9 new tests in `tests/test_admin_reset.py`. Full suite now
-**231 passing**. All OMO-R1–R7 routes audited and confirmed correct.
+**231 passing**. All REF-R1–R7 routes audited and confirmed correct.
 
 ## DONE
 ### Groq LLM migration + bug audit complete (2026-08-27)
@@ -82,19 +100,19 @@ syntax-clean. LLM ping test: both providers respond correctly.
 DeepSeek migration is deferred pending a funded API key.
 
 ## DONE
-### OMO-R1 Independent verifier + binding report (2026-08-26)
+### REF-R1 Independent verifier + binding report (2026-08-26)
 `/api/binding.json` runs four binding checks per sealed decision commit: tx_confirmed (meta.err == null), time_ordering (commit_at < blockTime), fee_payer (account key 0 == wallet), mint_present (mint in pre/postTokenBalances). Each check that cannot run reports `unknown`, never `pass` (fail-closed). New `signature`, `phase`, `matched_by` nullable columns added to `decision_commits` via idempotent ALTER TABLE migrations in both SQLite and Postgres backends. `live_execution/solana.py` gains `get_transaction()` helper. `/api/verify.json` extended with `created_at` and `signature` fields.
 
 ## DONE
-### OMO-R6 Public disclosure + reasoning feeds (2026-08-26)
+### REF-R6 Public disclosure + reasoning feeds (2026-08-26)
 `/api/disclosure.json`: machine state — armed/disarmed, kill-switch state, break state, config truths (caps/floors/thresholds). Zero secrets. `/api/reasoning.json`: per-decision provenance — model source (from payload), inputs snapshot hash (sha256 of canonical payload_json), linked commit hash. Both registered in `api/main.py` via the same optional try/except pattern.
 
 ## DONE
-### OMO-R7 Retro audit-log signature matching (2026-08-26)
-`backend/retro_matcher.py`: omo-exact algorithm — same symbol (case-insensitive, $-stripped) + side + fill_at >= decision_at + 12h window; earliest fill wins; `taken` set prevents double-claim. Runs post-cycle in both `main.py` and `run_live_cycle.py`. Exact-bind rows (signature IS NOT NULL) protected by WHERE clause in `bind_commit_signature`. Three new DB functions in both backends: `get_pending_unsigned_commits`, `get_recent_fills_for_retro`, `bind_commit_signature`.
+### REF-R7 Retro audit-log signature matching (2026-08-26)
+`backend/retro_matcher.py`: reference-exact algorithm — same symbol (case-insensitive, $-stripped) + side + fill_at >= decision_at + 12h window; earliest fill wins; `taken` set prevents double-claim. Runs post-cycle in both `main.py` and `run_live_cycle.py`. Exact-bind rows (signature IS NOT NULL) protected by WHERE clause in `bind_commit_signature`. Three new DB functions in both backends: `get_pending_unsigned_commits`, `get_recent_fills_for_retro`, `bind_commit_signature`.
 
 ## DONE
-### OMO-R4 Bug fix (2026-08-26)
+### REF-R4 Bug fix (2026-08-26)
 `liveness.set_break(think.break_minutes, think.break_reason)` was silently passing int/str to the wrong positional slots (`taking=break_minutes`, `minutes=break_reason`). Fixed to `set_break(True, think.break_minutes, think.break_reason)`.
 
 ## DONE
@@ -102,15 +120,15 @@ DeepSeek migration is deferred pending a funded API key.
 Root `pytest.ini` with `asyncio_mode = auto` and `testpaths = backend/tests live_execution/tests` restored (was removed in commit 20ddc0a). Full suite: **222 tests passing**.
 
 ## DONE
-### OMO-R2 FOMO crowd intel upgrade (2026-08-26)
+### REF-R2 FOMO crowd intel upgrade (2026-08-26)
 Full thesis rows with author P&L are now fetched from fomo.fun and injected into the LLM thinker prompt. The prompt instructs the model to weigh each claim by whether its author is actually up on their position.
 
 ## DONE
-### OMO-R4 Self-regulating break system (2026-08-26)
+### REF-R4 Self-regulating break system (2026-08-26)
 File-backed state (`break_state.json` inside `live_execution/state`) implements the `not_on_break` rule parity. The thinker can pass a `"break": {"taking": true, "minutes": 15, "reason": "..."}` block in its JSON verdict, which sets a persistent UTC expiry timestamp. While on break, the gate fails closed loudly on the `not_on_break` rule, blocking entries while exits continue functioning normally. Fail-safe semantics apply on state file corruption. LLM API migration for thinker (Groq) and social (Groq) is verified.
 
 ## DONE
-### OMO-R5 memory/events system (2026-08-26)
+### REF-R5 memory/events system (2026-08-26)
 Durable mirrored `events` and weighted `memories` tables now exist in both
 repositories. Tick stages write read/thought/did/refused/trade events;
 topic-scoped memory recall increments hits and is injected into thinker
@@ -139,8 +157,8 @@ right sidebar. 145 backend tests pass; vite build clean.
 Trigger: DB forensics showed −60% portfolio ($1,000 → $113 cash): 25 closed
 trades, 16% win rate, stops realizing −40% avg on a −20% config, and DONT
 re-entered 15×/stopped out 15× for −$709. User approved FULL mimicry of
-omotrades' logic including the think→gate intersection (qwen3 verdict = a
-necessary veto layer). Source-level study: omo's fomo.server.ts,
+the reference bot' logic including the think→gate intersection (qwen3 verdict = a
+necessary veto layer). Source-level study: the reference's fomo.server.ts,
 fomo-auth.server.ts, pipeline.server.ts, audit.server.ts, market.server.ts,
 execute.server.ts, blocklist.ts, PROCESS.md.
 
@@ -151,7 +169,7 @@ Groq direct API is configured for the thinker in strict non-thinking JSON mode; 
 Instrumentation of tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes have been implemented. Provider failure must return thinker `pass` for entry; a template may explain but cannot approve an entry.
 
 Current learning is measurement-only: daily aggregates, rejection breakdowns,
-and post-close reflections. Reviewed OMO evidence shows adaptive context and
+and post-close reflections. Reviewed the reference evidence shows adaptive context and
 auditability, not demonstrated autonomous weight training.
 
 ### Live execution status (2026-08-26)
@@ -174,7 +192,7 @@ executed.
 
 ## DONE
 ### Exit engine (81b9898) — rule_engine/exits.py
-omo's exit set ported: stop −20%, trail 50%-activation/40pp give-back vs
+the reference's exit set ported: stop −20%, trail 50%-activation/40pp give-back vs
 persisted HWM, liquidity break <$8k, invalidation −25%&1.4×sells, stale
 14d, TP ladder +100/300/900 trims 33/33/50%. Sell risk gate ($25 clip,
 30-min/mint cooldown, ≤8 exits/24h; risk-off BYPASSES gate — documented
@@ -182,7 +200,7 @@ deviation). E8/E9 partial closes via trim_position (atomic).
 main(): dedicated 15s price-only exit scan loop alongside tick. DB
 migration: trades.high_water_usd + trades.tranches_taken.
 
-### Old logic purged + entry gate = omo verbatim (ebdd1a1)
+### Old logic purged + entry gate = the reference verbatim (ebdd1a1)
 liq ≥$15k, vol ≥$8k, newborn 24h/−15%, strict already_held (scale-ins
 REMOVED entirely), not_on_break liveness (rule_engine/liveness.py),
 crowd_heat act-band [36,100]. exposure_cap + volume_mcap_ratio_ok deleted
@@ -215,7 +233,7 @@ re-extract fresh from a fomo.family re-login (dedicated browser profile).
   fixed for calibration comparability; conviction = min(1, heat/100+0.3),
   base min(cash×15%, $150), floor $25) + DAILY_DEPLOY_CAP_USD=$300 with
   journal-tagged refusals ([daily deploy cap reached]).
-- decision_commits table (omo 'seal' parity): every decision sealed with
+- decision_commits table (the reference 'seal' parity): every decision sealed with
   sha256(nonce|canonical payload) BEFORE acting; plaintext payload stored
   for recomputation. Wired into run_tick; unique hash index.
 - open_position/compute_position_size accept conviction-sized tickets.

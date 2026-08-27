@@ -1,5 +1,5 @@
 """
-tests/test_omo_r1_binding.py — OMO-R1 independent verifier + binding report.
+tests/test_ref_r1_binding.py — REF-R1 independent verifier + binding report.
 
 Properties verified:
   1. _verify_binding_checks passes all 4 checks on a well-formed tx

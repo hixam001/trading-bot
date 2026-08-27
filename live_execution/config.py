@@ -88,10 +88,10 @@ CONFIRM_TIMEOUT_SECONDS: float = 60.0
 
 
 # ---------------------------------------------------------------------------
-# omo-parity execution plumbing (2026-08-25).
+# reference-parity execution plumbing (2026-08-25).
 # ---------------------------------------------------------------------------
 # Rotating RPC list: first configured endpoint wins, then public fallbacks
-# (omo solana.server.ts parity). Public endpoints rate-limit hard; set
+# (the reference solana.server.ts parity). Public endpoints rate-limit hard; set
 # SOLANA_RPC_URL to a paid RPC before arming.
 RPC_URLS: list = [
     u for u in (
@@ -101,15 +101,15 @@ RPC_URLS: list = [
     ) if u
 ]
 
-# Fail-closed identity check (omo keys.server.ts parity): when set, the
+# Fail-closed identity check (the reference keys.server.ts parity): when set, the
 # loaded keypair MUST derive this exact pubkey or loading refuses loudly.
 EXPECTED_WALLET_ADDRESS: str = os.getenv("EXPECTED_WALLET_ADDRESS", "")
 
-# Quote guards (omo EXECUTION_LIMITS parity).
+# Quote guards (the reference EXECUTION_LIMITS parity).
 MAX_PRICE_IMPACT_PCT: float = 2.5      # block quotes above this impact
 MIN_SOL_RESERVE: float = 0.05          # keep this much SOL for fees/rent
 
-# Rolling UTC-day notional cap on NEW deployments (omo maxDailyUsd parity,
+# Rolling UTC-day notional cap on NEW deployments (the reference maxDailyUsd parity,
 # scaled to this book). Checked against the execution ledger.
 MAX_DAILY_DEPLOY_USD: float = 300.0
 

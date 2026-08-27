@@ -58,7 +58,7 @@ def pubkey_string(keypair) -> str:
 
 def verify_expected_address(keypair) -> str:
     """
-    Fail-closed identity check (omo keys.server.ts parity): when
+    Fail-closed identity check (the reference keys.server.ts parity): when
     EXPECTED_WALLET_ADDRESS is set, the loaded keypair MUST derive that
     exact pubkey - otherwise refuse loudly instead of quietly trading from
     some other account. Returns the verified address.

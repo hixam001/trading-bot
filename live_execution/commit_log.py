@@ -1,6 +1,6 @@
 """live_execution/commit_log.py - local pre-broadcast intent log.
 
-omo precommit parity without the memo layer: before an order is broadcast,
+the reference precommit parity without the memo layer: before an order is broadcast,
 sha256(nonce + | + canonical_payload) is recorded here together with the
 plaintext payload, so any later claim can be recomputed and checked.
 After confirmation the signature is bound to the same row.
