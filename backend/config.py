@@ -286,6 +286,11 @@ PRIVY_APP_ID: str = "cm6h485o300n3zj9yl6vpedq7"     # fomo.family's public app i
 FOMO_NETWORK_ID: int = 1399811149                   # solana mainnet
 FOMO_THESIS_LIMIT: int = 40
 FOMO_CACHE_TTL_SECONDS: float = 60.0
+# A4 (omo audit §28): the bot's OWN fomo.family handle. When set, the live
+# cycle reads the bot's own position accounting back from the thesis feed
+# (authorTrade) and cross-checks it against the journal's cost basis —
+# observability only, the journal stays the money authority. Empty = disabled.
+FOMO_OWN_HANDLE: str = os.getenv("FOMO_OWN_HANDLE", "")
 # (pump.fun comments were evaluated as a secondary source and DEFERRED —
 # their API host is dead/503s even via stealth proxy; docs/FOMO_INTEGRATION.md)
 

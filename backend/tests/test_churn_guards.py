@@ -22,10 +22,12 @@ import pytest
 import config
 from api import db
 from blocklist import (
+    BLOCKED_SYMBOLS,
     _load,
     block_mint,
     filter_candidates,
     is_blocked_mint,
+    is_blocked_symbol,
     should_autoblock,
     unblock_mint,
 )
@@ -119,6 +121,52 @@ def test_corrupt_blocklist_file_quarantined(bl_state):
     bl_state.write_text("not-json{")
     assert not is_blocked_mint("anything")
     assert bl_state.with_suffix(".corrupt").exists()
+
+
+# --- A6 static symbol blocklist --------------------------------------------------
+
+def test_is_blocked_symbol_matches_listed_names_case_insensitive():
+    assert is_blocked_symbol("WAWA")
+    assert is_blocked_symbol("wawa")          # lower-case source
+    assert is_blocked_symbol("$WAWA")         # leading $ ticker
+    assert is_blocked_symbol(" WAWA ")        # stray whitespace
+    assert is_blocked_symbol("CRASHIUS")
+    assert not is_blocked_symbol("PEPE")
+    assert not is_blocked_symbol("")          # empty never blocks
+    assert not is_blocked_symbol(None)        # missing never blocks
+
+
+def test_is_blocked_symbol_catches_404_family_any_spacing():
+    assert is_blocked_symbol("404")
+    assert is_blocked_symbol("404LIFE")
+    assert is_blocked_symbol("404 life not found")   # spaced variant
+    assert is_blocked_symbol("$404LIFENOTFOUND")
+    assert not is_blocked_symbol("405")              # not the 404 family
+
+
+def test_blocked_symbols_is_an_immutable_frozenset():
+    assert isinstance(BLOCKED_SYMBOLS, frozenset)
+    assert "WAWA" in BLOCKED_SYMBOLS
+
+
+def test_filter_candidates_blocks_static_symbol_even_on_fresh_mint(bl_state):
+    # A rugged name re-launched under a brand-new mint is still caught by the
+    # symbol layer (the mint list has never seen this mint before).
+    fresh = make_candidate("MintFresh9999999999999999999999999999999999", "WAWA")
+    good = make_candidate("MintGood3333333333333333333333333333333333", "GOOD")
+    kept, blocked = filter_candidates([fresh, good])
+    assert [c.mint_address for c in kept] == [good.mint_address]
+    assert blocked == [("WAWA", "blocked symbol (static list)")]
+
+
+def test_mint_block_takes_precedence_over_symbol_reason(bl_state):
+    # When a mint is ALSO manually blocked, the mint reason wins (it is more
+    # specific) and the symbol layer is never consulted.
+    block_mint("MINT_X", "WAWA", "operator block", kind="manual")
+    c = make_candidate("MINT_X", "WAWA")
+    kept, blocked = filter_candidates([c])
+    assert kept == []
+    assert blocked == [("WAWA", "operator block")]
 
 
 # --- conviction ticket sizing -----------------------------------------------------

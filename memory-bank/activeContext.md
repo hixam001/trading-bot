@@ -1,7 +1,40 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (REF-R11 on-chain precommit memo + micro-bootstrap IMPLEMENTED — reference parity now complete for R1–R9 + R11; live execution stays DISARMED, arming is the operator's final task §27).**
+**As of 2026-08-27 (omo-audit code queue A7/A6/A3/A2/A4 IMPLEMENTED — the five parity gaps from the omo audit are closed; live execution stays DISARMED, arming is the operator's final task §27).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### omo-audit code queue — A7/A6/A3/A2/A4 (handoff §29) (2026-08-27)
+The 2026-08-27 audit of `omotrades/omo` surfaced five parity gaps; all five
+implemented, tested, shipped DISARMED (444 passing, was 379):
+- **A7 wash-trade filter**: `backend/rule_engine/fake_chart.py` — verbatim port
+  of omo's `isFakeChart` (all 13 thresholds: fees-vs-fdv, vol-vs-depth 20×/150×,
+  thin-crowd, fat-ticket, one-sided, straight-bleed, dead-tape, headline-day-
+  empty-present, paper-float). `Candidate.volume_5m_usd` added; applied in the
+  READ stage before think/gate (filtered rows burn no credits). Unknown
+  age/fdv fields SKIP (not fail) — documented deviation.
+- **A6 symbol blocklist**: `BLOCKED_SYMBOLS` (omo's exact 14 names) + `^404`
+  prefix + `is_blocked_symbol()` in `blocklist.py`, enforced in
+  `filter_candidates()` before think/enrichment.
+- **A3 venue attribution**: `live_execution/venue.py` labels the executing
+  program off the confirmed fill tx (pump.fun/jupiter/raydium/orca/meteora;
+  unknown = `program XXXX…YYYY`, never guessed). Observability only.
+  `decision_commits.venue` column (both db layers + `004_fill_venue.sql`),
+  journaled by `run_live_cycle`, surfaced in `/api/binding.json`.
+- **A2 chain reconciliation**: `solana.get_token_balances()` (both token
+  programs; `{}`=empty vs `None`=unreadable) + `live_execution/reconcile.py`.
+  Chain is the authority on HOW MANY tokens we hold; journal stays the
+  authority on cost. chain<journal → exit sizing clamped; chain=0 → position
+  excluded + flagged; unjournaled mints flagged, never added. Ledger NEVER
+  mutated by a chain read. Reported in cycle outcome `chain_reconciliation`.
+- **A4 own-basis read-back**: `FOMO_OWN_HANDLE` env (default "" = disabled) +
+  `crowd.read_own_basis()` (finds our own `authorTrade` on the raw board,
+  invested = max(0, value−unrealized), cap 10 mints). `_crosscheck_basis()`
+  compares vs journal cost each live cycle (tolerance max(5%,$0.50));
+  mismatches logged, never applied. Reported as `basis_crosscheck`.
+Verification: 444 passing; isolation grep clean; live smoke disarmed —
+verify/binding/disclosure/proof all 200, binding pairs carry `venue: null`,
+`armed=False`, 0 tracebacks.
 
 ## DONE
 ### REF-R11 — on-chain precommit memo (commit–reveal) + micro-bootstrap (handoff §26) (2026-08-27)

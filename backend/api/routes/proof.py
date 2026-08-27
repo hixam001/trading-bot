@@ -396,6 +396,7 @@ async def get_binding():
                 "symbol": row["symbol"],
                 "status": "unbound",
                 "signature": None,
+                "venue": row.get("venue"),   # A3: null until a fill is bound
                 "checks": [],
             })
             unbound += 1
@@ -439,6 +440,9 @@ async def get_binding():
             "id": row["id"],
             "symbol": row["symbol"],
             "signature": sig,
+            # A3: which program executed the fill (null on paper rows and on
+            # rows journaled before venue attribution existed).
+            "venue": row.get("venue"),
             **result,
         })
 

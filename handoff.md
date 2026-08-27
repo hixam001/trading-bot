@@ -1536,54 +1536,26 @@ positions remain managed/journalled. Backend is unaffected
 ## 28. Tasks yet to be implemented (roadmap snapshot, 2026-08-27)
 
 Reference parity for the originally-scoped items is COMPLETE (REF-R1–R9 + R11).
-The 2026-08-27 omo audit (docs/08) surfaced five further parity gaps — those are
-the **active code queue** below and must ship test-green BEFORE arming. Everything
-else is operator-gated, post-calibration, or needs external credits/keys. Grouped
-by kind so a future session knows what is code, what is a human action, and what
-is deliberately out of scope. **§27 (enable live execution) remains the final
-task no matter what — the code queue never displaces it.**
+The 2026-08-27 omo audit (docs/09_OMO_AUDIT_COMPARISON.md) surfaced five further
+parity gaps — **all
+five shipped test-green on 2026-08-27 (implementation record: §29).** Everything
+else below is operator-gated, post-calibration, or needs external credits/keys.
+Grouped by kind so a future session knows what is code, what is a human action,
+and what is deliberately out of scope. **§27 (enable live execution) remains the
+final task no matter what.**
 
-### Code queue — implement these BEFORE arming (from the omo audit)
+### Code queue — COMPLETE (from the omo audit; record in §29)
 
-Five items closing remaining reference gaps. All are code; none require arming
-and none touch the hardcoded safety flags. Sequenced by impact + dependency.
-Accurate current-state notes are included so a future session does not redo work
-that already exists.
-
-- [ ] **A7 — Wash-trade "fake chart" filter** (highest impact, pure logic).
-      Port omo's `isFakeChart` (src/lib/market.server.ts — 13 thresholds: fee-vs-
-      fdv, vol-vs-depth 20×/150×, thin-crowd, one-sided, straight-bleed, dead-tape,
-      headline-day-empty-present, paper-float) into `backend/rule_engine/
-      fake_chart.py`. Add `volume_5m_usd` to `Candidate` + extract `volume.m5` in
-      `dexscreener.py`. Apply in `main.py` READ stage BEFORE think/gate so filtered
-      rows never burn LLM/scrape credits. Hand-computed threshold tests for all 13.
-- [ ] **A6 — Hardcoded symbol blocklist** (extend existing `blocklist.py`).
-      CURRENT STATE: mint-based manual + auto-blocking already exists and is
-      enforced in `run_tick`. GAP: no static name list. Add a `BLOCKED_SYMBOLS`
-      frozenset of known rugged/manufactured/closed names + `is_blocked_symbol()`,
-      enforced in `filter_candidates()` alongside the mint check (case-insensitive).
-      omo ref: src/lib/blocklist.ts.
-- [ ] **A3 — Venue attribution** (live-path). New `live_execution/venue.py`:
-      `fetch_fill_venue(signature)` parses the confirmed fill tx account keys to
-      label the executing program (pump.fun AMM / raydium / meteora / orca /
-      jupiter). Store on the ExecutionLedger record + a `decision_commits.venue`
-      column (idempotent migration, both db.py + db_pg.py + supabase file); surface
-      in /api/proof.json + /api/binding.json. omo ref: execute.server.ts
-      `fetchFillVenue`. Mocked-tx tests per venue.
-- [ ] **A2 — Chain book re-derivation** (live-path, advisory). New
-      `live_execution/chain_book.py`: `derive_book_from_chain(wallet)` reads all
-      token accounts via `getTokenAccountsByOwner`, prices each via a 1-token
-      Jupiter quote, and diffs against the local ExecutionLedger — logs drift
-      warnings. Called at `run_live_cycle.py` cycle start; advisory, never blocks
-      a cycle. omo ref: wallet.server.ts. Mocked-RPC tests.
-- [ ] **A4 — Own-basis read-back** (minor). CURRENT STATE: the fomo prod-api
-      integration is ALREADY done in `crowd.py` (Privy session minting + refresh-
-      token rotation persistence, direct + stealth-proxy failover, per-author P&L
-      extraction, and the thinker already shows each author's size/P&L). GAP: we do
-      not read OUR OWN cost basis back from FOMO's accounting. Add
-      `fetch_own_position(mint, wallet)` reading our `authorTrade`, and show it in
-      the thinker prompt. Uses the existing `FOMO_PRIVY_REFRESH_TOKEN` — no new
-      secret. omo ref: fomo.server.ts `authorTrade`.
+- [x] **A7 — Wash-trade "fake chart" filter** — `backend/rule_engine/fake_chart.py`
+      (all 13 omo thresholds), applied in the READ stage before think/gate.
+- [x] **A6 — Hardcoded symbol blocklist** — `BLOCKED_SYMBOLS` +
+      `is_blocked_symbol()` in `blocklist.py`, enforced in `filter_candidates()`.
+- [x] **A3 — Venue attribution** — `live_execution/venue.py`, journaled to
+      `decision_commits.venue`, surfaced in /api/binding.json.
+- [x] **A2 — Chain book reconciliation** — `live_execution/reconcile.py` +
+      `solana.get_token_balances()`, runs every live cycle; journal never mutated.
+- [x] **A4 — Own-basis read-back** — `crowd.read_own_basis()` +
+      `FOMO_OWN_HANDLE`, cross-checked against journal cost each live cycle.
 
 ### A. Final gating task — operator-only, NO code (handoff §27) — STILL LAST
 - [ ] **REF-R10 — Enable live execution.** The promotion path. Fund the wallet
@@ -1623,4 +1595,96 @@ that already exists.
 - Automatic learning, automatic threshold/prompt/model changes, or any
   automatic live-trading promotion (§15 / §8 rule 6). The LLM stays veto/input
   only; deterministic code decides. Arming is always a manual human act.
+
+---
+
+## 29. omo-audit code queue — implementation record (2026-08-27)
+
+All five audit gaps implemented, tested (444 passing, baseline was 379), and
+shipped DISARMED. No hardcoded safety flag was touched; arming stays §27.
+
+### A7 — wash-trade "fake chart" filter
+- `backend/rule_engine/fake_chart.py`: verbatim port of omo's `isFakeChart`
+  (src/lib/market.server.ts) — all 13 thresholds: lifetime-fees-vs-fdv (<3%),
+  fresh-launch low-float (<$150k fdv + <$2k fees), vol-vs-depth (1h >20× liq,
+  24h >150×), thin-crowd (>$50k vol with <60 trades), fat-ticket (avg >$2.5k
+  on <$150k depth), one-sided (>40 trades, zero buys or sells), straight-bleed
+  (−25% 1h & −40% 6h; −55% 24h & −20% 6h), dead-tape (1h <0.15× liq & 24h <3×;
+  0 5m-vol & <$5k 1h), headline-day-empty-present (6h/24h <6%), paper-float
+  (fdv/liq >30).
+- `Candidate.volume_5m_usd` added; dexscreener/discovery providers fill it.
+- Applied in `main.run_tick` READ stage BEFORE think/gate — filtered rows burn
+  no LLM or scrape credits. Filtered count is logged per tick.
+- Deviations from omo: thresholds requiring `ageHours`/`fdv` skip (not fail)
+  when the field is unknown — our providers don't always return them, and
+  failing closed on missing optional data would starve the candidate pool;
+  the numeric gate rules still apply afterwards.
+- Tests: `backend/tests/test_fake_chart.py` — hand-computed cases for all 13
+  thresholds + unknown-field skips.
+
+### A6 — hardcoded symbol blocklist
+- `backend/blocklist.py`: `BLOCKED_SYMBOLS` frozenset (omo's exact list:
+  404/404LIFE/404LIFENOTFOUND/WAWA/POOPHORSI/MACI/SHEEP/BIST/KIO/KIONGAZI/
+  CRASHIUS/HANDSEM/BASECAT/ZOE) + `^404` prefix rule + `is_blocked_symbol()`
+  (normalizes `$`, whitespace, case — reference parity with blocklist.ts).
+- Enforced in `filter_candidates()` alongside the mint blocklist, i.e. BEFORE
+  think/enrichment. A rugged name re-launched under a fresh mint is caught.
+- Tests: extended `backend/tests/test_churn_guards.py`.
+
+### A3 — venue attribution (live path)
+- `live_execution/venue.py`: `fill_venue_from_tx()` (pure parser) +
+  `fetch_fill_venue(signature)` (fail-soft RPC wrapper). Labels the executing
+  program from top-level instructions → inner instructions → account keys:
+  pump.fun bonding curve/amm, jupiter router (v4/v6), raydium (+clmm), orca
+  whirlpool, meteora dlmm; unknown routers are named `program XXXX…YYYY`,
+  never guessed. OBSERVABILITY ONLY — can never block or alter an order.
+- `decision_commits.venue` column (SQLite schema + idempotent ALTER, db_pg
+  self-heal, `migrations/supabase/004_fill_venue.sql`), `bind_commit_venue()`
+  in both db layers; `run_live_cycle` attributes after each filled order;
+  `/api/binding.json` surfaces `venue` on every pair (null until bound).
+- Tests: `live_execution/tests/test_venue.py` — mocked jsonParsed txs per venue.
+
+### A2 — chain book reconciliation (live path)
+- `live_execution/solana.py::get_token_balances()`: `getTokenAccountsByOwner`
+  across BOTH token programs (legacy + token-2022); `{}` = answered-empty,
+  `None` = unreadable (unknown is never empty).
+- `live_execution/reconcile.py::reconcile()`: pure cross-check of journal
+  positions vs chain balances. Chain is the sole authority on HOW MANY tokens
+  we hold; the journal stays the sole authority for cost basis. Verdicts:
+  match (tolerance 1e-6) → nothing; chain < journal → exit sizing clamped to
+  chain truth; chain = 0 → position excluded from the book this cycle +
+  flagged for operator review; chain > journal → keep journal (conservative);
+  unjournaled on-chain mints → flagged, NEVER added (no fabricated basis).
+  The ledger is NEVER mutated by a chain read — a lying RPC cannot corrupt
+  the money journal. Every disagreement logged loudly + reported in the cycle
+  outcome (`chain_reconciliation`).
+- Deliberate deviation from omo: they re-derive the whole book from chain +
+  tx history each sync; we keep the atomic §5.1 journal as money authority and
+  use the chain as a loud cross-check + sizing clamp. Safer at this scale.
+- Tests: `live_execution/tests/test_reconcile.py` (10),
+  `live_execution/tests/test_token_balances.py` (7).
+
+### A4 — own-basis read-back
+- `backend/config.py::FOMO_OWN_HANDLE` (env, default "" = disabled). No new
+  secret — reuses the existing Privy session chain.
+- `crowd.py`: `fetch_fomo_theses` refactored onto a shared cached
+  `_thesis_payload()` (contract unchanged); new `read_own_basis(picks)` finds
+  the bot's own `authorTrade` on the raw board (case/@-insensitive, no
+  substantive filter — our own short thesis still carries valid accounting),
+  returns invested = max(0, value − unrealized) per reference `readOwnBasis`,
+  capped at 10 mints.
+- `run_live_cycle::_crosscheck_basis()`: each live cycle compares FOMO's
+  invested figure against the journal cost (tolerance max(5%, $0.50));
+  mismatches logged loudly + reported in the outcome (`basis_crosscheck`).
+  OBSERVABILITY ONLY — the journal is never modified by FOMO's numbers.
+- Tests: `backend/tests/test_own_basis.py` (9).
+
+### Verification
+- Full suite: **444 passed** (was 379 before the audit batch), 0 failures.
+- Isolation grep clean: backend references to live_execution remain only the
+  sanctioned function-local optional imports (proof.py, disclosure.py) + state
+  file paths.
+- Live smoke (disarmed): /api/verify.json, /api/binding.json,
+  /api/disclosure.json, /api/proof.json all 200; binding pairs carry
+  `venue: null`; `armed=false`, `paper_only=true`; 0 tracebacks.
 

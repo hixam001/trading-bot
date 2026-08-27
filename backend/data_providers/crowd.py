@@ -576,15 +576,34 @@ async def _get_json_via(url: str, headers: dict) -> Optional[dict]:
 # Feed readers
 # ---------------------------------------------------------------------------
 
-async def fetch_fomo_theses(mint: str) -> Optional[dict]:
+def _thesis_row(it: dict) -> dict:
+    """One raw board item -> normalized row (NO substantive filter — callers
+    decide what counts as conviction vs what counts as accounting)."""
+    trade = it.get("authorTrade") or {}
+    comment = it.get("comment") or {}
+    closed = bool(trade.get("closedAt"))
+    # Percentage fields are optional in the API response — never
+    # float(None) them into a silent skip.
+    pct_raw = (trade.get("percentageRealizedPnl") if closed
+               else trade.get("percentageUnrealizedPnl"))
+    return {
+        "who": str(it.get("userHandle") or it.get("displayName") or ""),
+        "text": str(comment.get("comment") or ""),
+        "size_usd": float(trade.get("usdValue") or 0.0),
+        "unrealized_usd": float(trade.get("unrealizedPnlUsd") or 0.0),
+        "realized_usd": float(trade.get("realizedPnlUsd") or 0.0),
+        "pnl_pct": float(pct_raw) if pct_raw is not None else 0.0,
+        "closed": closed,
+    }
+
+
+async def _thesis_payload(mint: str) -> Optional[dict]:
     """
-    Theses attached to `mint` on the fomo.fun board, or None when the feed
-    is unconfigured/unreachable. Returns {"theses": [...], "total": int}
-    where total is the board's OWN count for that token
-    (olderThesis + newerThesis + page items — the reference's trick, since the page
-    is capped at 40). Cached per mint.
-    Each thesis: {who, text, size_usd, unrealized_usd, realized_usd,
-    pnl_pct, closed}.
+    Raw board payload for `mint`: {"rows": [...], "total": int} where rows
+    are normalized but NOT substantive-filtered, and total is the board's OWN
+    count (olderThesis + newerThesis + page items — the reference's trick,
+    since the page is capped at 40). Cached per mint. None = unconfigured or
+    the feed did not answer.
     """
     cached = _fomo_cache.get(mint)
     if cached is not None:
@@ -615,7 +634,7 @@ async def fetch_fomo_theses(mint: str) -> Optional[dict]:
 
     items = (payload.get("responseObject") or {}).get("items") or []
     if not items:
-        result = {"theses": [], "total": 0}
+        result = {"rows": [], "total": 0}
         _fomo_cache.put(mint, result)
         return result
 
@@ -625,32 +644,84 @@ async def fetch_fomo_theses(mint: str) -> Optional[dict]:
              + int(first_comment.get("newerThesis") or 0)
              + len(items))
 
-    theses: list[dict] = []
+    rows: list[dict] = []
     for it in items:
-        trade = it.get("authorTrade") or {}
-        comment = it.get("comment") or {}
-        closed = bool(trade.get("closedAt"))
-        # Percentage fields are optional in the API response — never
-        # float(None) them into a silent skip.
-        pct_raw = (trade.get("percentageRealizedPnl") if closed
-                   else trade.get("percentageUnrealizedPnl"))
         try:
-            thesis = {
-                "who": str(it.get("userHandle") or it.get("displayName") or ""),
-                "text": str(comment.get("comment") or ""),
-                "size_usd": float(trade.get("usdValue") or 0.0),
-                "unrealized_usd": float(trade.get("unrealizedPnlUsd") or 0.0),
-                "realized_usd": float(trade.get("realizedPnlUsd") or 0.0),
-                "pnl_pct": float(pct_raw) if pct_raw is not None else 0.0,
-                "closed": closed,
-            }
-            if _is_substantive(thesis["text"]):
-                theses.append(thesis)
+            rows.append(_thesis_row(it))
         except (TypeError, ValueError):
             continue
-    result = {"theses": theses, "total": total}
+    result = {"rows": rows, "total": total}
     _fomo_cache.put(mint, result)
     return result
+
+
+async def fetch_fomo_theses(mint: str) -> Optional[dict]:
+    """
+    Theses attached to `mint` on the fomo.fun board, or None when the feed
+    is unconfigured/unreachable. Returns {"theses": [...], "total": int}
+    where total is the board's OWN count for that token.
+    Each thesis: {who, text, size_usd, unrealized_usd, realized_usd,
+    pnl_pct, closed}. Junk texts are filtered — they are not conviction.
+    """
+    payload = await _thesis_payload(mint)
+    if payload is None:
+        return None
+    theses = [r for r in payload["rows"] if _is_substantive(r["text"])]
+    return {"theses": theses, "total": payload["total"]}
+
+
+def _norm_handle(raw) -> str:
+    return str(raw or "").strip().lstrip("@").lower()
+
+
+async def read_own_basis(picks: list) -> list:
+    """
+    A4 (omo audit §28): FOMO's own numbers for OUR positions.
+
+    The thesis feed carries `authorTrade` for every poster, including the bot
+    itself, and that is the same object the FOMO app renders in its
+    portfolio. Reading it back gives the true cost basis
+    (invested = value - unrealized) as FOMO's accounting sees it — a
+    cross-check on the journal's cost, which is reconstructed from fills
+    (reference: fomo.server.ts readOwnBasis).
+
+    picks: [{"mint": str, "symbol": str}]; at most 10 are read (reference
+    parity). Requires config.FOMO_OWN_HANDLE; returns [] when unset or
+    nothing matched. Fail-soft: an unreachable feed contributes nothing.
+    NOTE: rows are matched on the RAW board (no substantive filter) — our own
+    thesis text may be short and still carries valid accounting.
+    """
+    handle = _norm_handle(config.FOMO_OWN_HANDLE)
+    if not handle:
+        return []
+    rows: list[dict] = []
+    for p in picks[:10]:
+        mint = str(p.get("mint") or "")
+        if not mint:
+            continue
+        try:
+            payload = await _thesis_payload(mint)
+        except Exception as exc:
+            log.info("own-basis read failed for %s: %s", mint[:8], exc)
+            continue
+        if not payload:
+            continue
+        mine = next((r for r in payload["rows"]
+                     if _norm_handle(r.get("who")) == handle), None)
+        if mine is None:
+            continue
+        value = float(mine.get("size_usd") or 0.0)
+        unrealized = float(mine.get("unrealized_usd") or 0.0)
+        rows.append({
+            "mint": mint,
+            "symbol": str(p.get("symbol") or "").lstrip("$").upper(),
+            "value_usd": value,
+            "invested_usd": max(0.0, value - unrealized),
+            "unrealized_usd": unrealized,
+            "realized_usd": float(mine.get("realized_usd") or 0.0),
+            "closed": bool(mine.get("closed")),
+        })
+    return rows
 
 
 # ---------------------------------------------------------------------------

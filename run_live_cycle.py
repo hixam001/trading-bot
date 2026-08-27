@@ -105,21 +105,94 @@ async def _journal_live_commit(conn, symbol: str, mint_address: str,
         if result.signature:
             await db.bind_commit_signature(conn, commit_id, result.signature,
                                            "filled", "exact")
+            # A3: attribute the executing venue off the confirmed fill tx.
+            # Fail-soft — an unknown venue stays null, never blocks journaling.
+            try:
+                from live_execution.venue import fetch_fill_venue
+                venue = await fetch_fill_venue(result.signature)
+                if venue.get("label"):
+                    await db.bind_commit_venue(conn, commit_id, venue["label"])
+            except Exception:
+                log.info("venue attribution skipped for %s", result.signature[:16],
+                         exc_info=True)
     except Exception:
         log.warning("live commit journaling failed (fill unaffected)",
                     exc_info=True)
 
 
-async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict]:
+async def _reconcile_with_chain(meta: dict) -> dict:
+    """A2 (omo audit §28): cross-check the journal against chain truth.
+
+    The chain is the sole authority on HOW MANY tokens the wallet holds; the
+    journal stays the sole authority for cost basis. Never mutates the ledger
+    — disagreements are flagged on the meta entries (chain_excluded /
+    chain_tokens), logged loudly, and reported in the cycle outcome.
+    Fail-soft: no wallet configured or RPC unreadable -> unchecked report
+    (blocking exits on an RPC outage would bleed the book)."""
+    from live_execution.reconcile import reconcile
+    try:
+        payer = wallet.load_keypair()
+    except Exception:
+        return {"checked": False, "discrepancies": [],
+                "reason": "wallet not configured"}
+    balances = await solana.get_token_balances(wallet.pubkey_string(payer))
+    if balances is None:
+        return {"checked": False, "discrepancies": [],
+                "reason": "token balances unreadable"}
+    return reconcile(meta, balances,
+                     exclude_mints=frozenset({paper_config.USDC_MINT}))
+
+
+async def _crosscheck_basis(meta: dict) -> list:
+    """A4 (omo audit §28): read FOMO's own accounting for the open positions
+    back from the thesis feed and cross-check the journal's cost basis.
+
+    OBSERVABILITY ONLY — the journal remains the sole money authority; a
+    disagreement is logged and reported, never applied. Disabled unless
+    FOMO_OWN_HANDLE is set. Fail-soft: feed unreachable -> empty list."""
+    if not getattr(paper_config, "FOMO_OWN_HANDLE", ""):
+        return []
+    picks = [{"mint": mint, "symbol": mint[:6]}
+             for mint, m in meta.items() if not m.get("chain_excluded")]
+    if not picks:
+        return []
+    try:
+        from data_providers.crowd import read_own_basis
+        rows = await read_own_basis(picks)
+    except Exception as exc:
+        log.info("basis cross-check skipped: %s", exc)
+        return []
+    checks = []
+    for row in rows:
+        m = meta.get(row["mint"]) or {}
+        journal_cost = float(m.get("cost") or 0.0)
+        delta = row["invested_usd"] - journal_cost
+        match = abs(delta) <= max(0.05 * journal_cost, 0.50)
+        if not match:
+            log.warning("BASIS %s: fomo invested $%.2f vs journal cost "
+                        "$%.2f (delta $%.2f) — journal NOT modified, "
+                        "operator review", row["mint"][:8],
+                        row["invested_usd"], journal_cost, delta)
+        checks.append({**row, "journal_cost_usd": journal_cost,
+                       "delta_usd": delta, "match": match})
+    return checks
+
+
+async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict, dict]:
     """PortfolioState for the gate built from the LIVE ledger (read-only).
 
     REF-R11 micro-bootstrap: cash is the REAL on-chain USDC balance, not a
     cap-derived phantom — the book starts from $3-5 USDC and must compound
     from the truth. Fail closed: an unreadable balance (or missing wallet
     config) means cash 0.0 — no entries this cycle; exits still run.
-    Returns (portfolio, {mint: {price_usd, tokens, opened_ts}} metadata).
+
+    A2: the journal's open positions are cross-checked against on-chain
+    token balances; positions the chain says are gone are excluded from the
+    book this cycle (see live_execution/reconcile.py).
+
+    Returns (portfolio, {mint: {price_usd, tokens, opened_ts, ...}} metadata,
+    chain reconciliation report).
     """
-    positions: list[Trade] = []
     meta: dict = {}
     for r in ledger._load():   # same package - internal read is acceptable
         if r.get("kind") != "buy" or r.get("status") not in ledger._OPEN:
@@ -138,7 +211,11 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
             "cost": float(r.get("usd_size") or 0),
             "opened_ts": float(r.get("ts") or 0),
         }
+    chain_report = await _reconcile_with_chain(meta)
+    positions: list[Trade] = []
     for mint, m in meta.items():
+        if m.get("chain_excluded"):
+            continue   # chain says the tokens are gone — not a position today
         qty = m["tokens"] or 1.0
         positions.append(Trade(
             trade_id=f"live-{mint[:8]}",
@@ -164,12 +241,14 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
     except Exception as exc:
         log.warning("live USDC balance unavailable (%s) - cash=0 "
                     "(no entries this cycle)", exc)
-    return PortfolioState(cash_usd=cash, open_positions=positions), meta
+    return PortfolioState(cash_usd=cash, open_positions=positions), meta, chain_report
 
 
 async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, meta: dict) -> None:
     """Re-price every open position, run the the reference exit rule set, route sells."""
     for mint, m in meta.items():
+        if m.get("chain_excluded"):
+            continue   # A2: chain says the tokens are gone — nothing to exit
         try:
             dec = await solana.get_mint_decimals(mint)
             if dec is None:
@@ -194,10 +273,18 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
         decision = evaluate_exits(ExitInput(trade=trade, price_usd=price, high_water_usd=hwm[mint]))
         if decision.action == "hold":
             continue
+        fraction = decision.fraction
+        chain_tokens = m.get("chain_tokens")
+        if chain_tokens is not None and m["tokens"] > 0:
+            # A2: never sell more than the chain says we hold — clamp the
+            # fraction so the sell amount stays within the on-chain balance.
+            fraction = min(fraction, chain_tokens / m["tokens"])
+            log.info("manage %s: sell fraction clamped to chain balance "
+                     "(%.6f/%.6f)", mint[:8], chain_tokens, m["tokens"])
         log.info("EXIT %s %s (%s)", decision.action, mint[:8], decision.detail)
         result = await place_order(
             side="sell", mint=mint, symbol=mint[:6],
-            fraction=decision.fraction,
+            fraction=fraction,
         )
         log.info("sell -> %s %s", result.status, result.reason)
         if result.status == "filled":
@@ -221,12 +308,16 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
 async def run_cycle(once: bool = False) -> dict:
     """One full cycle. Returns a step-by-step outcome record, refusals included."""
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
-    portfolio, meta = await _live_portfolio(ledger)
+    portfolio, meta, chain_report = await _live_portfolio(ledger)
     hwm: dict = getattr(run_cycle, "_hwm", {})
     jupiter = JupiterProvider()
 
     await _manage(jupiter, ledger, hwm, meta)
     run_cycle._hwm = hwm
+
+    # A4: FOMO's own accounting for the open positions, cross-checked against
+    # the journal's cost basis (observability only; needs FOMO_OWN_HANDLE).
+    basis_checks = await _crosscheck_basis(meta)
 
     candidates = await build_provider().get_candidates(paper_config.MAX_CANDIDATES_PER_TICK)
     candidates, blocked_now = filter_candidates(candidates)
@@ -256,7 +347,11 @@ async def run_cycle(once: bool = False) -> dict:
     regime = compute_market_regime(candidates)
     thinker = Thinker()
     outcome = {"entries": [], "exits": [], "regime_ok": regime.regime_ok,
-               "candidates": len(candidates)}
+               "candidates": len(candidates),
+               # A2/A4 observability: how the journal compared to chain truth
+               # and to FOMO's own accounting this cycle.
+               "chain_reconciliation": chain_report,
+               "basis_crosscheck": basis_checks}
     for c in candidates:
         think = await thinker.think(c)
         

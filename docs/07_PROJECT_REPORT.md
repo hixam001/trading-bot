@@ -8,10 +8,12 @@ Supabase Postgres persistence).
 risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
 precommit memo, commit–reveal) + micro-bootstrap implemented 2026-08-27
 (handoff §26); dead-provider fail-fast (handoff §24) + fresh scraper keys &
-ScrapingDog bearer-forwarding (handoff §25) shipped 2026-08-27. R10 (live
-execution) remains deferred-by-design — arming is the operator's final manual
-task (handoff §27).** Tests:
-**379 passing**.
+ScrapingDog bearer-forwarding (handoff §25) shipped 2026-08-27; the five
+omo-audit gaps A7/A6/A3/A2/A4 (wash-trade filter, symbol blocklist, venue
+attribution, chain reconciliation, own-basis read-back — handoff §29)
+implemented 2026-08-27. R10 (live execution) remains deferred-by-design —
+arming is the operator's final manual task (handoff §27).** Tests:
+**444 passing**.
 
 ---
 
@@ -722,6 +724,62 @@ signer = the trading wallet; de-branded `commit:v1:` prefix.
 
 ### Cost / performance (live path only; $0 while disarmed)
 +1 minimum-fee tx (~0.000005 SOL) per executed order; no rent on the memo.
+
+
+---
+
+## 14. omo-audit gap queue A7/A6/A3/A2/A4 (2026-08-27, handoff §29)
+
+A full audit of the reference repo (`omotrades/omo`) produced a comparison
+(`docs/09_OMO_AUDIT_COMPARISON.md`). The operator selected five gaps to close.
+All five are implemented, tested, and ship **DISARMED** where they touch the
+live path. Reference sources were fetched raw (`market.server.ts`,
+`blocklist.ts`, `wallet.server.ts`, `fomo.server.ts`, `execute.server.ts`).
+
+### A7 — Wash-trade / fake-chart filter (`backend/rule_engine/fake_chart.py`)
+All 13 of the reference's `isFakeChart` thresholds, ported verbatim (fee-receipt
+vs FDV, volume-vs-depth turnover, thin-crowd ticket size, one-sided-by-
+construction, straight-bleed corpses, dead tape, headline-day-empty-present,
+paper-float-on-sliver-depth). Runs in the READ stage — before think/gate — so
+manufactured tapes never reach the LLM or burn credits. `Candidate.volume_5m_usd`
+added to feed the dead-tape check. **Deviation (defense-first):** unknown
+age/fdv fields skip a check rather than fail-closed, because our providers do
+not always return them and failing would starve the candidate pool; the numeric
+gate rules still apply afterwards.
+
+### A6 — Symbol blocklist (`backend/blocklist.py`)
+`BLOCKED_SYMBOLS` + `is_blocked_symbol()` added alongside the existing mint
+blocklist, enforced in `filter_candidates` (manual + auto-stop-out entries
+unchanged). A rugged/manufactured name cannot re-enter through a fresh mint.
+
+### A3 — Venue attribution (`live_execution/venue.py`)
+Fills labeled by executing program (pump.fun AMM / raydium / meteora / orca /
+jupiter / unknown) from the transaction's account keys — solscan-checkable.
+Stored on `decision_commits.venue` (SQLite + PG self-heal +
+`004_fill_venue.sql`) and surfaced in `/api/binding.json`. **Observability-only:**
+never branches a decision.
+
+### A2 — Chain reconciliation (`live_execution/reconcile.py` + `solana.get_token_balances`)
+The chain is read as the authority on **quantities**; the §5.1 atomic journal
+remains the authority on **cost**. The ledger is never mutated by a chain read.
+Exit sizing is clamped to chain truth, vanished positions are excluded + flagged,
+and unjournaled holdings are never added. **Deviation (defense-first):** the
+reference re-derives the whole book from chain + tx history each sync; we keep
+the journal as money authority and use the chain as a loud cross-check + sizing
+clamp, so a lying RPC cannot corrupt the money ledger.
+
+### A4 — Own-basis read-back (`crowd.read_own_basis` + `FOMO_OWN_HANDLE`)
+Reads the bot's own true cost basis back from FOMO's accounting, cross-checked
+against journal cost each live cycle. Reuses the existing Privy session chain —
+no new secret. **Observability-only.**
+
+### Verification
++65 tests since REF-R11 → **444 combined passing** (all offline/hermetic).
+Isolation grep clean (backend's only `live_execution` refs remain function-local
+optional imports). Live smoke (disarmed): all proof endpoints 200, `armed=False`,
+`venue:null` on unbound pairs, 0 tracebacks. Ships DISARMED — §27 (enable live
+execution) untouched and still the final task.
+
 +~3–8s ordering latency per order (memo must confirm before the fill) —
 irrelevant at one-decision-per-cycle cadence.
 

@@ -1,6 +1,18 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] omo-audit code queue A7/A6/A3/A2/A4 (handoff §29): wash-trade "fake
+      chart" filter (all 13 omo thresholds, READ-stage before think/gate),
+      hardcoded symbol blocklist (omo's list + `^404`, enforced in
+      `filter_candidates`), venue attribution (`live_execution/venue.py` →
+      `decision_commits.venue` → /api/binding.json), chain book reconciliation
+      (`solana.get_token_balances` + `live_execution/reconcile.py`; journal
+      never mutated, exit sizing clamped to chain truth, vanished positions
+      excluded + flagged), own-basis read-back (`crowd.read_own_basis` +
+      `FOMO_OWN_HANDLE`, cross-checked vs journal cost each live cycle,
+      observability only). 65 new tests since REF-R11; **444 combined
+      passing**; isolation grep clean; live smoke disarmed all endpoints 200
+      with `venue` surfaced. Ships DISARMED — arming is §27 (2026-08-27)
 - [x] REF-R11 on-chain precommit memo (commit–reveal) + micro-bootstrap (handoff
       §26): every armed order seals `sha256(nonce|canonical_payload)`, publishes
       the hash on-chain as a Solana memo (`commit:v1:`, SPL Memo program) BEFORE

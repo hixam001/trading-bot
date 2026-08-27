@@ -282,6 +282,8 @@ _SCHEMA_SYNC_SQL = (
     # REF-R11: on-chain precommit memo columns (003_commit_memos.sql).
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_signature TEXT",
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_slot BIGINT",
+    # A3: fill-venue attribution (004_fill_venue.sql).
+    "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS venue TEXT",
     # Same RLS-lockdown posture as 001_init.sql §11: backend connects with
     # the service role (bypasses RLS); anon keys must see nothing.
     "ALTER TABLE llm_call_usage ENABLE ROW LEVEL SECURITY",
@@ -320,6 +322,8 @@ async def init_db() -> None:
             # REF-R11: on-chain precommit memo columns (null on paper commits)
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS memo_slot BIGINT",
+            # A3: fill-venue attribution (null until a live fill is bound)
+            "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS venue TEXT",
             "CREATE INDEX IF NOT EXISTS idx_decision_commits_sig "
             "ON decision_commits(signature) WHERE signature IS NOT NULL",
         ):
@@ -835,6 +839,24 @@ async def bind_commit_memo(
     return _rowcount(status)
 
 
+async def bind_commit_venue(
+    conn: asyncpg.Connection,
+    commit_id: int,
+    venue: str,
+) -> int:
+    """A3: attach the executing-venue label to a decision commit row. Only
+    updates rows without a venue already."""
+    status = await conn.execute(
+        """
+        UPDATE decision_commits
+        SET venue = $1
+        WHERE id = $2 AND venue IS NULL
+        """,
+        venue, commit_id,
+    )
+    return _rowcount(status)
+
+
 async def get_trade_by_id(conn: asyncpg.Connection, trade_id: str) -> Optional[Trade]:
     row = await conn.fetchrow(
         f"SELECT {_TRADE_COLS} FROM trades WHERE trade_id = $1", trade_id)
@@ -1177,7 +1199,7 @@ async def get_recent_decision_commits(
         SELECT id, created_at::text AS created_at, tick_ts::text AS tick_ts,
                symbol, mint_address, verdict, entry_allowed, nonce,
                payload_json::text AS payload_json, payload_hash,
-               signature, memo_signature, memo_slot
+               signature, memo_signature, memo_slot, venue
         FROM decision_commits ORDER BY created_at DESC LIMIT $1
         """,
         limit,
@@ -1197,6 +1219,7 @@ async def get_recent_decision_commits(
             "signature": r["signature"],
             "memo_signature": r["memo_signature"],
             "memo_slot": int(r["memo_slot"]) if r["memo_slot"] is not None else None,
+            "venue": r["venue"],
         }
         for r in rows
     ]
@@ -1273,7 +1296,7 @@ async def get_verify_commits(
         """
         SELECT id, nonce, payload_json::text AS payload_json, payload_hash,
                symbol, verdict, created_at::text AS created_at, signature,
-               memo_signature, memo_slot
+               memo_signature, memo_slot, venue
         FROM decision_commits ORDER BY created_at DESC LIMIT $1
         """,
         limit,

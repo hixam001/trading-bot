@@ -58,6 +58,7 @@ class Candidate:
     price_change_5m_pct: Optional[float] = None
     price_change_6h_pct: Optional[float] = None
     price_change_24h_pct: Optional[float] = None
+    volume_5m_usd: Optional[float] = None         # A7 fake-chart filter input
     fdv_usd: Optional[float] = None               # fully-diluted valuation
     buys_6h: Optional[int] = None
     sells_6h: Optional[int] = None
@@ -118,6 +119,7 @@ class Candidate:
             "price_change_5m_pct": self.price_change_5m_pct,
             "price_change_6h_pct": self.price_change_6h_pct,
             "price_change_24h_pct": self.price_change_24h_pct,
+            "volume_5m_usd": self.volume_5m_usd,
             "fdv_usd": self.fdv_usd,
             "buys_6h": self.buys_6h,
             "sells_6h": self.sells_6h,

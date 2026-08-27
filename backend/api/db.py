@@ -143,6 +143,9 @@ CREATE TABLE IF NOT EXISTS decision_commits (
     -- memo BEFORE the fill; nullable — paper commits never have one)
     memo_signature  TEXT,
     memo_slot       INTEGER,
+    -- A3: which program executed the bound fill (pump.fun / raydium / jupiter
+    -- router / …), read off the confirmed tx; nullable — observability only
+    venue           TEXT,
     model_version   TEXT,
     prompt_version  TEXT
 );
@@ -239,6 +242,8 @@ async def init_db() -> None:
             # REF-R11: on-chain precommit memo columns (null on paper commits)
             "ALTER TABLE decision_commits ADD COLUMN memo_signature TEXT",
             "ALTER TABLE decision_commits ADD COLUMN memo_slot INTEGER",
+            # A3: fill-venue attribution (null until a live fill is bound)
+            "ALTER TABLE decision_commits ADD COLUMN venue TEXT",
             "ALTER TABLE decision_commits ADD COLUMN model_version TEXT",
             "ALTER TABLE decision_commits ADD COLUMN prompt_version TEXT",
             "ALTER TABLE feed_events ADD COLUMN model_version TEXT",
@@ -813,6 +818,26 @@ async def bind_commit_memo(
     return max(cursor.rowcount, 0)
 
 
+async def bind_commit_venue(
+    conn: aiosqlite.Connection,
+    commit_id: int,
+    venue: str,
+) -> int:
+    """A3: attach the executing-venue label to a decision commit row. Only
+    updates rows without a venue already (a recorded venue is never
+    overwritten). Returns affected rowcount."""
+    cursor = await conn.execute(
+        """
+        UPDATE decision_commits
+        SET venue = ?
+        WHERE id = ? AND venue IS NULL
+        """,
+        (venue, commit_id),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
 async def get_trade_by_id(conn: aiosqlite.Connection, trade_id: str) -> Optional[Trade]:
     cursor = await conn.execute("SELECT * FROM trades WHERE trade_id = ?", (trade_id,))
     row = await cursor.fetchone()
@@ -1101,7 +1126,7 @@ async def get_recent_decision_commits(
         """
         SELECT id, created_at, tick_ts, symbol, mint_address,
                verdict, entry_allowed, nonce, payload_json, payload_hash,
-               signature, memo_signature, memo_slot
+               signature, memo_signature, memo_slot, venue
         FROM decision_commits ORDER BY created_at DESC LIMIT ?
         """,
         (limit,),
@@ -1121,6 +1146,7 @@ async def get_recent_decision_commits(
             "signature": r["signature"],
             "memo_signature": r["memo_signature"],
             "memo_slot": r["memo_slot"],
+            "venue": r["venue"],
         }
         for r in await cursor.fetchall()
     ]
@@ -1192,7 +1218,7 @@ async def get_verify_commits(
     cursor = await conn.execute(
         """
         SELECT id, nonce, payload_json, payload_hash, symbol, verdict,
-               created_at, signature, memo_signature, memo_slot
+               created_at, signature, memo_signature, memo_slot, venue
         FROM decision_commits ORDER BY created_at DESC LIMIT ?
         """,
         (limit,),

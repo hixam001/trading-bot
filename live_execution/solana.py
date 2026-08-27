@@ -242,3 +242,46 @@ async def get_usdc_balance(address: str) -> float | None:
     return None
 
 
+# ---------------------------------------------------------------------------
+# A2 (omo audit §28): chain-derived balance truth.
+# ---------------------------------------------------------------------------
+
+_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+
+
+async def get_token_balances(address: str) -> Optional[dict[str, float]]:
+    """
+    Every SPL token balance > 0 the owner holds, across BOTH token programs
+    (legacy + token-2022), as {mint: ui_amount}.
+
+    The chain is the sole authority on HOW MANY tokens the wallet actually
+    holds — the journal is cross-checked against this every live cycle
+    (live_execution/reconcile.py). Returns None when no RPC answered at all:
+    callers must treat that as "unknown", never as "empty" (fail closed —
+    an empty read and an unreadable read must never be confused).
+    """
+    balances: dict[str, float] = {}
+    any_ok = False
+    for program_id in (_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
+        res = await rpc(
+            "getTokenAccountsByOwner",
+            [address, {"programId": program_id}, {"encoding": "jsonParsed"}],
+        )
+        if res is None:
+            continue
+        any_ok = True
+        for entry in res.get("value") or []:
+            try:
+                info = entry["account"]["data"]["parsed"]["info"]
+                mint = str(info["mint"])
+                ta = info["tokenAmount"]
+                ui = ta.get("uiAmount")
+                if ui is None:
+                    ui = int(ta.get("amount") or 0) / (10 ** int(ta.get("decimals") or 0))
+                if ui and ui > 0:
+                    balances[mint] = balances.get(mint, 0.0) + float(ui)
+            except (KeyError, TypeError, ValueError):
+                continue
+    return balances if any_ok else None
+
+

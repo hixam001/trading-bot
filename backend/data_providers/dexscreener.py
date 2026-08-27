@@ -83,6 +83,7 @@ def _extract_pair_fields(pair: dict) -> dict:
         "market_cap_usd": market_cap,
         "volume_24h_usd": require_type(vol_obj.get("h24"), (int, float), "volume.h24", "dexscreener"),
         "volume_1h_usd": require_type(vol_obj.get("h1"), (int, float), "volume.h1", "dexscreener"),
+        "volume_5m_usd": require_type(vol_obj.get("m5"), (int, float), "volume.m5", "dexscreener"),
         "price_change_1h_pct": require_type(chg_obj.get("h1"), (int, float), "priceChange.h1", "dexscreener"),
         "buys_1h": require_type(h1.get("buys"), int, "txns.h1.buys", "dexscreener"),
         "sells_1h": require_type(h1.get("sells"), int, "txns.h1.sells", "dexscreener"),
@@ -173,7 +174,8 @@ class DexscreenerProvider:
                          "age_hours", "has_twitter", "has_telegram",
                          "has_website", "price_change_5m_pct",
                          "price_change_6h_pct", "price_change_24h_pct",
-                         "fdv_usd", "buys_6h", "sells_6h", "volume_6h_usd"):
+                         "fdv_usd", "buys_6h", "sells_6h", "volume_6h_usd",
+                         "volume_5m_usd"):
                 value = fields.get(attr)
                 if value is not None:
                     setattr(cand, attr, value)

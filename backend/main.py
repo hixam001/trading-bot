@@ -28,6 +28,7 @@ import config
 from api import db
 from blocklist import filter_candidates
 from data_providers import build_provider
+from rule_engine.fake_chart import is_fake_candidate
 from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
 from llm.thinker import Thinker, ThinkResult
@@ -109,6 +110,23 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
     candidates, blocked_now = filter_candidates(candidates)
     for sym, reason in blocked_now:
         log.info("BLOCKED %s skipped: %s", sym, reason)
+
+    # --- FAKE-CHART filter (A7, omo isFakeChart parity): wash-traded / dead /
+    # manufactured tapes never reach enrichment or think/gate, so they burn no
+    # scrape or LLM credits and never skew the regime. Each rejection logs its
+    # tripped threshold (defense-first rule 6).
+    real = []
+    for c in candidates:
+        fake, reason = is_fake_candidate(c)
+        if fake:
+            log.info("FAKE-CHART %s (%s) skipped: %s",
+                     c.symbol, (c.mint_address or "")[:8], reason)
+        else:
+            real.append(c)
+    if len(real) != len(candidates):
+        log.info("fake-chart filter removed %d of %d candidates",
+                 len(candidates) - len(real), len(candidates))
+    candidates = real
 
     # --- READ stage: crowd conviction (fomo.fun board).
     # Live feeds ONLY in live mode — mock runs stay hermetic and fast (a real

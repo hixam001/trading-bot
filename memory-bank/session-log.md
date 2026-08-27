@@ -1,3 +1,41 @@
+## Memory-bank update - 2026-08-27 (omo-audit code queue session: A7/A6/A3/A2/A4)
+
+- **Task**: close the five parity gaps surfaced by the 2026-08-27 audit of
+  `omotrades/omo` (docs/09_OMO_AUDIT_COMPARISON.md), per operator instruction. Reference files fetched
+  raw: market.server.ts (isFakeChart), blocklist.ts, wallet.server.ts
+  (readViaRpc/getWalletSnapshot/fetchFillVenue), fomo.server.ts (readOwnBasis),
+  execute.server.ts.
+- **A7**: `backend/rule_engine/fake_chart.py` — all 13 thresholds ported;
+  `Candidate.volume_5m_usd` added (models/dexscreener/discovery); wired into
+  `main.run_tick` READ stage before think/gate. Deviation: unknown age/fdv
+  skip rather than fail (documented §29).
+- **A6**: `blocklist.py` gains `BLOCKED_SYMBOLS` (omo's exact list) +
+  `is_blocked_symbol()`; enforced in `filter_candidates()`.
+- **A3**: `live_execution/venue.py` (pure parser + fail-soft fetch);
+  `decision_commits.venue` (SQLite + PG self-heal + `004_fill_venue.sql`);
+  `bind_commit_venue()` both db layers; journaled in `run_live_cycle` after
+  fills; `/api/binding.json` shows venue on every pair.
+- **A2**: `solana.get_token_balances()` (legacy + token-2022; empty-vs-
+  unreadable distinction) + `live_execution/reconcile.py` (pure). Chain =
+  authority on quantities; journal = authority on cost; ledger never mutated
+  by a chain read; exit sizing clamped to chain; vanished positions excluded
+  + flagged; unjournaled holdings flagged, never added. Cycle outcome gains
+  `chain_reconciliation`. Deliberate deviation from omo's full re-derivation:
+  our §5.1 atomic journal stays the money authority (safer at micro scale).
+- **A4**: `crowd.py` refactored — shared cached `_thesis_payload()`;
+  `fetch_fomo_theses` contract unchanged; new `read_own_basis()` (raw-board
+  match, no substantive filter on our own row, invested floored at 0, cap 10).
+  `FOMO_OWN_HANDLE` env (default disabled). `_crosscheck_basis()` in
+  run_live_cycle logs mismatches (tolerance max(5%,$0.50)), never applies
+  them. Cycle outcome gains `basis_crosscheck`.
+- **Tests**: +65 since REF-R11 → **444 combined passing** (test_fake_chart,
+  test_reconcile ×10, test_token_balances ×7, test_own_basis ×9, test_venue,
+  extended churn guards). Isolation grep clean. Live smoke disarmed:
+  verify/binding/disclosure/proof all 200, `venue: null` on unbound pairs,
+  `armed=False`, 0 tracebacks.
+- **Docs**: handoff §28 code queue marked complete + new §29 implementation
+  record; §27 (enable live execution) untouched and STILL the final task.
+
 ## Memory-bank update - 2026-08-27 (REF-R11 on-chain precommit memo + micro-bootstrap session)
 
 - **Task**: implement the last implementable reference-parity gap — REF-R11
