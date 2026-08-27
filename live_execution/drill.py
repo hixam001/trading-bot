@@ -24,6 +24,8 @@ from live_execution.solana import (  # noqa: F401
     send_raw_transaction,
 )
 
+log = logging.getLogger(__name__)
+
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 

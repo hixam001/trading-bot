@@ -472,14 +472,14 @@ def main() -> None:
     parser.add_argument("--once", action="store_true", help="run one cycle and exit")
     parser.add_argument("--drill", action="store_true", help="DEVNET drill: exercise sign/send/confirm without Jupiter or tokens")
     args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO,
+                        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
+                        datefmt="%H:%M:%S")
     if args.drill:
         from live_execution.drill import run_drill
         steps = asyncio.run(run_drill())
         failed = [s for s in steps if not s["ok"]]
         sys.exit(1 if failed else 0)
-    logging.basicConfig(level=logging.INFO,
-                        format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-                        datefmt="%H:%M:%S")
 
     if paper_config.DATA_BACKEND != "live":
         log.error("DATA_BACKEND=%s - the live cycle runs on the live stack only.", paper_config.DATA_BACKEND)

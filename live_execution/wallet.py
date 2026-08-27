@@ -32,11 +32,14 @@ def load_keypair(path: str | None = None):
         raw = json.loads(kp_path.read_text())
     except (ValueError, OSError) as exc:
         raise WalletError(f"keypair file unreadable: {exc}") from exc
-    if not isinstance(raw, list) or not all(
-        isinstance(b, int) and 0 <= b <= 255 for b in raw
+    if (
+        not isinstance(raw, list)
+        or len(raw) != 64
+        or not all(isinstance(b, int) and 0 <= b <= 255 for b in raw)
     ):
         raise WalletError(
-            "keypair file is not a Solana JSON byte array — refusing"
+            "keypair file is not a Solana JSON byte array (exactly 64 ints, "
+            "each 0-255) — refusing"
         )
 
     try:
@@ -46,7 +49,12 @@ def load_keypair(path: str | None = None):
             "solders is not installed — run: pip install solders"
         ) from exc
     try:
-        return Keypair.from_json(str(kp_path))
+        # from_bytes on the ALREADY-VALIDATED array: solders' from_json wants
+        # a JSON-content string (not a path — passing the path made solders
+        # parse the path itself and fail-closed with "expected value at line
+        # 1 column 1"; bug found by the first real keypair load, 2026-08-28).
+        # Reusing `raw` also avoids re-reading the file after validation.
+        return Keypair.from_bytes(bytes(raw))
     except Exception as exc:  # solders raises assorted types
         raise WalletError(f"keypair rejected by solders: {exc}") from exc
 

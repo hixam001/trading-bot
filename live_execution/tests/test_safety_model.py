@@ -235,6 +235,62 @@ def test_wallet_non_byte_array_refuses(state):
         wallet.load_keypair(str(p))
 
 
+def test_wallet_wrong_length_refuses(state):
+    p = state / "kp.json"
+    p.write_text(json.dumps([1, 2, 3]))          # valid u8s, wrong length
+    with pytest.raises(wallet.WalletError, match="64"):
+        wallet.load_keypair(str(p))
+
+
+def test_wallet_loads_real_keypair_file(state):
+    """Regression (2026-08-28): the success path through solders. A previous
+    revision passed the file PATH to solders' from_json (which expects JSON
+    CONTENT), so every real keypair load fail-closed with "expected value at
+    line 1 column 1". The old tests only exercised refusal paths, which is
+    why this loads a REAL generated keypair end-to-end."""
+    from solders.keypair import Keypair
+
+    kp = Keypair()
+    p = state / "kp.json"
+    p.write_text(json.dumps(list(bytes(kp))))
+    loaded = wallet.load_keypair(str(p))
+    assert wallet.pubkey_string(loaded) == str(kp.pubkey())
+
+
+def test_wallet_verify_expected_address_mismatch_refuses(state):
+    from solders.keypair import Keypair
+
+    kp = Keypair()
+    p = state / "kp.json"
+    p.write_text(json.dumps(list(bytes(kp))))
+    loaded = wallet.load_keypair(str(p))
+    wrong = str(Keypair().pubkey())              # some OTHER account
+    import live_execution.config as cfg
+    original = cfg.EXPECTED_WALLET_ADDRESS
+    cfg.EXPECTED_WALLET_ADDRESS = wrong
+    try:
+        with pytest.raises(wallet.WalletError, match="not the expected wallet"):
+            wallet.verify_expected_address(loaded)
+    finally:
+        cfg.EXPECTED_WALLET_ADDRESS = original
+
+
+def test_wallet_verify_expected_address_match_passes(state):
+    from solders.keypair import Keypair
+
+    kp = Keypair()
+    p = state / "kp.json"
+    p.write_text(json.dumps(list(bytes(kp))))
+    loaded = wallet.load_keypair(str(p))
+    import live_execution.config as cfg
+    original = cfg.EXPECTED_WALLET_ADDRESS
+    cfg.EXPECTED_WALLET_ADDRESS = str(kp.pubkey())
+    try:
+        assert wallet.verify_expected_address(loaded) == str(kp.pubkey())
+    finally:
+        cfg.EXPECTED_WALLET_ADDRESS = original
+
+
 def test_wallet_config_default_missing_refuses(monkeypatch, tmp_path):
     monkeypatch.setattr(le_config, "WALLET_KEYPAIR_PATH", "")
     with pytest.raises(wallet.WalletError, match="WALLET_KEYPAIR_PATH"):
