@@ -2,9 +2,11 @@
 # ============================================================================
 # trading-bot one-click launcher.
 # Starts (in order): venv setup -> frontend build -> backend + tick loop
-# -> dashboard served by the backend on http://localhost:8000, then opens
-# the browser. Idempotent: safe to click twice; already-running parts are
-# reused. Use ./stop.sh to stop what this script started.
+# -> dashboard served by the backend on http://localhost:8000 -> the live
+# decision cycle (ONLY when live_execution is armed AND a wallet is
+# configured in .env), then opens the browser. Idempotent: safe to click
+# twice; already-running parts are reused. Use ./stop.sh to stop what this
+# script started.
 #
 # LLM: main provider (Thinker/Narrator/reflections) is selected by
 #      MAIN_LLM_PROVIDER in .env: "deepseek" (DeepSeek V4 Flash direct API,
@@ -82,10 +84,43 @@ else
   fi
 fi
 
+# --- 5) Live execution cycle (ARMED repo) ------------------------------------
+# The live runner is a SEPARATE process from the paper tick loop (two books,
+# one brain). It starts here only when BOTH are true:
+#   a) live_execution/config.py carries LIVE_TRADING_ENABLED = True (the
+#      committed armed state — human-edit-only, never env), and
+#   b) .env points WALLET_KEYPAIR_PATH at a wallet file that exists.
+# Without a funded wallet configured, nothing real-money ever starts.
+ARMED="$(grep -E '^LIVE_TRADING_ENABLED' "$ROOT/live_execution/config.py" 2>/dev/null | grep -c 'True')"
+KP="$(grep -E '^WALLET_KEYPAIR_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
+LIVE_STATE="not started (disarmed or no wallet configured)"
+if [ "$ARMED" -ge 1 ] && [ -n "$KP" ] && [ -f "$KP" ]; then
+  if pgrep -f "run_live_cycle.py" >/dev/null 2>&1; then
+    echo "[live] live cycle already running — reusing"
+    LIVE_STATE="running (reused)"
+  else
+    echo "[live] ARMED + wallet configured — starting live decision cycle..."
+    (
+      cd "$ROOT"
+      # setsid: same detachment contract as the backend — a closed terminal
+      # tab or Ctrl+C here can never take the live cycle down with it.
+      nohup setsid "$ROOT/.venv/bin/python" run_live_cycle.py \
+        >"$LOGS/live_cycle.log" 2>&1 </dev/null &
+      echo $! >"$RUN/live_cycle.pid"
+    )
+    LIVE_STATE="RUNNING — REAL MONEY (logs/live_cycle.log)"
+  fi
+fi
+
 echo ""
 echo "==========================================================="
-echo " trading-bot is live   (PAPER TRADING — NO REAL FUNDS)"
+if [ "$ARMED" -ge 1 ] && [ -n "$KP" ] && [ -f "$KP" ]; then
+  echo " trading-bot is live   (LIVE TRADING ARMED — REAL FUNDS)"
+else
+  echo " trading-bot is live   (PAPER TRADING — NO REAL FUNDS)"
+fi
 echo " dashboard : http://localhost:8000"
+echo " live cycle: $LIVE_STATE"
 echo " LLM main  : $MAIN_PROVIDER (social: SOCIAL_LLM_*)"
 echo " logs      : $LOGS/"
 echo " stop      : $ROOT/stop.sh"

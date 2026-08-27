@@ -10,6 +10,13 @@ POST /api/admin/reset
                                    deleted. portfolio_state.cash_usd is
                                    reset to config.INITIAL_CASH_USD.
 
+      mode=wipe_paper            — scoped reset: clear ONLY the paper-display
+                                   rows (feed_events + trades) and restore the
+                                   starting cash. KEEPS the proof/observability
+                                   record (decision_commits, events, memories,
+                                   theses, daily_stats, llm_call_usage,
+                                   market_regime).
+
       mode=prune_only            — trim old feed_events and market_regime
                                    rows, keeping only the newest
                                    config.FEED_PRUNE_KEEP and
@@ -52,13 +59,17 @@ async def admin_reset(
     confirm: str = Query(default="", description="Must be 'yes' to proceed."),
     mode: str = Query(
         default="reset_book",
-        description="'reset_book' (full wipe) or 'prune_only' (trim old rows).",
+        description=(
+            "'reset_book' (full wipe), 'wipe_paper' (feed+trades only), or "
+            "'prune_only' (trim old rows)."
+        ),
     ),
 ):
     """Operator-only book maintenance.
 
     ?confirm=yes is required. Without it the endpoint is a no-op (400).
     mode=reset_book (default) wipes everything and restores $1,000 cash.
+    mode=wipe_paper clears only feed_events + trades and restores cash.
     mode=prune_only trims feed_events and market_regime to configured limits.
     """
     if confirm.strip().lower() != "yes":
@@ -70,10 +81,13 @@ async def admin_reset(
             ),
         )
 
-    if mode not in ("reset_book", "prune_only"):
+    if mode not in ("reset_book", "wipe_paper", "prune_only"):
         raise HTTPException(
             status_code=400,
-            detail=f"Unknown mode '{mode}'. Use 'reset_book' or 'prune_only'.",
+            detail=(
+                f"Unknown mode '{mode}'. Use 'reset_book', 'wipe_paper', or "
+                "'prune_only'."
+            ),
         )
 
     started_at = _now_iso()
@@ -87,6 +101,13 @@ async def admin_reset(
             result = await db.reset_book(conn, config.INITIAL_CASH_USD)
             log.warning(
                 "ADMIN RESET complete | mode=reset_book | deleted=%d rows total",
+                result["total_deleted"],
+            )
+        elif mode == "wipe_paper":
+            result = await db.wipe_paper_book(conn, config.INITIAL_CASH_USD)
+            log.warning(
+                "ADMIN WIPE_PAPER complete | feed_events+trades cleared, cash "
+                "reset | deleted=%d rows total",
                 result["total_deleted"],
             )
         else:  # prune_only

@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import os
+import sys
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -23,6 +24,14 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
+
+# The repo ROOT on sys.path so the sanctioned function-local optional imports
+# of live_execution (proof.py, disclosure.py, live_book.py) can resolve when
+# the app runs from inside backend/. Optional only — a paper-only checkout
+# still boots (the imports stay try/except ImportError at every call site).
+_REPO_ROOT = str(config.BASE_DIR.parent)
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 from api.routes import (
     feed,
     holdings,
@@ -92,6 +101,12 @@ try:
     app.include_router(admin_router)
 except ImportError:
     pass  # operator admin/reset endpoint
+
+try:
+    from api.routes.live_book import router as live_book_router
+    app.include_router(live_book_router)
+except ImportError:
+    pass  # live book surface (read-only view of the real wallet/ledger)
 
 
 @app.websocket("/ws/feed")

@@ -122,3 +122,34 @@ export interface KnowledgeBaseResponse {
     by_age_bucket: Record<string, { wins: number; trades: number; win_rate: number | null }>
   }
 }
+
+export interface LivePositionRow {
+  mint_address: string
+  symbol: string
+  cost_usd: number
+  tokens: number
+  entry_price_usd: number | null
+  current_price_usd: number | null
+  value_usd: number
+  unrealized_pnl_usd: number | null
+  opened_at: string | null
+}
+
+export interface LivePortfolioResponse {
+  enabled: boolean
+  reason?: string
+  armed?: boolean
+  manual_confirmation?: boolean
+  wallet?: string
+  cash_usd?: number | null
+  sol_balance?: number | null
+  equity_usd?: number | null
+  open_value_usd?: number
+  unrealized_pnl_usd?: number | null
+  realized_pnl_usd?: number
+  deployed_today_usd?: number
+  closed_trades?: number
+  positions?: LivePositionRow[]
+  count?: number
+  generated_at_utc?: string
+}

@@ -1438,6 +1438,44 @@ async def reset_book(conn: aiosqlite.Connection, initial_cash_usd: float) -> dic
     }
 
 
+async def wipe_paper_book(
+    conn: aiosqlite.Connection, initial_cash_usd: float
+) -> dict:
+    """Scoped operator reset (admin mode=wipe_paper): clear only the paper
+    DISPLAY rows — feed_events (decision feed) and trades (holdings +
+    journal) — and restore the starting paper cash.
+
+    Unlike reset_book(), this KEEPS the proof/observability record:
+    decision_commits, events, memories, theses, daily_stats, llm_call_usage,
+    and market_regime are UNTOUCHED. Paper-trading maintenance only — never
+    touches any wallet or on-chain state.
+
+    Returns a summary dict for the operator log.
+    """
+    counts: dict[str, int] = {}
+
+    async def _del(table: str) -> int:
+        cur = await conn.execute(f"DELETE FROM {table}")
+        return max(cur.rowcount, 0)
+
+    counts["feed_events"] = await _del("feed_events")
+    counts["trades"]      = await _del("trades")
+
+    await conn.execute(
+        "UPDATE portfolio_state SET cash_usd = ?, updated_at = ? WHERE id = 1",
+        (initial_cash_usd, _now_iso()),
+    )
+    await conn.commit()
+
+    return {
+        "reset": True,
+        "scope": "wipe_paper",
+        "initial_cash_usd": initial_cash_usd,
+        "rows_deleted": counts,
+        "total_deleted": sum(counts.values()),
+    }
+
+
 # ===========================================================================
 # Backend selection — when Supabase is configured (USE_SUPABASE_DB=1 +
 # SUPABASE_DB_URL), the Postgres implementation in api/db_pg.py overrides

@@ -321,3 +321,118 @@ async def test_admin_prune_only_returns_200():
     assert result["feed_events_deleted"] == 42
     assert result["market_regime_deleted"] == 17
     assert result["paper_trading_only"] is True
+
+
+# ---------------------------------------------------------------------------
+# Unit tests for wipe_paper_book (scoped reset: feed + trades only)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_wipe_paper_book_clears_feed_and_trades_keeps_proof():
+    """wipe_paper_book empties feed_events + trades and resets cash, but
+    PRESERVES the proof/observability tables (decision_commits, market_regime).
+    """
+    from api.db import wipe_paper_book, get_cash_balance
+
+    async with _test_db() as conn:
+        # Seed one row in each of: feed_events, trades, decision_commits,
+        # market_regime.
+        await conn.execute(
+            """
+            INSERT INTO feed_events (
+                ts, symbol, mint_address, candidate_snapshot,
+                verdict, rule_breakdown, failed_rule_ids,
+                regime_ok, grounding_flags, narration_source
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (_now_iso(), "BONK", "mint123", "{}", "pass", "[]", "[]", 1, "[]", ""),
+        )
+        await conn.execute(
+            """
+            INSERT INTO trades (
+                trade_id, symbol, mint_address, opened_at, entry_price_usd,
+                position_size_usd, quantity, candidate_snapshot, thesis, is_open
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            ("t1", "BONK", "mint123", _now_iso(), 0.001, 50.0, 50000.0, "{}", "x", 1),
+        )
+        await conn.execute(
+            """
+            INSERT INTO decision_commits (
+                created_at, tick_ts, symbol, mint_address, verdict,
+                entry_allowed, nonce, payload_json, payload_hash
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (_now_iso(), _now_iso(), "BONK", "mint123", "buy", 1,
+             "nonce1", "{}", "hash_unique_1"),
+        )
+        await conn.execute(
+            """
+            INSERT INTO market_regime (
+                computed_at, candidate_count, pct_candidates_green_1h,
+                median_volume_1h_usd, avg_buy_sell_ratio, regime_ok, regime_detail
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (_now_iso(), 5, 0.6, 20000.0, 1.1, 1, "ok"),
+        )
+        # Drain cash so we can prove the reset restores it.
+        await conn.execute(
+            "UPDATE portfolio_state SET cash_usd = 12.5 WHERE id = 1"
+        )
+        await conn.commit()
+
+        result = await wipe_paper_book(conn, 1000.0)
+
+        assert result["reset"] is True
+        assert result["scope"] == "wipe_paper"
+        assert result["rows_deleted"]["feed_events"] == 1
+        assert result["rows_deleted"]["trades"] == 1
+        assert result["total_deleted"] == 2
+
+        # Paper-display tables are empty...
+        for table in ("feed_events", "trades"):
+            cur = await conn.execute(f"SELECT COUNT(*) FROM {table}")
+            assert (await cur.fetchone())[0] == 0, f"{table} should be empty"
+
+        # ...but the proof/observability record is preserved.
+        for table in ("decision_commits", "market_regime"):
+            cur = await conn.execute(f"SELECT COUNT(*) FROM {table}")
+            assert (await cur.fetchone())[0] == 1, f"{table} should be preserved"
+
+        # Cash restored to the starting balance.
+        assert await get_cash_balance(conn) == 1000.0
+
+
+# ---------------------------------------------------------------------------
+# Endpoint test for mode=wipe_paper
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_admin_wipe_paper_returns_200():
+    """?confirm=yes&mode=wipe_paper returns the scoped-reset summary."""
+    from api.routes.admin import admin_reset
+
+    mock_result = {
+        "reset": True,
+        "scope": "wipe_paper",
+        "initial_cash_usd": 1000.0,
+        "rows_deleted": {"feed_events": 7, "trades": 2},
+        "total_deleted": 9,
+    }
+
+    @asynccontextmanager
+    async def _get_db():
+        yield None
+
+    with patch("api.routes.admin.db") as mock_db:
+        mock_db.get_db = _get_db
+        mock_db.wipe_paper_book = AsyncMock(return_value=mock_result)
+
+        result = await admin_reset(confirm="yes", mode="wipe_paper")
+
+    assert result["mode"] == "wipe_paper"
+    assert result["scope"] == "wipe_paper"
+    assert result["reset"] is True
+    assert result["total_deleted"] == 9
+    assert result["paper_trading_only"] is True
+    mock_db.wipe_paper_book.assert_awaited_once()

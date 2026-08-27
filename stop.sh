@@ -34,11 +34,18 @@ stop_pidfile() {
 }
 
 stop_pidfile "$RUN/backend.pid" "backend + tick loop"
+stop_pidfile "$RUN/live_cycle.pid" "live decision cycle"
 
 # Sweep any stray backend of ours (e.g. after an unclean reboot).
 if pgrep -f "uvicorn api.main:app" >/dev/null 2>&1; then
   echo "[stop] killing stray backend process(es)"
   pkill -f "uvicorn api.main:app"
+fi
+
+# Sweep any stray live cycle (same reason).
+if pgrep -f "run_live_cycle.py" >/dev/null 2>&1; then
+  echo "[stop] killing stray live cycle process(es)"
+  pkill -f "run_live_cycle.py"
 fi
 
 echo "[stop] done — dashboard at http://localhost:8000 is now offline."
