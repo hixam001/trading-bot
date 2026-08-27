@@ -1,6 +1,19 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] A11 thesis re-authoring (handoff §30): `backend/thesis_restate.py` —
+      the module the original omo audit missed (`thesis-author.server.ts`),
+      found in the 2026-08-27 re-read (full local clone). Once per tick/cycle,
+      rewrites open write-ups that are stale (>6h) or not model-authored
+      against the position's current numbers (≤2/pass, oldest first, under-60-
+      word contract). Narrative-only (thesis text/author/updated_at only;
+      retired-mid-pass rows guarded out); reuses the tick's own price marks;
+      fail-closed validation; peak-window skip; never raises. Wired into the
+      paper tick + live cycle, both DB layers, disclosure.json, llm_call_usage
+      (task thesis_restate), `did` events. 26 new tests; **470 combined
+      passing**; isolation grep clean; live-verified first tick advanced both
+      stale open write-ups. Ships with live execution still DISARMED — arming
+      is §27 (2026-08-27)
 - [x] omo-audit code queue A7/A6/A3/A2/A4 (handoff §29): wash-trade "fake
       chart" filter (all 13 omo thresholds, READ-stage before think/gate),
       hardcoded symbol blocklist (omo's list + `^404`, enforced in
@@ -174,7 +187,17 @@
       hardcoded flags. No session may arm before every other task is done.
 
 ## Status
-Live calibration day ~2. Dead-provider fail-fast shipped (2026-08-27, handoff
+Live calibration day ~2. A11 thesis re-authoring shipped (2026-08-27, handoff
+§30): the omo re-read (full local clone) found `thesis-author.server.ts` —
+missed by the original audit — and it is now ported: open write-ups stale >6h
+are advanced against current position numbers (≤2/tick, narrative-only,
+fail-closed). Live-verified on the first tick (two write-ups advanced via
+DeepSeek, retired row skipped, 0 tracebacks). The same re-read resolved both
+remaining audit caveats verbatim (placeOrder guards: our executor is a strict
+superset; their calibration factor: still unwired in their public code). The
+code queue is EMPTY again — everything left is operator-gated (§27 arming),
+post-calibration, or needs external credits/keys.
+Dead-provider fail-fast shipped (2026-08-27, handoff
 §24): a provider that times out / fails to connect twice in a row is now
 benched exactly like a 402, so a dead scraper can never stall a tick again
 (was ~15 min/tick when ScrapingBee ReadTimeouts went un-benched). Stealth
@@ -195,5 +218,5 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 379 combined passing** (backend 308 + live_execution 71; +41 REF-R11
-memo/micro-bootstrap this batch).
+**Tests: 470 combined passing** (backend 399 + live_execution 71; +26 A11
+thesis re-authoring this batch).

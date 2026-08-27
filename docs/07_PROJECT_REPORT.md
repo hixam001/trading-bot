@@ -11,9 +11,11 @@ precommit memo, commit–reveal) + micro-bootstrap implemented 2026-08-27
 ScrapingDog bearer-forwarding (handoff §25) shipped 2026-08-27; the five
 omo-audit gaps A7/A6/A3/A2/A4 (wash-trade filter, symbol blocklist, venue
 attribution, chain reconciliation, own-basis read-back — handoff §29)
-implemented 2026-08-27. R10 (live execution) remains deferred-by-design —
+implemented 2026-08-27; A11 thesis re-authoring (the module the original
+audit missed, found in the same-day re-read — handoff §30) implemented
+2026-08-27. R10 (live execution) remains deferred-by-design —
 arming is the operator's final manual task (handoff §27).** Tests:
-**444 passing**.
+**470 passing**.
 
 ---
 
@@ -56,7 +58,7 @@ position-opening function.
   the backend itself at http://localhost:8000 (single origin, one process).
 - **Launcher**: `./start.sh` (ollama serve if needed → backend + tick loop →
   browser), `./stop.sh`, `trading-bot.desktop` app-menu entry.
-- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections + the reference-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost).
+- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections/thesis restatements + the reference-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost).
 - **Data**: Birdeye memepool trending (discovery + decimals + security),
   Dexscreener pairs (all rule numerics + age + socials), Jupiter lite-api
   (execution-quality price for open positions).
@@ -458,6 +460,7 @@ All seven approved Reference parity items are now implemented:
 | REF-R8 | Drawdown-adaptive risk budget | ✅ | `paper_trading_engine.py` `compute_risk_budget` (2026-08-27) |
 | REF-R9 | Closed-loop conviction factor | ✅ | `calibration.py`, `patch_daily_stats` (2026-08-27) |
 | REF-R11 | On-chain precommit memo (commit–reveal) | ✅ | `live_execution/memo.py`, `proof.py` `/api/verify.json` memo checks (2026-08-27) |
+| A11 | Thesis re-authoring (omo audit re-read) | ✅ | `thesis_restate.py`, `db.py`/`db_pg.py` `get_open_theses/update_thesis_text` (2026-08-27) |
 | REF-R10 | Live execution (promotion path) | ⏸ deferred-by-design | operator's final manual task (handoff §27) |
 
 ### REF-R4 bug fix (2026-08-26)
@@ -782,4 +785,81 @@ execution) untouched and still the final task.
 
 +~3–8s ordering latency per order (memo must confirm before the fill) —
 irrelevant at one-decision-per-cycle cadence.
+
+---
+
+## 15. A11 — thesis re-authoring (2026-08-27, handoff §30)
+
+A same-day re-read of the reference repo (`omotrades/omo`, full local clone,
+commit 48a86f9 — unchanged since the audit) surfaced one module the original
+audit's read list missed: `src/lib/thesis-author.server.ts` (`restateTheses`).
+A write-up typed once at entry and never touched again is a static string with
+extra steps; the reference walks the open book on the live cadence and has the
+reasoning model rewrite any write-up that is stale or not model-authored,
+against the position's CURRENT numbers. Implemented same day under the
+standing "implement against omotrades/omo" instruction.
+
+### Semantics (reference parity)
+- **Due** = open row (`closed_at IS NULL`) whose `updated_at` is older than
+  `THESIS_RESTATE_STALE_HOURS` (6.0 — reference `STALE_MS`), OR whose author
+  is not `model*`, OR whose `updated_at` does not parse (fail toward
+  refreshing — reference `isStale()` treats unparseable as stale).
+- At most `THESIS_RESTATE_PER_PASS` (2) rows per pass, oldest text first, so
+  a tick never turns into a batch job. Both constants hardcoded in
+  `backend/config.py` (cadence knobs of a narrative-only job; not
+  env-overridable, same philosophy as the sizing constants).
+- Rewrite contract: under 60 words — why the position is still on, what
+  changed since entry, the single condition that takes it out; advance the
+  argument, never restate. Output validated fail-closed: <20 chars or >1000
+  chars is REJECTED — old text kept, refusal logged.
+- **NARRATIVE ONLY**: the pass can only ever change `theses.thesis` /
+  `theses.author` / `theses.updated_at`. It never touches trades, cash,
+  sizing, exits, or verdicts — size, P&L, and retirement come from the
+  journal. The DB write itself is guarded by `closed_at IS NULL`, so a row
+  retired mid-pass is never rewritten (rowcount 0 → skip, logged).
+
+### Implementation
+- `backend/thesis_restate.py` — pure helpers (`parse_ts`, `is_due`,
+  `select_due`, `validate_restatement`, `position_numbers`, `build_brief`)
+  + `restate_theses(conn, positions, price_map)` (never raises). Main
+  provider via `build_main_client().complete_json(json_mode=False,
+  task="thesis_restate")`; every call accounted in `llm_call_usage`
+  (success AND degradation); each rewrite journaled as a `did` event
+  (`action: thesis_restate`). DeepSeek peak-window skip (docs/08 §5 —
+  non-urgent work); mock mode is a deterministic no-op.
+- DB layer (lockstep, no raw SQL outside `api/db*.py`): `get_open_theses()`
+  + `update_thesis_text()` in BOTH `api/db.py` and `api/db_pg.py`.
+- Wiring: `main.py run_tick` — one pass after the risk-budget block,
+  reusing that block's `price_map` + open positions (**zero extra network
+  I/O** — documented deviation from the reference's per-row tape fetch).
+  `run_live_cycle.py` — same pass after `_manage` re-prices the live book
+  (marks from the cycle), reported in the cycle outcome as
+  `thesis_restatements`.
+- Surface: `/api/theses.json` already exposes author/updated_at (restated
+  rows are publicly visible); `/api/disclosure.json` gains a
+  `thesis_restatement` block (stale_hours, per_pass, scope).
+
+### Verification
+- 26 new tests (`backend/tests/test_thesis_restate.py`): selection math,
+  validation bounds, hand-computed P&L reuse, both DB behaviors incl. the
+  retired-mid-pass guard, PG surface parity, and mocked-HTTP orchestration
+  (write/refuse/fail-closed/peak-skip/cap/never-raises). Combined suite:
+  **470 passed** (was 444), 0 failures.
+- Isolation grep clean (no new backend→live_execution references).
+- Live smoke: first tick after restart advanced BOTH stale open write-ups
+  (aura +3.5% mark; ANSEM −8.1% with a tightened invalidation) via
+  `model:deepseek:deepseek-v4-flash`, journaled two `did` events, skipped
+  the retired row; all proof endpoints 200; `armed=false`; 0 tracebacks.
+
+### Also resolved (same re-read)
+Both "not verbatim-verified" caveats from the original audit: (1)
+`placeOrder`'s guard block is now verbatim-readable — our
+`live_execution/executor.py` guards are a strict superset (adds kill switch,
+manual confirmation, idempotency ledger, micro-bootstrap floors); (2) their
+calibration factor is STILL not wired into their sizing (`computeBudget`
+takes no factor; `ticketUsd(cash, conviction)` uses crowd-heat conviction) —
+our REF-R8×REF-R9 wiring remains strictly ahead of their public code. Their
+`exit.server.ts` is still missing from the public repo (README mentions it;
+raw fetch 404) — nothing to port.
+
 

@@ -319,6 +319,24 @@ async def run_cycle(once: bool = False) -> dict:
     # the journal's cost basis (observability only; needs FOMO_OWN_HANDLE).
     basis_checks = await _crosscheck_basis(meta)
 
+    # A11: advance stale open write-ups against the positions' current
+    # numbers. Narrative only (thesis text), reuses this cycle's own marks
+    # from _manage (no extra network I/O), never raises into the cycle.
+    restatements: list = []
+    try:
+        from thesis_restate import restate_theses
+        marks = {mint: m["last_price_usd"] for mint, m in meta.items()
+                 if m.get("last_price_usd")}
+        async with db.get_db() as conn:
+            restatements = await restate_theses(
+                conn, portfolio.open_positions, marks)
+        if restatements:
+            log.info("thesis restatement: %d live write-up(s) advanced",
+                     len(restatements))
+    except Exception:
+        log.warning("thesis restatement pass failed (non-fatal)",
+                    exc_info=True)
+
     candidates = await build_provider().get_candidates(paper_config.MAX_CANDIDATES_PER_TICK)
     candidates, blocked_now = filter_candidates(candidates)
     if paper_config.DATA_BACKEND == "live":
@@ -351,7 +369,9 @@ async def run_cycle(once: bool = False) -> dict:
                # A2/A4 observability: how the journal compared to chain truth
                # and to FOMO's own accounting this cycle.
                "chain_reconciliation": chain_report,
-               "basis_crosscheck": basis_checks}
+               "basis_crosscheck": basis_checks,
+               # A11: which open write-ups this cycle advanced (narrative only).
+               "thesis_restatements": restatements}
     for c in candidates:
         think = await thinker.think(c)
         

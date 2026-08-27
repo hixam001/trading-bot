@@ -256,8 +256,10 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
         price_map: dict = {}
         equity_usd = 0.0
         unrealized_usd = 0.0
+        open_positions: list = []
         try:
             book = await load_portfolio_state(conn)
+            open_positions = book.open_positions
             for t in book.open_positions:
                 try:
                     decimals = (t.candidate_snapshot or {}).get("decimals")
@@ -297,6 +299,22 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
         except Exception:
             log.warning("risk budget/calibration persistence failed "
                         "(non-fatal)", exc_info=True)
+
+        # --- A11: thesis restatement pass (reference parity) --------------
+        # Advance stale open write-ups against the position's current
+        # numbers. Narrative only: can only ever change thesis text, never
+        # trades/cash/exits. Reuses this tick's own price_map (no extra
+        # network I/O). Fail-soft: never kills a tick; the pass itself
+        # never raises either (belt and suspenders).
+        try:
+            from thesis_restate import restate_theses
+            restated = await restate_theses(conn, open_positions, price_map)
+            if restated:
+                log.info("thesis restatement: %d write-up(s) advanced",
+                         len(restated))
+        except Exception:
+            log.warning("thesis restatement pass failed (non-fatal)",
+                        exc_info=True)
 
         for c in candidates:
             # --- THINK (the reference order): the model writes its assessment BEFORE

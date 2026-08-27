@@ -1,3 +1,48 @@
+## Memory-bank update - 2026-08-27 (A11 thesis re-authoring session)
+
+- **Task**: the handoff code queue was COMPLETE (§29), so this session re-read
+  the reference (`omotrades/omo`, full local clone — commit 48a86f9, unchanged
+  since the audit) to find any remaining parity gap. Found ONE: the original
+  audit's module list missed `src/lib/thesis-author.server.ts` (thesis
+  re-authoring). Also resolved both "not verbatim-verified" audit caveats:
+  (1) `placeOrder`'s guard block is now verbatim-readable — our
+  `live_execution/executor.py` guards are a strict superset; (2) their
+  calibration factor is STILL not wired into their sizing (`computeBudget`
+  takes no factor; `ticketUsd(cash, conviction)` uses crowd heat) — our
+  REF-R8×REF-R9 wiring remains ahead. Their `exit.server.ts` is still missing
+  from the public repo (README mentions it; raw 404) — nothing to port.
+- **What shipped**: `backend/thesis_restate.py` — pure selection/validation
+  helpers + `restate_theses(conn, positions, price_map)` (never raises). Due =
+  open AND (stale >6h OR not model-authored OR unparseable updated_at); ≤2
+  rows/pass, oldest first; under-60-word rewrite contract validated fail-
+  closed (<20/>1000 chars rejected, old text kept). NARRATIVE ONLY: writes
+  theses.thesis/author/updated_at and nothing else; the UPDATE is guarded by
+  closed_at IS NULL (retired-mid-pass rows untouched). Reuses the tick's own
+  price_map (zero extra network I/O — documented deviation from the
+  reference's per-row tape fetch). Main provider via build_main_client
+  (json_mode=False, task="thesis_restate"); usage accounted success AND
+  degradation; each rewrite journaled as a `did` event; DeepSeek peak-window
+  skip; mock mode no-op.
+- **Wiring**: `get_open_theses()`/`update_thesis_text()` in BOTH db.py +
+  db_pg.py (lockstep); `main.py run_tick` pass after the risk-budget block;
+  `run_live_cycle.py` pass after `_manage` (outcome `thesis_restatements`);
+  `/api/disclosure.json` `thesis_restatement` block (stale_hours/per_pass/
+  scope). Config: `THESIS_RESTATE_STALE_HOURS=6.0`/`THESIS_RESTATE_PER_PASS=2`
+  hardcoded (cadence knobs of a narrative-only job).
+- **Tests**: +26 → **470 combined passing** (test_thesis_restate.py:
+  selection math, validation bounds, hand-computed P&L reuse, DB behaviors
+  incl. retired-mid-pass guard, PG surface parity, mocked-HTTP orchestration).
+  Isolation grep clean (no new backend→live_execution references).
+- **Live smoke**: backend restarted; first tick advanced BOTH stale open
+  write-ups (aura +3.5% mark; ANSEM −8.1% with tightened invalidation) via
+  model:deepseek:deepseek-v4-flash, two `did` events journaled, retired `neet`
+  skipped; system-status/theses/disclosure/proof/verify/binding all 200;
+  `armed=false`, `paper_only=true`; 0 tracebacks.
+- **Docs**: handoff §30 (implementation record) + §28 queue/header/test
+  counts; docs/09 gains row A11 + resolved caveats; project report updated.
+- **Still DISARMED**: `LIVE_TRADING_ENABLED=False` untouched. §27 (enable live
+  execution) remains the operator's FINAL task — no session may arm.
+
 ## Memory-bank update - 2026-08-27 (omo-audit code queue session: A7/A6/A3/A2/A4)
 
 - **Task**: close the five parity gaps surfaced by the 2026-08-27 audit of

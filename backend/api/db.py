@@ -1302,6 +1302,48 @@ async def get_theses(
     return [dict(r) for r in rows]
 
 
+async def get_open_theses(conn: aiosqlite.Connection) -> list[dict[str, Any]]:
+    """A11: every thesis row that is still open (not retired), oldest text
+    first. The restatement pass (thesis_restate.py) applies the due-filter
+    (staleness / authorship / cap) in pure code so unparseable timestamps
+    fail toward refreshing and both DB backends share one query shape.
+    Open rows are bounded by the book's position limits — this is not a
+    full-table scan of a growing table."""
+    cursor = await conn.execute(
+        """
+        SELECT trade_id, mint_address, symbol, author, thesis,
+               created_at, updated_at
+        FROM theses
+        WHERE closed_at IS NULL
+        ORDER BY updated_at ASC
+        """
+    )
+    rows = await cursor.fetchall()
+    return [dict(r) for r in rows]
+
+
+async def update_thesis_text(
+    conn: aiosqlite.Connection, trade_id: str, thesis: str, author: str,
+) -> int:
+    """A11: rewrite an OPEN thesis write-up (restatement). Returns rowcount.
+
+    Guarded by closed_at IS NULL: a row retired between selection and write
+    is never touched (rowcount 0 tells the caller the rewrite was skipped).
+    Only the text, author, and updated_at move — size, P&L, and the
+    retirement stamp stay where they are (the journal owns those).
+    """
+    cursor = await conn.execute(
+        """
+        UPDATE theses
+        SET thesis = ?, author = ?, updated_at = ?
+        WHERE trade_id = ? AND closed_at IS NULL
+        """,
+        (thesis, author, _now_iso(), trade_id),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
 # ===========================================================================
 # DB maintenance — prune + reset (operator-only, called by /api/admin/reset)
 # ===========================================================================

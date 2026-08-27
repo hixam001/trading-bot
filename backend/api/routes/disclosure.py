@@ -125,6 +125,8 @@ async def get_disclosure():
       risk_budget    — REF-R8 derived sizing budget (equity, drawdown factor,
                        max order/day, formula) the sizing used
       calibration    — REF-R9 conviction factor + formula from closed outcomes
+      thesis_restatement — A11 cadence truths for the write-up re-authoring
+                       job (stale horizon, per-pass cap, scope)
       generated_at_utc
     """
     # Safety fields — both hardcoded constants; surface them for auditability.
@@ -207,6 +209,18 @@ async def get_disclosure():
         "risk_budget": risk_budget,
         "calibration": calibration,
         "commit_memo": commit_memo,
+        # A11 (omo audit §30): thesis re-authoring cadence truths. Published
+        # like the sizing formulas — the job is narrative-only, so the only
+        # numbers it has are its cadence knobs.
+        "thesis_restatement": {
+            "implemented": True,
+            "stale_hours": getattr(config, "THESIS_RESTATE_STALE_HOURS", None),
+            "per_pass": getattr(config, "THESIS_RESTATE_PER_PASS", None),
+            "scope": "narrative only — rewrites open thesis text against the "
+                     "position's current numbers; never touches size, exits, "
+                     "or verdicts",
+            "source": "A11 (omo audit §30), reference thesis-author.server.ts",
+        },
     }
 
 

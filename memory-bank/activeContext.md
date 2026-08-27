@@ -1,7 +1,30 @@
 # Active Context — trading-bot
 
-**As of 2026-08-27 (omo-audit code queue A7/A6/A3/A2/A4 IMPLEMENTED — the five parity gaps from the omo audit are closed; live execution stays DISARMED, arming is the operator's final task §27).**
+**As of 2026-08-27 (A11 thesis re-authoring IMPLEMENTED — the omo re-read found one module the original audit missed; it is now shipped. The code queue is empty again; live execution stays DISARMED, arming is the operator's final task §27).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### A11 — thesis re-authoring (handoff §30) (2026-08-27)
+Same-day re-read of `omotrades/omo` (full local clone, commit 48a86f9 —
+unchanged since the audit) found `thesis-author.server.ts`, which the original
+audit's module list missed. Ported as `backend/thesis_restate.py`: once per
+tick/cycle, rewrite open write-ups that are stale (>6h) or not model-authored
+against the position's CURRENT numbers — ≤2 rows/pass, oldest first, under-60-
+word contract validated fail-closed (<20/>1000 chars rejected, old text kept).
+NARRATIVE ONLY: can only ever change thesis text/author/updated_at — never
+trades, cash, sizing, exits, verdicts; DB write guarded by `closed_at IS NULL`
+(retired-mid-pass rows untouched). Reuses the tick's own price_map (zero extra
+network I/O — documented deviation from the reference's per-row tape fetch).
+Wired into `main.py run_tick` + `run_live_cycle.py` (outcome key
+`thesis_restatements`); `get_open_theses()`/`update_thesis_text()` in both DB
+layers; `/api/disclosure.json` `thesis_restatement` block; usage accounted as
+task `thesis_restate`; each rewrite journaled as a `did` event. DeepSeek peak-
+window skip; mock mode no-op; never raises. Also resolved both audit caveats
+verbatim (placeOrder guards — our executor is a strict superset; their
+calibration factor still unwired in their public code). 26 new tests → **470
+combined passing**; isolation grep clean; live-verified: first tick advanced
+both stale open write-ups (aura, ANSEM) via deepseek, retired row skipped,
+0 tracebacks.
 
 ## DONE
 ### omo-audit code queue — A7/A6/A3/A2/A4 (handoff §29) (2026-08-27)

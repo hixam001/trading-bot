@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-27 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 289 passing (full suite incl. live_execution)
+**Tests:** 470 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -39,8 +39,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # already up, starts backend+tick loop on :8000 (serves
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 308 tests
-.venv/bin/python -m pytest -q                           # full suite: 379 tests, ~2s
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 399 tests
+.venv/bin/python -m pytest -q                           # full suite: 470 tests, ~2s
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -73,6 +73,7 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 308 test
 | `backend/api/routes/proof.py` | REF-R1 binding report (`/api/binding.json`), `/api/verify.json` (REF-R11: also re-verifies the on-chain commit memo hash + slot ordering), `/api/refusals.json`, `/api/theses.json`, `/api/proof.json`, `/api/exits.json` |
 | `backend/api/routes/disclosure.py` | REF-R6 public machine-truth feeds: `/api/disclosure.json` (armed/break/config state + REF-R11 `commit_memo` block) + `/api/reasoning.json` (per-decision provenance) |
 | `backend/retro_matcher.py` | REF-R7 retro audit-log signature matching: attributes out-of-pipeline fills to decision commit rows using the reference's exact algorithm (symbol+side match, 12h window, earliest fill wins, taken set) |
+| `backend/thesis_restate.py` | A11 thesis re-authoring (§30): once per tick/cycle, rewrites open write-ups that are stale (>6h) or not model-authored against the position's current numbers (≤2/pass, oldest first). Narrative-only — can only ever change thesis text; reuses the tick's own price marks; fail-closed validation; never raises |
 | `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, the reference bot comparison, project report |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
 
@@ -1538,13 +1539,16 @@ positions remain managed/journalled. Backend is unaffected
 Reference parity for the originally-scoped items is COMPLETE (REF-R1–R9 + R11).
 The 2026-08-27 omo audit (docs/09_OMO_AUDIT_COMPARISON.md) surfaced five further
 parity gaps — **all
-five shipped test-green on 2026-08-27 (implementation record: §29).** Everything
+five shipped test-green on 2026-08-27 (implementation record: §29).** A same-day
+re-read of the reference (full local clone) surfaced one module the original
+audit missed — **A11 thesis re-authoring, shipped test-green 2026-08-27
+(implementation record: §30).** Everything
 else below is operator-gated, post-calibration, or needs external credits/keys.
 Grouped by kind so a future session knows what is code, what is a human action,
 and what is deliberately out of scope. **§27 (enable live execution) remains the
 final task no matter what.**
 
-### Code queue — COMPLETE (from the omo audit; record in §29)
+### Code queue — COMPLETE (from the omo audit; record in §29, A11 in §30)
 
 - [x] **A7 — Wash-trade "fake chart" filter** — `backend/rule_engine/fake_chart.py`
       (all 13 omo thresholds), applied in the READ stage before think/gate.
@@ -1556,6 +1560,8 @@ final task no matter what.**
       `solana.get_token_balances()`, runs every live cycle; journal never mutated.
 - [x] **A4 — Own-basis read-back** — `crowd.read_own_basis()` +
       `FOMO_OWN_HANDLE`, cross-checked against journal cost each live cycle.
+- [x] **A11 — Thesis re-authoring** — `backend/thesis_restate.py` (§30), advances
+      stale open write-ups each tick/cycle. Found in the 2026-08-27 re-read.
 
 ### A. Final gating task — operator-only, NO code (handoff §27) — STILL LAST
 - [ ] **REF-R10 — Enable live execution.** The promotion path. Fund the wallet
@@ -1687,4 +1693,68 @@ shipped DISARMED. No hardcoded safety flag was touched; arming stays §27.
 - Live smoke (disarmed): /api/verify.json, /api/binding.json,
   /api/disclosure.json, /api/proof.json all 200; binding pairs carry
   `venue: null`; `armed=false`, `paper_only=true`; 0 tracebacks.
+
+
+## 30. A11 — thesis re-authoring (2026-08-27)
+
+The 2026-08-27 re-read of `omotrades/omo` (full local clone, commit 48a86f9 —
+unchanged since the audit) found one module the original audit's read list
+missed: `src/lib/thesis-author.server.ts` (`restateTheses`). A write-up typed
+once at entry and never touched again is a static string with extra steps;
+the reference walks the open book on the live cadence and has the reasoning
+model rewrite any write-up that is stale or not model-authored, against the
+position's CURRENT numbers. Implemented same day under the standing
+"implement against omotrades/omo" instruction.
+
+### Semantics (reference parity)
+- Due = open row (`closed_at IS NULL`) whose `updated_at` is older than
+  `THESIS_RESTATE_STALE_HOURS` (6.0, reference STALE_MS), OR whose author is
+  not `model*`, OR whose `updated_at` does not parse (fail toward refreshing —
+  reference `isStale()` treats unparseable as stale).
+- At most `THESIS_RESTATE_PER_PASS` (2) rows per pass, oldest text first, so
+  a tick never turns into a batch job. Both constants hardcoded in
+  `backend/config.py` (cadence knobs of a narrative-only job; not
+  env-overridable, same philosophy as the sizing constants).
+- Rewrite contract: under 60 words; why the position is still on; what
+  changed since entry; the single condition that takes it out; advance the
+  argument, never restate. Output validated fail-closed: <20 chars or >1000
+  chars is REJECTED — old text kept, refusal logged.
+- NARRATIVE ONLY: the pass can only ever change `theses.thesis` /
+  `theses.author` / `theses.updated_at`. It never touches trades, cash,
+  sizing, exits, or verdicts — size, P&L, and retirement come from the
+  journal. The DB write itself is guarded by `closed_at IS NULL`, so a row
+  retired mid-pass is never rewritten (rowcount 0 → skip, logged).
+
+### Implementation
+- `backend/thesis_restate.py` — pure helpers (`parse_ts`, `is_due`,
+  `select_due`, `validate_restatement`, `position_numbers`, `build_brief`)
+  + `restate_theses(conn, positions, price_map)` (never raises). Main
+  provider via `build_main_client().complete_json(json_mode=False,
+  task="thesis_restate")`; every call accounted in `llm_call_usage`
+  (success AND degradation); each rewrite journaled as a `did` event
+  (`action: thesis_restate`). DeepSeek peak-window skip (docs/08 §5 —
+  non-urgent work); mock mode is a deterministic no-op.
+- DB layer (lockstep, no raw SQL outside api/db*.py): `get_open_theses()`
+  + `update_thesis_text()` in BOTH `api/db.py` and `api/db_pg.py`.
+- Wiring: `main.py run_tick` — one pass after the risk-budget block,
+  reusing that block's `price_map` + open positions (ZERO extra network
+  I/O; documented deviation from the reference's per-row tape fetch).
+  `run_live_cycle.py` — same pass after `_manage` re-prices the live book
+  (marks from the cycle), reported in the cycle outcome as
+  `thesis_restatements`.
+- Surface: `/api/theses.json` already exposes author/updated_at (restated
+  rows are publicly visible); `/api/disclosure.json` gains a
+  `thesis_restatement` block (stale_hours, per_pass, scope).
+
+### Verification
+- 26 new tests (`backend/tests/test_thesis_restate.py`): selection math,
+  validation bounds, hand-computed P&L reuse, both DB behaviors incl. the
+  retired-mid-pass guard, PG surface parity, and mocked-HTTP orchestration
+  (write/refuse/fail-closed/peak-skip/cap/never-raises). Full suite:
+  **470 passed** (was 444), 0 failures.
+- Isolation grep clean (no new backend→live_execution references).
+- Live smoke: first tick after restart advanced BOTH stale open write-ups
+  (aura +3.5% mark; ANSEM −8.1% with a tightened invalidation) via
+  `model:deepseek:deepseek-v4-flash`, journaled two `did` events, skipped
+  the retired row; all proof endpoints 200; `armed=false`; 0 tracebacks.
 

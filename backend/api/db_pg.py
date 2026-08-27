@@ -1181,6 +1181,39 @@ async def get_theses(
     return [dict(r) for r in rows]
 
 
+async def get_open_theses(conn: asyncpg.Connection) -> list[dict[str, Any]]:
+    """A11: every thesis row that is still open (not retired), oldest text
+    first. Mirror of api/db.py get_open_theses — the due-filter lives in
+    thesis_restate.py so both backends share one query shape."""
+    rows = await conn.fetch(
+        """
+        SELECT trade_id, mint_address, symbol, author, thesis,
+               created_at::text AS created_at,
+               updated_at::text AS updated_at
+        FROM theses
+        WHERE closed_at IS NULL
+        ORDER BY updated_at ASC
+        """
+    )
+    return [dict(r) for r in rows]
+
+
+async def update_thesis_text(
+    conn: asyncpg.Connection, trade_id: str, thesis: str, author: str,
+) -> int:
+    """A11: rewrite an OPEN thesis write-up (restatement). Returns rowcount.
+    Mirror of api/db.py update_thesis_text — the closed_at IS NULL guard
+    keeps a row retired mid-pass untouched."""
+    return _rowcount(await conn.execute(
+        """
+        UPDATE theses
+        SET thesis = $1, author = $2, updated_at = $3
+        WHERE trade_id = $4 AND closed_at IS NULL
+        """,
+        thesis, author, _now(), trade_id,
+    ))
+
+
 # ===========================================================================
 # Proof/journal helpers — mirror api/db.py's SQLite versions with
 # dialect-correct Postgres (bool literals, $n params, ::text timestamps).

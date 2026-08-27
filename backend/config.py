@@ -52,6 +52,19 @@ HARD_ORDER_CEILING_USD: float = 3000.0     # absolute stop per order
 HARD_DAILY_CEILING_USD: float = 12000.0    # absolute stop per UTC day
 
 # ---------------------------------------------------------------------------
+# A11 thesis restatement (omo audit §30; reference thesis-author.server.ts).
+# An open write-up that has not been advanced in THESIS_RESTATE_STALE_HOURS
+# (or was never model-authored) is rewritten against the position's current
+# numbers, at most THESIS_RESTATE_PER_PASS rows per pass, oldest text first,
+# so a tick never turns into a batch job. HARDCODED cadence knobs — the job
+# is narrative-only: it can only ever change thesis text, never size, exits,
+# or verdicts, so it is not env-overridable (same philosophy as the sizing
+# constants above).
+# ---------------------------------------------------------------------------
+THESIS_RESTATE_STALE_HOURS: float = 6.0    # reference STALE_MS = 6h
+THESIS_RESTATE_PER_PASS: int = 2           # reference PER_PASS = 2
+
+# ---------------------------------------------------------------------------
 # SAFETY FLAG — HARDCODED, NEVER READ FROM ENV, NEVER CHANGED BY CODE.
 # Edited only by a human, manually, in this file. Every position-opening
 # function asserts this at runtime as well (belt-and-suspenders, E7).

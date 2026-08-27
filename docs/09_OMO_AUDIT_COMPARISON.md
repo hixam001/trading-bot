@@ -16,6 +16,11 @@ execute → journal → reveal(20-min delayed)`.
 > Status of the five gaps the operator selected (A2/A3/A4/A6/A7): **implemented
 > 2026-08-27** — see handoff §29 and project report §14. This document records
 > the audit findings that drove that decision.
+>
+> **2026-08-27 re-read (full local clone, commit 48a86f9):** surfaced one module
+> the original audit missed — `thesis-author.server.ts` (thesis re-authoring),
+> recorded below as **A11** and implemented same day (handoff §30). The two
+> "not verbatim-verified" caveats at the bottom are now resolved.
 
 ---
 
@@ -33,9 +38,12 @@ execute → journal → reveal(20-min delayed)`.
 | 8 | Delayed reveal (20 min) | Plaintext opened 20 min after sealing | Immediate reveal (documented deviation) |
 | 9 | Signer abstraction (`signer.interface.ts`) | Clean contract: local keypair / remote service / HSM / hardware all satisfy it | Concrete file keypair (+ identity pin) |
 | 10 | Personality layer (`cabin-ritual.server.ts`, 122KB) | Daily lore/flavor notes to the public terminal | Nothing comparable (pure UX narrative — not a trading feature) |
+| 11 | Thesis re-authoring (`thesis-author.server.ts`) | Live-cadence job rewrites any open write-up that is stale (>6h) or not model-authored against the position's current numbers — ≤2 rows/pass, oldest first, never touches size/PnL/retirement | **Missed by the original audit** (module absent from the read list); thesis book wrote at open and retired at close only. **Implemented 2026-08-27** (handoff §30): `backend/thesis_restate.py`, wired into the paper tick and the live cycle, narrative-only, fail-closed validation (reject <20/>1000 chars), reuses the tick's own price marks (no extra network I/O) |
 
 **Operator decision:** implement **2, 3, 4, 6, 7**. (1, 5, 8, 9, 10 left as-is —
-see "Deliberately not adopted" below.)
+see "Deliberately not adopted" below.) **11** discovered in the 2026-08-27
+re-read and implemented same day under the standing "implement against
+omotrades/omo" instruction.
 
 ---
 
@@ -149,10 +157,25 @@ see "Deliberately not adopted" below.)
 
 - Their repo is **partially broken as published** (missing exit module) — so
   comparisons against their *deployed* behavior rely on their docs/endpoints, not
-  just code.
-- `placeOrder`'s guard block was middle-truncated in every fetch; the guard list
-  is taken from the module's own header documentation plus all visible code —
-  accurate but not verbatim-quoted.
+  just code. **Re-verified 2026-08-27** against a full local clone (commit
+  48a86f9): `src/lib/exit.server.ts` is still absent (README mentions it; raw
+  fetch 404), so there is still nothing to port for their exit rule set.
+- ~~`placeOrder`'s guard block was middle-truncated in every fetch; the guard
+  list is taken from the module's own header documentation plus all visible
+  code — accurate but not verbatim-quoted.~~ **Resolved 2026-08-27**: the full
+  clone made the guard block verbatim-readable — mint-matches-sealed-commit,
+  memo-already-on-chain, one-order-per-commit-row, 2.5% price-impact floor,
+  $3,000/$12,000 per-order/per-day ceilings, 0.05 SOL reserve, $25 min ticket,
+  decimals-from-chain refusal, zero-round sell refusal. Our
+  `live_execution/executor.py` guards are a strict superset (adds kill switch,
+  manual confirmation, idempotency ledger, micro-bootstrap floors).
 - Their calibration wiring claim is flagged "unverified", not "false".
+  **Re-checked 2026-08-27**: still unverified — `computeBudget` takes no
+  factor and the pipeline's `ticketUsd(cash, conviction)` uses crowd-heat
+  conviction only; our REF-R8×REF-R9 wiring (factor multiplies the budget)
+  remains strictly ahead of their public code.
+- **Added 2026-08-27:** the original audit's module list omitted
+  `thesis-author.server.ts`; the re-read caught it (A11). Lesson recorded:
+  audit from the file tree, not from a hand-maintained module list.
 
     calibration — they have no paper layer.
