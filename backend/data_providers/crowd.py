@@ -328,15 +328,31 @@ async def _direct_get(url: str, headers: dict) -> Optional[dict]:
 _BENCHED_UNTIL: dict[str, float] = {}             # scraper -> monotonic ts
 
 
-def _bench(name: str) -> None:
-    """Stop using an exhausted/broken provider for STEALTH_BENCH_SECONDS."""
-    _BENCHED_UNTIL[name] = time.monotonic() + config.STEALTH_BENCH_SECONDS
-    log.warning("stealth scraper %s benched %.0f min", name,
-                config.STEALTH_BENCH_SECONDS / 60.0)
+def _bench(name: str, seconds: Optional[float] = None) -> None:
+    """Stop using a provider for `seconds` (default STEALTH_BENCH_SECONDS).
+    Credit exhaustion (402) gets the long bench; a transient rate-limit (429)
+    gets the short STEALTH_THROTTLE_BACKOFF_SECONDS instead."""
+    wait = config.STEALTH_BENCH_SECONDS if seconds is None else seconds
+    _BENCHED_UNTIL[name] = time.monotonic() + wait
+    log.warning("stealth scraper %s benched %.0f min", name, wait / 60.0)
 
 
 def _is_benched(name: str) -> bool:
     return _BENCHED_UNTIL.get(name, 0.0) > time.monotonic()
+
+
+def _handle_provider_status(name: str, status: int, body: str) -> None:
+    """Bench a provider on quota/throttle signals and surface the provider's
+    OWN reason in our logs. 402 = credit exhaustion (long bench); 429 = a
+    transient rate-limit (short backoff). Logging the body is what makes e.g.
+    ZenRows' AUTH004 "usage limit reached" self-diagnosable (2026-08-27)."""
+    snippet = " ".join((body or "").split())[:160]
+    if status == 402:
+        log.warning("%s: 402 credit exhaustion — %s", name, snippet)
+        _bench(name)
+    elif status == 429:
+        log.warning("%s: 429 rate-limited — %s", name, snippet)
+        _bench(name, config.STEALTH_THROTTLE_BACKOFF_SECONDS)
 
 
 def _json_from_body(text: str) -> Optional[dict]:
@@ -377,7 +393,7 @@ async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
             json=body,
         )
     if resp.status_code in (402, 429):
-        _bench("firecrawl")               # out of credits / throttled
+        _handle_provider_status("firecrawl", resp.status_code, resp.text)
         return None
     if resp.status_code != 200:
         log.warning("firecrawl: scrape HTTP %s", resp.status_code)
@@ -409,10 +425,11 @@ async def _scrape_get_template(name: str, template: str,
         async with httpx.AsyncClient(timeout=_FIRECRAWL_TIMEOUT) as client:
             resp = await client.get(get_url, headers=req_headers)
     except Exception as exc:
-        log.warning("%s: scrape error: %s", name, exc)
+        log.warning("%s: scrape error: %s", name,
+                    str(exc) or type(exc).__name__)
         return None
     if resp.status_code in (402, 429):
-        _bench(name)
+        _handle_provider_status(name, resp.status_code, resp.text)
         return None
     if resp.status_code != 200:
         log.warning("%s: scrape HTTP %s", name, resp.status_code)

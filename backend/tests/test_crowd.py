@@ -10,6 +10,7 @@ rule consuming real feed heat with a tagged detail.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import pytest
 
@@ -39,6 +40,7 @@ def fresh_state(monkeypatch):
     """Reset module globals + caches so tests never see each other's data."""
     monkeypatch.setattr(crowd, "_sessions", {})
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
+    monkeypatch.setattr(crowd, "_BENCHED_UNTIL", {})
     monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
 
 
@@ -298,6 +300,55 @@ async def test_quota_exhausted_firecrawl_fails_over(monkeypatch):
     assert data is not None and len(data["theses"]) == 1
     assert calls == ["firecrawl", "scrapingbee"]     # failover happened
     assert crowd._is_benched("firecrawl")            # and stayed failed-over
+
+
+async def test_throttled_firecrawl_gets_short_backoff(monkeypatch):
+    """A 429 is a transient RATE LIMIT, not credit exhaustion: firecrawl must
+    fail over AND be benched only for the short throttle backoff — NOT the
+    30-min credit bench. Regression for the 2026-08-27 Firecrawl sideline."""
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "fc-key")
+    monkeypatch.setattr(config, "SCRAPINGBEE_API_KEY", "sb-key")
+    # Make the two bench durations unambiguous: long bench huge, backoff tiny.
+    monkeypatch.setattr(config, "STEALTH_BENCH_SECONDS", 10_000.0)
+    monkeypatch.setattr(config, "STEALTH_THROTTLE_BACKOFF_SECONDS", 0.02)
+
+    payload = {"responseObject": {"items": [
+        {"userHandle": "whale", "ticker": "WHALE",
+         "comment": {"comment": "floor holds"},
+         "authorTrade": {"usdValue": 9000.0,
+                         "unrealizedPnlUsd": 1200.0}}]}}
+
+    calls = []
+
+    class RoutedClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            if url.startswith(config.FOMO_API_BASE):
+                return FakeResponse(
+                    403, text="<!DOCTYPE html>Just a moment...</html>")
+            if "app.scrapingbee.com" in url:
+                calls.append("scrapingbee")
+                import json as _json
+                return FakeResponse(200, text=_json.dumps(payload))
+            return FakeResponse(200, {})
+
+        async def post(self, url, **kw):
+            if "firecrawl" in url:
+                calls.append("firecrawl")
+                return FakeResponse(429, text="rate limited")
+            return FakeResponse(200, {"token": "t"})
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RoutedClient)
+
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data is not None and len(data["theses"]) == 1
+    assert calls == ["firecrawl", "scrapingbee"]     # failover happened
+    assert crowd._is_benched("firecrawl")            # benched right after 429
+
+    # The short backoff expires quickly -> firecrawl is eligible again, which
+    # would NOT be true if the 30-min credit bench had (wrongly) been applied.
+    await asyncio.sleep(0.05)
+    assert not crowd._is_benched("firecrawl")
 
 
 def test_benched_scraper_is_skipped(monkeypatch):

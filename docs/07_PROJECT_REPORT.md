@@ -4,7 +4,7 @@
 Solana memecoins. Report updated 2026-08-27 from the current main branch.
 Status: **live** (real market data, simulated funds; optional
 Supabase Postgres persistence).
-**OMO parity: ALL R1–R7 features implemented.** Tests: **261 passing**.
+**OMO parity: ALL R1–R7 features implemented.** Tests: **262 passing**.
 
 ---
 
@@ -226,7 +226,7 @@ cash writes, cap refusal, and flag assertion.
 | Birdeye | memepool trending discovery; decimals; token_security | free tier 401s on security → session auto-disable, fields stay UNKNOWN |
 | Dexscreener | all rule numerics per mint: 1h volume/change, buys/sells, liquidity, mcap, pair age, socials | deepest pair chosen; field names confirmed against real payloads |
 | Jupiter (lite-api) | execution-quality price for exits/holdings | decimals-aware; fails closed without them |
-| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); the last two forward the Privy bearer through Cloudflare (verified live); quota-exhausted providers benched 30 min |
+| fomo.fun board (crowd) | real crowd conviction: heat = clamp(20 + 8×theses) via Privy-authenticated reads | direct reads Cloudflare-challenged → stealth chain firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+premium_proxy) → scrapeops(keep_headers); the last two forward the Privy bearer through Cloudflare (verified live); a credit-exhausted provider (HTTP 402) is benched 30 min while a merely rate-limited one (HTTP 429) takes only a short ~75s backoff, and the provider's own error reason is logged |
 | Mock | full offline parity incl. threshold edge cases | default backend |
 
 All external calls: 15s timeout, ≤3 retries with backoff, distinct longer
@@ -314,7 +314,7 @@ LLM provider-swap suite (DeepSeek/Groq factory selection, peak/off-peak +
 cache-hit cost branches against hand-computed values, mocked
 `/chat/completions` usage parsing, fail-closed degradation never buying,
 `narration_mode` labels).
-48 live_execution tests (**261 combined** via root pytest.ini). The live
+48 live_execution tests (**262 combined** via root pytest.ini). The live
 execution bridge is wired
 and remains disarmed; its offline/mock flow covers execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.

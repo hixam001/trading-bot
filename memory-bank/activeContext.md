@@ -25,6 +25,19 @@ tracebacks. 30 new tests → **261 passing**. Rollback = `MAIN_LLM_PROVIDER=groq
 template passes until re-added).
 
 ## DONE
+### Stealth-scrape chain: 429 rate-limit vs 402 credit split (2026-08-27)
+Live-diagnosed operator report that Firecrawl/ZenRows still had credits.
+Root cause of the Firecrawl dropout: a `429 Too Many Requests` (a transient
+rate-limit) was benched for the full 30 min like credit exhaustion. Fix in
+`data_providers/crowd.py`: `_handle_provider_status()` now benches 402 for
+`STEALTH_BENCH_SECONDS` but 429 only for the new
+`STEALTH_THROTTLE_BACKOFF_SECONDS` (default 75s), and logs the provider's own
+error body so quota reasons are self-diagnosable. ZenRows' `.env` key is in
+fact at its usage limit (AUTH004 on both cheap and premium requests); ScrapingBee
+basic tier answers but its stealth-proxy errors and it can't forward the Privy
+bearer, so it never serves fomo reads. +1 regression test → **262 passing**.
+
+## DONE
 ### DB maintenance: prune + reset + OMO audit (2026-08-27)
 Added `prune_feed_events(conn, keep_rows)`, `prune_market_regime(conn, keep_rows)`,
 and `reset_book(conn, initial_cash_usd)` to both `api/db.py` (SQLite DELETE NOT IN)
@@ -164,8 +177,9 @@ x-supported-chains were missing in our first attempt → that's why direct
 reads 403'd), sequential queue w/ 220ms gap, TTL dedupe, junk filter,
 board-total extraction (olderThesis+newerThesis+page). Stealth-scrape
 FAILOVER CHAIN when challenged: firecrawl → scrapingbee → scrapingdog →
-zenrows → scrapeops (quota-exhausted providers benched 30 min; firecrawl
-API host is firecrawl.DEV now — .app host TLS-dead). Enrichment runs ONLY
+zenrows → scrapeops (credit-exhausted 402 benched 30 min; a rate-limited 429
+gets only a short ~75s backoff so a healthy provider isn't sidelined — 2026-08-27
+split; firecrawl API host is firecrawl.DEV now — .app host TLS-dead). Enrichment runs ONLY
 when DATA_BACKEND=live (mock hermeticity: a real feed answering for mock
 mints once flipped all e2e verdicts). Live proof: mint F8hVFDi8… → 40
 board theses → heat 100 [fomo] with author positions parsed.

@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-27 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 261 passing (full suite incl. live_execution)
+**Tests:** 262 passing (full suite incl. live_execution)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -896,4 +896,44 @@ is re-added. DeepSeek key stays in `.env` either way.
 Entry still requires `think.verdict == "buy"` AND all ten rules; the LLM
 never opens/closes/sizes; `PAPER_TRADING_ONLY=True` untouched;
 `live_execution` untouched and disarmed; keys only in server `.env`
+
+
+---
+
+## 20. FOLLOW-UP FIX — stealth-scrape chain: 429 rate-limit vs 402 credits (2026-08-27, DONE)
+
+Operator reported Firecrawl/ZenRows "still have credits; only bee is full".
+Live diagnosis (keys never printed) found the real story:
+
+- **Firecrawl** was healthy (returning 200s) but a single `429 Too Many
+  Requests` — a transient *rate-limit* — benched it for the full 30 min.
+  **This was the bug.**
+- **ZenRows**' key in `.env` is genuinely at its usage limit: `AUTH004
+  "account has reached its usage limit"` on BOTH a cheap basic request and the
+  premium one. (Operator may be viewing a different account/key.)
+- **ScrapingBee** basic tier answers 200, but prod calls it with
+  `stealth_proxy=true` which errors, and it can't forward the Privy bearer
+  anyway — so it never serves fomo reads regardless of credits.
+
+### Fix (`backend/data_providers/crowd.py`, `config.py`, `.env.example`)
+- New `_handle_provider_status()`: **HTTP 402** (credit exhaustion) → long
+  `STEALTH_BENCH_SECONDS` bench; **HTTP 429** (rate-limit) → short
+  `STEALTH_THROTTLE_BACKOFF_SECONDS` (default **75s**) backoff. Applied to both
+  the Firecrawl adapter and the generic GET template (bee/dog/zenrows/scrapeops).
+- Provider's own error body is now logged on 402/429, so quota reasons (e.g.
+  ZenRows `AUTH004`) are self-diagnosable from `logs/backend.log`.
+- Empty scrape exceptions now log their exception type (was a blank message).
+- `_bench(name, seconds=None)` gained an optional duration override.
+
+### Tests
+- New `test_throttled_firecrawl_gets_short_backoff`: a 429 fails over AND is
+  benched only for the short backoff (proves it's eligible again quickly, which
+  a 30-min bench would not allow). Existing 402→failover test still green.
+- `fresh_state` fixture now also resets `_BENCHED_UNTIL` (no cross-test bleed).
+- **Total: 262 passing** (was 261): backend 214, live_execution 48.
+
+### Invariants held
+Read-only fail-soft path; no money logic touched; `live_execution` untouched;
+keys only in server `.env` (diagnostic script redacted them).
+
 (redaction verified in logs); no raw SQL outside api/db*.py.

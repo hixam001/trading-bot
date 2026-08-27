@@ -269,6 +269,11 @@ SCRAPINGDOG_API_KEY: str = os.getenv("SCRAPINGDOG_API_KEY", "")
 ZENROWS_API_KEY: str = os.getenv("ZENROWS_API_KEY", "")
 SCRAPEOPS_API_KEY: str = os.getenv("SCRAPEOPS_API_KEY", "")
 STEALTH_BENCH_SECONDS: float = float(os.getenv("STEALTH_BENCH_SECONDS", "1800"))
+# A 429 is a transient RATE LIMIT (clears in ~a minute), not credit exhaustion,
+# so it gets a short backoff instead of the long bench — benching a healthy
+# provider for 30 min over a throttle is what sidelined Firecrawl (2026-08-27).
+STEALTH_THROTTLE_BACKOFF_SECONDS: float = float(
+    os.getenv("STEALTH_THROTTLE_BACKOFF_SECONDS", "75"))
 
 # ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.

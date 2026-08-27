@@ -7,6 +7,12 @@
       non-thinking mode enforced; thinker/narrator/reflections live on
       `deepseek-v4-flash`; shadow replay gate 8/8; first full DeepSeek
       tick verified; 30 new tests (2026-08-27)
+- [x] Stealth-scrape chain 429/402 split: rate-limit (429) → short
+      `STEALTH_THROTTLE_BACKOFF_SECONDS` backoff instead of the 30-min credit
+      bench; credit exhaustion (402) keeps the long bench; provider error body
+      logged (self-diagnoses e.g. ZenRows AUTH004). Restores a healthy
+      Firecrawl after a transient throttle. +1 regression test, 262 total
+      (2026-08-27)
 - [x] Supabase schema-drift fix: self-healing `_SCHEMA_SYNC_SQL` in `db_pg.init_db()` (events/memories/theses/llm_call_usage + versioning columns + RLS + migration bookkeeping); db_pg surface fixes (`status` param, `::text` casts, feed-event versioning parity); live-verified: first full tick completed, all endpoints 200 (2026-08-27)
 - [x] DB maintenance: prune_feed_events/prune_market_regime + reset_book in both db.py + db_pg.py (2026-08-27)
 - [x] POST /api/admin/reset (confirm=yes required; reset_book + prune_only modes) (2026-08-27)
@@ -102,4 +108,4 @@ OMO-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 261 passing** (was 231; +30 new provider-swap tests).
+**Tests: 262 passing** (was 231; +30 provider-swap, +1 stealth 429/402 split).
