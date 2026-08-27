@@ -178,4 +178,94 @@ omotrades/omo" instruction.
   `thesis-author.server.ts`; the re-read caught it (A11). Lesson recorded:
   audit from the file tree, not from a hand-maintained module list.
 
-    calibration — they have no paper layer.
+---
+
+## F. Final re-audit (2026-08-28) — full module coverage, open questions closed
+
+Repo state: **unchanged** (still commit 48a86f9, the same HEAD audited on
+2026-08-27). This pass read every remaining module the earlier audits had not
+covered in depth (`omo-brain`, `learn`, `audit`, `keys`, `signer.interface`,
+`web-research`, `ai-gateway`, `models`, `offbook`, error infra, and the
+`__tests__/` directory) and closed the three standing open questions.
+
+### Open questions — closed
+
+1. **Does `exit.server.ts` exist at all?** YES — proven. Their
+   `src/lib/__tests__/exit-rules.test.ts` imports `../exit.server`
+   (`EXIT_LIMITS, evaluateExitRules, evaluateSellGate, ExitInputs`). The
+   module exists in their working tree but is **not published** — a fresh
+   clone cannot even run their own test suite. Hard evidence for the
+   long-standing caveat: *their published code is a subset of the running
+   machine*. The test also pins their exit contract verbatim: hard stop
+   (full), trailing stop armed only after a real run, liquidity break even
+   in profit, price+flow invalidation, TP tranches (0.33 first, never
+   retaken), risk-break prefers full exit over trim, stale close, and a sell
+   gate (`gate_min_clip` / `gate_cooldown` / `gate_daily_exits`). **Our
+   `rule_engine/exits.py` implements the same model** (rebuilt on it
+   2026-08-20, decisionLog #20) — and ours is fully published and tested,
+   plus the fast 15s scanner and the §32 bad-quote guards, which they do not
+   publish.
+2. **Is their calibration factor wired into sizing?** NO — final proof.
+   `convictionFactor` appears nowhere outside `learn.server.ts` (grep across
+   the whole tree). `computeCalibration` feeds only the public surface;
+   `computeBudget` takes no factor. Our REF-R8×REF-R9 wiring (factor
+   multiplies the risk budget) remains strictly ahead.
+3. **Do they apply the wash-trade filter?** YES — `isFakeChart` is applied
+   in `market.server.ts:237` (fake-chart pairs return null), the same
+   READ-stage placement as our A7 port. Parity.
+
+### What they have that we don't — and the verdict on each
+
+| # | Their feature (module) | What it is | Verdict |
+|---|---|---|---|
+| 1 | Off-book positions (`offbook.server.ts`) | Hardcoded manual bookkeeping for value held OUTSIDE the tracked wallet (a BNB token through the FOMO app; the closed $BASECAT +$3,490.14 banked as a constant) so their terminal shows the whole account | **Deliberately not adopted.** Manual accounting for another chain/app; folding off-wallet value into the book would break our "journal + chain are the sole money authorities" invariant. If the operator ever holds positions outside the trading wallet, the right move is a separate disclosure line, never journal entries |
+| 2 | Narration anti-repetition (`omo-brain.server.ts`) | Heavy dedupe machinery on the public thought stream: thought fingerprints, shingles, bigrams, Jaccard similarity, opening-trigram checks, verdict rotation/merge/reconcile-with-book | **Genuine gap — queued as a future UX item.** Our feed narration can repeat similar phrasing across ticks (A11's "advance, don't restate" contract covers write-ups, not feed thoughts). Not trading-critical, no safety value — pure reader experience |
+| 3 | Three-model role routing (`models.server.ts`) | reasoning → claude opus 5, realtime → grok, narration → opus; honest resolution (`resolveRole` returns the id actually used + a degraded flag) | **Documented non-gap.** We run a two-provider split (main reasoning provider + Groq social) with the same honest-degradation contract (`LLMResult.degradation_reason`, source tagging). Finer per-role routing is a scale luxury, not a correctness gap |
+| 4 | Separate memo-only burner key (`keys.server.ts` `OMO_COMMIT_KEY`) | A second key that can only write memos, so a leaked commit key can never touch funds | **Documented deviation (§26):** single signer = the trading wallet at this book's scale ($3–5 bootstrap). Their rationale is real defense-in-depth at their scale ($10k+ book); revisit if the book grows |
+| 5 | AI-gateway abstraction + h3/preview error plumbing (`ai-gateway.server.ts`, `error-capture.ts`, `error-reporting.ts`) | Lovable-gateway headers; h3 stack recovery; preview-host error hooks | **Not applicable** — platform plumbing for their hosting stack. Our FastAPI + local-process logs already carry full tracebacks |
+
+### Where they are genuinely better
+
+- Per-role model selection (an instruction-adherence model for reasoning, a
+  timeline-native model for social reads) — a real quality lever we don't use.
+- The anti-repetition machinery on the public thought stream (item 2 above).
+- Memo-signing custody separation (item 4) at their book scale.
+- Their **deployed** machine clearly runs more than they publish (the exit
+  module at minimum) — the deployed system is ahead of the public repo.
+
+### Where we are genuinely better (with evidence)
+
+- **Published and runnable.** A fresh clone passes the full suite (486
+  tests). Their published repo cannot even run its own tests —
+  `exit-rules.test.ts` imports the unpublished `../exit.server`.
+- **Calibration is actually wired.** REF-R8×REF-R9: the conviction factor
+  multiplies the risk budget in sizing. Final grep proof this pass:
+  `convictionFactor` appears nowhere outside `learn.server.ts`; their
+  `computeBudget` never receives it.
+- **A paper layer at all.** They have none. Ours is a full atomic journal
+  with a 15s exit scanner and, since §32, bad-quote guards
+  (`EXIT_PRICE_JUMP_MAX`, `MAX_EXIT_PROCEEDS_MULT`) + proceeds-bound
+  backstops on every close/trim.
+- **Deeper live safety model.** Kill switch + daily-loss breaker + manual
+  confirmation with fail-closed expiry + idempotency ledger + identity pin
+  + caps + a repeatable devnet drill regime (§27/§31).
+- **The exit engine is public and tested.** Same contract as their
+  unpublished module (hard stop; trail armed only after a real run;
+  liquidity break even in profit; price+flow invalidation; TP tranches —
+  0.33 first, never retaken; risk-break prefers full exit; stale close;
+  sell gate) — ours published since 2026-08-20 (decisionLog #20), plus the
+  fast scanner and quote guards they don't publish at all.
+- **Audit items closed:** A2 chain reconciliation, A3 venue attribution, A4
+  own-basis cross-check, A6 blocklist, A7 wash-trade filter (parity —
+  theirs applied at `market.server.ts:237`, ours at the READ stage), A11
+  thesis restatement (parity).
+
+### Final verdict (2026-08-28)
+
+No trading-critical parity gap remains. Everything left on their side is UX
+polish (narration dedupe), scale-dependent custody (memo burner key), or
+hosting plumbing. The balance has flipped: on everything comparable from
+public code, this machine is now ahead of their public repo — and unlike
+theirs, all of it is verifiable from a fresh clone.
+
+

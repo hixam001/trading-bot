@@ -1,7 +1,8 @@
 **Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 474 passing (full suite incl. live_execution)
+**Tests:** 486 total — 485 passing while the operator's machine is armed
+(the 1 red test is the ships-disarmed canary; see §32)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -40,7 +41,8 @@ seems to require real execution inside backend/ — stop and flag it.
                   # dashboard), opens browser. Idempotent.
 ./stop.sh         # stops backend; leaves pre-existing ollama alone
 cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 370 tests
-.venv/bin/python -m pytest -q                           # full suite: 474 tests, ~2s
+.venv/bin/python -m pytest -q                           # full suite: 486 tests, ~2s
+                                                        # (485 while armed — §32 canary)
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -1820,4 +1822,75 @@ Note: the RPC `requestAirdrop` faucet was at its daily limit (tried 4 amounts
    (later optionally `REQUIRE_MANUAL_CONFIRMATION = False`).
 5. Supervise `python run_live_cycle.py --once` before continuous running.
 Rollback stays one line: `LIVE_TRADING_ENABLED = False`.
+
+
+## 32. Cash-corruption incident + bad-quote guards + final omo audit (2026-08-28)
+
+### The incident (paper book)
+After a `neet` close the dashboard showed an outrageous cash balance.
+Forensics: a transient bad Jupiter quote priced the ~$0.04 token at
+$119.0648 (~2,960×). The 15s exit scanner ratcheted high-water on the
+poisoned mark, a take-profit trim fired against it, and `close/trim`
+credited `price × quantity` ≈ **$94k of phantom cash** into the paper
+accumulator. Root cause class: *exit math trusted a single unbounded price
+sample for a money write*.
+
+### The fix (two hardcoded, fail-closed guards — `backend/config.py`)
+- `EXIT_PRICE_JUMP_MAX = 50.0` — scan-level: a single exit-scan price this
+  many multiples ABOVE the position's established peak is a bad quote, not
+  a move: skip the position this scan and do NOT ratchet high-water.
+  Upward-only on purpose — a genuine collapse must still be able to exit.
+- `MAX_EXIT_PROCEEDS_MULT = 200.0` — backstop in `close_position` AND
+  `trim_position`: a single exit crediting more than 200× cost basis is
+  refused BEFORE any state write (cash can never be corrupted even if a bad
+  price reaches the exit math).
+- Both deliberately generous: they only ever trip on data errors, never on
+  real market moves. The corrupted book's cash was repaired to the true
+  accumulator value (script-run, one-off, journaled in this record).
+- Tests: `backend/tests/test_exit_price_guards.py` (9) — jump skip + no
+  ratchet, legitimate moves pass, collapse still exits, proceeds backstop
+  refuses on close and trim, guard boundaries.
+
+### Live parity (same class of harm, different shape)
+A live sell can never FABRICATE money — it is a real swap and cash is chain
+truth (below) — but an early exit on a phantom spike is still real harm.
+`run_live_cycle._manage` got the identical jump guard (skip cycle, high-water
+untouched, upward-only). Tests: `live_execution/tests/test_manage_jump_guard.py`
+(3), built on the exact incident numbers ($0.04022 entry, $119.0648 quote).
+
+### Why live cash is accurate by construction (operator question)
+- Live "cash" is NOT an accumulator: every cycle `_live_portfolio()` reads
+  the wallet's REAL on-chain USDC balance (`solana.get_usdc_balance` →
+  `getTokenAccountBalance` on the USDC ATA; missing account = 0.0;
+  unreadable = None → cash 0, no entries, orders refused at the executor).
+- Live proceeds are real fills — what the chain actually credits, journaled
+  from the fill result. No simulated mark ever touches cash; a bad quote can
+  at worst trigger an early exit (now guarded), never phantom money.
+- A2 chain reconciliation cross-checks token quantities against the chain
+  every cycle. The dashboard cash display is the PAPER book; the live book's
+  truth is the wallet's on-chain USDC balance (any explorer).
+
+### Final omo audit (docs/09 §F)
+Full-coverage re-read of `omotrades/omo` (still commit 48a86f9 — unchanged).
+Closed all standing open questions: (1) `exit.server.ts` EXISTS but is
+unpublished — proven by their own `exit-rules.test.ts` importing it; their
+published repo cannot run its own tests, and the test pins an exit contract
+identical to our public engine; (2) their calibration factor is STILL not
+wired into sizing (final grep: `convictionFactor` lives only in
+`learn.server.ts`); (3) wash-trade filter applied at `market.server.ts:237`
+— parity with our A7. Remaining deltas are UX polish (narration dedupe —
+queued), scale custody (memo burner key — documented deviation), and hosting
+plumbing. **No trading-critical parity gap remains.**
+
+### Arming state (operator-executed; repo still ships DISARMED)
+The operator performed the §27 human-only steps on this machine:
+`live_execution/config.py` now carries `LIVE_TRADING_ENABLED = True` and
+`REQUIRE_MANUAL_CONFIRMATION = False` (hand-edited, as designed — no env
+bypass exists). That edit is LOCAL OPERATIONAL STATE and is deliberately NOT
+committed: the repo default stays disarmed, and
+`test_safety_flags_are_hardcoded_safe_defaults` is the canary that enforces
+it — it is EXPECTED to be red while this machine is armed (it is doing its
+job: loudly marking the working tree as armed so the armed state can never
+be silently committed). Suite: **486 tests; 485 pass while armed**.
+Rollback is still one line: `LIVE_TRADING_ENABLED = False`.
 

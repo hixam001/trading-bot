@@ -260,6 +260,21 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
             continue
         if price <= 0:
             continue
+        # §32 parity with the paper scanner (handoff §32): a single-cycle
+        # price this far ABOVE the established peak is a bad quote, not a
+        # market move. Skip this position this cycle and do NOT ratchet
+        # high-water or mark the risk budget on suspect data — a poisoned
+        # peak can force a premature trail exit. Upward-only on purpose: a
+        # genuine collapse must still exit. A live sell can never fabricate
+        # money (it is a real swap), but an early exit on a phantom spike is
+        # still real harm, so the guard matches the paper side exactly.
+        peak = hwm.get(mint, m["price_usd"])
+        if peak and peak > 0 and price > peak * paper_config.EXIT_PRICE_JUMP_MAX:
+            log.warning("manage %s: price $%.8f is %.0fx the established peak "
+                        "$%.8f — treating as a bad quote, skipping this cycle "
+                        "(high-water NOT updated)", mint[:8], price,
+                        price / peak, peak)
+            continue
         prev = hwm.get(mint, m["price_usd"])
         hwm[mint] = max(prev, price)
         m["last_price_usd"] = price   # REF-R8: freshest mark for the risk budget

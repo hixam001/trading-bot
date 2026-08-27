@@ -318,7 +318,8 @@ class OpenResult:
 class CloseResult:
     applied: bool
     trade: Optional[Trade]
-    reason: str   # "closed" | "already_closed" | "cash_refused"
+    reason: str   # "closed" | "already_closed" | "cash_refused" |
+                  # "implausible_proceeds" (§32 backstop)
 
 
 # ---------------------------------------------------------------------------
@@ -391,6 +392,20 @@ async def close_position(
         return CloseResult(False, trade, "invalid_price")
 
     realized_usd, realized_pct = compute_realized_pnl(trade, exit_price)
+    proceeds = trade.position_size_usd + realized_usd
+
+    # §32 backstop: a single close crediting more than MAX_EXIT_PROCEEDS_MULT
+    # times cost basis is a bad exit price (decimals/quote bug), not a gain.
+    # Refuse BEFORE any state write so cash can never be corrupted.
+    if proceeds > trade.position_size_usd * config.MAX_EXIT_PROCEEDS_MULT:
+        log.critical(
+            "close_position: %s implausible proceeds $%.2f (%.0fx cost basis "
+            "$%.2f) — refusing to credit (bad exit price); position stays open",
+            trade.symbol, proceeds,
+            proceeds / trade.position_size_usd, trade.position_size_usd,
+        )
+        return CloseResult(False, trade, "implausible_proceeds")
+
     closed_at = datetime.now(timezone.utc).isoformat()
 
     # 1. Conditional close write FIRST.
@@ -407,7 +422,6 @@ async def close_position(
         return CloseResult(False, persisted, "already_closed")
 
     # 2. Confirmed close. Credit cash now: cost basis + realized P&L.
-    proceeds = trade.position_size_usd + realized_usd
     moved = await db.adjust_cash(conn, proceeds)
     if moved == 0:
         # Cannot happen with positive proceeds on a healthy portfolio, but
@@ -499,7 +513,8 @@ async def decide_and_act(
 class TrimResult:
     applied: bool
     trade: Optional[Trade]
-    reason: str   # "trimmed" | "position_closed" | "degenerate" | "cash_refused"
+    reason: str   # "trimmed" | "position_closed" | "degenerate" |
+                  # "cash_refused" | "implausible_proceeds" (§32 backstop)
 
 
 async def trim_position(
@@ -524,6 +539,21 @@ async def trim_position(
     qty_out = trade.quantity * fraction
     size_out = trade.position_size_usd * fraction
 
+    # §32 backstop (same as close_position): a trim crediting more than
+    # MAX_EXIT_PROCEEDS_MULT times cost basis is a bad exit price. Refuse
+    # BEFORE the quantity reduction so the position is never trimmed without
+    # a matching, plausible cash credit.
+    gross = qty_out * exit_price
+    proceeds = gross * (1.0 - config.SLIPPAGE_PCT) * (1.0 - config.FEE_PCT)
+    if proceeds > trade.position_size_usd * config.MAX_EXIT_PROCEEDS_MULT:
+        log.critical(
+            "trim_position: %s implausible proceeds $%.2f (%.0fx cost basis "
+            "$%.2f) — refusing to credit (bad exit price); position untouched",
+            trade.symbol, proceeds,
+            proceeds / trade.position_size_usd, trade.position_size_usd,
+        )
+        return TrimResult(False, trade, "implausible_proceeds")
+
     # 1. Conditional partial write FIRST.
     rows = await db.trim_position_row(conn, trade.trade_id, qty_out, size_out)
     if rows == 0:
@@ -537,8 +567,6 @@ async def trim_position(
         return TrimResult(False, persisted or trade, "degenerate")
 
     # 2. Confirmed. Credit net proceeds for the trimmed slice.
-    gross = qty_out * exit_price
-    proceeds = gross * (1.0 - config.SLIPPAGE_PCT) * (1.0 - config.FEE_PCT)
     moved = await db.adjust_cash(conn, proceeds)
     if moved == 0:
         log.critical(
@@ -616,6 +644,22 @@ async def scan_and_execute_exits(
                         trade.symbol, exc)
             continue
         if price is None or price <= 0:
+            continue
+
+        # Price-plausibility guard (§32 cash-corruption incident): a single-scan
+        # price this far ABOVE the position's established peak is a bad quote,
+        # not a market move. Skip this position this scan and do NOT ratchet
+        # high-water on suspect data (a poisoned peak later forces a premature
+        # trail exit). Upward-only on purpose: a genuine collapse must still
+        # exit, and a poisoned peak must not trap a position.
+        peak = trade.high_water_usd or trade.entry_price_usd
+        if peak and peak > 0 and price > peak * config.EXIT_PRICE_JUMP_MAX:
+            log.warning(
+                "exit scan: %s price $%.8f is %.0fx the established peak "
+                "$%.8f — treating as a bad quote, skipping this scan "
+                "(high-water NOT updated)",
+                trade.symbol, price, price / peak, peak,
+            )
             continue
 
         # Trail memory: the peak includes right now.

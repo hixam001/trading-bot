@@ -1,6 +1,22 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §32 cash-corruption fix + bad-quote guards + final omo audit (handoff
+      §32) (2026-08-28): phantom-cash incident root-caused (bad quote ~2,960×
+      → poisoned high-water → TP trim credited ≈$94k); two hardcoded
+      fail-closed guards (`EXIT_PRICE_JUMP_MAX=50` scan-level skip/no-ratchet;
+      `MAX_EXIT_PROCEEDS_MULT=200` proceeds backstop on close AND trim);
+      book cash repaired; identical jump guard in the live `_manage` loop
+      (3 tests on the exact incident numbers); 9 paper-guard tests. Live cash
+      verified accurate by construction (chain USDC balance re-read every
+      cycle, never accumulated). Final full-coverage omo audit (docs/09 §F):
+      exit module exists-but-unpublished (their tests import it), calibration
+      factor still unwired in their sizing (grep proof), wash-trade parity;
+      no trading-critical gap remains; remaining deltas = UX polish / scale
+      custody / hosting plumbing. Operator ARMED this machine (§27 human-only
+      flags flipped by hand) — armed config deliberately uncommitted; the
+      ships-disarmed canary test is red by design while armed. **486 tests;
+      485 pass while armed**
 - [x] §27 pre-flight + DEVNET DRILL PASSED (handoff §31) (2026-08-28): first
       real keypair load exposed + fixed two latent fail-closed bugs (wallet
       from_json path-vs-content → from_bytes on validated array + 64-u8
@@ -227,5 +243,8 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 474 combined passing** (backend 370 + live_execution 104; +4 wallet
-regression tests this batch).
+**Tests: 486 total — 485 passing while armed** (backend 379 + live_execution
+107; +12 this batch: 9 exit-price guards + 3 live manage jump guard; the 1
+red test is the ships-disarmed canary, expected red while the operator's
+machine is armed — handoff §32).
+

@@ -259,6 +259,25 @@ MAX_EXITS_PER_24H: int = 8             # rolling window, gated sells only
 EXIT_SCAN_INTERVAL_SECONDS: float = 15.0
 
 # ---------------------------------------------------------------------------
+# Exit-price sanity guards (2026-08-28 cash-corruption incident, handoff §32).
+# A transient bad quote once priced a $0.04 token at $119 (~2960x); the exit
+# scanner ratcheted high-water on it and a take-profit trim credited ~$94k of
+# phantom cash. These two hardcoded, fail-closed guards make that class of bug
+# impossible. Both are deliberately generous so they ONLY ever trip on data
+# errors, never on real market moves.
+# ---------------------------------------------------------------------------
+# A single exit-scan price this many multiples ABOVE the position's
+# established peak is a bad quote, not a move: skip the position this scan and
+# do NOT ratchet high-water. Upward-only on purpose — a genuine collapse must
+# still be able to exit. Real prices do not 50x in one 15s scan; bad quotes do.
+EXIT_PRICE_JUMP_MAX: float = 50.0
+# Backstop: a single close/trim crediting more than this multiple of the
+# position's cost basis is refused before any state write (the cash can never
+# be corrupted even if a bad price reaches the exit math). 200x on one
+# position is already a once-in-a-blue-moon gain; beyond it is a data bug.
+MAX_EXIT_PROCEEDS_MULT: float = 200.0
+
+# ---------------------------------------------------------------------------
 # Rule engine thresholds (§2.3). All in USD / percent as labelled.
 # ---------------------------------------------------------------------------
 MIN_LIQUIDITY_USD: float = 15_000.0     # liquidity_floor (the reference bot parity)

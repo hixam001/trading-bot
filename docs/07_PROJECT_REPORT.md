@@ -13,10 +13,15 @@ omo-audit gaps A7/A6/A3/A2/A4 (wash-trade filter, symbol blocklist, venue
 attribution, chain reconciliation, own-basis read-back — handoff §29)
 implemented 2026-08-27; A11 thesis re-authoring (the module the original
 audit missed, found in the same-day re-read — handoff §30) implemented
-2026-08-27. R10 (live execution) remains deferred-by-design —
-arming is the operator's final manual task (handoff §27); the §27 devnet
-drill PASSED 5/5 on 2026-08-28 (handoff §31), still DISARMED.** Tests:
-**474 passing**.
+2026-08-27. R10 (live execution): the §27 devnet drill PASSED 5/5 on
+2026-08-28 (handoff §31); the operator then performed the human-only arming
+steps on this machine (handoff §32) — the repo itself still ships DISARMED.
+The 2026-08-28 cash-corruption incident (bad quote → phantom cash in the
+PAPER book) was fixed with hardcoded bad-quote guards on both books and a
+final full-coverage omo audit closed every open question (handoff §32,
+docs/09 §F): no trading-critical parity gap remains.** Tests: **486 total —
+485 passing while the operator's machine is armed** (the 1 red test is the
+ships-disarmed canary; handoff §32).
 
 ---
 
@@ -916,6 +921,68 @@ PASS commit-memo:    REF-R11 publish_commit_memo end-to-end
 
 ### Verification
 474 combined passing (backend 370 + live_execution 104). Isolation grep
+
+## 17. Cash-corruption incident, bad-quote guards, final omo audit (2026-08-28, handoff §32)
+
+### The incident (paper book)
+After a close, the dashboard showed an outrageous cash balance. Forensics: a
+transient bad Jupiter quote priced a ~$0.04 token at $119.0648 (~2,960×);
+the 15s exit scanner ratcheted high-water on the poisoned mark and a
+take-profit trim credited `price × quantity` ≈ $94k of phantom cash.
+Root-cause class: **exit math trusted a single unbounded price sample for a
+money write.**
+
+### The fix — two hardcoded, fail-closed guards
+- `EXIT_PRICE_JUMP_MAX = 50.0` (scan-level): a single exit-scan price 50×
+  above the established peak is a bad quote → skip the position this scan,
+  do NOT ratchet high-water. Upward-only on purpose — a genuine collapse
+  must still exit.
+- `MAX_EXIT_PROCEEDS_MULT = 200.0` (backstop in `close_position` AND
+  `trim_position`): a single exit crediting >200× cost basis is refused
+  BEFORE any state write — cash can never be corrupted even if a bad price
+  reaches the exit math.
+- Both deliberately generous: they trip only on data errors, never real
+  moves. The book's cash was repaired to the true accumulator value.
+- Live parity: `run_live_cycle._manage` got the identical jump guard — a
+  live sell can never fabricate money (real swap), but an early exit on a
+  phantom spike is real harm.
+- Tests: `test_exit_price_guards.py` (9) + `test_manage_jump_guard.py` (3,
+  built on the exact incident numbers).
+
+### Why live cash is accurate by construction
+Live "cash" is never accumulated: every cycle reads the wallet's REAL
+on-chain USDC balance (`getTokenAccountBalance` on the USDC ATA; missing
+account = 0.0; unreadable = None → cash 0, no entries, executor refuses).
+Live proceeds are real fills — what the chain actually credits. A bad quote
+can at worst trigger an early exit (now guarded), never phantom money. A2
+chain reconciliation cross-checks token quantities every cycle. The
+dashboard cash display is the PAPER book; the live book's truth is the
+wallet's on-chain USDC balance.
+
+### Final omo audit (docs/09 §F)
+Full-coverage re-read of `omotrades/omo` (unchanged at commit 48a86f9).
+Closed all open questions: (1) `exit.server.ts` EXISTS but is unpublished —
+their own `exit-rules.test.ts` imports it, so a fresh clone cannot run their
+tests; the pinned exit contract matches our public engine; (2) their
+calibration factor is still not wired into sizing (grep: `convictionFactor`
+only in `learn.server.ts`); (3) wash-trade filter parity confirmed
+(`market.server.ts:237`). Remaining deltas: narration anti-repetition
+(queued UX item), memo burner key (documented §26 deviation), hosting
+plumbing. **Verdict: no trading-critical parity gap remains.**
+
+### Arming state
+The operator performed the §27 human-only steps on this machine
+(`LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`,
+hand-edited as designed). That edit is local operational state and is
+deliberately NOT committed — the repo ships disarmed, enforced by the canary
+test `test_safety_flags_are_hardcoded_safe_defaults` (expected red while
+armed). Rollback remains one line.
+
+### Verification
+486 tests total; 485 pass while armed (the canary is the single red test).
+Guards regression-tested on the exact incident shape; live jump guard
+hermetically tested (stubbed chain reads, no network).
+
 clean. Arm flags untouched: `LIVE_TRADING_ENABLED=False`,
 `REQUIRE_MANUAL_CONFIRMATION=True`. Remaining operator-only steps: mainnet
 wallet funded (0.03 SOL + $3–5 USDC), `.env` re-pointed, the two hand-edited

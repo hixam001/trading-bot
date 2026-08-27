@@ -1,7 +1,31 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (DEVNET DRILL PASSED — §27 pre-flight complete, 5/5 drill steps incl. the REF-R11 commit-memo; two latent live-path bugs found and fixed on the first real keypair load. Live execution stays DISARMED: the two arm-flag flips + mainnet funding are the operator's remaining human-only steps §27.)**
+**As of 2026-08-28 (cash-corruption incident FIXED + bad-quote guards on both books; final full-coverage omo audit closed — no trading-critical parity gap remains; operator has ARMED this machine per §27 human-only steps — repo still ships DISARMED, armed config deliberately uncommitted).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### §32 cash-corruption incident + bad-quote guards + final omo audit (2026-08-28)
+A transient bad Jupiter quote (~$0.04 token at $119.0648, ~2,960×) poisoned
+the paper exit scanner's high-water ratchet; a TP trim credited ≈$94k phantom
+cash. Fixed with two hardcoded fail-closed guards — `EXIT_PRICE_JUMP_MAX=50`
+(scan-level: skip + no ratchet on upward jumps; collapse still exits) and
+`MAX_EXIT_PROCEEDS_MULT=200` (close/trim proceeds backstop before any state
+write) — plus a one-off cash repair. Live parity: identical jump guard in
+`run_live_cycle._manage` (a live sell can't fabricate money — real swap +
+chain-truth cash — but a phantom-spike early exit is real harm). Live cash is
+accurate by construction: re-read from the wallet's on-chain USDC balance
+every cycle (`getTokenAccountBalance`), never accumulated; fail-closed to 0
+when unreadable. Final omo audit (docs/09 §F): `exit.server.ts` exists but is
+unpublished (their own test imports it — published repo can't run its own
+tests; contract matches our public engine); their calibration factor still
+unwired (final grep proof); wash-trade filter parity confirmed. Remaining
+deltas: narration dedupe (queued UX item), memo burner key (documented
+deviation), hosting plumbing. 12 new tests → **486 total; 485 pass while
+armed** — the 1 red test is `test_safety_flags_are_hardcoded_safe_defaults`,
+the ships-disarmed canary, expected red while the operator's machine is
+armed. Operator flipped `LIVE_TRADING_ENABLED=True` +
+`REQUIRE_MANUAL_CONFIRMATION=False` by hand (§27 human-only step); that edit
+stays LOCAL — deliberately not committed; rollback is one line.
 
 ## DONE
 ### §27 pre-flight + devnet drill (handoff §31) (2026-08-28)

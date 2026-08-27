@@ -1,3 +1,46 @@
+## Memory-bank update - 2026-08-28 (§32 cash-corruption fix + final omo audit session)
+
+- **Incident**: operator reported an outrageous cash balance on the dashboard
+  after closing `neet`. Forensics: a transient bad Jupiter quote priced the
+  ~$0.04 token at $119.0648 (~2,960×); the 15s exit scanner ratcheted
+  high-water on the poisoned mark and a TP trim credited ≈$94k of phantom
+  cash into the paper accumulator. Root-cause class: exit math trusted a
+  single unbounded price sample for a money write.
+- **Fix**: two hardcoded fail-closed guards in `backend/config.py` —
+  `EXIT_PRICE_JUMP_MAX=50` (scan-level: a price 50× the established peak is a
+  bad quote → skip the scan, do NOT ratchet high-water; upward-only so a
+  genuine collapse still exits) and `MAX_EXIT_PROCEEDS_MULT=200`
+  (close/trim proceeds backstop refused BEFORE any state write). Both
+  deliberately generous — they only trip on data errors. Book cash repaired
+  to the true accumulator value (one-off script). 9 tests
+  (`test_exit_price_guards.py`).
+- **Live parity**: a live sell can never fabricate money (real swap; cash is
+  chain truth) but a phantom-spike early exit is real harm → identical jump
+  guard in `run_live_cycle._manage` (skip cycle, high-water untouched).
+  3 tests (`test_manage_jump_guard.py`) on the exact incident numbers.
+- **Operator question answered**: live cash is accurate BY CONSTRUCTION —
+  every cycle reads the wallet's real on-chain USDC balance
+  (`getTokenAccountBalance`; missing account = 0.0; unreadable = None →
+  cash 0, no entries, executor refuses). It is never accumulated, so the
+  paper failure mode cannot occur; A2 reconciles token quantities vs chain.
+  Dashboard cash = the PAPER book; live truth = on-chain balance.
+- **Final omo audit** (docs/09 §F, full-coverage re-read, repo unchanged at
+  48a86f9): (1) `exit.server.ts` EXISTS but is unpublished — proven by their
+  own `exit-rules.test.ts` importing it; a fresh clone cannot run their
+  tests; the pinned exit contract matches our public engine. (2) calibration
+  factor STILL unwired in their sizing (grep: `convictionFactor` only in
+  learn.server.ts). (3) wash-trade filter parity confirmed
+  (market.server.ts:237). Remaining deltas: narration anti-repetition (queued
+  UX item), memo burner key (documented §26 deviation), hosting plumbing.
+  Verdict: no trading-critical parity gap remains.
+- **Arming**: the operator performed the §27 human-only steps — hand-edited
+  `LIVE_TRADING_ENABLED=True` + `REQUIRE_MANUAL_CONFIRMATION=False`. That
+  edit is LOCAL operational state and deliberately NOT committed (repo ships
+  disarmed); `test_safety_flags_are_hardcoded_safe_defaults` is the canary —
+  expected red while armed. **486 tests; 485 pass while armed.** Rollback:
+  one line.
+- **Docs**: handoff §32; docs/09 §F; project report updated.
+
 ## Memory-bank update - 2026-08-28 (§27 pre-flight + DEVNET DRILL PASSED session)
 
 - **Refusal first**: the session opened with a request to "move live execution
