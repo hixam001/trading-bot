@@ -1,9 +1,27 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (§37 STALE-HOLDINGS DUST FIX + FIRST REAL FILL + items 1 & 3 — full_close threading + one-time ledger repair unblocked entries and the bot landed a REAL PINK fill; CommitLog.reconcile_orphaned heals memo-only orphans; narrator anti-repetition rotation; 516 backend tests + 8 E2E green; bot LIVE and ARMED).**
+**As of 2026-08-28 (§38 SECURITY AUDIT + HARDENING — 20-rule checklist audited: 11 pass / 3 partial→fixed / 2 gaps→fixed / 4 N-A; zero secrets in git history; admin+ingest endpoints now token-gated fail-closed; ingest size cap; security headers; CORS narrowed; .env + keypair 600; 527 backend tests + 8 E2E green; bot LIVE and ARMED).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §38 security audit + hardening (2026-08-28)
+Audited the whole codebase against the operator's 20-rule checklist. Verified
+CLEAN: zero secrets in full git history; all keys in untracked `.env`;
+Supabase RLS ON (13 tables, zero permissive policies, service-role server-side
+only); both DB layers fully parameterized; npm audit 0 vulns; pip audit 0 known
+vulns; React auto-escaping (no dangerouslySetInnerHTML). FIXED: **F1/F2**
+`.env` + drill keypair 644→600; **F3** new `api/auth.py::require_admin_token`
+gates `POST /api/admin/reset` + `/api/knowledge-base/ingest` via
+`X-Admin-Token` (constant-time compare, FAIL CLOSED — unset token disables the
+endpoint; 32-char token generated into `.env`); **F4** `MAX_INGEST_CHARS`
+200k cap in `loader.ingest_file`; **F5** security-headers middleware
+(nosniff/DENY/no-referrer + no-store on /api/*); **F6** CORS `*`→GET/POST +
+Content-Type. Accepted risk: HTTP on loopback only (never leaves machine; all
+external calls TLS). Operator item F7: GitHub repo is public — consider
+private. E2E made deterministic (poll-based settle, feed row-or-empty-state).
++11 tests → 527; Playwright 8/8; live-verified 403/200 token behavior.
+Handoff §38.
+
 ### §37 stale-holdings dust fix + first real fill + items 1 & 3 (2026-08-28)
 ONE ledger bug caused three symptoms: a reconcile-clamped FULL exit produced a
 sell fraction just under the 0.999 close threshold, so `reduce_position`

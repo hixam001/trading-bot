@@ -125,14 +125,16 @@ async def test_system_status_endpoint(client):
     assert "ollama_reachable" in body and "provider_calls_today" in body
 
 
-async def test_knowledge_base_endpoints(client):
+async def test_knowledge_base_endpoints(client, monkeypatch):
+    # §38 F3: ingest is operator-token gated now.
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "test-token")
     r = await client.post("/api/knowledge-base/ingest", json={
         "documents": [
             {"filename": "notes.md", "content": "First note about liquidity. Second sentence."},
             {"filename": "../evil.md", "content": "Should be sanitized."},
             {"filename": "empty.md", "content": "   "},
         ]
-    })
+    }, headers={"X-Admin-Token": "test-token"})
     body = r.json()
     assert len(body["ingested"]) == 2          # empty one rejected
     assert any(e["filename"] == "evil.md" for e in body["ingested"])  # path stripped

@@ -24,7 +24,9 @@ POST /api/admin/reset
                                    respectively. Trades, cash, and all other
                                    tables are UNTOUCHED.
 
-    Requires: ?confirm=yes query param.
+    Requires: X-Admin-Token header matching config.ADMIN_TOKEN (§38 F3 —
+    the endpoint is fully disabled when no token is configured) AND the
+    ?confirm=yes query param.
     Returns: JSON summary of rows deleted / tables reset.
 
 SAFETY:
@@ -44,7 +46,8 @@ from datetime import datetime, timezone
 
 import config
 from api import db
-from fastapi import APIRouter, HTTPException, Query
+from api.auth import require_admin_token
+from fastapi import APIRouter, HTTPException, Query, Request
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -56,6 +59,7 @@ def _now_iso() -> str:
 
 @router.post("/api/admin/reset", include_in_schema=False)
 async def admin_reset(
+    request: Request,
     confirm: str = Query(default="", description="Must be 'yes' to proceed."),
     mode: str = Query(
         default="reset_book",
@@ -67,11 +71,14 @@ async def admin_reset(
 ):
     """Operator-only book maintenance.
 
-    ?confirm=yes is required. Without it the endpoint is a no-op (400).
+    Requires the X-Admin-Token header matching config.ADMIN_TOKEN (§38 F3;
+    endpoint is fully disabled if no token is configured) AND ?confirm=yes.
+    Without both the endpoint is a no-op (400/403).
     mode=reset_book (default) wipes everything and restores $1,000 cash.
     mode=wipe_paper clears only feed_events + trades and restores cash.
     mode=prune_only trims feed_events and market_regime to configured limits.
     """
+    require_admin_token(request)
     if confirm.strip().lower() != "yes":
         raise HTTPException(
             status_code=400,

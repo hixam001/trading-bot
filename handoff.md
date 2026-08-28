@@ -2183,3 +2183,56 @@ verdict; grounding unaffected. Tests: +3.
 **Tests:** 506 → **516 passing** (+3 full-close, +4 reconcile, +3 rotation).
 All endpoints 200, 0 tracebacks after restart.
 
+## 38. Security audit + hardening (2026-08-28)
+
+Operator-requested audit against a 20-rule security checklist (hide keys, purge
+git secrets, RLS, encryption, auth, parameterized queries, input validation,
+escaping, uploads, response trimming, security headers, HTTPS, dependency
+scans). Result: **11 pass · 3 partial · 2 gaps · 4 not-applicable** (no
+accounts/login/cookies/public surface exist — rules 9–12 have nothing to
+protect). Full-history git scan: **zero secrets ever committed**; all keys
+live only in the untracked `.env`. Supabase RLS is ON for all 13 tables with
+zero permissive policies; DB access is server-side service-role over the
+direct pooler (no anon key to leak). Both DB layers fully parameterized; the
+only f-string SQL interpolates hardcoded whitelisted table literals.
+`npm audit --omit=dev`: 0 vulns; `pip audit` (33 pkgs): 0 known vulns.
+
+**Findings fixed this session:**
+
+- **F1/F2 — file perms:** `.env` and `~/.config/solana/drill-keypair.json`
+  were 644 (world-readable); now `600` (mainnet wallet already was).
+- **F3 — unauthenticated mutating endpoints:** `POST /api/admin/reset` and
+  `POST /api/knowledge-base/ingest` now require the `X-Admin-Token` header
+  matching `config.ADMIN_TOKEN` (new `api/auth.py::require_admin_token`,
+  constant-time compare). **FAIL CLOSED:** an unset/empty token disables the
+  endpoints entirely (403) — a destructive endpoint is never open without a
+  credential, even on loopback. A 32-char token was generated into `.env`
+  (untracked); `.env.example` documents the knob.
+- **F4 — ingest size cap:** `loader.ingest_file` rejects documents over
+  `config.MAX_INGEST_CHARS` (default 200,000, env-overridable) before they
+  touch disk/DB/prompt context.
+- **F5 — security headers:** new middleware sets `X-Content-Type-Options:
+  nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` on every
+  response and `Cache-Control: no-store` on `/api/*`.
+- **F6 — CORS narrowed:** `allow_methods ["*"]→["GET","POST"]`,
+  `allow_headers ["*"]→["Content-Type"]` (only what the dashboard uses).
+
+**Accepted risk (documented, not fixed):** HTTP on loopback only (rule 19) —
+the API binds `127.0.0.1:8000`, traffic never leaves the machine, and all
+external calls are TLS; browsers forbid HTTPS-only for localhost. **Operator
+action item (F7):** the GitHub repo is PUBLIC — verified secret-free, but
+consider making it private (one-click setting, cannot be done from here).
+
+**E2E hardening (same session):** the three feed/panel tests were timing-
+fragile (empty feed between live cycles; slow first chain reads after
+restart). Now deterministic: skeleton check polls up to 45s; feed tests
+accept rows OR the documented empty state (same pattern as holdings/journal).
+
+**Tests:** 516 → **527 passing** (+11 in new `test_security_hardening.py`:
+token guard missing/wrong/unset/valid/confirm-still-required, kb-ingest
+guard, size cap, empty-doc refusal, headers, no-store, CORS narrowing).
+Playwright **8/8**. Live-verified after restart: headers present; admin reset
+403 without/with-wrong token, 200 with the real token (prune_only); kb
+ingest 403 without token; all endpoints 200; 0 tracebacks.
+
+

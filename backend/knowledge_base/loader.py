@@ -77,6 +77,13 @@ async def ingest_file(filename: str, content: str) -> dict:
     """
     if not content or not content.strip():
         raise ValueError("refusing to ingest empty document")
+    # §38 F4: hard size cap — reject before the content touches disk, the DB,
+    # or prompt context (defense against oversized payloads).
+    if len(content) > config.MAX_INGEST_CHARS:
+        raise ValueError(
+            f"document too large: {len(content)} chars > "
+            f"limit {config.MAX_INGEST_CHARS}"
+        )
     safe = sanitize_filename(filename)
     digest = (await _llm_digest(content)) or _extractive_digest(content)
 

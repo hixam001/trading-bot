@@ -2,8 +2,9 @@
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
 Solana memecoins. Report updated 2026-08-28 from the current main branch
-(§37: stale-holdings dust fix unblocked entries — **first REAL fill** landed;
-omo-audit items 1 & 3 shipped). Status: **live** (real market data,
+(§38: 20-rule security audit + hardening — token-gated operator endpoints,
+ingest size cap, security headers, CORS narrowed, file perms locked).
+Status: **live** (real market data,
 simulated funds; optional Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
 risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
@@ -1191,4 +1192,60 @@ deferred omo-audit items.
 **Verification:** +10 unit tests (3 full-close, 4 reconcile, 3 rotation) →
 **516 passing**; all endpoints 200, 0 tracebacks after restart.
 
-  200; no `commits.json` at the repo root.
+## 22. Security audit + hardening (2026-08-28, handoff §38)
+
+Operator-requested audit of the entire codebase against a 20-rule security
+checklist. **Verdict: 11 pass · 3 partial · 2 gaps · 4 not-applicable.**
+
+**Verified clean (no action needed):**
+- **Secrets (rules 1–2):** all keys live only in the untracked `.env`;
+  `.env.example` carries placeholders only; a full-history git scan
+  (`git log --all -p`) found **zero secrets ever committed** — nothing to purge.
+- **Database (rules 3–4, 7, 13):** no anon/public DB key exists to leak — the
+  backend connects server-side with the service role over the direct pooler.
+  Supabase RLS is ON for all 13 tables with **zero permissive policies**. Both
+  DB layers are fully parameterized (`?`/`$n`); the only f-string SQL
+  interpolates hardcoded whitelisted table literals.
+- **Encryption (rule 5):** TLS in transit everywhere (`sslmode=require`, HTTPS
+  for all LLM/RPC calls); at-rest perms fixed this session (below).
+- **Tampering/escaping/uploads/trimming (rules 8, 15, 16, 17):** Pydantic
+  request models; admin `mode` whitelist; React auto-escaping with zero
+  `dangerouslySetInnerHTML`/`innerHTML`/`eval`; JSON-only ingest with
+  path-traversal-safe names; `disclosure.json` excludes secrets by design.
+- **Dependencies (rule 20):** `npm audit --omit=dev` → 0 vulnerabilities;
+  `pip audit` (33 packages) → no known vulnerabilities.
+- **Not applicable (rules 9–12):** no cookies, sessions, accounts, passwords,
+  login, or public web surface exist — the app listens on `127.0.0.1:8000`
+  only (verified via `ss`).
+
+**Findings fixed this session:**
+- **F1/F2 — file permissions:** `.env` and the devnet drill keypair were
+  world-readable (644); now `600` (the mainnet wallet already was).
+- **F3 — unauthenticated mutating endpoints (rule 6):** `POST /api/admin/reset`
+  and `POST /api/knowledge-base/ingest` now require the `X-Admin-Token` header
+  matching `config.ADMIN_TOKEN` (new `api/auth.py::require_admin_token`,
+  constant-time compare). **Fail closed:** an unset token disables the
+  endpoints entirely (403). A 32-char token was generated into `.env`.
+- **F4 — ingest size cap (rules 14/16):** `loader.ingest_file` rejects
+  documents over `MAX_INGEST_CHARS` (default 200,000) before they touch disk,
+  the DB, or prompt context.
+- **F5 — security headers (rule 18):** new middleware sets
+  `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`,
+  `Referrer-Policy: no-referrer` on every response, and `Cache-Control:
+  no-store` on `/api/*`.
+- **F6 — CORS narrowed:** `allow_methods ["*"]→["GET","POST"]`,
+  `allow_headers ["*"]→["Content-Type"]`.
+
+**Accepted risk (rule 19):** HTTP on loopback only — the API never leaves the
+machine and all external calls are TLS; browsers forbid HTTPS-only mode for
+localhost. **Operator item (F7):** the GitHub repo is public — verified
+secret-free, but consider making it private.
+
+**E2E determinism (same session):** the three feed/panel Playwright tests were
+cycle-timing fragile; they now poll for settle (≤45s) and accept feed rows OR
+the documented empty state.
+
+**Verification:** +11 tests (`test_security_hardening.py`) → **527 passing**;
+Playwright **8/8**; live-verified after restart — headers present, admin reset
+403/403/200 (no-token/wrong/real), kb ingest 403 without token, all endpoints
+200, 0 tracebacks.

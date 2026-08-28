@@ -3,10 +3,11 @@ api/routes/knowledge_base.py — GET /api/knowledge-base + POST ingest (F4/F9).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from api import db
+from api.auth import require_admin_token
 from knowledge_base import loader
 
 router = APIRouter()
@@ -34,7 +35,9 @@ async def get_knowledge_base():
 
 
 @router.post("/api/knowledge-base/ingest")
-async def ingest_documents(req: IngestRequest):
+async def ingest_documents(req: IngestRequest, request: Request):
+    # §38 F3: mutating endpoint — requires the operator token (fail closed).
+    require_admin_token(request)
     if not req.documents:
         raise HTTPException(status_code=400, detail="no documents provided")
     results = []

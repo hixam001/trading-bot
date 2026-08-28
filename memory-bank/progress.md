@@ -1,6 +1,13 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §38 security audit + hardening (handoff §38) (2026-08-28): 20-rule
+      checklist → 11 pass / 3 partial / 2 gaps / 4 N-A. Zero secrets in full
+      git history; RLS ON everywhere; parameterized queries; npm+pip audits
+      clean. Fixed: `.env`+keypair → 600; admin/ingest endpoints token-gated
+      fail-closed (`api/auth.py`, X-Admin-Token); ingest 200k char cap;
+      security-headers middleware; CORS narrowed to GET/POST+Content-Type.
+      E2E made deterministic. 527 unit + 8 E2E green; live 403/200 verified.
 - [x] §37 stale-holdings dust fix + FIRST REAL FILL + items 1 & 3 (handoff
       §37) (2026-08-28): one ledger bug → three symptoms (holdings ghost,
       ENTER blocked by MAX_OPEN_POSITIONS, journal/book disagree). Fix:
@@ -294,8 +301,8 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 501 backend + 5 Playwright E2E — fully green** (backend 385 +
-live_execution 116; +3 state-dir regression this batch; +5 E2E in
+**Tests: 527 backend + 8 Playwright E2E — fully green** (backend 399 +
+live_execution 128; +11 security-hardening tests this batch; 8 E2E in
 frontend/e2e/dashboard.spec.ts via `npm run test:e2e`).
 The flag-state canary now pins the committed ARMED state — green while armed
 (handoff §33/§34).

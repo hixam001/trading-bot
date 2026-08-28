@@ -76,9 +76,29 @@ app = FastAPI(title="trading-bot", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[config.FRONTEND_ORIGIN],
-    allow_methods=["*"],
-    allow_headers=["*"],
+    # §38 F6: only the verbs/headers the dashboard actually uses.
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
 )
+
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """§38 F5: baseline security headers on every response.
+
+    The dashboard is served same-origin and never renders raw HTML, so these
+    are defense-in-depth: nosniff stops MIME-confusion, DENY blocks click-
+    jacking framing, no-referrer keeps local URLs out of third-party logs,
+    and no-store keeps book/wallet data out of any cache.
+    """
+    response = await call_next(request)
+    response.headers.setdefault("X-Content-Type-Options", "nosniff")
+    response.headers.setdefault("X-Frame-Options", "DENY")
+    response.headers.setdefault("Referrer-Policy", "no-referrer")
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault(
+            "Cache-Control", "no-store")
+    return response
 
 for module in (feed, holdings, journal, stats, market_regime,
                promotion_gate, knowledge_base, system_status):

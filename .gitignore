@@ -17,6 +17,8 @@ live_execution/state/
 wallet-keypair.json
 # Live execution ledgers (real order nonces) — never commit, wherever they land
 commits.json
+# Operator-ingested knowledge archive (runtime data, not code)
+backend/knowledge_base/ingested/
 
 # Frontend
 node_modules/

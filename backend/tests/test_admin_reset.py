@@ -244,11 +244,13 @@ async def test_reset_book_restores_cash():
 
 @pytest.mark.asyncio
 async def test_admin_reset_requires_confirm():
-    """Calling without ?confirm=yes returns 400."""
+    """Calling without ?confirm=yes returns 400 (token guard patched out —
+    it is covered separately in test_security_hardening.py)."""
     from api.routes.admin import admin_reset
     from fastapi import HTTPException
-    with pytest.raises(HTTPException) as exc_info:
-        await admin_reset(confirm="", mode="reset_book")
+    with patch("api.routes.admin.require_admin_token"):
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_reset(None, confirm="", mode="reset_book")
     assert exc_info.value.status_code == 400
 
 
@@ -257,8 +259,9 @@ async def test_admin_reset_unknown_mode_returns_400():
     """Passing an invalid mode returns 400."""
     from api.routes.admin import admin_reset
     from fastapi import HTTPException
-    with pytest.raises(HTTPException) as exc_info:
-        await admin_reset(confirm="yes", mode="wipe_everything")
+    with patch("api.routes.admin.require_admin_token"):
+        with pytest.raises(HTTPException) as exc_info:
+            await admin_reset(None, confirm="yes", mode="wipe_everything")
     assert exc_info.value.status_code == 400
 
 
@@ -280,11 +283,12 @@ async def test_admin_reset_book_returns_200():
 
     with (
         patch("api.routes.admin.db") as mock_db,
+        patch("api.routes.admin.require_admin_token"),
     ):
         mock_db.get_db = _get_db
         mock_db.reset_book = AsyncMock(return_value=mock_result)
 
-        result = await admin_reset(confirm="yes", mode="reset_book")
+        result = await admin_reset(None, confirm="yes", mode="reset_book")
 
     assert result["mode"] == "reset_book"
     assert result["reset"] is True
@@ -305,6 +309,7 @@ async def test_admin_prune_only_returns_200():
     with (
         patch("api.routes.admin.db") as mock_db,
         patch("api.routes.admin.config") as mock_cfg,
+        patch("api.routes.admin.require_admin_token"),
     ):
         mock_db.get_db = _get_db
         mock_db.prune_feed_events = AsyncMock(return_value=42)
@@ -314,7 +319,7 @@ async def test_admin_prune_only_returns_200():
         mock_cfg.INITIAL_CASH_USD = 1000.0
         mock_cfg.PAPER_TRADING_ONLY = True
 
-        result = await admin_reset(confirm="yes", mode="prune_only")
+        result = await admin_reset(None, confirm="yes", mode="prune_only")
 
     assert result["mode"] == "prune_only"
     assert result["prune_only"] is True
@@ -424,11 +429,14 @@ async def test_admin_wipe_paper_returns_200():
     async def _get_db():
         yield None
 
-    with patch("api.routes.admin.db") as mock_db:
+    with (
+        patch("api.routes.admin.db") as mock_db,
+        patch("api.routes.admin.require_admin_token"),
+    ):
         mock_db.get_db = _get_db
         mock_db.wipe_paper_book = AsyncMock(return_value=mock_result)
 
-        result = await admin_reset(confirm="yes", mode="wipe_paper")
+        result = await admin_reset(None, confirm="yes", mode="wipe_paper")
 
     assert result["mode"] == "wipe_paper"
     assert result["scope"] == "wipe_paper"

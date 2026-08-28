@@ -92,6 +92,19 @@ STATIC_KNOWLEDGE_FILE: Path = KNOWLEDGE_BASE_DIR / "static_knowledge.md"
 INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 
 # ---------------------------------------------------------------------------
+# Operator API auth (§38 security audit, finding F3).
+# ADMIN_TOKEN gates the mutating operator endpoints (POST /api/admin/reset,
+# POST /api/knowledge-base/ingest) via the X-Admin-Token header. FAIL CLOSED:
+# an empty/unset token DISABLES those endpoints entirely (403) — a destructive
+# endpoint must never be open without a credential, even on loopback.
+# ---------------------------------------------------------------------------
+ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
+
+# §38 finding F4: hard cap on one ingested knowledge document (chars).
+# Rejects oversized payloads before they touch disk, the DB, or prompt context.
+MAX_INGEST_CHARS: int = int(os.getenv("MAX_INGEST_CHARS", "200000"))
+
+# ---------------------------------------------------------------------------
 # LLM providers
 # Qwen3-8B: empirically ~23.6 tok/s on the target 6GB VRAM GPU with 100%
 # valid structured output. The LLM is the pipeline bottleneck; nothing here
