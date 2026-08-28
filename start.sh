@@ -56,17 +56,20 @@ if ! (cd "$ROOT/frontend" && npm run build --silent >"$LOGS/frontend-build.log" 
   echo "[frontend] continuing with the last successful build if present."
 fi
 
-# --- 4) Backend (+ in-process tick loop) -------------------------------------
+# --- 4) Backend (API + dashboard; paper tick loop OFF — live-only) -----------
+# The in-process PAPER tick loop is deliberately DISABLED (TICK_LOOP_IN_PROCESS=0):
+# this system trades LIVE only (see step 5). The backend still serves the API,
+# the WebSocket, and the dashboard; it just no longer runs the simulated book.
 if up http://localhost:8000/api/system-status; then
   echo "[backend] already running on :8000 — reusing"
 else
-  echo "[backend] starting uvicorn + tick loop..."
+  echo "[backend] starting uvicorn (API + dashboard, no paper tick)..."
   (
     cd "$ROOT/backend"
     # setsid detaches uvicorn into its own session: closing the terminal
     # tab or Ctrl+C-ing the script can never take the backend down with it
     # (nohup alone only blocks SIGHUP — SIGINT still killed it).
-    TICK_LOOP_IN_PROCESS=1 nohup setsid \
+    TICK_LOOP_IN_PROCESS=0 nohup setsid \
       "$ROOT/.venv/bin/python" -m uvicorn \
       api.main:app --host 127.0.0.1 --port 8000 \
       >"$LOGS/backend.log" 2>&1 </dev/null &

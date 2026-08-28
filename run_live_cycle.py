@@ -42,7 +42,7 @@ from blocklist import filter_candidates           # noqa: E402
 from data_providers import build_provider         # noqa: E402
 from data_providers.jupiter import JupiterProvider  # noqa: E402
 from llm.thinker import Thinker                   # noqa: E402
-from models import PortfolioState, Trade          # noqa: E402
+from models import FeedEvent, PortfolioState, Trade  # noqa: E402
 from rule_engine.exits import ExitInput, evaluate_exits  # noqa: E402
 from rule_engine.gate import evaluate_gate        # noqa: E402
 from rule_engine.regime import compute_market_regime  # noqa: E402
@@ -320,6 +320,67 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
                 )
 
 
+async def _journal_cycle_regime(conn, regime, candidate_count: int) -> None:
+    """Persist this cycle's market-regime snapshot, shaped exactly like the
+    paper tick's, so /api/market-regime + the regime panel show live data."""
+    await db.insert_market_regime(
+        conn,
+        computed_at=regime.computed_at,
+        candidate_count=candidate_count,
+        pct_green=regime.pct_candidates_green_1h,
+        median_vol=regime.median_volume_1h_usd,
+        avg_ratio=regime.avg_buy_sell_ratio,
+        regime_ok=regime.regime_ok,
+        detail=regime.regime_detail,
+    )
+    await db.insert_event(
+        conn, "read", datetime.now(timezone.utc).isoformat(),
+        payload={"candidate_count": candidate_count,
+                 "regime_ok": regime.regime_ok, "book": "live"},
+    )
+
+
+async def _journal_feed_event(conn, c, think, gate, regime,
+                              entry_allowed: bool) -> None:
+    """Persist the live cycle's per-candidate decision as a feed_events row,
+    shaped exactly like the paper tick's. The dashboard decision feed and the
+    WebSocket broadcaster are both DB-driven (they poll feed_events), so this
+    single write is what makes live decisions appear on the dashboard.
+    Observability only — callers wrap this fail-soft so it can never block
+    the trade path."""
+    full_thesis = think.thesis + (
+        f" | invalidates if: {think.invalidation}" if think.invalidation else ""
+    )
+    event = FeedEvent(
+        symbol=c.symbol,
+        mint_address=c.mint_address,
+        candidate_snapshot=c.to_dict(),
+        verdict="pass" if entry_allowed else "fail",
+        thesis=full_thesis,
+        rule_breakdown=[
+            {"rule_id": r.rule_id, "passed": r.passed,
+             "detail": r.detail, "value": r.value}
+            for r in gate.rules
+        ],
+        failed_rule_ids=gate.failed_rule_ids,
+        regime_ok=regime.regime_ok,
+        grounding_flags=think.grounding_flags,
+        narration_source=getattr(think, "source", "unknown"),
+    )
+    if getattr(think, "llm_usage", None):
+        event.model_version = think.llm_usage.model
+        event.prompt_version = think.llm_usage.pricing_snapshot_id
+    event.id = await db.insert_feed_event(conn, event)
+    await db.insert_event(
+        conn, "did" if entry_allowed else "refused",
+        datetime.now(timezone.utc).isoformat(),
+        c.symbol, c.mint_address,
+        {"entry_allowed": entry_allowed,
+         "failed_rule_ids": list(gate.failed_rule_ids),
+         "model_verdict": think.verdict, "book": "live"},
+    )
+
+
 async def run_cycle(once: bool = False) -> dict:
     """One full cycle. Returns a step-by-step outcome record, refusals included."""
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
@@ -378,6 +439,14 @@ async def run_cycle(once: bool = False) -> dict:
             log.warning("social read failed - continuing without it", exc_info=True)
 
     regime = compute_market_regime(candidates)
+    # Persist the regime snapshot + a per-candidate decision feed so the
+    # dashboard (regime panel + decision feed + WebSocket) shows live data.
+    # Fail-soft: observability never blocks the trade path.
+    try:
+        async with db.get_db() as conn:
+            await _journal_cycle_regime(conn, regime, len(candidates))
+    except Exception:
+        log.warning("regime journal failed (non-fatal)", exc_info=True)
     thinker = Thinker()
     outcome = {"entries": [], "exits": [], "regime_ok": regime.regime_ok,
                "candidates": len(candidates),
@@ -401,6 +470,15 @@ async def run_cycle(once: bool = False) -> dict:
         log.info("%s think=%s gate=%s%s", c.symbol, think.verdict,
                  "PASS" if gate.all_passed else "FAIL:" + ",".join(failed),
                  "" if entry_allowed else " -> refused")
+        # Persist the decision to the public feed (dashboard + WebSocket).
+        # Fail-soft: a feed write must never block or alter the trade path.
+        try:
+            async with db.get_db() as conn:
+                await _journal_feed_event(conn, c, think, gate, regime,
+                                          entry_allowed)
+        except Exception:
+            log.warning("feed journal failed for %s (non-fatal)",
+                        c.symbol, exc_info=True)
         if not entry_allowed:
             continue
         cash = portfolio.cash_usd
