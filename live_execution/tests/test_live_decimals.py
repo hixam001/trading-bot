@@ -73,7 +73,7 @@ async def test_get_quote_fails_closed_without_decimals(env_quote, monkeypatch):
     """Unknown decimals must refuse to quote — never guess 9."""
     def _boom(*a, **k):
         raise AssertionError("network call attempted after refusal!")
-    monkeypatch.setattr(je, "_post_json", _boom)
+    monkeypatch.setattr(je, "_get_json", _boom)
     with pytest.raises(je.Refusal, match="UNKNOWN decimals"):
         await je.get_jupiter_quote(
             "SomeMint1111111111111111111111111111111111", None, 10.0)
@@ -83,7 +83,7 @@ async def test_get_quote_fails_closed_without_decimals(env_quote, monkeypatch):
 def env_quote(monkeypatch, tmp_path):
     """
     Minimal armed environment + captured-quote hook. The fixture object gets
-    a mutable `response` attribute that fake _post_json returns for quotes.
+    a mutable `response` attribute that fake _get_json returns for quotes.
     """
     import live_execution.config as le_config
 
@@ -96,10 +96,10 @@ def env_quote(monkeypatch, tmp_path):
 
     holder = Holder()
 
-    async def fake(url, payload):
+    async def fake(url, params):
         if url.endswith("/quote"):
             return holder.response
         raise AssertionError(f"unexpected call to {url}")
 
-    monkeypatch.setattr(je, "_post_json", fake)
+    monkeypatch.setattr(je, "_get_json", fake)
     return holder

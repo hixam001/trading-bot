@@ -31,12 +31,13 @@ from typing import Optional
 from live_execution import config, kill_switch, memo, solana, wallet
 from live_execution.confirmation_queue import ConfirmationError
 from live_execution.jupiter_executor import (
+    ExecutionError,
     Refusal,
     USDC_DECIMALS,
     _BACKEND_QUOTE_URL,
     _BACKEND_USDC_MINT,
     _build_swap_transaction,
-    _post_json,
+    _get_json,
     _sign_transaction,
     default_ledger,
     default_queue,
@@ -210,22 +211,36 @@ async def place_buy(
     try:
         q = await get_jupiter_quote(mint, output_decimals, usd, ledger=ledger)
     except Refusal as exc:
+        logc.fail(sealed["hash"], f"quote refused: {exc}")
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": str(exc), **commit_fields})
     except ExecutionError as exc:
+        logc.fail(sealed["hash"], f"quote failed: {exc}")
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": str(exc), **commit_fields})
+    except Exception as exc:
+        # Fail closed on ANY unexpected quote-phase error and journal it —
+        # never let it crash the cycle (defense-first).
+        logc.fail(sealed["hash"], f"quote crashed: {type(exc).__name__}: {exc}")
         return OrderResult(**{**base.to_json(), "status": "failed",
                               "reason": str(exc), **commit_fields})
 
     impact = quote_impact_pct(q["quote"])
     if impact > config.MAX_PRICE_IMPACT_PCT:
+        reason = f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"
+        logc.fail(sealed["hash"], reason)
         return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%",
-                              **commit_fields})
+                              "reason": reason, **commit_fields})
 
     try:
         swap_b64 = await _build_swap_transaction(q["quote"], addr)
         outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed)
-    except ExecutionError as exc:
+    except Exception as exc:
+        # ANY build/sign/broadcast error (ExecutionError or not) fails closed
+        # and lands in the journal. The first real armed order died on an
+        # AttributeError here and the commit stayed 'published' with no
+        # explanation — that must never happen again.
+        logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
         return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
                               "price_impact_pct": impact, **commit_fields})
 
@@ -238,6 +253,11 @@ async def place_buy(
         outcome.tokens = q["tokens_out"]
         outcome.price_impact_pct = impact
         log.info("FILLED buy %s $%.2f -> %.6f tokens sig %s", mint[:8], usd, q["tokens_out"], outcome.signature)
+    else:
+        # Honest journal: a commit whose fill did not confirm is marked failed
+        # so the dashboard shows WHY the enter didn't execute (commit_log
+        # contract: a skipped trade must be as visible as an executed one).
+        logc.fail(sealed["hash"], outcome.reason or "fill not confirmed")
     outcome.commit_hash = sealed["hash"]
     outcome.commit_nonce = sealed["nonce"]
     outcome.commit_payload = intent
@@ -332,31 +352,43 @@ async def place_sell(
                          memo_slot=memo_res["slot"])
 
     try:
-        quote = await _post_json(_BACKEND_QUOTE_URL, {
+        # Jupiter's /swap/v1/quote is a GET endpoint (query params). POST
+        # returns 405 — the same bug the buy path had. The sell path builds
+        # its own quote (token -> USDC) so it must use the GET helper too.
+        quote = await _get_json(_BACKEND_QUOTE_URL, {
             "inputMint": mint,
             "outputMint": _BACKEND_USDC_MINT,
             "amount": str(amount_raw),
             "slippageBps": str(config.SLIPPAGE_BPS),
         })
     except ExecutionError as exc:
+        logc.fail(sealed["hash"], f"quote failed: {exc}")
+        return OrderResult(**{**base.to_json(), "status": "failed",
+                              "reason": f"quote: {exc}", **commit_fields})
+    except Exception as exc:
+        logc.fail(sealed["hash"], f"quote crashed: {type(exc).__name__}: {exc}")
         return OrderResult(**{**base.to_json(), "status": "failed",
                               "reason": f"quote: {exc}", **commit_fields})
     out_raw = quote.get("outAmount")
     if out_raw is None:
+        logc.fail(sealed["hash"], "no route quoted for this mint")
         return OrderResult(**{**base.to_json(), "status": "failed",
                               "reason": "no route quoted for this mint", **commit_fields})
 
     impact = quote_impact_pct(quote)
     if impact > config.MAX_PRICE_IMPACT_PCT:
+        reason = f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"
+        logc.fail(sealed["hash"], reason)
         return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%",
-                              **commit_fields})
+                              "reason": reason, **commit_fields})
     proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
 
     try:
         swap_b64 = await _build_swap_transaction(quote, addr)
         outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed)
-    except ExecutionError as exc:
+    except Exception as exc:
+        # Same fail-closed contract as the buy path (see comment there).
+        logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
         return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
                               "price_impact_pct": impact, **commit_fields})
 
@@ -369,6 +401,9 @@ async def place_sell(
         outcome.tokens = sell_amount
         outcome.price_impact_pct = impact
         log.info("FILLED sell %s %.4f tokens -> $%.2f sig %s", mint[:8], sell_amount, proceeds_usd, outcome.signature)
+    else:
+        # Honest journal (same contract as the buy path).
+        logc.fail(sealed["hash"], outcome.reason or "fill not confirmed")
     outcome.commit_hash = sealed["hash"]
     outcome.commit_nonce = sealed["nonce"]
     outcome.commit_payload = intent

@@ -1,9 +1,24 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (§35 FRONTEND REBUILT — terminal design system + Playwright E2E; STATE_DIR empty-env bug found+fixed; 501 backend tests + 5 E2E green; bot LIVE and ARMED).**
+**As of 2026-08-28 (§36 LIVE EXECUTION UNBLOCKED — quote-GET fix + ExecutionError import + solders from_bytes + honest fail journal; Journal + Holdings pages restored; /api/live/executions; 506 backend tests + 8 E2E green; bot LIVE and ARMED, first impact-floor refusal journalled).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §36 live execution unblocked + Journal/Holdings pages (2026-08-28)
+Three stacked bugs blocked every armed order: (1) quote POSTed to a GET
+endpoint (405) — buy + sell paths now use the new `_get_json`; (2)
+`ExecutionError` caught but never imported in `executor.py` → NameError
+crashed the cycle on the first quote failure; (3) solders 0.29 has no
+`VersionedTransaction.deserialize` → `from_bytes`. Hardening: every
+post-memo failure now journals `logc.fail(hash, reason)` (commit_log
+contract: a skipped trade as visible as an executed one) and the
+build/sign/broadcast phase catches all exceptions fail-closed. Live proof:
+GTA6 buy sealed → memo on-chain → quote 200 → blocked at 2.5% impact floor
+(5.30%) → journalled with reason; no crashes since. New read-only
+`/api/live/executions` (commits lifecycle + money ledger); frontend Journal
++ Holdings pages restored as live-only views with a three-page tab bar;
++3 E2E tests (8/8), +5 unit tests (506). Handoff §36.
+
 ### §35 frontend rebuild + STATE_DIR fix (2026-08-28)
 Operator-directed rebuild using the awesome-design-skills pack + Playwright.
 `frontend/DESIGN.md` is now the UI source of truth (token-only colors in

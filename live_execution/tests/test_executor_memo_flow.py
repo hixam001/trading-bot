@@ -193,3 +193,122 @@ async def test_disarmed_refuses_before_anything(env, monkeypatch):
     res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
                              idempotency_key="k6", ledger=ledger)
     assert res.status == "unarmed"
+
+
+# --- regressions: the two bugs that blocked ALL live executions (2026-08-28) --
+# 1) ExecutionError was caught in four except-clauses but never imported, so
+#    the FIRST quote failure crashed the whole cycle with NameError instead of
+#    returning status="failed".
+# 2) the sell path quoted via POST; Jupiter's /swap/v1/quote is GET (POST 405).
+
+def _arm_sell_network(monkeypatch, calls):
+    """Mock memo + GET-quote + build + sign + send + confirm for the SELL path."""
+
+    async def fake_memo(payer, seal_hash, endpoints=None):
+        calls.append("memo")
+        return {"signature": "MEMOSIG", "slot": 5}
+
+    async def fake_get(url, params):
+        calls.append({"verb": "get", "url": url, "params": params})
+        if url.endswith("/quote"):
+            # selling 1.0 token (6-dec mint) -> $1.20 USDC out
+            return {"outAmount": str(1_200_000), "priceImpactPct": "0.001"}
+        raise AssertionError(f"unexpected GET {url}")
+
+    async def fake_build(quote, addr):
+        calls.append("build")
+        return base64.b64encode(b"swap").decode()
+
+    def fake_sign(b64, payer):
+        calls.append("sign")
+        return "FILLSIG", b"raw"
+
+    async def fake_send(raw, endpoints=None):
+        calls.append("send")
+        return "FILLSIG"
+
+    async def fake_confirm(sig, timeout_s=None, endpoints=None):
+        calls.append("confirm")
+        return {"confirmed": True, "slot": 11, "err": None}
+
+    async def fake_decimals(mint):
+        return 6
+
+    monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
+    monkeypatch.setattr(ex, "_get_json", fake_get)
+    monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
+    monkeypatch.setattr(ex, "_sign_transaction", fake_sign)
+    monkeypatch.setattr(ex.solana, "send_raw_transaction", fake_send)
+    monkeypatch.setattr(ex.solana, "confirm_signature", fake_confirm)
+    monkeypatch.setattr(ex.solana, "get_mint_decimals", fake_decimals)
+
+
+def _ledger_with_open_position(env, key="kopen"):
+    ledger = ExecutionLedger(env / "exec.json")
+    ledger.record_buy(idempotency_key=key, mint="MINT", usd_size=1.0,
+                      tokens_out=1.0, price_usd=1.0, signature="OPENSIG",
+                      status="confirmed")
+    return ledger
+
+
+async def test_buy_quote_failure_returns_failed_not_nameerror(env, monkeypatch):
+    """A quote-phase ExecutionError must yield status='failed' — NOT crash the
+    cycle with NameError (ExecutionError was used but never imported)."""
+    order = []
+    _arm_balances(monkeypatch)
+    _arm_fill(monkeypatch, order)
+
+    async def boom_quote(mint, decimals, usd, ledger=None):
+        raise ex.ExecutionError("giving up on quote after 3 attempts")
+
+    monkeypatch.setattr(ex, "get_jupiter_quote", boom_quote)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
+                             idempotency_key="kq1", ledger=ledger)
+
+    assert res.status == "failed"
+    assert "giving up" in res.reason
+    assert res.memo_signature == "MEMOSIG"   # memo went out; fill did not
+    assert "send" not in order
+
+
+async def test_sell_quote_uses_get_and_full_flow_fills(env, monkeypatch):
+    """The sell quote must go out as GET with query params (POST -> 405 was
+    the second execution blocker), and the full sell flow fills + closes the
+    ledger position."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls)
+    ledger = _ledger_with_open_position(env)
+
+    res = await ex.place_sell("MINT", "SYM", 1.0, ledger=ledger)
+
+    assert res.status == "filled"
+    quote_calls = [c for c in calls
+                   if isinstance(c, dict) and c["verb"] == "get"]
+    assert len(quote_calls) == 1
+    assert quote_calls[0]["url"].endswith("/swap/v1/quote")
+    assert quote_calls[0]["params"]["inputMint"] == "MINT"
+    assert quote_calls[0]["params"]["outputMint"] == ex._BACKEND_USDC_MINT
+    assert res.usd_value == pytest.approx(1.20)
+    assert ledger.open_token_amounts().get("MINT", 0.0) == 0.0
+
+
+async def test_sell_quote_failure_returns_failed_not_nameerror(env, monkeypatch):
+    """Sell-side twin of the buy regression: quote failure -> status='failed'."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls)
+
+    async def boom_get(url, params):
+        raise ex.ExecutionError("giving up on quote after 3 attempts")
+
+    monkeypatch.setattr(ex, "_get_json", boom_get)
+    ledger = _ledger_with_open_position(env, key="kopen2")
+
+    res = await ex.place_sell("MINT", "SYM", 1.0, ledger=ledger)
+
+    assert res.status == "failed"
+    assert "quote" in res.reason
+    assert "send" not in calls

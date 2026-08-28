@@ -1,3 +1,39 @@
+## Memory-bank update - 2026-08-28 (§36 live execution unblocked + Journal/Holdings restored)
+
+- **Task**: operator reported "the bot says enter but it doesn't execute any
+  transaction" and "the journal page and the other page is gone".
+- **Root cause (three stacked bugs, all in `live_execution/`)**: (1) the buy
+  quote POSTed to Jupiter's GET-only `/swap/v1/quote` → 405 ×3 (the sell path
+  had its own inline POST quote — same bug); (2) `executor.py` caught
+  `ExecutionError` in four except-clauses without importing it → the first
+  quote failure crashed the cycle with NameError; (3) solders 0.29 has no
+  `VersionedTransaction.deserialize` (parse constructor is `from_bytes`) —
+  the first order that survived the quote (GTA6: quote 200, swap 200) died at
+  signing. None of the three was reachable by the mocked test suite; each was
+  fail-closed (no order ever went out wrong), but together they blocked all.
+- **Fixes**: new `_get_json` GET helper (buy + sell quotes), import fix,
+  `from_bytes`, and honest-journal hardening — every post-memo failure now
+  calls `logc.fail(hash, reason)` and the network phase catches all
+  exceptions fail-closed (no crash can leave a commit stuck at `published`
+  without explanation again).
+- **Live proof (ARMED mainnet)**: GTA6 `think=buy gate=PASS` → sealed → memo
+  on-chain → quote GET 200 → blocked at the 2.5% price-impact floor (5.30%)
+  → journalled `failed | price impact 5.30% above floor 2.5%`. Zero cycle
+  crashes since; the first fill is market-dependent (needs a candidate under
+  the impact floor) — the machinery is proven end-to-end.
+- **Restored pages**: Journal (order decisions with lifecycle badges +
+  expandable proof: fail reason, commit hash, memo/fill solscan links — plus
+  the money ledger) and Holdings (live positions detail), behind a new
+  read-only `/api/live/executions`; three-page tab bar (dashboard/holdings/
+  journal). The pages were removed with the paper components in b49bb10; they
+  are back as live-only views.
+- **Tests**: +5 unit (GET-verb MockTransport proof, buy/sell quote-failure →
+  failed-not-NameError, sell full-flow fill + ledger reduce, real-solders
+  signing round-trip) → 506 passing; +3 E2E (tab nav, holdings, journal
+  proof-expand) → 8/8 Playwright.
+- **Docs**: handoff §36 + header counts; activeContext/progress/decisionLog
+  #49; project report §20. Committed + pushed (no contributor trailers).
+
 ## Memory-bank update - 2026-08-28 (§35 frontend rebuild + STATE_DIR fix session)
 
 - **Task**: "rebuild the frontend, use all .clinerules skills especially

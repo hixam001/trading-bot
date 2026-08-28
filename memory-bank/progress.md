@@ -1,6 +1,15 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §36 live execution UNBLOCKED + Journal/Holdings restored (handoff §36)
+      (2026-08-28): three stacked bugs fixed — quote verb (POST→GET via new
+      `_get_json`, buy AND sell paths), `ExecutionError` import NameError,
+      solders `from_bytes` (no `.deserialize` in 0.29); every post-memo
+      failure now journalled via `logc.fail` + network phase catches all
+      exceptions fail-closed; live proof: GTA6 sealed→memo→quote 200→blocked
+      at 2.5% impact floor (5.30%) with honest journal reason; new read-only
+      `/api/live/executions`; Journal + Holdings pages restored (three-page
+      tab bar, proof-expand rows with solscan links); 506 unit + 8 E2E green.
 - [x] §35 frontend rebuild + STATE_DIR fix (handoff §35) (2026-08-28):
       terminal design system (`frontend/DESIGN.md`, token-only
       `tailwind.config.js`, shared `lib/format.ts` + `components/ui.tsx`);

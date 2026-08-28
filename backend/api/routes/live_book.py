@@ -174,3 +174,57 @@ async def _build(request: Request) -> dict:
         "count": len(positions),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }
+
+
+@router.get("/api/live/executions")
+async def get_live_executions(request: Request):
+    """The LIVE order journal — why an enter did or did not become a fill.
+
+    Two read-only views of the live_execution state dir:
+      * commits — every sealed order decision with its full lifecycle
+                  (sealed -> published memo -> bound fill, or failed + reason)
+      * records — the execution ledger's money movements (buys and closes)
+
+    Same fail-soft contract as /api/live/portfolio: never 500s, never
+    fabricates a number, degrades to {"enabled": false, "reason": ...}.
+    """
+    try:
+        return _build_executions()
+    except Exception as exc:
+        log.warning("live executions unreadable: %s", exc, exc_info=True)
+        return _disabled(f"unreadable: {exc}")
+
+
+def _build_executions() -> dict:
+    try:
+        from live_execution import config as le_config
+        from live_execution.commit_log import CommitLog
+        from live_execution.models import ExecutionLedger
+    except ImportError:
+        return _disabled("live_execution package not importable")
+
+    if not getattr(le_config, "LIVE_TRADING_ENABLED", False):
+        return _disabled("disarmed (LIVE_TRADING_ENABLED=False)")
+
+    commits = CommitLog(le_config.STATE_DIR / "commits.json").recent(limit=100)
+    ledger = ExecutionLedger(le_config.STATE_DIR / "executions.json")
+    try:
+        records = list(reversed(ledger._load()[-100:]))   # newest first
+    except RuntimeError as exc:
+        return _disabled(f"ledger corrupt: {exc}")
+
+    return {
+        "enabled": True,
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "commits": commits,
+        "records": records,
+        "totals": {
+            "commits": len(commits),
+            "bound": sum(1 for c in commits if c.get("status") == "bound"),
+            "failed": sum(1 for c in commits if c.get("status") == "failed"),
+            "published_unfilled": sum(
+                1 for c in commits if c.get("status") == "published"),
+            "buys": sum(1 for r in records if r.get("kind") == "buy"),
+            "closes": sum(1 for r in records if r.get("kind") == "close"),
+        },
+    }

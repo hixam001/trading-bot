@@ -1,9 +1,10 @@
 # 07 — Project Report
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
-Solana memecoins. Report updated 2026-08-28 from the current main branch.
-Status: **live** (real market data, simulated funds; optional
-Supabase Postgres persistence).
+Solana memecoins. Report updated 2026-08-28 from the current main branch
+(§36: live execution unblocked — first real orders reach the chain guards;
+Journal + Holdings pages restored). Status: **live** (real market data,
+simulated funds; optional Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
 risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
 precommit memo, commit–reveal) + micro-bootstrap implemented 2026-08-27
@@ -1099,4 +1100,54 @@ the state dir; `/commits.json` and Playwright artifacts were gitignored.
 - `npm run build` clean (tsc strict + vite); **Playwright 5/5 passing**;
   **pytest 501 passing** (backend 385 + live_execution 116).
 - Restart smoke: system-status / live/portfolio / feed / market-regime all
+
+## 20. Live execution UNBLOCKED + Journal/Holdings restored (2026-08-28, handoff §36)
+
+Operator report: "the bot says enter but it doesn't execute any transaction"
+and "the journal page and the other page is gone". Three stacked bugs in
+`live_execution/` were blocking **every** armed order; all fixed, then the two
+missing pages were restored as live-only views.
+
+**The three blockers (each fail-closed, none reachable by the mocked suite):**
+- **Quote verb** — `get_jupiter_quote` POSTed to Jupiter's GET-only
+  `/swap/v1/quote` → 405 ×3 → `ExecutionError`. The sell path built its own
+  inline POST quote too. Both now use a new `_get_json` helper (GET twin of
+  `_post_json`, same 3-attempt/429 semantics).
+- **`NameError: ExecutionError`** — `executor.py` caught it in four
+  except-clauses but never imported it, so the first quote failure crashed
+  the whole cycle instead of returning `status="failed"`.
+- **`VersionedTransaction.deserialize` doesn't exist** — solders 0.29's parse
+  constructor is `from_bytes`. The first order past the quote (GTA6: quote
+  200, swap 200) died at signing. The drill/memo paths were unaffected (they
+  build from a `Message`, never parse Jupiter bytes).
+
+**Hardening (defense-first):** every post-memo failure phase now journals
+`logc.fail(hash, reason)` — quote refused/failed/crashed, impact floor,
+build/sign/broadcast error, unconfirmed fill — and the network phase catches
+all exceptions fail-closed. The CommitLog contract ("a skipped trade must be
+as visible as an executed one") is now actually enforced; before, a failed
+fill left the commit stuck at `published` with no explanation.
+
+**Live proof (ARMED mainnet):** GTA6 `think=buy gate=PASS` → sealed → memo
+on-chain → quote GET 200 → **blocked at the 2.5% price-impact floor (5.30%)**
+→ journalled `failed | price impact 5.30% above floor 2.5%`. The pipeline now
+runs end-to-end; the first fill lands when a candidate quotes under the floor
+(market-dependent — the machinery is proven). Zero cycle crashes since.
+
+**New endpoint + pages:**
+- `GET /api/live/executions` (read-only, fail-soft): the CommitLog order
+  lifecycle (sealed→published→bound/failed + fail_reason + memo/fill sigs) +
+  the ExecutionLedger money movements.
+- Frontend **Journal** page (order decisions with status badges + expandable
+  proof rows: fail reason, commit hash, memo/fill solscan links; plus the
+  money ledger) and **Holdings** page (live positions detail), behind a
+  three-page tab bar (dashboard / holdings / journal). These answers "why
+  didn't it buy?" directly in the UI.
+
+**Verification:** +5 unit tests (GET-verb MockTransport proof, buy/sell
+quote-failure→failed-not-NameError, sell full-flow GET fill + ledger reduce,
+real-solders signing round-trip) → **506 passing**; +3 E2E (tab navigation,
+holdings data/empty, journal proof-expand) → **8/8 Playwright**; `npm run
+build` clean; live endpoints 200.
+
   200; no `commits.json` at the repo root.

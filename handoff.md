@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 501 backend/live_execution passing + 5 Playwright E2E (suite
+**Tests:** 506 backend/live_execution passing + 8 Playwright E2E (suite
 fully green; the flag-state canary now pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -2056,4 +2056,72 @@ Playwright artifacts added to `.gitignore`; app restarted clean.
   and terminal-true.
 - Live smoke after restart: system-status / live/portfolio / feed /
   market-regime all 200; no `commits.json` at repo root.
+
+## 36. Live execution UNBLOCKED + Journal/Holdings pages restored (2026-08-28)
+
+Operator report: "the bot says enter but it doesn't execute any transaction"
++ "the journal page and the other page are gone". Root-caused and fixed the
+three stacked bugs that blocked EVERY armed order, then restored the two
+missing pages as live-only views.
+
+**The three execution blockers (all in `live_execution/`):**
+1. **Quote verb bug** — `get_jupiter_quote` POSTed to
+   `https://lite-api.jup.ag/swap/v1/quote`, which is a **GET** endpoint →
+   405 ×3 retries → `ExecutionError`. (The paper side always GETs it; the
+   live module docstring even says so.) Fixed: new `_get_json` helper
+   (GET-with-query-params twin of `_post_json`, same 3-attempt/429
+   semantics); the buy quote uses it. The **sell path** built its own inline
+   quote with `_post_json` too — same 405 — switched to `_get_json`.
+2. **`NameError: ExecutionError`** — `executor.py` caught `ExecutionError`
+   in four `except` clauses but never imported it, so the FIRST quote
+   failure crashed the whole cycle instead of returning `status="failed"`.
+   Fixed: imported; `_post_json` import dropped (unused after #1).
+3. **`VersionedTransaction.deserialize` doesn't exist** — solders 0.29's
+   parse constructor is `from_bytes`. The first order that survived the
+   quote (GTA6, 16:22 — quote 200 OK, swap build 200 OK) died at signing.
+   Fixed in `_sign_transaction`; the drill/memo paths were never affected
+   (they build from a `Message`, they never parse Jupiter bytes).
+
+**Hardening (defense-first, all fail-closed + journalled):**
+- Every post-memo failure phase in `place_buy`/`place_sell` now calls
+  `logc.fail(sealed_hash, reason)` — quote refused/failed/crashed, impact
+  floor, build/sign/broadcast error, unconfirmed fill. The CommitLog's own
+  contract: "a skipped trade must be as visible as an executed one." Before
+  this, a failed fill left the commit stuck at `published` forever with no
+  explanation — exactly the "says enter but nothing happens" opacity.
+- The build/sign/broadcast phase now catches `Exception` (not just
+  `ExecutionError`): no network-phase error can crash the cycle again.
+
+**Live proof (ARMED, real mainnet):** 16:36 cycle — GTA6 `think=buy
+gate=PASS` → sealed → memo on-chain → quote GET 200 → **blocked at the
+2.5% price-impact floor (5.30%)** → commit journalled
+`failed | price impact 5.30% above floor 2.5%`. The whole pipeline now runs
+end-to-end; the first fill lands when a candidate quotes under the impact
+floor (market-dependent; the machinery is proven). No `cycle crashed` since.
+
+**New endpoint — `GET /api/live/executions`** (`api/routes/live_book.py`):
+read-only view of the live state dir — `commits` (CommitLog, newest 100,
+full lifecycle sealed→published→bound/failed + fail_reason + memo/fill
+signatures) + `records` (ExecutionLedger money movements, newest 100) +
+totals. Same fail-soft contract as `/api/live/portfolio` (never 500s,
+degrades to `{"enabled": false, "reason": ...}`).
+
+**Frontend — Journal + Holdings pages restored** (removed in b49bb10 with
+the paper components; the operator wanted them back as live pages):
+- `App.tsx` — three-page tab bar (dashboard / holdings / journal), plain
+  buttons with `aria-current`, keyboard-operable.
+- `components/Holdings.tsx` — live positions detail (size/entry/mark/value/
+  uP&L/opened/mint) from `/api/live/portfolio`; documented empty state.
+- `components/Journal.tsx` — order-decisions table (status badges:
+  filled / memo-only-no-fill / sealed / failed; expandable proof row with
+  fail reason, commit hash, memo + fill solscan links) + money-ledger table.
+  This page answers "why didn't it buy?" directly.
+- Types: `LiveCommitEntry`, `LiveExecutionRecord`, `LiveExecutionsResponse`.
+- Playwright: +3 tests (tab navigation, holdings data/empty, journal proof
+  expand) → **8/8 E2E passing**.
+
+**Tests:** +5 (quote-GET verb regression incl. MockTransport proof,
+buy/sell quote-failure→failed-not-NameError, sell full-flow GET fill +
+ledger reduce, real-solders signing round-trip) → **506 passing**.
+
 

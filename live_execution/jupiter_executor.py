@@ -155,7 +155,10 @@ def preflight(
 
 
 # ---------------------------------------------------------------------------
-# HTTP helper — bounded retries, distinct 429 handling (parity w/ paper side)
+# HTTP helpers — bounded retries, distinct 429 handling (parity w/ paper side)
+# NOTE: Jupiter's /swap/v1/quote is a GET endpoint with query params (the
+# paper side GETs it); POST returns 405. /swap/v1/swap and the RPC are POST.
+# So there are two helpers, each used only for its correct verb.
 # ---------------------------------------------------------------------------
 
 async def _post_json(url: str, payload: dict) -> dict:
@@ -174,6 +177,27 @@ async def _post_json(url: str, payload: dict) -> dict:
         except (httpx.HTTPError, ValueError) as exc:
             last = exc
             log.warning("call failed (attempt %d/3): %s", attempt, exc)
+        await asyncio.sleep(2.0 * attempt)
+    raise ExecutionError(f"giving up on {url} after 3 attempts") from last
+
+
+async def _get_json(url: str, params: dict) -> dict:
+    """GET-with-query-params twin of _post_json (quote endpoint is GET)."""
+    last: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(url, params=params)
+            if resp.status_code == 429:
+                raise ProviderError(f"HTTP 429 from {url}")
+            resp.raise_for_status()
+            return resp.json()
+        except ProviderError as exc:
+            last = exc
+            log.warning("rate_limited: %s attempt %d/3", exc, attempt)
+        except (httpx.HTTPError, ValueError) as exc:
+            last = exc
+            log.warning("quote call failed (attempt %d/3): %s", attempt, exc)
         await asyncio.sleep(2.0 * attempt)
     raise ExecutionError(f"giving up on {url} after 3 attempts") from last
 
@@ -201,7 +225,7 @@ async def get_jupiter_quote(
     # shared unit-math helper, not a local 10**6.
     amount_raw = int(round(usd_size * raw_units_for_one_token(USDC_DECIMALS)))
 
-    data = await _post_json(
+    data = await _get_json(
         _BACKEND_QUOTE_URL,
         {
             "inputMint": input_mint,
@@ -258,7 +282,10 @@ def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
     from solders.transaction import VersionedTransaction  # type: ignore
 
     raw_unsigned = base64.b64decode(swap_b64)
-    tx = VersionedTransaction.deserialize(raw_unsigned)
+    # solders 0.29 parse constructor is from_bytes — there is NO .deserialize.
+    # That call crashed the first real armed order (AttributeError) after the
+    # quote+swap phases had already succeeded. Regression-tested offline.
+    tx = VersionedTransaction.from_bytes(raw_unsigned)
     signed = VersionedTransaction(tx.message, [payer])
     signature = str(signed.signatures[0])
     return signature, bytes(signed)

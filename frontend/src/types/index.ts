@@ -171,3 +171,56 @@ export interface LivePortfolioResponse {
   count?: number
   generated_at_utc?: string
 }
+
+/** One sealed order decision from the live CommitLog (state/commits.json).
+ *  Lifecycle: sealed -> published (memo on-chain) -> bound (fill confirmed),
+ *  or failed (+ fail_reason) when the fill phase could not complete. */
+export interface LiveCommitEntry {
+  kind: string
+  nonce: string
+  payload: {
+    kind?: string
+    mint?: string
+    symbol?: string
+    usd?: number
+    fraction?: number
+  }
+  hash: string
+  sealed_at: number
+  signature: string | null
+  status: 'sealed' | 'published' | 'bound' | 'failed'
+  memo_signature: string | null
+  memo_slot: number | null
+  memo_published_at: number | null
+  fail_reason?: string
+}
+
+/** One money movement from the live ExecutionLedger (state/executions.json). */
+export interface LiveExecutionRecord {
+  kind: 'buy' | 'close'
+  idempotency_key: string
+  mint: string
+  usd_size: number
+  tokens_out: number
+  price_usd: number
+  signature: string
+  status: string
+  ts: number
+  pnl_usd: number | null
+}
+
+export interface LiveExecutionsResponse {
+  enabled: boolean
+  reason?: string
+  generated_at_utc?: string
+  commits?: LiveCommitEntry[]
+  records?: LiveExecutionRecord[]
+  totals?: {
+    commits: number
+    bound: number
+    failed: number
+    published_unfilled: number
+    buys: number
+    closes: number
+  }
+}

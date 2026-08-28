@@ -133,16 +133,22 @@ def test_missing_wallet_refuses_before_network(env, monkeypatch):
             "MINT", 6, 10.0, idempotency_key="k8"))
 
 
-# --- quote math + request shape (mocked _post_json; no real network) ----------
+# --- quote math + request shape (mocked _get_json/_post_json; no real network) ---
 
 def capture_post(monkeypatch, response: dict) -> list[dict]:
+    """>> Returned list entries are {"verb","url","payload"|"params"}."""
     calls: list[dict] = []
 
-    async def fake(url, payload):
-        calls.append({"url": url, "payload": payload})
+    async def fake_post(url, payload):
+        calls.append({"verb": "post", "url": url, "payload": payload})
         return response
 
-    monkeypatch.setattr(je, "_post_json", fake)
+    async def fake_get(url, params):
+        calls.append({"verb": "get", "url": url, "params": params})
+        return response
+
+    monkeypatch.setattr(je, "_post_json", fake_post)
+    monkeypatch.setattr(je, "_get_json", fake_get)
     return calls
 
 
@@ -154,12 +160,13 @@ def test_quote_happy_path_six_decimals(env, monkeypatch):
 
     assert q["tokens_out"] == pytest.approx(0.691)
     assert q["price_usd"] == pytest.approx(10.0 / 0.691)
-    assert calls[0]["payload"]["amount"] == str(10_000_000)      # USDC 6-dec,
-    # computed via the IMPORTED raw_units_for_one_token(6), not a literal.
-    assert calls[0]["payload"]["outputMint"] == "MINT"
-    assert "quote-api.jup.ag" not in calls[0]["url"]             # dead endpoint gone
+    assert calls[0]["verb"] == "get"                      # quote is a GET!
     assert calls[0]["url"] == "https://lite-api.jup.ag/swap/v1/quote"
-    assert calls[0]["url"] == je._BACKEND_QUOTE_URL              # single source
+    assert calls[0]["url"] == je._BACKEND_QUOTE_URL       # single source
+    assert calls[0]["params"]["amount"] == str(10_000_000)  # USDC 6-dec,
+    # computed via the IMPORTED raw_units_for_one_token(6), not a literal.
+    assert calls[0]["params"]["outputMint"] == "MINT"
+    assert "quote-api.jup.ag" not in calls[0]["url"]      # dead endpoint gone
 
 
 def test_quote_happy_path_nine_decimals_in_cap(env, monkeypatch):
@@ -175,6 +182,74 @@ def test_quote_garbage_out_amount_fails_closed(env, monkeypatch):
     capture_post(monkeypatch, {"outAmount": "not-a-number"})
     with pytest.raises(je.ExecutionError, match="unparseable outAmount"):
         asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
+
+
+# --- regression: quote REALLY goes out as GET with query params -------------
+
+def test_quote_uses_http_get_with_query_params(env, monkeypatch):
+    """The bug that blocked all live executions: POST /swap/v1/quote returns
+    405 (Jupiter's quote endpoint is GET with query params — the paper side
+    has always GET it). This test drives the real _get_json through an
+    httpx.MockTransport and asserts (a) the actual HTTP verb is GET, and
+    (b) _post_json is NOT used for the quote — so a revert to POST trips it.
+    """
+    import httpx
+
+    seen = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["url"] = str(request.url)
+        return httpx.Response(200, json={"outAmount": "1000000"})
+
+    def _boom(*a, **k):
+        raise AssertionError("quote must use GET (_get_json), not POST!")
+    monkeypatch.setattr(je, "_post_json", _boom)
+
+    async def bound_get(url, params):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as c:
+            r = await c.get(url, params=params)
+            return r.json()
+
+    monkeypatch.setattr(je, "_get_json", bound_get)
+    q = asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
+
+    assert q["tokens_out"] == 1.0
+    assert seen["method"] == "GET"
+    assert seen["url"].startswith("https://lite-api.jup.ag/swap/v1/quote?")
+    assert "outputMint=MINT" in seen["url"]
+
+
+# --- regression: real solders signing round-trip (no network) ----------------
+
+def test_sign_transaction_real_solders_roundtrip(env):
+    """The first real armed order crashed with
+    AttributeError: VersionedTransaction has no attribute 'deserialize'
+    (solders 0.29's parse constructor is from_bytes). This test drives the
+    REAL solders stack offline: build an unsigned versioned tx, hand its
+    base64 to _sign_transaction, and assert a real signature comes back and
+    the signed bytes re-parse. A revert to .deserialize trips this."""
+    from solders.hash import Hash
+    from solders.keypair import Keypair
+    from solders.message import Message
+    from solders.system_program import TransferParams, transfer
+    from solders.transaction import VersionedTransaction
+
+    payer = Keypair()
+    ix = transfer(TransferParams(from_pubkey=payer.pubkey(),
+                                 to_pubkey=payer.pubkey(), lamports=1))
+    msg = Message.new_with_blockhash([ix], payer.pubkey(), Hash.default())
+    # Sign once only to produce serializable tx bytes (Jupiter sends the
+    # unsigned equivalent; re-signing below is the path under test).
+    seed = VersionedTransaction(msg, [payer])
+    swap_b64 = base64.b64encode(bytes(seed)).decode()
+
+    signature, raw_signed = je._sign_transaction(swap_b64, payer)
+
+    assert len(signature) >= 40
+    assert raw_signed and len(raw_signed) > 0
+    reparsed = VersionedTransaction.from_bytes(raw_signed)
+    assert str(reparsed.signatures[0]) == signature
 
 
 @pytest.mark.asyncio
@@ -199,11 +274,15 @@ class _StubPayer:
 
 
 def _wire_fake_network(monkeypatch, calls: list[dict]):
-    async def fake(url, payload):
-        calls.append({"url": url, "payload": payload})
+    async def fake_get(url, params):
+        calls.append({"verb": "get", "url": url, "params": params})
         if url.endswith("/quote"):
             # $10 buys 10.0 tokens of a 6-dec mint @ $1.00/token:
             return {"outAmount": str(10 * 1_000_000)}
+        raise AssertionError(f"unexpected GET {url}")
+
+    async def fake_post(url, payload):
+        calls.append({"verb": "post", "url": url, "payload": payload})
         if url.endswith("/swap"):
             return {"swapTransaction":
                     base64.b64encode(b"unsigned-tx").decode()}
@@ -215,7 +294,8 @@ def _wire_fake_network(monkeypatch, calls: list[dict]):
                 {"confirmationStatus": "finalized", "err": None}]}}
         raise AssertionError(f"unexpected rpc call {method}")
 
-    monkeypatch.setattr(je, "_post_json", fake)
+    monkeypatch.setattr(je, "_get_json", fake_get)
+    monkeypatch.setattr(je, "_post_json", fake_post)
 
 
 def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):

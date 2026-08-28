@@ -103,3 +103,65 @@ test.describe('dashboard', () => {
     await expect(banner).toContainText('API unreachable')
   })
 })
+
+test.describe('pages (tabs)', () => {
+  test('tab bar navigates dashboard / holdings / journal', async ({ page }) => {
+    await page.goto(APP)
+    await expect(page.getByTestId('tab-dashboard')).toBeVisible()
+    await expect(page.getByTestId('tab-holdings')).toBeVisible()
+    await expect(page.getByTestId('tab-journal')).toBeVisible()
+
+    // Dashboard is the default page.
+    await expect(page.getByTestId('live-feed')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('tab-dashboard')).toHaveAttribute('aria-current', 'page')
+
+    // Holdings page.
+    await page.getByTestId('tab-holdings').click()
+    await expect(page.getByTestId('holdings')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('tab-holdings')).toHaveAttribute('aria-current', 'page')
+
+    // Journal page.
+    await page.getByTestId('tab-journal').click()
+    await expect(page.getByTestId('journal')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('tab-journal')).toHaveAttribute('aria-current', 'page')
+
+    // Back to dashboard.
+    await page.getByTestId('tab-dashboard').click()
+    await expect(page.getByTestId('live-feed')).toBeVisible({ timeout: 15_000 })
+  })
+
+  test('holdings shows positions or the documented empty state', async ({ page }) => {
+    await page.goto(APP)
+    await page.getByTestId('tab-holdings').click()
+    const holdings = page.getByTestId('holdings')
+    await expect(holdings).toBeVisible({ timeout: 15_000 })
+    await expect(holdings.getByText('Open value')).toBeVisible()
+    // Either a position row or the explicit empty explanation — never blank.
+    const hasContent =
+      (await holdings.locator('table tbody tr').count()) > 0 ||
+      (await holdings.getByText('No open live positions').count()) > 0
+    expect(hasContent).toBe(true)
+  })
+
+  test('journal shows order decisions with expandable proof', async ({ page }) => {
+    await page.goto(APP)
+    await page.getByTestId('tab-journal').click()
+    const journal = page.getByTestId('journal')
+    await expect(journal).toBeVisible({ timeout: 15_000 })
+    await expect(journal.getByText('Order decisions')).toBeVisible()
+
+    // This deployment has sealed commits (filled or not) — at least one row.
+    const proofBtn = journal.locator('button[aria-expanded]').first()
+    await expect(proofBtn).toBeVisible({ timeout: 15_000 })
+
+    // Expand proof detail: commit hash + memo lines appear.
+    await proofBtn.click()
+    await expect(proofBtn).toHaveAttribute('aria-expanded', 'true')
+    await expect(journal.getByText('commit hash:').first()).toBeVisible()
+    await expect(journal.getByText('memo:').first()).toBeVisible()
+
+    // Collapse again.
+    await proofBtn.click()
+    await expect(proofBtn).toHaveAttribute('aria-expanded', 'false')
+  })
+})
