@@ -42,6 +42,7 @@ def fresh_state(monkeypatch):
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
     monkeypatch.setattr(crowd, "_BENCHED_UNTIL", {})
     monkeypatch.setattr(crowd, "_CONSECUTIVE_ERRORS", {})
+    monkeypatch.setattr(crowd, "_CONSECUTIVE_REJECTIONS", {})
     monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
 
 
@@ -495,6 +496,109 @@ async def test_firecrawl_transport_error_fails_soft_and_benches(monkeypatch):
     assert not crowd._is_benched("firecrawl")
     assert await crowd._scrape_firecrawl("https://origin.example/x", {}) is None
     assert crowd._is_benched("firecrawl")
+
+
+# --- origin-rejection (403) fail-fast (2026-08-28) ---------------------------------
+# A provider whose proxy keeps getting refused by the ORIGIN (HTTP 403 — it
+# can't pass the endpoint's Cloudflare even with forwarded headers) is dead for
+# THIS endpoint. Before this fix it was re-tried on every candidate (one wasted
+# request + latency each, every tick) because only transport errors and 402/429
+# benched a provider. Now two consecutive 403s bench it exactly like a 402.
+# Kept in its own counter (_CONSECUTIVE_REJECTIONS) because _transport_success
+# resets _CONSECUTIVE_ERRORS on any completed response — a 403 IS a completed
+# response, so it must not clear the rejection streak, and vice versa.
+
+
+async def test_two_consecutive_403s_bench_provider(monkeypatch):
+    monkeypatch.setattr(config, "SCRAPINGBEE_API_KEY", "sb-key")
+    calls = {"n": 0}
+
+    class RejectClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            calls["n"] += 1
+            return FakeResponse(403, text="cloudflare challenge")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RejectClient)
+
+    # attempt 1: counted, still transient
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://origin.example/x") is None
+    assert not crowd._is_benched("scrapingbee")
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 1
+
+    # attempt 2: streak hits the threshold -> benched like a 402
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://origin.example/x") is None
+    assert crowd._is_benched("scrapingbee")
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 0
+    assert calls["n"] == 2     # a third read skips it without any network call
+
+
+async def test_single_403_is_transient_not_benched(monkeypatch):
+    class RejectClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            return FakeResponse(403, text="one-off challenge")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", RejectClient)
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://origin.example/x") is None
+    assert not crowd._is_benched("scrapingbee")
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 1
+
+
+async def test_200_resets_the_rejection_streak(monkeypatch):
+    """403 -> 200 -> 403 must NOT bench: the rejection streak only counts
+    consecutive origin refusals; a 200 proves the proxy got through."""
+    outcomes = ["403", "ok", "403"]
+
+    class FlakyClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            outcome = outcomes.pop(0)
+            if outcome == "403":
+                return FakeResponse(403, text="challenge")
+            return FakeResponse(200, text='{"responseObject": {"items": []}}')
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", FlakyClient)
+
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is None
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 1
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is not None
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 0
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is None
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 1
+    assert not crowd._is_benched("scrapingbee")
+
+
+async def test_403_does_not_clear_transport_streak_and_vice_versa(monkeypatch):
+    """The two streak counters are independent: a 403 (completed response)
+    resets the TRANSPORT streak via _transport_success but must not be counted
+    as a transport error; a timeout resets nothing in the rejection counter."""
+    outcomes = ["timeout", "403"]
+
+    class MixedClient(FakeClient):
+        async def get(self, url, headers=None, **kw):
+            outcome = outcomes.pop(0)
+            if outcome == "timeout":
+                raise crowd.httpx.ReadTimeout("flaky")
+            return FakeResponse(403, text="challenge")
+
+    monkeypatch.setattr(crowd.httpx, "AsyncClient", MixedClient)
+
+    # timeout -> transport streak 1, rejection streak untouched
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is None
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 1
+    assert crowd._CONSECUTIVE_REJECTIONS.get("scrapingbee", 0) == 0
+
+    # 403 -> completed response clears transport streak, rejection streak 1
+    assert await crowd._scrape_get_template(
+        "scrapingbee", _SB_TEMPLATE, "sb-key", "https://o.example/x") is None
+    assert crowd._CONSECUTIVE_ERRORS["scrapingbee"] == 0
+    assert crowd._CONSECUTIVE_REJECTIONS["scrapingbee"] == 1
+    assert not crowd._is_benched("scrapingbee")
 
 
 async def test_direct_get_retries_transport_once(monkeypatch):

@@ -1,6 +1,20 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §34 live-cycle hardening (handoff §34) (2026-08-28): two operator-reported
+      issues with the ARMED live cycle. (1) 403-rejection benching
+      (`backend/data_providers/crowd.py`): `_CONSECUTIVE_REJECTIONS` — a stealth
+      provider whose proxy keeps getting refused by the origin (HTTP 403) is
+      benched after two, exactly like a 402, instead of being re-tried on every
+      candidate every tick; own counter (a 403 is a completed response so it
+      must not clear the transport streak), reset on any 200. (2)
+      Micro-bootstrap live cash rule (`run_live_cycle.py`): `LIVE_ACTIVE_RULES`
+      swaps the paper `cash_available` (checks $100 `INTENDED_POSITION_SIZE_USD`)
+      for `_live_cash_available` (checks `MIN_LIVE_TICKET_USD` $0.50); every
+      other rule verbatim, paper rules calibration-frozen. Both live-verified
+      ARMED: scrapingdog benched after 2× 403 (ScrapeOps served all 20), no
+      `cash_available` gate failures, several `gate=PASS`, $5 book sizes $0.75
+      ≥ floor. 11 new tests → **498 combined passing**.
 - [x] §33 armed state committed + pushed (handoff §33) (2026-08-28):
       operator-directed ("push config as armed, no questions asked").
       `live_execution/config.py` committed ARMED (`LIVE_TRADING_ENABLED=True`,
@@ -250,8 +264,8 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 486 total — 485 passing while armed** (backend 379 + live_execution
-107; +12 this batch: 9 exit-price guards + 3 live manage jump guard; the 1
-red test is the ships-disarmed canary, expected red while the operator's
-machine is armed — handoff §32).
+**Tests: 498 passing — suite fully green** (backend 385 + live_execution 113;
++11 this batch: 4 crowd 403-rejection bench + 7 live micro-bootstrap cash rule;
+the flag-state canary now pins the committed ARMED state, so it is green while
+armed — handoff §33/§34).
 

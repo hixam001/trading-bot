@@ -23,9 +23,13 @@ trading must flip the flag before running anything.
 The 2026-08-28 cash-corruption incident (bad quote → phantom cash in the
 PAPER book) was fixed with hardcoded bad-quote guards on both books and a
 final full-coverage omo audit closed every open question (handoff §32,
-docs/09 §F): no trading-critical parity gap remains.** Tests: **486 passing
-(suite fully green; the flag-state canary pins the committed ARMED state —
-handoff §33).**
+docs/09 §F): no trading-critical parity gap remains. Live-cycle hardening
+(handoff §34) shipped the same day: 403-rejection benching for the stealth
+scraper chain (a proxy refused by the origin twice is benched like a 402) and
+a micro-bootstrap live cash rule (`LIVE_ACTIVE_RULES` checks the $0.50 live
+floor instead of the paper book's $100), both live-verified ARMED.** Tests:
+**498 passing (suite fully green; the flag-state canary pins the committed
+ARMED state — handoff §33).**
 
 ---
 
@@ -1013,8 +1017,36 @@ in `.env` (all gitignored), but cloners must read the README warning first.
 This was the operator's explicit, informed choice after the devnet drill
 passed 5/5 and live cycles were supervised.
 
-clean. Arm flags untouched: `LIVE_TRADING_ENABLED=False`,
-`REQUIRE_MANUAL_CONFIRMATION=True`. Remaining operator-only steps: mainnet
-wallet funded (0.03 SOL + $3–5 USDC), `.env` re-pointed, the two hand-edited
-flag flips, supervised `run_live_cycle.py --once`.
+## 19. Live-cycle hardening (2026-08-28, handoff §34)
+
+Two operator-reported issues with the now-ARMED live cycle, both fixed and
+live-verified the same day:
+
+- **403-rejection benching** (`backend/data_providers/crowd.py`): Firecrawl
+  and ZenRows were out of credits (402, benched correctly), but ScrapingDog's
+  proxy was being refused by the fomo.fun origin (HTTP 403 — it can't pass
+  that endpoint's Cloudflare even with forwarded headers) on every candidate,
+  and ScrapingBee was timing out; only ScrapeOps gets through. Added a
+  `_CONSECUTIVE_REJECTIONS` streak: two consecutive origin 403s bench a
+  provider for 30 min exactly like a 402. Own counter because a 403 is a
+  completed response (it must not clear the transport streak); a 200 resets
+  it. Live proof: scrapingdog benched after 2× 403, ScrapeOps served all 20
+  candidates — the chain converges on the working provider instead of burning
+  calls on dead ones.
+- **Micro-bootstrap live cash rule** (`run_live_cycle.py`): the paper
+  `cash_available` rule checks cash against `INTENDED_POSITION_SIZE_USD`
+  ($100, sized for the $1,000 paper book), so the few-USDC live book refused
+  every entry before sizing. `LIVE_ACTIVE_RULES` swaps in
+  `_live_cash_available` (checks `MIN_LIVE_TICKET_USD` $0.50); every other
+  rule stays verbatim and the paper rules remain calibration-frozen. Live
+  proof: no `cash_available` gate failures, several `gate=PASS`; with
+  `SIZING_MODE=fixed` a $5 book sizes $0.75 ≥ the floor, so a model "buy" +
+  gate pass now places a micro-order. (Current refusals are the model
+  returning verdict "pass" not "buy" — DeepSeek 200 OK on every think call,
+  no degradation; the model veto working as designed.)
+
+### Verification
+11 new tests → **498 passing** (backend 385 + live_execution 113), suite fully
+green. Both fixes observed in `logs/live_cycle.log` on the first cycle after an
+ARMED restart; system-status / live/portfolio / disclosure.json all 200.
 

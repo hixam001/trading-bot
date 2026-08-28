@@ -1,3 +1,47 @@
+## Memory-bank update - 2026-08-28 (§34 live-cycle hardening session)
+
+- **Task**: two operator-reported issues with the now-ARMED live cycle:
+  (1) "if Firecrawl credits are finished, there's still ScrapingBee and
+  ScrapingDog tokens left" — dead stealth scrapers were being re-tried every
+  candidate every tick; (2) "when $5 is all the cash, if it passes on tokens it
+  should buy as well — it's not working as intended" — the paper cash rule
+  refused every live entry.
+- **Fix 1 — 403-rejection benching** (`backend/data_providers/crowd.py`):
+  Forensics in `logs/live_cycle.log` showed Firecrawl (402 credits) and ZenRows
+  (402 credits) benching correctly, but ScrapingDog's proxy refused by the
+  fomo.fun origin (HTTP 403 — can't pass that endpoint's Cloudflare even with
+  forwarded headers) on EVERY candidate, and ScrapingBee ReadTimeout-ing; only
+  ScrapeOps gets through. Added `_CONSECUTIVE_REJECTIONS` +
+  `_rejection_error`/`_rejection_success`: two consecutive 403s bench a provider
+  30 min exactly like a 402; own counter because `_transport_success` resets the
+  transport streak on any completed response; a 200 resets the rejection streak.
+  Wired into `_scrape_get_template`.
+- **Fix 2 — micro-bootstrap live cash rule** (`run_live_cycle.py`): the paper
+  `cash_available` rule checks cash vs `INTENDED_POSITION_SIZE_USD` ($100, sized
+  for the $1,000 paper book); the live book starts from a few USDC (REF-R11) and
+  sizes from `MIN_LIVE_TICKET_USD` ($0.50), so the paper threshold refused every
+  entry before sizing. `LIVE_ACTIVE_RULES` swaps in `_live_cash_available`
+  (checks the live floor); every other rule verbatim; paper `ACTIVE_RULES` +
+  `INTENDED_POSITION_SIZE_USD` untouched (calibration-frozen). `run_cycle`
+  evaluates `LIVE_ACTIVE_RULES`.
+- **Tests**: +11 → **498 combined passing** (backend 385 + live_execution 113).
+  4 in `test_crowd.py` (two-403s-bench, single-403-transient, 200-resets-streak,
+  transport/rejection counters independent) + 7 in `test_live_cash_rule.py`
+  (only-cash-rule-swapped, paper-rule-frozen, live-floor pass/fail,
+  gate-outcome-flips, run_cycle-uses-live-rules). `fresh_state` fixture resets
+  the new counter.
+- **Live verification (ARMED)**: system was cleanly shut down, restarted via
+  `./start.sh` (ARMED + live cycle). First cycle: `scrapingdog: 2 consecutive
+  origin rejections (403) — benching`, called exactly 2× then skipped, ScrapeOps
+  served all 20 candidates; no `cash_available` in any failed-rule list, several
+  `gate=PASS`; DeepSeek 200 OK on every think call (no degradation). Current
+  refusals are the model returning verdict "pass" not "buy" — the model veto
+  working as designed. With `SIZING_MODE=fixed` a $5 book sizes
+  `min(5×0.15, 150) = $0.75` ≥ the $0.50 floor, so a model "buy" + gate pass now
+  places a micro-order. system-status / live/portfolio / disclosure.json all 200.
+- **Docs**: handoff §34 + header test count; memory-bank updated; project report
+  updated. Committed + pushed (no contributor trailers).
+
 ## Memory-bank update - 2026-08-28 (§32 cash-corruption fix + final omo audit session)
 
 - **Incident**: operator reported an outrageous cash balance on the dashboard

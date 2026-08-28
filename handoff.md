@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 486 passing (suite fully green; the flag-state canary now pins
+**Tests:** 498 passing (suite fully green; the flag-state canary now pins
 the committed ARMED state — see §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -43,9 +43,9 @@ seems to require real execution inside backend/ — stop and flag it.
                   # :8000 (serves dashboard), opens browser. Idempotent.
                   # No local model: LLM = DeepSeek/Groq cloud APIs via .env.
 ./stop.sh         # stops the backend (+ tick loop)
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 379 tests
-.venv/bin/python -m pytest -q                           # full suite: 486 tests, ~2s
-                                                        # (485 while armed — §32 canary)
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 385 tests
+.venv/bin/python -m pytest -q                           # full suite: 498 tests, ~2s
+                                                        # (fully green while armed — §33 canary)
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -1930,4 +1930,67 @@ Done, exactly as directed:
   in `.env` (all gitignored), but anyone cloning should read the README
   warning first. This was the operator's explicit, informed choice.
 
+
+## 34. Live-cycle hardening: 403-rejection benching + micro-bootstrap cash rule (2026-08-28)
+
+Two operator-reported issues with the now-ARMED live cycle, both fixed and
+live-verified the same day.
+
+### Issue 1 — dead stealth scrapers re-tried every candidate, every tick
+Operator: "if Firecrawl credits are finished, there's still ScrapingBee and
+ScrapingDog tokens left." Reality in the logs: Firecrawl (402 credits) and
+ZenRows (402 credits) bench correctly, but **ScrapingDog's proxy gets refused
+by the fomo.fun origin (HTTP 403 — it can't pass that endpoint's Cloudflare
+even with forwarded headers)** and was re-tried on every candidate (one wasted
+request + ~2-3s latency each, every tick), and ScrapingBee was ReadTimeout-ing.
+Only ScrapeOps actually gets through.
+
+**Fix** (`backend/data_providers/crowd.py`): added an origin-rejection streak
+counter (`_CONSECUTIVE_REJECTIONS`) mirroring the transport-error counter — two
+consecutive 403s bench a provider for 30 min exactly like a 402. Kept in its
+own counter because `_transport_success` resets the transport streak on any
+completed response (a 403 IS a completed response). A 200 resets the rejection
+streak, so a provider that recovers is used again.
+
+**Live proof:** after restart, `scrapingdog: 2 consecutive origin rejections
+(403) — benching`, called exactly 2× then skipped; ScrapeOps served all 20
+candidates. The chain now converges on the working provider instead of burning
+calls on dead ones. (Note: ScrapingBee/ScrapingDog tokens "being left" doesn't
+help here — their proxies genuinely can't reach this endpoint right now; the
+fix stops wasting calls on them, it can't make them work.)
+
+### Issue 2 — $5 book refused every entry (cash rule sized for the paper book)
+Operator: "when $5 is all the cash, if it passes on tokens it should buy as
+well — it's not working as intended." Root cause: the paper `cash_available`
+rule checks cash against `INTENDED_POSITION_SIZE_USD` ($100 — sized for the
+$1,000 paper book). The live book starts from a few USDC (REF-R11
+micro-bootstrap) and sizes from `MIN_LIVE_TICKET_USD` ($0.50), so the paper
+threshold refused EVERY live entry before sizing even ran.
+
+**Fix** (`run_live_cycle.py`): `LIVE_ACTIVE_RULES` — the paper `ACTIVE_RULES`
+with exactly one swap: `cash_available` → `_live_cash_available`, which checks
+`cash_usd >= MIN_LIVE_TICKET_USD`. Every other rule stays verbatim; paper
+`ACTIVE_RULES` + `INTENDED_POSITION_SIZE_USD` are untouched (calibration-frozen)
+— the same "paper frozen, live threads its own floor" pattern as
+`compute_ticket(min_ticket_usd=...)`. `run_cycle` now evaluates
+`LIVE_ACTIVE_RULES`.
+
+**Live proof:** after restart, no candidate shows `cash_available` in its
+failed list; several show `gate=PASS`. With `SIZING_MODE=fixed` a $5 book sizes
+`min(5×0.15, 150) = $0.75` ≥ the $0.50 floor, so a model "buy" + gate pass now
+places a micro-order. (Current candidates are being refused because the model
+returns verdict "pass", not "buy" — DeepSeek 200 OK on every think call, no
+degradation; that is the model veto working as designed, not a bug.)
+
+### Verification
+- **11 new tests → 498 combined passing** (was 486): 4 in
+  `backend/tests/test_crowd.py` (two-403s-bench, single-403-transient,
+  200-resets-streak, transport/rejection counters independent) + 7 in
+  `live_execution/tests/test_live_cash_rule.py` (only-cash-rule-swapped,
+  paper-rule-frozen, live-floor pass/fail, gate-outcome-flips,
+  run_cycle-uses-live-rules).
+- Isolation unchanged; no new backend→live_execution references (the live rule
+  lives in the root bridge `run_live_cycle.py`, which already imports both).
+- Live smoke (ARMED): system-status / live/portfolio / disclosure.json all 200;
+  both fixes observed in `logs/live_cycle.log` on the first cycle after restart.
 

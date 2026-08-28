@@ -1,7 +1,27 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (ARMED STATE COMMITTED + PUSHED by explicit operator direction — handoff §33; §27 fully complete; suite fully green at 486; disclosure `armed` now reads the real flag).**
+**As of 2026-08-28 (LIVE-CYCLE HARDENING — handoff §34: 403-rejection benching for the stealth scraper chain + micro-bootstrap live cash rule; both live-verified ARMED; suite fully green at 498).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### §34 live-cycle hardening (2026-08-28)
+Two operator-reported issues with the ARMED live cycle, both fixed + verified:
+(1) **403-rejection benching** (`backend/data_providers/crowd.py`): a stealth
+provider whose proxy keeps getting refused by the ORIGIN (HTTP 403 — can't pass
+the endpoint's Cloudflare) was re-tried on every candidate every tick. Added
+`_CONSECUTIVE_REJECTIONS` — two consecutive 403s bench it 30 min like a 402;
+own counter because `_transport_success` resets the transport streak on any
+completed response; a 200 resets it. Live proof: scrapingdog benched after 2×
+403, ScrapeOps served all 20 candidates. (2) **Micro-bootstrap live cash rule**
+(`run_live_cycle.py`): the paper `cash_available` rule checks cash vs
+`INTENDED_POSITION_SIZE_USD` ($100, sized for the $1,000 paper book), so a $5
+live book refused every entry before sizing. `LIVE_ACTIVE_RULES` swaps in
+`_live_cash_available` (checks `MIN_LIVE_TICKET_USD` $0.50); every other rule
+verbatim, paper rules frozen. Live proof: no `cash_available` failures, several
+`gate=PASS`; $5 book sizes $0.75 ≥ floor so a model "buy" now places a
+micro-order. Current refusals are the model returning verdict "pass" (DeepSeek
+200 OK, no degradation) — the model veto working as designed. 11 new tests →
+**498 combined passing**.
 
 ## DONE
 ### §33 armed state committed (operator-directed) (2026-08-28)

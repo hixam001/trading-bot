@@ -337,6 +337,8 @@ async def _direct_get(url: str, headers: dict) -> Optional[dict]:
 _BENCHED_UNTIL: dict[str, float] = {}             # scraper -> monotonic ts
 _CONSECUTIVE_ERRORS: dict[str, int] = {}          # scraper -> transport errors in a row
 _TRANSPORT_ERROR_BENCH_AFTER = 2   # N consecutive transport failures -> bench
+_CONSECUTIVE_REJECTIONS: dict[str, int] = {}      # scraper -> origin 403 rejections in a row
+_REJECTION_BENCH_AFTER = 2         # N consecutive 403s -> bench (proxy dead for this endpoint)
 
 
 def _bench(name: str, seconds: Optional[float] = None) -> None:
@@ -386,6 +388,29 @@ def _transport_success(name: str) -> None:
     """Any completed response (whatever its status) proves the transport
     works — the consecutive-error streak resets."""
     _CONSECUTIVE_ERRORS[name] = 0
+
+
+def _rejection_error(name: str) -> None:
+    """Count an origin rejection (HTTP 403). A provider whose proxy keeps
+    getting refused by the origin (e.g. it can't pass the endpoint's
+    Cloudflare even with forwarded headers) is effectively dead for THIS
+    endpoint, so it is benched exactly like a 402 — otherwise it is re-tried
+    on every candidate (one wasted request + latency each, every tick). Kept
+    in its own counter because _transport_success resets _CONSECUTIVE_ERRORS
+    on any completed response. Reset on any 200."""
+    n = _CONSECUTIVE_REJECTIONS.get(name, 0) + 1
+    _CONSECUTIVE_REJECTIONS[name] = n
+    if n >= _REJECTION_BENCH_AFTER:
+        log.warning("%s: %d consecutive origin rejections (403) — benching",
+                    name, n)
+        _bench(name)
+        _CONSECUTIVE_REJECTIONS[name] = 0
+
+
+def _rejection_success(name: str) -> None:
+    """A 200 proves the provider's proxy got through — the rejection streak
+    resets so a provider that recovers is used again."""
+    _CONSECUTIVE_REJECTIONS[name] = 0
 
 
 def _json_from_body(text: str) -> Optional[dict]:
@@ -475,7 +500,10 @@ async def _scrape_get_template(name: str, template: str,
         return None
     if resp.status_code != 200:
         log.warning("%s: scrape HTTP %s", name, resp.status_code)
+        if resp.status_code == 403:
+            _rejection_error(name)
         return None
+    _rejection_success(name)
     return _json_from_body(resp.text)
 
 

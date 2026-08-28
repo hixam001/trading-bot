@@ -42,11 +42,11 @@ from blocklist import filter_candidates           # noqa: E402
 from data_providers import build_provider         # noqa: E402
 from data_providers.jupiter import JupiterProvider  # noqa: E402
 from llm.thinker import Thinker                   # noqa: E402
-from models import FeedEvent, PortfolioState, Trade  # noqa: E402
+from models import Candidate, FeedEvent, PortfolioState, RuleResult, Trade  # noqa: E402
 from rule_engine.exits import ExitInput, evaluate_exits  # noqa: E402
 from rule_engine.gate import evaluate_gate        # noqa: E402
-from rule_engine.regime import compute_market_regime  # noqa: E402
-from rule_engine.rules import ACTIVE_RULES        # noqa: E402
+from rule_engine.regime import MarketRegime, compute_market_regime  # noqa: E402
+from rule_engine.rules import ACTIVE_RULES, cash_available  # noqa: E402
 from api import db                                # noqa: E402
 from calibration import compute_calibration       # noqa: E402
 from paper_trading_engine import (                # noqa: E402
@@ -61,6 +61,32 @@ from live_execution.executor import place_order   # noqa: E402
 from live_execution.models import ExecutionLedger  # noqa: E402
 
 log = logging.getLogger("run_live_cycle")
+
+
+# --- LIVE gate rules (micro-bootstrap parity) --------------------------------
+# The paper `cash_available` rule checks cash against INTENDED_POSITION_SIZE_USD
+# ($100 — sized for the $1,000 paper book). The live book starts from a few
+# USDC (REF-R11 micro-bootstrap) and sizes from MIN_LIVE_TICKET_USD ($0.50), so
+# the paper threshold would refuse every live entry before sizing even runs.
+# Swap in a live cash rule that checks the live floor; every other rule stays
+# verbatim. Paper ACTIVE_RULES + INTENDED_POSITION_SIZE_USD are untouched
+# (calibration-frozen) — the same "paper frozen, live threads its own floor"
+# pattern as compute_ticket(min_ticket_usd=...).
+def _live_cash_available(c: Candidate, p: PortfolioState,
+                         r: MarketRegime) -> RuleResult:
+    floor = live_config.MIN_LIVE_TICKET_USD
+    ok = p.cash_usd >= floor
+    return RuleResult(
+        "cash_available", ok,
+        f"cash ${p.cash_usd:,.2f} vs live floor ${floor:,.2f}",
+        value=p.cash_usd,
+    )
+
+
+LIVE_ACTIVE_RULES = [
+    _live_cash_available if rule is cash_available else rule
+    for rule in ACTIVE_RULES
+]
 
 
 def _iso(ts: float) -> str:
@@ -464,7 +490,7 @@ async def run_cycle(once: bool = False) -> dict:
             liveness.set_break(think.break_minutes, think.break_reason)
             log.warning("self-regulating break triggered: %d mins (reason: %s)", think.break_minutes, think.break_reason)
             
-        gate = evaluate_gate(c, portfolio, regime, ACTIVE_RULES)
+        gate = evaluate_gate(c, portfolio, regime, LIVE_ACTIVE_RULES)
         entry_allowed = gate.all_passed and think.wants_entry
         failed = [r.rule_id for r in gate.rules if not r.passed]
         log.info("%s think=%s gate=%s%s", c.symbol, think.verdict,
