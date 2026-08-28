@@ -1,7 +1,7 @@
 **Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 506 backend/live_execution passing + 8 Playwright E2E (suite
+**Tests:** 516 backend/live_execution passing + 8 Playwright E2E (suite
 fully green; the flag-state canary now pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -2124,4 +2124,62 @@ the paper components; the operator wanted them back as live pages):
 buy/sell quote-failure→failed-not-NameError, sell full-flow GET fill +
 ledger reduce, real-solders signing round-trip) → **506 passing**.
 
+
+## 37. Stale-holdings dust fix + first REAL fill + items 1 & 3 (2026-08-28)
+
+Operator report: "the bot bought a token, then sold it, yet it still shows up
+in holdings … journal even shows it's closed" + "shows enter but doesn't
+enter." Root cause was ONE ledger bug with three symptoms; fixing it unblocked
+entries and the bot immediately landed its **first real fill**. Then shipped
+the two deferred omo-audit items (1 narration anti-repetition, 3 commit
+orphan reconciliation).
+
+**The dust bug (root cause of all three symptoms).** A reconcile-clamped FULL
+exit produced a sell fraction just under the 0.999 close threshold
+(chain/journal mismatch, e.g. 0.99889), so `ExecutionLedger.reduce_position`
+booked it as a *trim* and left a dust row `status="confirmed"` (OPEN). That
+phantom row (a) showed in Holdings, (b) counted against `MAX_OPEN_POSITIONS=3`
+so every subsequent ENTER was refused ("would hold 4 mints"), and (c) left the
+journal saying closed while the book said open.
+- **Fix:** threaded the exit engine's full-close intent through
+  `models.reduce_position(..., full_close=False)` →
+  `executor.place_sell(..., full_close)` → `executor.place_order(...,
+  full_close)` → `run_live_cycle._manage` (`full_close=(decision.action ==
+  "close_full")`). With `full_close=True` the position is CLOSED outright and
+  PnL is realized against the FULL cost (the journal-vs-chain dust is written
+  off, never left open). Trim behaviour (`full_close=False`) is unchanged.
+- **One-time data repair** (services stopped → edit → restart): flipped the
+  stuck `2NffKvfZ…` dust buy row to `closed` (its sell had already filled and
+  the close record already carried the correct −$0.19 PnL). Backup kept at
+  `executions.json.bak-dust`. Freed the position slot + removed the ghost.
+- **Tests:** +3 (`test_ledger_full_close.py`: sub-threshold full-close closes
+  + realizes on full cost; trim-without-full-close leaves remainder; full-cost
+  PnL).
+
+**Live proof (ARMED, real mainnet):** 18:40 cycle — `PINK think=buy
+gate=PASS` (no longer blocked) → memo on-chain → Jupiter quote **GET 200** →
+swap build 200 → **`FILLED buy AVBN6kXd $0.66 -> 491.146377 tokens`** →
+venue attributed (jupiter router). First real fill; the whole manage→read→
+think→gate→execute pipeline now trades real money. `think=pass -> refused`
+rows are the model veto working as designed.
+
+**Item 3 — commit orphan reconciliation** (`live_execution/commit_log.py`):
+new `CommitLog.reconcile_orphaned(max_age_seconds=600)` marks any commit still
+`"published"` (memo on chain, no bound fill) that is older than the window as
+`failed` with reason "memo published but no fill followed (orphan reconciled)"
+— reusing the existing `failed` status so no UI/proof route needs a new state.
+Wired at the top of `run_live_cycle.run_cycle` (cheap, idempotent, fail-soft).
+Heals the historical orphans that predate the §36 post-memo `fail()` wiring.
+**Live:** first cycle reconciled **7** orphans → commits.json now
+`{failed: 8, bound: 5}`, **zero ambiguous `published`**. Tests: +4.
+
+**Item 1 — narration anti-repetition** (`backend/llm/narrator.py`, omo
+cabin-ritual parity, lightweight): a rotating set of style angles
+(`_ANGLES`) is appended to the LLM prompt and the deterministic template
+opener rotates (`_ENTER_OPENERS`/`_REJECT_OPENERS`) so consecutive narrations
+read distinctly. Style-only: never changes which rules are cited or the
+verdict; grounding unaffected. Tests: +3.
+
+**Tests:** 506 → **516 passing** (+3 full-close, +4 reconcile, +3 rotation).
+All endpoints 200, 0 tracebacks after restart.
 

@@ -57,6 +57,7 @@ from paper_trading_engine import (                # noqa: E402
 
 from live_execution import config as live_config  # noqa: E402
 from live_execution import solana, wallet         # noqa: E402
+from live_execution.commit_log import CommitLog   # noqa: E402
 from live_execution.executor import place_order   # noqa: E402
 from live_execution.models import ExecutionLedger  # noqa: E402
 
@@ -326,6 +327,7 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
         result = await place_order(
             side="sell", mint=mint, symbol=mint[:6],
             fraction=fraction,
+            full_close=(decision.action == "close_full"),
         )
         log.info("sell -> %s %s", result.status, result.reason)
         if result.status == "filled":
@@ -410,6 +412,15 @@ async def _journal_feed_event(conn, c, think, gate, regime,
 async def run_cycle(once: bool = False) -> dict:
     """One full cycle. Returns a step-by-step outcome record, refusals included."""
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
+    # Item 3: heal any commit whose memo went on-chain but whose fill never
+    # followed (historical orphans predate the post-memo fail() wiring). Cheap
+    # + idempotent; only touches rows old enough that a fill is long resolved.
+    try:
+        healed = CommitLog(live_config.STATE_DIR / "commits.json").reconcile_orphaned()
+        if healed:
+            log.info("reconciled %d orphaned published commit(s) -> failed/no-fill", healed)
+    except Exception:
+        log.warning("commit orphan reconciliation skipped", exc_info=True)
     portfolio, meta, chain_report = await _live_portfolio(ledger)
     hwm: dict = getattr(run_cycle, "_hwm", {})
     jupiter = JupiterProvider()

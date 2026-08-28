@@ -273,6 +273,7 @@ async def place_sell(
     confirmation_id: Optional[str] = None,
     queue=None,
     ledger: Optional[ExecutionLedger] = None,
+    full_close: bool = False,
 ) -> OrderResult:
     """reference-style SELL: fraction of the open position, decimals read from chain.
     UNKNOWN decimals refuse - never a default (the decimals lesson)."""
@@ -394,7 +395,7 @@ async def place_sell(
 
     if outcome.status == "filled":
         try:
-            ledger.reduce_position(mint, frac, proceeds_usd)
+            ledger.reduce_position(mint, frac, proceeds_usd, full_close=full_close)
         except ValueError as exc:
             log.error("post-fill ledger reduce failed: %s", exc)
         outcome.usd_value = proceeds_usd
@@ -421,6 +422,7 @@ async def place_order(
     output_decimals: Optional[int] = None,
     confirmation_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
+    full_close: bool = False,
 ) -> OrderResult:
     """the reference OrderIntent parity: buys sized in USD, sells as a position fraction."""
     if side == "buy":
@@ -433,5 +435,6 @@ async def place_order(
     if side == "sell":
         return await place_sell(mint, symbol,
                                 1.0 if fraction is None else float(fraction),
-                                confirmation_id=confirmation_id)
+                                confirmation_id=confirmation_id,
+                                full_close=full_close)
     return OrderResult(status="blocked", reason=f"unknown side {side!r}", side=side, mint=mint)

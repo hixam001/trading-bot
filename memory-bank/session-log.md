@@ -1,3 +1,30 @@
+## Memory-bank update - 2026-08-28 (§37 stale-holdings dust fix + FIRST REAL FILL + items 1 & 3)
+
+- **Task**: operator reported "the bot bought a token, then sold it, yet it
+  still shows up in holdings … journal even shows it's closed" and "it shows
+  enter but also doesn't enter and shows failed txns". Then: implement the two
+  deferred omo-audit items (1 narration anti-repetition, 3 fill-linking).
+- **Root cause (one bug, three symptoms)**: a reconcile-clamped FULL exit made
+  a sell fraction just under the 0.999 close threshold (chain/journal dust,
+  e.g. 0.99889), so `reduce_position` booked a trim and left a dust row OPEN —
+  it showed in Holdings, counted against `MAX_OPEN_POSITIONS=3` (blocking every
+  ENTER with "would hold 4 mints"), and disagreed with the journal. The
+  "failed txns" was the GTA6 2.5%-impact guard correctly refusing a 5.30% trade.
+- **Fix**: threaded `full_close` through `models.reduce_position` →
+  `executor.place_sell` → `place_order` → `run_live_cycle._manage`
+  (`decision.action == "close_full"`); full close realizes PnL on full cost +
+  one-time repair flipped the stuck `2NffKvfZ…` row closed (backup kept).
+- **Live proof**: freeing the slot unblocked entries — PINK `think=buy
+  gate=PASS` → memo → quote GET 200 → **FILLED $0.66 → 491.15 tokens** (first
+  real fill), venue attributed.
+- **Item 3**: `CommitLog.reconcile_orphaned(600s)` marks old memo-only
+  `published` commits failed/no-fill (reuses `failed` status), wired at
+  `run_cycle` start; healed 7 orphans → commits.json `{failed:8, bound:5}`,
+  0 ambiguous. **Item 1**: narrator rotates style angles + template openers
+  (style-only, grounding intact).
+- **Tests**: +10 (3 full-close, 4 reconcile, 3 rotation) → **516 passing**;
+  all endpoints 200, 0 tracebacks after restart. Handoff §37.
+
 ## Memory-bank update - 2026-08-28 (§36 live execution unblocked + Journal/Holdings restored)
 
 - **Task**: operator reported "the bot says enter but it doesn't execute any

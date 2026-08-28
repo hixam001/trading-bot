@@ -48,6 +48,52 @@ If ENTER: state which factors support entry, using actual numbers.
 Do not mention any check not listed above. /no_think"""
 
 
+# ---------------------------------------------------------------------------
+# Item 1 — narration anti-repetition (omo cabin-ritual parity, lightweight).
+#
+# Consecutive narrations were sounding identical: the template always opened
+# "Entered X:" / "Rejected X:" and the LLM was given no instruction to vary
+# its angle. We rotate a small set of *style angles* (which factor to lead
+# with / how to frame it) through both paths so back-to-back decisions read
+# distinctly. Purely cosmetic: the angle never changes WHICH rules are cited
+# or the verdict — grounding is unaffected, and every angle still instructs
+# the model to use only the given numbers.
+# ---------------------------------------------------------------------------
+
+# Style angles for the LLM path. Each is a short framing instruction; they
+# rotate so the same verdict is not always led the same way.
+_ANGLES = (
+    "Lead with the single strongest factor and keep it to one crisp sentence.",
+    "Frame it as risk-first: what had to be true for this verdict to stand.",
+    "Lead with the flow/pressure picture, then the supporting number.",
+    "Be terse and factual; state the verdict, then the deciding number.",
+    "Lead with the liquidity/depth picture, then the supporting factor.",
+)
+
+# Opener variants for the deterministic template path (degraded/mock mode).
+_ENTER_OPENERS = (
+    "Entered {sym}: {bits}.",
+    "{sym} entry — {bits}.",
+    "Taking a position in {sym}: {bits}.",
+)
+_REJECT_OPENERS = (
+    "Rejected {sym}: failed {n} check(s) — {named}.",
+    "{sym} turned away — {n} check(s) failed: {named}.",
+    "Passing on {sym}: {named}.",
+)
+
+_angle_index = 0
+
+
+def _next_angle() -> int:
+    """Advance the rotation and return the index to use for this narration."""
+    global _angle_index
+    idx = _angle_index % len(_ANGLES)
+    _angle_index += 1
+    return idx
+
+
+
 class NarrationResult:
     def __init__(self, thesis: str, source: str, grounding_flags: list[str], llm_usage: Optional[LLMResult] = None):
         self.thesis = thesis
@@ -62,19 +108,30 @@ def build_prompt(gate: GateDecision) -> str:
         f"- {r.rule_id}: {'PASS' if r.passed else 'FAIL'} ({r.detail})"
         for r in gate.rules
     ]
-    return NARRATION_PROMPT.format(verdict=verdict, rules_block="\n".join(lines))
+    base = NARRATION_PROMPT.format(verdict=verdict, rules_block="\n".join(lines))
+    # Item 1: rotate the framing angle so consecutive narrations differ. The
+    # angle is style-only — it never adds facts or changes the verdict.
+    angle = _ANGLES[_next_angle()]
+    return f"{base}\nStyle for this one: {angle}"
 
 
 def _template_thesis(gate: GateDecision) -> str:
-    """Deterministic thesis grounded by construction."""
+    """Deterministic thesis grounded by construction.
+
+    Item 1: the opener rotates through a small set of variants so consecutive
+    degraded narrations do not all start identically. The cited rule details
+    are unchanged — only the framing sentence varies.
+    """
     c = gate.candidate
     if gate.all_passed:
         supporting = [r for r in gate.rules if r.passed][:3]
         bits = "; ".join(r.detail for r in supporting)
-        return f"Entered {c.symbol}: {bits}."
+        opener = _ENTER_OPENERS[_next_angle() % len(_ENTER_OPENERS)]
+        return opener.format(sym=c.symbol, bits=bits)
     failing = [r for r in gate.rules if not r.passed]
     named = "; ".join(f"{r.rule_id} ({r.detail})" for r in failing[:2])
-    return f"Rejected {c.symbol}: failed {len(failing)} check(s) — {named}."
+    opener = _REJECT_OPENERS[_next_angle() % len(_REJECT_OPENERS)]
+    return opener.format(sym=c.symbol, n=len(failing), named=named)
 
 
 class Narrator:

@@ -118,3 +118,33 @@ class CommitLog:
 
     def all(self) -> list:
         return self._load()
+
+    def reconcile_orphaned(self, max_age_seconds: float = 600.0) -> int:
+        """Heal commits stuck at "published" that never filled (item 3).
+
+        A commit whose memo is on chain but which has no bound fill is
+        ambiguous on the proof surface (binding.json shows it "unbound").
+        Once it is older than max_age_seconds the fill attempt is long
+        resolved: a real fill would have been bound within seconds. So any
+        still-"published" row that old definitively did NOT fill and is
+        marked failed with an honest reason (reusing the existing failed
+        status so no UI/proof route needs a new state). Idempotent and cheap;
+        intended to run once per cycle at startup. Returns rows healed.
+        """
+        now = self.now_fn()
+        commits = self._load()
+        healed = 0
+        for rec in commits:
+            if rec.get("status") != "published":
+                continue
+            published_at = (rec.get("memo_published_at")
+                            or rec.get("sealed_at") or 0.0)
+            if now - float(published_at) < max_age_seconds:
+                continue  # too fresh — a fill may still be in flight
+            rec["status"] = "failed"
+            rec["fail_reason"] = ("memo published but no fill followed "
+                                  "(orphan reconciled)")
+            healed += 1
+        if healed:
+            self._save(commits)
+        return healed

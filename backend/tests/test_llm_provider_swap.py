@@ -338,6 +338,34 @@ async def test_narrator_deepseek_source_label(monkeypatch):
     await n.aclose()
 
 
+# ------------------------------------------- item 1: narration anti-repetition
+
+def test_template_opener_rotates_across_calls():
+    # Same gate every time — only the framing opener should vary.
+    outputs = {narrator_mod._template_thesis(_gate()) for _ in range(6)}
+    # The reject gate cites the same failing rule, but the rotation must
+    # produce more than one distinct framing sentence over 6 calls.
+    assert len(outputs) > 1
+    # Every variant still names the symbol and the failing rule (grounded).
+    for text in outputs:
+        assert "TEST" in text
+        assert "volume_alive" in text
+
+
+def test_build_prompt_carries_a_style_angle():
+    prompt = narrator_mod.build_prompt(_gate())
+    assert "Style for this one:" in prompt
+    # The angle is one of the curated set (style-only, no new facts).
+    angle = prompt.split("Style for this one:", 1)[1].strip()
+    assert angle in narrator_mod._ANGLES
+
+
+def test_angle_rotation_advances():
+    before = narrator_mod._angle_index
+    narrator_mod._next_angle()
+    assert narrator_mod._angle_index == before + 1
+
+
 async def test_narrator_provider_failure_falls_back_to_template(monkeypatch):
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
     monkeypatch.setattr(config, "MAIN_LLM_PROVIDER", "deepseek")

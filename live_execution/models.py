@@ -216,9 +216,18 @@ class ExecutionLedger:
                 total += float(r.get("usd_size") or 0.0)
         return total
 
-    def reduce_position(self, mint: str, fraction: float, proceeds_usd: float) -> ExecutionRecord:
+    def reduce_position(self, mint: str, fraction: float, proceeds_usd: float,
+                        full_close: bool = False) -> ExecutionRecord:
         # Partial-or-full SELL against the OLDEST open buy (FIFO). fraction=1.0
         # closes; smaller fractions shrink the open buy pro-rata - trims need this.
+        #
+        # full_close=True is the reconcile-clamped FULL exit: the exit engine
+        # intended to close the whole position and the sell disposed of everything
+        # the chain confirms we hold, so the position is CLOSED outright even though
+        # the fraction landed just below the trim threshold. Without this, the
+        # journal-vs-chain dust (buy fill slightly under quote) is left as a
+        # phantom OPEN position that pollutes holdings and counts against
+        # MAX_OPEN_POSITIONS forever (the stale-holdings bug).
         records = self._load()
         open_buys = [r for r in records if r["kind"] == "buy" and r["mint"] == mint and r["status"] in self._OPEN]
         if not open_buys:
@@ -237,13 +246,19 @@ class ExecutionLedger:
             if (r["kind"] == "buy" and r["mint"] == mint
                     and r["status"] in self._OPEN
                     and r["idempotency_key"] == target_key):
-                cost_part = float(r["usd_size"]) * frac
-                rec.pnl_usd = proceeds_usd - cost_part
-                if frac >= 0.999:
+                if full_close:
+                    # Realize against the FULL cost and close outright. The
+                    # journal-vs-chain dust is written off, never left open.
+                    rec.pnl_usd = proceeds_usd - float(r["usd_size"])
                     r["status"] = "closed"
                 else:
-                    r["usd_size"] = float(r["usd_size"]) - cost_part
-                    r["tokens_out"] = float(r.get("tokens_out") or 0.0) * (1.0 - frac)
+                    cost_part = float(r["usd_size"]) * frac
+                    rec.pnl_usd = proceeds_usd - cost_part
+                    if frac >= 0.999:
+                        r["status"] = "closed"
+                    else:
+                        r["usd_size"] = float(r["usd_size"]) - cost_part
+                        r["tokens_out"] = float(r.get("tokens_out") or 0.0) * (1.0 - frac)
                 break
         records.append(rec.to_json())
         self._save(records)

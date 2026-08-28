@@ -2,8 +2,8 @@
 
 **trading-bot** — a local, AI-assisted paper-trading research system for
 Solana memecoins. Report updated 2026-08-28 from the current main branch
-(§36: live execution unblocked — first real orders reach the chain guards;
-Journal + Holdings pages restored). Status: **live** (real market data,
+(§37: stale-holdings dust fix unblocked entries — **first REAL fill** landed;
+omo-audit items 1 & 3 shipped). Status: **live** (real market data,
 simulated funds; optional Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
 risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
@@ -1149,5 +1149,46 @@ quote-failure→failed-not-NameError, sell full-flow GET fill + ledger reduce,
 real-solders signing round-trip) → **506 passing**; +3 E2E (tab navigation,
 holdings data/empty, journal proof-expand) → **8/8 Playwright**; `npm run
 build` clean; live endpoints 200.
+
+
+
+## 21. Stale-holdings dust fix + FIRST REAL FILL + omo-audit items 1 & 3 (2026-08-28, handoff §37)
+
+Operator report: "the bot bought a token, then sold it, yet it still shows up
+in holdings … journal even shows it's closed" + "shows enter but doesn't
+enter." One ledger bug caused all three symptoms; fixing it unblocked entries
+and the bot immediately landed its **first real fill**. Then shipped the two
+deferred omo-audit items.
+
+- **Dust bug:** a reconcile-clamped FULL exit produced a sell fraction just
+  under the 0.999 close threshold (chain/journal dust, e.g. 0.99889), so
+  `ExecutionLedger.reduce_position` booked a *trim* and left a dust row OPEN —
+  it showed in Holdings, counted against `MAX_OPEN_POSITIONS=3` (blocking every
+  ENTER with "would hold 4 mints"), and disagreed with the journal. **Fix:**
+  threaded the exit engine's full-close intent through
+  `models.reduce_position(..., full_close)` → `executor.place_sell` →
+  `place_order` → `run_live_cycle._manage` (`decision.action == "close_full"`);
+  `full_close=True` closes outright and realizes PnL on the FULL cost (dust
+  written off, never left open); the trim path is unchanged. A one-time data
+  repair flipped the stuck dust row closed (backup kept).
+- **Live proof (ARMED, real mainnet):** PINK `think=buy gate=PASS` → memo
+  on-chain → Jupiter quote GET 200 → swap 200 → **FILLED buy $0.66 → 491.15
+  tokens** → venue attributed (jupiter router). The first real fill; the whole
+  manage→read→think→gate→execute pipeline now trades real money.
+- **Item 3 — commit orphan reconciliation:** `CommitLog.reconcile_orphaned(
+  max_age_seconds=600)` marks any commit still `published` (memo on chain, no
+  bound fill) older than the window as `failed`/"memo published but no fill
+  followed (orphan reconciled)" — reuses the existing `failed` status so no
+  UI/proof route needs a new state; wired at `run_cycle` start (cheap,
+  idempotent, fail-soft). Healed 7 historical orphans → commits.json
+  `{failed:8, bound:5}`, **zero ambiguous `published`**.
+- **Item 1 — narration anti-repetition** (omo cabin-ritual parity,
+  lightweight): a rotating set of style angles is appended to the LLM prompt
+  and the deterministic template opener rotates, so consecutive narrations read
+  distinctly. Style-only: never changes which rules are cited or the verdict;
+  grounding unaffected.
+
+**Verification:** +10 unit tests (3 full-close, 4 reconcile, 3 rotation) →
+**516 passing**; all endpoints 200, 0 tracebacks after restart.
 
   200; no `commits.json` at the repo root.

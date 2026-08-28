@@ -1,6 +1,15 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §37 stale-holdings dust fix + FIRST REAL FILL + items 1 & 3 (handoff
+      §37) (2026-08-28): one ledger bug → three symptoms (holdings ghost,
+      ENTER blocked by MAX_OPEN_POSITIONS, journal/book disagree). Fix:
+      `full_close` threaded `reduce_position`→`place_sell`→`place_order`→
+      `_manage`; full close realizes PnL on full cost + one-time repair of the
+      stuck dust row. Live proof: PINK buy gate=PASS → **FILLED $0.66 → 491.15
+      tokens** (first real fill). Item 3 `CommitLog.reconcile_orphaned` healed
+      7 memo-only orphans (0 ambiguous `published` left). Item 1 narrator
+      anti-repetition rotation. 516 unit + 8 E2E green.
 - [x] §36 live execution UNBLOCKED + Journal/Holdings restored (handoff §36)
       (2026-08-28): three stacked bugs fixed — quote verb (POST→GET via new
       `_get_json`, buy AND sell paths), `ExecutionError` import NameError,

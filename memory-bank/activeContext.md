@@ -1,9 +1,26 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (§36 LIVE EXECUTION UNBLOCKED — quote-GET fix + ExecutionError import + solders from_bytes + honest fail journal; Journal + Holdings pages restored; /api/live/executions; 506 backend tests + 8 E2E green; bot LIVE and ARMED, first impact-floor refusal journalled).**
+**As of 2026-08-28 (§37 STALE-HOLDINGS DUST FIX + FIRST REAL FILL + items 1 & 3 — full_close threading + one-time ledger repair unblocked entries and the bot landed a REAL PINK fill; CommitLog.reconcile_orphaned heals memo-only orphans; narrator anti-repetition rotation; 516 backend tests + 8 E2E green; bot LIVE and ARMED).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §37 stale-holdings dust fix + first real fill + items 1 & 3 (2026-08-28)
+ONE ledger bug caused three symptoms: a reconcile-clamped FULL exit produced a
+sell fraction just under the 0.999 close threshold, so `reduce_position`
+booked a trim and left a dust row OPEN — it showed in Holdings, counted
+against `MAX_OPEN_POSITIONS=3` (blocking every ENTER with "would hold 4
+mints"), and disagreed with the journal. Fix: threaded `full_close` through
+`models.reduce_position` → `executor.place_sell` → `place_order` →
+`run_live_cycle._manage` (`decision.action == "close_full"`); full_close
+closes outright + realizes PnL on full cost. One-time repair flipped the stuck
+`2NffKvfZ…` row closed (backup kept). Live proof: PINK `think=buy gate=PASS`
+→ memo → quote GET 200 → **FILLED $0.66 → 491.15 tokens** (first real fill).
+Item 3: `CommitLog.reconcile_orphaned(600s)` marks old memo-only `published`
+commits failed/no-fill (reuses `failed` status), wired at `run_cycle` start —
+healed 7 orphans, commits.json now `{failed:8, bound:5}`, 0 ambiguous. Item 1:
+narrator rotates style angles (LLM prompt) + template openers — style-only,
+grounding intact. +10 tests → 516. Handoff §37.
+
 ### §36 live execution unblocked + Journal/Holdings pages (2026-08-28)
 Three stacked bugs blocked every armed order: (1) quote POSTed to a GET
 endpoint (405) — buy + sell paths now use the new `_get_json`; (2)
