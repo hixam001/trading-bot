@@ -15,11 +15,22 @@ __pycache__/
 blocklist_state.json
 live_execution/state/
 wallet-keypair.json
+# Live execution ledgers (real order nonces) — never commit, wherever they land
+commits.json
 
 # Frontend
 node_modules/
 frontend/dist/
 *.tsbuildinfo
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/
+
+# Third-party Cline skills marketplace install (own .git, 22MB of example
+# images) — local tooling, not project content. Its design guidance was
+# synthesized into frontend/DESIGN.md, the UI source of truth.
+.clinerules/awesome-design-skills/
 
 
 # One-click launcher state

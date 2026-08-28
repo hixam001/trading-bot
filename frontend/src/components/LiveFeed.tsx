@@ -1,18 +1,25 @@
 import { useState } from 'react'
 import type { FeedEventRow, RuleResultRow } from '../types'
+import { Badge, Empty, Panel } from './ui'
+import { clock } from '../lib/format'
 
 function RuleLine({ r }: { r: RuleResultRow }) {
   return (
-    <div className="flex gap-2 text-xs">
-      <span className={r.passed ? 'text-term-green' : 'text-term-red'}>
+    <div className="flex gap-2 text-xs items-baseline">
+      <span className={`shrink-0 w-10 font-semibold ${r.passed ? 'text-pos' : 'text-neg'}`}>
         {r.passed ? 'PASS' : 'FAIL'}
       </span>
-      <span className="w-44 shrink-0 text-term-blue">{r.rule_id}</span>
-      <span className="text-term-dim">{r.detail}</span>
+      <span className="w-44 shrink-0 text-info">{r.rule_id}</span>
+      <span className="text-dim">{r.detail}</span>
     </div>
   )
 }
 
+/**
+ * Live decision feed — the main content. Rows are full-width <button>s
+ * (keyboard operable, aria-expanded) that reveal the contract address, the
+ * model's verbatim answer, and the rule-by-rule breakdown (DESIGN.md §2/§4).
+ */
 export default function LiveFeed({
   events,
   connected,
@@ -34,102 +41,106 @@ export default function LiveFeed({
   }
 
   return (
-    <div className="panel flex-1 min-w-0 overflow-auto" style={{ maxHeight: '75vh' }}>
-      <div className="panel-title flex justify-between">
-        <span>live feed</span>
-        <span className={connected ? 'text-term-green' : 'text-term-red'}>
-          {connected ? '● ws live' : '● ws offline (polling only)'}
-        </span>
-      </div>
-      {events.length === 0 && (
-        <div className="text-term-dim text-xs">Waiting for tick events…</div>
-      )}
-      <div className="space-y-1">
-        {events.map((ev) => {
-          // All rules passed but no entry -> the model itself declined.
-          const modelDeclined =
-            ev.verdict !== 'pass' && ev.failed_rule_ids.length === 0
-          return (
-            <div key={ev.id} className="border-b border-term-border/50 pb-1">
-              <button
-                className="w-full text-left flex items-start gap-2 hover:bg-term-bg px-1 rounded"
-                onClick={() => setExpanded(expanded === ev.id ? null : ev.id)}
-              >
-                <span
-                  className={
-                    ev.verdict === 'pass'
-                      ? 'text-term-green font-bold shrink-0'
-                      : 'text-term-red font-bold shrink-0'
-                  }
+    <Panel
+      testId="live-feed"
+      title="Live feed"
+      className="flex-1 min-w-0"
+      right={
+        <Badge tone={connected ? 'pos' : 'neg'}>
+          {connected ? '● ws live' : '● ws offline'}
+        </Badge>
+      }
+    >
+      {events.length === 0 ? (
+        <Empty>
+          No decisions yet this cycle. Rows appear as the model evaluates each
+          candidate against the rule set.
+        </Empty>
+      ) : (
+        <div className="space-y-1 overflow-y-auto pr-1" style={{ maxHeight: '72vh' }}>
+          {events.map((ev) => {
+            // All rules passed but no entry -> the model itself declined.
+            const modelDeclined = ev.verdict !== 'pass' && ev.failed_rule_ids.length === 0
+            const isOpen = expanded === ev.id
+            return (
+              <div key={ev.id} className="border-b border-line/60 pb-1">
+                <button
+                  className="w-full text-left flex items-start gap-2 hover:bg-raised px-1.5 py-1 rounded min-h-[24px]"
+                  onClick={() => setExpanded(isOpen ? null : ev.id)}
+                  aria-expanded={isOpen}
                 >
-                  {ev.verdict === 'pass' ? 'ENTER' : 'PASS'}
-                </span>
-                <span className="font-bold w-20 shrink-0">{ev.symbol}</span>
-                <span className="text-term-dim text-xs whitespace-pre-wrap flex-1">
-                  {ev.thesis}
-                </span>
-                {ev.grounding_flags.length > 0 && (
                   <span
-                    className="text-term-amber text-xs shrink-0"
-                    title={ev.grounding_flags.join('; ')}
+                    className={`shrink-0 w-14 font-bold ${
+                      ev.verdict === 'pass' ? 'text-pos' : 'text-neg'
+                    }`}
                   >
-                    ⚑ {ev.grounding_flags.length} grounding flag(s)
+                    {ev.verdict === 'pass' ? 'ENTER' : 'PASS'}
                   </span>
+                  <span className="font-bold w-20 shrink-0 text-bright">{ev.symbol}</span>
+                  <span className="text-dim text-xs whitespace-pre-wrap flex-1 line-clamp-2">
+                    {ev.thesis}
+                  </span>
+                  {ev.grounding_flags.length > 0 && (
+                    <span
+                      className="text-warn text-xs shrink-0"
+                      title={ev.grounding_flags.join('; ')}
+                    >
+                      ⚑ {ev.grounding_flags.length}
+                    </span>
+                  )}
+                  <span className="text-faint text-xs shrink-0 tnum">{clock(ev.ts)}</span>
+                </button>
+
+                {isOpen && (
+                  <div className="bg-raised/60 border-l-2 border-info rounded p-2 mt-1 space-y-2">
+                    {/* Token contract address — click to copy */}
+                    <div className="flex items-center gap-2 text-xs flex-wrap">
+                      <span className="text-dim shrink-0">contract:</span>
+                      <button
+                        className="font-mono text-info hover:text-bright break-all text-left"
+                        onClick={() => copyMint(ev.mint_address)}
+                        title="click to copy contract address"
+                      >
+                        {ev.mint_address || 'unknown'}
+                      </button>
+                      {copiedMint === ev.mint_address && (
+                        <span className="text-pos" role="status">copied ✓</span>
+                      )}
+                    </div>
+
+                    {/* Complete model answer, verbatim */}
+                    <div>
+                      <div className="text-xs text-dim mb-0.5">
+                        {modelDeclined ? 'model chose not to enter:' : 'model answer:'}
+                      </div>
+                      <div
+                        className={`text-xs whitespace-pre-wrap ${
+                          modelDeclined ? 'text-warn' : 'text-body'
+                        }`}
+                      >
+                        {ev.thesis}
+                      </div>
+                    </div>
+
+                    {/* Rule-by-rule pass/fail breakdown */}
+                    <div className="space-y-0.5">
+                      {ev.rule_breakdown.map((r) => (
+                        <RuleLine key={r.rule_id} r={r} />
+                      ))}
+                    </div>
+
+                    <div className="text-xs text-faint pt-1">
+                      narration source: {ev.narration_source || 'n/a'} · regime:{' '}
+                      {ev.regime_ok ? 'OK' : 'BAD'}
+                    </div>
+                  </div>
                 )}
-                <span className="text-term-dim text-xs shrink-0">
-                  {new Date(ev.ts).toLocaleTimeString()}
-                </span>
-              </button>
-              {expanded === ev.id && (
-                <div className="pl-4 pt-1 space-y-2 bg-term-bg/40 p-2 rounded mt-1">
-                  {/* Token contract address — click to copy */}
-                  <div className="flex items-center gap-2 text-xs flex-wrap">
-                    <span className="text-term-dim shrink-0">contract:</span>
-                    <button
-                      className="font-mono text-term-blue hover:text-term-text break-all text-left"
-                      onClick={() => copyMint(ev.mint_address)}
-                      title="click to copy contract address"
-                    >
-                      {ev.mint_address || 'unknown'}
-                    </button>
-                    {copiedMint === ev.mint_address && (
-                      <span className="text-term-green">copied ✓</span>
-                    )}
-                  </div>
-
-                  {/* Complete model answer, verbatim */}
-                  <div>
-                    <div className="text-xs text-term-dim mb-0.5">
-                      {modelDeclined
-                        ? 'model chose not to enter:'
-                        : 'model answer:'}
-                    </div>
-                    <div
-                      className={`text-xs whitespace-pre-wrap ${
-                        modelDeclined ? 'text-term-amber' : 'text-term-text'
-                      }`}
-                    >
-                      {ev.thesis}
-                    </div>
-                  </div>
-
-                  {/* Rule-by-rule pass/fail breakdown */}
-                  <div className="space-y-0.5">
-                    {ev.rule_breakdown.map((r) => (
-                      <RuleLine key={r.rule_id} r={r} />
-                    ))}
-                  </div>
-
-                  <div className="text-xs text-term-dim pt-1">
-                    narration source: {ev.narration_source || 'n/a'} · regime:{' '}
-                    {ev.regime_ok ? 'OK' : 'BAD'}
-                  </div>
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
-    </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </Panel>
   )
 }
+

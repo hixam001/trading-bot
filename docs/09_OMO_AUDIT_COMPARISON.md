@@ -268,4 +268,115 @@ hosting plumbing. The balance has flipped: on everything comparable from
 public code, this machine is now ahead of their public repo — and unlike
 theirs, all of it is verifiable from a fresh clone.
 
+---
+
+## Full logic-and-rules comparison — deep re-read, later 2026-08-28
+
+Same upstream commit (`48a86f9`, no drift). This section is the consolidated
+side-by-side the operator asked for: how each bot works, rule by rule, and
+the four lists — what they have that we don't, what we have that they don't,
+where we are better, where we are worse. Every number below was read out of
+the two codebases, not remembered.
+
+### 1. The loops
+
+| Stage | omo (`pipeline.server.ts`) | ours (`run_live_cycle.py` / `backend/main.py`) |
+|---|---|---|
+| cadence | 45s tick (`TICK_MS=45_000`), wallet snapshot 60s, equity read 8s | 60s live cycle (paper tick was 60s; exit scan 15s) |
+| manage | `runExitCycle()` first — risk off before risk on | `_manage()` first — same ordering |
+| read | DexScreener rotated queries + boosts/profiles, fomo board, web search | Birdeye memepool trending + Dexscreener enrichment, fomo board (Privy), web + social enrichment |
+| candidates | **one per cycle** (`candidates[0]`, top of screener) | up to `MAX_CANDIDATES_PER_TICK` per tick |
+| think | reasoning role writes <60 words ending "buy"/"pass"; `wantsBuy = /\bbuy\b/ && !/\bpass\b/` regex | DeepSeek structured JSON `{thesis, invalidation, verdict}`; entry needs `verdict=="buy"` AND all rules |
+| gate | `evaluateRules()` — the same 9 rules the audit log publishes | `evaluate_gate()` — 11 rules, no short-circuit, every refusal journalled with full breakdown |
+| seal | sha256(decision+rules+inputs+nonce) → Solana memo BEFORE the order | identical seal → memo BEFORE the fill, fail-closed (no memo = no order) |
+| execute | Jupiter quote → local sign → mainnet RPC; "unarmed" without key | same path through `live_execution.executor` with a deeper guard block |
+| journal | supabase audit row; signature bound when the fill shows up | `decision_commits` + retro matcher + binding report |
+| reveal | **20 minutes later** the plaintext is opened | **immediate** — `/api/verify.json` recomputes the hash and checks the memo on chain |
+
+### 2. Entry rules, side by side
+
+Their `evaluateRules()` (audit.server.ts) is the single source of truth for
+both the live gate and the audit log — the same design principle as our
+`ACTIVE_RULES`. Theirs has **9 rules; ours has 11** (the same 9, plus two).
+
+| # | rule | omo threshold | ours | verdict |
+|---|---|---|---|---|
+| 1 | liquidity_floor | ≥ $15,000 | ≥ $15,000 | parity |
+| 2 | volume_alive | 1h ≥ $8,000 | 1h ≥ $8,000 | parity |
+| 3 | buy_pressure | buys > sells (1h) | buys > sells (1h) | parity |
+| 4 | not_newborn_fade | age 0–24h AND 1h < −15% fails | age < 24h AND 1h ≤ −15% fails | parity |
+| 5 | public_presence | socials OR site | twitter/telegram/website, any known-present | parity (ours: unknown ≠ absent) |
+| 6 | crowd_heat | heat 25–90; heat = 20 + 8×written-theses | heat 36–100; real board heat, else 20 + 8×signals | **different band** (see §6) |
+| 7 | cash_available | ≥ $25 | ≥ ticket (live: real USDC balance) | ours is ticket-aware |
+| 8 | already_held | no size in name | no size in mint | parity |
+| 9 | not_on_break | loop awake | liveness break state | parity |
+| 10 | — | — | **market_regime_ok** (market-wide euphoria filter) | **ours only** |
+| 11 | — | — | **security_clear** (mint authority / honeypot known-bad) | **ours only** |
+
+Discovery filters before the gate: their `isFakeChart()` (13 checks) +
+`newbornFaded()` at `market.server.ts`; our `fake_chart.py` (all 13
+thresholds, A7) at the READ stage + symbol blocklist (A6). Parity, applied
+at equivalent points.
+
+### 3. Exit rules, side by side
+
+Their `exit.server.ts` is **still unpublished** — but their
+`__tests__/exit-rules.test.ts` (102 lines) pins the exact contract, and a
+fresh clone of their repo fails those tests because the module is missing.
+Ours (`rule_engine/exits.py`) has been public and tested since 2026-08-20.
+
+| rule | omo (from their test pins) | ours (config values) | verdict |
+|---|---|---|---|
+| hard stop | full close at `stopLossPct` | full close at −20% | same model |
+| trailing | arms only after a real run (peak 40% does NOT arm; peak 120% → give-back to 70% fires ⇒ ~50pp give-back, activation between 40–120%) | arms at HWM +50%, fires on 40pp give-back | same model, ours published |
+| liquidity break | full exit even at +50% (liq $4k breaks, $120k holds) | full exit below $8k even in profit | same model |
+| invalidation | price AND flow both break (chg6h −40, sells 3× buys) | chg6h ≤ −25% AND sells > 1.4× buys (6h) | ours triggers earlier |
+| profit tranches | 150% ⇒ 0.33 trim (tranche 0), never retaken; risk-break prefers full exit over trim | TP ladder +100/+300/+900 trims, never retaken; risk-off rules take priority | same model |
+| stale close | `staleDays`+1, flat pnl, dead volume | 14 days, \|pnl\| ≤ 10%, vol6h < $5k | same model |
+| sell gate | min clip ($5 dust blocked), cooldown (2 min blocked), daily exit ceiling | $25 min clip, 30-min per-mint cooldown, 8 exits/24h | same model |
+| risk-off bypass | not visible (module unpublished) | **documented**: stops/liquidity-break bypass cooldown+ceiling — blocking a stop in a cascade is how books bleed | ours explicit |
+| cadence | once per 45s cycle | **dedicated 15s exit scan** | ours faster |
+| bad-quote protection | nothing published | `EXIT_PRICE_JUMP_MAX` 50% + `MAX_EXIT_PROCEEDS_MULT` 200× + proceeds-bound backstops on every close/trim (§32) | **ours only** |
+
+### 4. Sizing and risk
+
+- **Their pipeline** sizes with `ticketUsd(cash, conviction) =
+  min(cash × 0.15, $3,000) × conviction`, where conviction is crowd heat
+  (0..1). That is the whole story in `runDecisionCycle`.
+- **Their `risk.server.ts::computeBudget`** exists and is **byte-identical to
+  our REF-R8 port**: equity × 0.035 × drawdown factor (clamp(1 + dd×2.5,
+  0.5, 1)), clamped [$25, $3,000]; daily = ×4 capped $12,000. **But it is not
+  wired into `ticketUsd`** — verified again this re-read. Their calibration
+  (`learn.server.ts::computeCalibration`: expectancy → factor, confidence
+  pulled to 1 below 12 samples, clamped [0.6, 1.2]) is likewise computed and
+  published but never multiplies a ticket.
+- **Ours**: `SIZING_MODE=risk_budget` runs exactly their computeBudget, then
+  **multiplies by their calibration factor** (REF-R9, same formula, same
+  [0.6, 1.2] clamp) — the wiring their public code never does. Live floor
+  `MIN_LIVE_TICKET_USD=$0.5` for the micro-bootstrap; hard ceilings $3k/$12k;
+  daily ceiling enforced + journalled.
+
+### 5. Model usage
+
+| | omo | ours |
+|---|---|---|
+| roles | ai-gateway roles: "realtime" (grok) social read <40 words; "reasoning" thesis <60 words | DeepSeek V4 Flash main (thinking mode disabled); Groq for social evidence |
+| output | free text, regex-parsed for buy/pass | structured JSON `{thesis, invalidation, verdict}` — no regex guessing |
+| invalidation | "what would make you wrong" inside the prose | dedicated `invalidation` sentence stored with the trade |
+| degradation | `.catch(() => null)` → "model gave nothing usable" | fail-closed deterministic template tagged `degraded:*`; provider swap; peak-window skip (2× pricing hours) |
+| accounting | none published | `llm_call_usage` per call: tokens, latency, cost, cache, model, degradation reason |
+| restatement | `thesis-author.server.ts` rewrites stale write-ups | A11 parity (`thesis_restate.py`) |
+
+### 6. The one real rule difference: crowd_heat band
+
+Their act band is **[25, 90]**; ours is **[36, 100]**. Consequences:
+- We demand more written conviction before acting (36 vs 25) — stricter entry.
+- They refuse heat > 90 (hype peak). Our proxy heat is capped at 100 by
+  construction, so on the proxy path our upper bound can never fire; it only
+  fires when real board heat arrives > 100. **Their peak-refusal is stricter
+  in practice.** If we want it, lowering `CROWD_HEAT_MAX` to 90 is a one-line
+  config change — recorded here as the only candidate follow-up this audit
+  found, and deliberately NOT applied without an operator decision.
+
+
 

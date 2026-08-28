@@ -1,3 +1,47 @@
+## Memory-bank update - 2026-08-28 (§35 frontend rebuild + STATE_DIR fix session)
+
+- **Task**: "rebuild the frontend, use all .clinerules skills especially
+  awesome-design-skills, install and use Playwright, completely functional,
+  fully wired, not vibecoded." A reported Qwen3.8 "text-only" Groq error was
+  checked first — it was the operator's own chat tool, NOT the bot (Groq
+  social reads 8/8 HTTP 200 in live logs at that time, DeepSeek brain OK,
+  0 errored usage rows, error absent from every log). Diagnosis documented;
+  no code change needed.
+- **Design system**: `frontend/DESIGN.md` = new source of truth (synthesized
+  from awesome-design-skills mono/sleek/impeccable + defense-first +
+  performance-discipline). Token-only colors in `tailwind.config.js`
+  (ink/panel/raised/line surface; bright/body/dim/faint text; pos/neg/warn/
+  info semantics; JetBrains Mono data + Inter labels; flat 6px panels, no
+  shadows; 8pt grid; five required states; a11y gates). Old `term-*` tokens
+  fully retired — grep: 0 refs, 0 hex literals outside the token file.
+- **Code**: new `src/lib/format.ts` (verbatim-value formatters, signed
+  money, `—` for null, NO client-side math) + `src/components/ui.tsx`
+  (Panel/Stat/Badge/Skeleton/Empty/ErrorState). All four live panels rebuilt:
+  LiveBook (headline equity strip + positions table), LiveFeed (accessible
+  expand/collapse, contract copy, verbatim model answer, rule breakdown),
+  MarketRegimePanel, SystemStatus (shows the real reasoning model + recent
+  LLM calls). Feed now REST-hydrates `/api/feed?limit=50` on mount then
+  live-appends over WS, deduped by id — reloads are never blank.
+- **Playwright**: `npm i -D @playwright/test` + `playwright.config.ts`
+  (against the running backend on :8000) + `e2e/dashboard.spec.ts` — 5
+  tests: zero console errors on load, all panels reach data/empty (never
+  blank, no stuck skeletons), feed expand/collapse with aria-expanded, Enter-
+  key operability, offline banner on route-abort. **5/5 passing**. npm
+  scripts `test:e2e` / `test:e2e:ui` added; `frontend/test-results/`
+  gitignored.
+- **BUG FOUND + FIXED while wiring** (this is the important one):
+  `LIVE_EXECUTION_STATE_DIR=` (EMPTY) in `.env` → `os.getenv(name, default)`
+  returns `""`, so `Path("")` = CWD → the live CommitLedger (`commits.json`
+  — real order nonces/seals) was written at the REPO ROOT, one `git add -A`
+  from being published. Fixed to `os.getenv("LIVE_EXECUTION_STATE_DIR") or
+  <default>`; stray `commits.json` moved into `live_execution/state/`;
+  `/commits.json` + Playwright artifacts added to `.gitignore`; +3 tests
+  (`live_execution/tests/test_state_dir.py`: empty-unset fallback, explicit
+  override wins). App restarted clean; no root ledger.
+- **Verification**: `npm run build` clean (tsc strict + vite); Playwright
+  5/5; **pytest 501 passing** (backend 385 + live_execution 116); restart
+  smoke all 200; screenshot review of the running dashboard.
+
 ## Memory-bank update - 2026-08-28 (§34 live-cycle hardening session)
 
 - **Task**: two operator-reported issues with the now-ARMED live cycle:

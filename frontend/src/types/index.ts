@@ -97,6 +97,23 @@ export interface PromotionGateResponse {
   note: string
 }
 
+export interface LlmUsageRow {
+  id: number
+  ts: string
+  task: string
+  provider: string
+  model: string
+  status: string
+  latency_ms: number | null
+  input_tokens: number | null
+  cache_hit_tokens: number | null
+  output_tokens: number | null
+  total_tokens: number | null
+  estimated_cost_usd: number | null
+  is_peak_window: number
+  degradation_reason: string | null
+}
+
 export interface SystemStatusResponse {
   paper_trading_only: boolean
   data_backend: string
@@ -111,6 +128,7 @@ export interface SystemStatusResponse {
     rate_limit_429_count: number
     last_call_at: string | null
   }[]
+  llm_usage_recent: LlmUsageRow[]
   tick_interval_seconds: number
 }
 

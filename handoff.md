@@ -1,8 +1,8 @@
 **Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
 (real market data, simulated funds; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000
-**Tests:** 498 passing (suite fully green; the flag-state canary now pins
-the committed ARMED state — see §33)
+**Tests:** 501 backend/live_execution passing + 5 Playwright E2E (suite
+fully green; the flag-state canary now pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -44,8 +44,10 @@ seems to require real execution inside backend/ — stop and flag it.
                   # No local model: LLM = DeepSeek/Groq cloud APIs via .env.
 ./stop.sh         # stops the backend (+ tick loop)
 cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 385 tests
-.venv/bin/python -m pytest -q                           # full suite: 498 tests, ~2s
-                                                        # (fully green while armed — §33 canary)
+.venv/bin/python -m pytest -q                           # full suite: 501 tests, ~2s
+                                                         # (fully green while armed — §33 canary)
+cd frontend && npm run test:e2e                          # Playwright E2E: 5 tests vs the
+                                                         # running backend on :8000 (§35)
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -74,7 +76,9 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 385 test
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
 | `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. |
 | `live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
-| `frontend/src/` | dashboard panels (feed WS, holdings, journal, stats [equity/spend/realized/unrealized/cash], regime, gate, status); no knowledge tab, no paper-trading banner (removed 2026-08-25) |
+| `frontend/DESIGN.md` | the frontend design system: tokens, component anatomy, five required states, a11y criteria, anti-patterns, QA checklist. All UI work must conform |
+| `frontend/src/` | live-trading terminal (rebuilt §35): `lib/format.ts` (verbatim-value formatters, `—` for null), `components/ui.tsx` (Panel/Stat/Badge/Skeleton/Empty/ErrorState), `LiveBook` (headline real-money panel), `LiveFeed` (WS + REST-hydrated decision feed), `MarketRegimePanel`, `SystemStatus`; paper panels (stats/holdings/journal/gate) removed 2026-08-28 when the system went live |
+| `frontend/e2e/dashboard.spec.ts` | Playwright E2E (5 tests): zero console errors, all panels reach data/empty (never blank), feed expand/collapse + aria-expanded, keyboard operability, offline banner on API loss. `npm run test:e2e` (needs backend on :8000) |
 | `backend/api/routes/proof.py` | REF-R1 binding report (`/api/binding.json`), `/api/verify.json` (REF-R11: also re-verifies the on-chain commit memo hash + slot ordering), `/api/refusals.json`, `/api/theses.json`, `/api/proof.json`, `/api/exits.json` |
 | `backend/api/routes/disclosure.py` | REF-R6 public machine-truth feeds: `/api/disclosure.json` (armed/break/config state + REF-R11 `commit_memo` block) + `/api/reasoning.json` (per-decision provenance) |
 | `backend/retro_matcher.py` | REF-R7 retro audit-log signature matching: attributes out-of-pipeline fills to decision commit rows using the reference's exact algorithm (symbol+side match, 12h window, earliest fill wins, taken set) |
@@ -1993,4 +1997,63 @@ degradation; that is the model veto working as designed, not a bug.)
   lives in the root bridge `run_live_cycle.py`, which already imports both).
 - Live smoke (ARMED): system-status / live/portfolio / disclosure.json all 200;
   both fixes observed in `logs/live_cycle.log` on the first cycle after restart.
+
+
+## 35. Frontend rebuild — terminal design system + Playwright E2E (2026-08-28)
+
+Operator-directed: "rebuild the frontend using all .clinerules skills,
+especially awesome-design-skills; install and use Playwright; it must be
+completely functional, fully wired, and not look vibecoded."
+
+### Design system (`frontend/DESIGN.md` — new source of truth)
+Synthesized from the awesome-design-skills pack (mono + sleek + impeccable),
+held to defense-first (never invent values) and performance-discipline (no
+new runtime deps): dark high-contrast terminal; token-only colors
+(`tailwind.config.js` — surface ladder ink/panel/raised/line, text ladder
+bright/body/dim/faint, semantics pos/neg/warn/info); JetBrains Mono for all
+data (tabular-nums everywhere), Inter for labels; flat 6px panels, no
+shadows; five required states (loading skeletons / explicit empty / error /
+global offline banner / stale); a11y gates (aria-expanded rows, keyboard
+operability, copy announce, never color-only meaning).
+
+### What shipped
+- `src/lib/format.ts` — verbatim-value formatters (signed money `+$/−$`,
+  small-price precision, em-dash for null; NO client-side money math).
+- `src/components/ui.tsx` — shared primitives (Panel/Stat/Badge/Skeleton/
+  Empty/ErrorState) so every panel implements the required states the same way.
+- Rebuilt all four live panels: `LiveBook` (headline real-money equity strip +
+  positions table), `LiveFeed` (accessible expand/collapse rows, contract
+  copy, verbatim model answer, rule breakdown), `MarketRegimePanel`,
+  `SystemStatus` (now shows the real reasoning model + recent LLM calls from
+  `llm_usage_recent`).
+- Feed history: `useWebSocket` hydrates the last 50 decisions from
+  `/api/feed?limit=50` on mount, then live-appends over `/ws/feed` (deduped by
+  id, newest-first) — the dashboard no longer starts blank after a reload.
+- Old `term-*` token system fully retired (grep: 0 refs; 0 hex literals
+  outside the token file). Fonts self-hosted via @fontsource-variable.
+
+### Playwright E2E (`npm run test:e2e` — 5 passing)
+Zero console errors on load; every panel reaches data or an explicit empty
+state (never blank, no stuck skeletons); feed rows expand/collapse with
+`aria-expanded` and are Enter-key operable; offline banner appears when the
+API is unreachable (route-abort). Config pins the already-running backend on
+:8000 (it serves `frontend/dist`); `frontend/test-results/` gitignored.
+
+### Found + fixed while wiring: STATE_DIR empty-env bug
+`LIVE_EXECUTION_STATE_DIR=` (empty) in `.env` made `os.getenv(..., default)`
+return `""` → `Path("")` = CWD → the live CommitLedger (`commits.json`, real
+order nonces) was written to the REPO ROOT — one `git add -A` from being
+published. Fixed: empty value now falls back to `live_execution/state/`
+(`+3` tests in `live_execution/tests/test_state_dir.py` incl. override-wins);
+stray ledger moved into `live_execution/state/`; `/commits.json` +
+Playwright artifacts added to `.gitignore`; app restarted clean.
+
+### Verification
+- `npm run build` clean (tsc strict + vite); **Playwright 5/5 passing**;
+  **pytest 501 passing** (backend 385 + live_execution 116, +3 state-dir).
+- Screenshot review of the running dashboard (live book $ figures, feed with
+  expanded row, regime BAD/OK column, system status) — layout is calm, dense,
+  and terminal-true.
+- Live smoke after restart: system-status / live/portfolio / feed /
+  market-regime all 200; no `commits.json` at repo root.
 

@@ -1,7 +1,25 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (LIVE-CYCLE HARDENING — handoff §34: 403-rejection benching for the stealth scraper chain + micro-bootstrap live cash rule; both live-verified ARMED; suite fully green at 498).**
+**As of 2026-08-28 (§35 FRONTEND REBUILT — terminal design system + Playwright E2E; STATE_DIR empty-env bug found+fixed; 501 backend tests + 5 E2E green; bot LIVE and ARMED).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
+
+## DONE
+### §35 frontend rebuild + STATE_DIR fix (2026-08-28)
+Operator-directed rebuild using the awesome-design-skills pack + Playwright.
+`frontend/DESIGN.md` is now the UI source of truth (token-only colors in
+`tailwind.config.js`, JetBrains Mono data / Inter labels, five required
+states, a11y gates). All four live panels rebuilt on shared primitives
+(`lib/format.ts`, `components/ui.tsx`); feed hydrates 50 rows from
+`/api/feed` then live-appends over WS (deduped) — reloads never blank;
+`term-*` tokens fully retired; fonts self-hosted. Playwright `npm run
+test:e2e` (5 passing: console-clean load, panels reach data/empty never
+blank, aria-expanded expand/collapse, Enter operable, offline banner).
+FOUND + FIXED while wiring: empty `LIVE_EXECUTION_STATE_DIR=` in `.env` →
+`Path("")` = CWD → the live CommitLedger (`commits.json`, real order
+nonces) wrote to the REPO ROOT; now `or`-falls back to `live_execution/state/`,
+stray ledger moved, `/commits.json` + Playwright artifacts gitignored,
++3 tests. The "Qwen3.8 text-only" error was the operator's own chat tool —
+verified NOT the bot (Groq 8/8 200s, DeepSeek OK, 0 errored usage rows).
 
 ## DONE
 ### §34 live-cycle hardening (2026-08-28)

@@ -46,12 +46,12 @@ RPC_URL: str = os.getenv(
 )
 
 # Mutable state (confirmations, idempotency ledger, kill switch). Gitignored;
-# override the directory for isolated drills/backups if needed.
+# override the directory for isolated drills/backups if needed. An EMPTY env
+# value must fall back to the default (Path("") = cwd once put the live
+# CommitLedger at the repo root — exactly the accident this prevents).
 STATE_DIR: Path = Path(
-    os.getenv(
-        "LIVE_EXECUTION_STATE_DIR",
-        str(Path(__file__).resolve().parent / "state"),
-    )
+    os.getenv("LIVE_EXECUTION_STATE_DIR")
+    or str(Path(__file__).resolve().parent / "state")
 )
 
 # ---------------------------------------------------------------------------

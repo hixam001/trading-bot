@@ -27,9 +27,12 @@ docs/09 §F): no trading-critical parity gap remains. Live-cycle hardening
 (handoff §34) shipped the same day: 403-rejection benching for the stealth
 scraper chain (a proxy refused by the origin twice is benched like a 402) and
 a micro-bootstrap live cash rule (`LIVE_ACTIVE_RULES` checks the $0.50 live
-floor instead of the paper book's $100), both live-verified ARMED.** Tests:
-**498 passing (suite fully green; the flag-state canary pins the committed
-ARMED state — handoff §33).**
+floor instead of the paper book's $100), both live-verified ARMED. The
+frontend was rebuilt on a real design system the same day (handoff §35 —
+token-based terminal, shared primitives, Playwright E2E) and a latent
+STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
+at the repo root).** Tests: **501 backend + 5 Playwright E2E — fully green
+(the flag-state canary pins the committed ARMED state — handoff §33).**
 
 ---
 
@@ -1050,3 +1053,50 @@ live-verified the same day:
 green. Both fixes observed in `logs/live_cycle.log` on the first cycle after an
 ARMED restart; system-status / live/portfolio / disclosure.json all 200.
 
+---
+
+## 16. Frontend terminal rebuild + STATE_DIR fix (2026-08-28, handoff §35)
+
+### Design system (`frontend/DESIGN.md`)
+Synthesized from the awesome-design-skills pack (mono / sleek / impeccable)
+and held to the project's defense-first and performance-discipline skills:
+a calm, dense, dark trading terminal presenting live money truth with zero
+client-side invention. Tokens live only in `tailwind.config.js` (surface
+ladder ink/panel/raised/line; text ladder bright/body/dim/faint; semantics
+pos/neg/warn/info); JetBrains Mono for all data (tabular-nums), Inter for
+labels; flat 6px panels without shadows; five required states (skeleton /
+empty / error / offline banner / stale); accessible by testable criteria.
+
+### What shipped
+- `src/lib/format.ts` — verbatim-value formatters (signed `+$/−$`, small-price
+  precision, `—` for null; no client-side money math).
+- `src/components/ui.tsx` — Panel / Stat / Badge / Skeleton / Empty /
+  ErrorState shared primitives.
+- Rebuilt panels: `LiveBook` (headline real-money equity + positions),
+  `LiveFeed` (REST-hydrated history + WS live-append, expanded rows with
+  contract copy + verbatim model answer + rule breakdown), `MarketRegimePanel`,
+  `SystemStatus` (real reasoning model + `llm_usage_recent`).
+- Old `term-*` token system fully retired; fonts self-hosted; old paper
+  panels already removed when the system went live.
+
+### Playwright E2E (`npm run test:e2e`)
+Five tests against the running backend on :8000: zero console errors on load;
+every panel reaches data or a documented empty state (never blank); feed rows
+expand/collapse with `aria-expanded` and are Enter-key operable; offline
+banner appears when the API is unreachable. Config + spec in
+`frontend/playwright.config.ts` / `frontend/e2e/dashboard.spec.ts`.
+
+### STATE_DIR bug found while wiring (important)
+Empty `LIVE_EXECUTION_STATE_DIR=` in `.env` made `os.getenv` return `""`, so
+`Path("")` = CWD and the live CommitLedger (`commits.json`, real order
+nonces) was written at the repo root — one `git add -A` from being
+published. `live_execution/config.py` now falls back to
+`live_execution/state/` on any empty value; the stray ledger was moved into
+the state dir; `/commits.json` and Playwright artifacts were gitignored.
++3 regression tests (`live_execution/tests/test_state_dir.py`).
+
+### Verification
+- `npm run build` clean (tsc strict + vite); **Playwright 5/5 passing**;
+  **pytest 501 passing** (backend 385 + live_execution 116).
+- Restart smoke: system-status / live/portfolio / feed / market-regime all
+  200; no `commits.json` at the repo root.

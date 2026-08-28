@@ -1,6 +1,18 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §35 frontend rebuild + STATE_DIR fix (handoff §35) (2026-08-28):
+      terminal design system (`frontend/DESIGN.md`, token-only
+      `tailwind.config.js`, shared `lib/format.ts` + `components/ui.tsx`);
+      all four live panels rebuilt (LiveBook / LiveFeed / MarketRegime /
+      SystemStatus with real reasoning model + llm_usage_recent); feed
+      REST-hydrates 50 rows then WS live-append (deduped); `term-*` tokens
+      retired; fonts self-hosted; Playwright `npm run test:e2e` 5/5 (console-
+      clean load, data/empty never blank, aria-expanded + Enter operability,
+      offline banner). FOUND + FIXED: empty `LIVE_EXECUTION_STATE_DIR=` →
+      `Path("")` = CWD → live CommitLedger at repo root; now or-fallback to
+      `live_execution/state/`, ledger moved, gitignore entries added, +3
+      tests. vite build clean; **501 backend tests + 5 E2E passing**.
 - [x] §34 live-cycle hardening (handoff §34) (2026-08-28): two operator-reported
       issues with the ARMED live cycle. (1) 403-rejection benching
       (`backend/data_providers/crowd.py`): `_CONSECUTIVE_REJECTIONS` — a stealth
@@ -264,8 +276,9 @@ REF-R1–R7 audited and confirmed correct. Dashboard v2 shipped
 (2026-08-25): ENTER/PASS feed labels, verbatim model answers + contract
 address in feed detail, five-number portfolio stats panel; knowledge tab +
 paper banner removed. App runnable via ./start.sh (rebuilds frontend/dist).
-**Tests: 498 passing — suite fully green** (backend 385 + live_execution 113;
-+11 this batch: 4 crowd 403-rejection bench + 7 live micro-bootstrap cash rule;
-the flag-state canary now pins the committed ARMED state, so it is green while
-armed — handoff §33/§34).
+**Tests: 501 backend + 5 Playwright E2E — fully green** (backend 385 +
+live_execution 116; +3 state-dir regression this batch; +5 E2E in
+frontend/e2e/dashboard.spec.ts via `npm run test:e2e`).
+The flag-state canary now pins the committed ARMED state — green while armed
+(handoff §33/§34).
 

@@ -2,14 +2,107 @@
 @tailwind components;
 @tailwind utilities;
 
-body {
-  @apply bg-term-bg text-term-text font-mono text-sm antialiased;
+/* ---------------------------------------------------------------------------
+ * Design system — trading-bot terminal (frontend/DESIGN.md).
+ * Raw color/spacing values live ONLY in tailwind.config.js; this file maps
+ * them onto reusable component classes. No hex literals below this line.
+ * ------------------------------------------------------------------------- */
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  html {
+    /* Data-dense terminal: crisp text rendering, no bouncy overscroll. */
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+  body {
+    @apply bg-ink text-body font-mono text-[13px] leading-snug antialiased;
+  }
+  /* Every numeric column uses tabular figures so values never jiggle. */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+  /* Visible focus for keyboard users (DESIGN.md §1 / §4). */
+  :focus-visible {
+    outline: 2px solid theme('colors.info');
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  ::selection {
+    background: theme('colors.line-strong');
+    color: theme('colors.bright');
+  }
+  /* Thin, on-theme scrollbars for the dense scroll regions. */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: theme('colors.line-strong') transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-thumb {
+    background: theme('colors.line-strong');
+    border-radius: 4px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
 }
 
-.panel {
-  @apply bg-term-panel border border-term-border rounded p-3;
-}
+@layer components {
+  /* Panel — the primary surface. Flat, bordered, no shadow (DESIGN.md §2). */
+  .panel {
+    @apply bg-panel border border-line rounded p-3;
+  }
+  .panel-header {
+    @apply flex items-center justify-between gap-2 mb-2;
+  }
+  .panel-title {
+    @apply font-sans text-[11px] font-semibold uppercase tracking-[0.08em] text-dim;
+  }
 
-.panel-title {
-  @apply text-xs uppercase tracking-wider text-term-dim mb-2;
+  /* Stat — label over value (DESIGN.md §2). */
+  .stat-label {
+    @apply font-sans text-[11px] uppercase tracking-[0.06em] text-dim;
+  }
+  .stat-value {
+    @apply font-mono tnum text-bright;
+  }
+
+  /* Badge — 1px semantic border, transparent bg (DESIGN.md §2). */
+  .badge {
+    @apply inline-flex items-center gap-1 font-sans text-[11px] font-medium
+           leading-none px-1.5 py-[3px] rounded-[4px] border whitespace-nowrap;
+  }
+  .badge-pos  { @apply border-pos/60 text-pos; }
+  .badge-neg  { @apply border-neg/60 text-neg; }
+  .badge-warn { @apply border-warn/60 text-warn; }
+  .badge-info { @apply border-info/60 text-info; }
+  .badge-dim  { @apply border-line-strong text-dim; }
+
+  /* Table primitives (DESIGN.md §2). */
+  .th {
+    @apply font-sans text-[11px] font-medium uppercase tracking-[0.06em]
+           text-dim text-left py-1.5 px-2 border-b border-line-strong
+           whitespace-nowrap;
+  }
+  .td {
+    @apply py-1.5 px-2 border-b border-line align-middle;
+  }
+  .td-num {
+    @apply td text-right tnum whitespace-nowrap;
+  }
+
+  /* Skeleton loading bar (DESIGN.md §3 — never a spinner alone). */
+  .skeleton {
+    @apply animate-pulse bg-raised rounded;
+  }
+
+  /* Hairline divider used inside expanded feed rows. */
+  .divider {
+    @apply border-t border-line my-2;
+  }
 }
