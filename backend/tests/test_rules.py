@@ -294,7 +294,8 @@ def test_gate_no_short_circuit_all_rules_present_on_failure():
     assert len(decision.rules) == len(ACTIVE_RULES)          # every rule evaluated
     assert len({r.rule_id for r in decision.rules}) == len(ACTIVE_RULES)
     for expected in ("liquidity_floor", "volume_alive", "buy_pressure",
-                     "public_presence", "crowd_heat", "cash_available"):
+                     "public_presence", "crowd_heat", "cash_available",
+                     "security_clear"):
         assert expected in decision.failed_rule_ids
     # rules AFTER the first failure still carry real results
     assert decision.rules[-1].rule_id == "not_on_break"
@@ -303,7 +304,7 @@ def test_gate_no_short_circuit_all_rules_present_on_failure():
 def test_gate_full_decision_sample_all_pass(capsys):
     decision = evaluate_gate(make_candidate(), make_portfolio(), make_regime(True), ACTIVE_RULES)
     assert decision.all_passed and decision.failed_rule_ids == []
-    assert len(decision.rules) == 9
+    assert len(decision.rules) == 10
     print("\n--- Sample full GateDecision (every rule shown) ---")
     for r in decision.rules:
         print(f"  {r.rule_id:24s} {'PASS' if r.passed else 'FAIL'}  {r.detail}")
@@ -321,7 +322,7 @@ def test_gate_already_held_blocks_pyramiding():
 
 
 
-def test_active_rules_are_exactly_reference_nine():
+def test_active_rules_are_exactly_reference_nine_plus_security_clear():
     from rule_engine.rules import ACTIVE_RULES
-    expected = ["liquidity_floor", "volume_alive", "buy_pressure", "not_newborn_fade", "public_presence", "crowd_heat", "cash_available", "already_held", "not_on_break"]
+    expected = ["liquidity_floor", "volume_alive", "buy_pressure", "not_newborn_fade", "public_presence", "crowd_heat", "cash_available", "already_held", "security_clear", "not_on_break"]
     assert [r.__name__ for r in ACTIVE_RULES] == expected

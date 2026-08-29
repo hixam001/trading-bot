@@ -1,9 +1,49 @@
 # Active Context — trading-bot
 
-**As of 2026-08-28 (§38 SECURITY AUDIT + HARDENING — 20-rule checklist audited: 11 pass / 3 partial→fixed / 2 gaps→fixed / 4 N-A; zero secrets in git history; admin+ingest endpoints now token-gated fail-closed; ingest size cap; security headers; CORS narrowed; .env + keypair 600; 527 backend tests + 8 E2E green; bot LIVE and ARMED).**
+**As of 2026-08-29 (§39 ROADMAP #1/#3/#6 — security_clear re-activated as the 10th gate rule; crowd heat discounts dumped thesis authors; paper+live pipelines unified on backend/decision_pipeline.py; 550 tests + 8 E2E green; bot LIVE and ARMED on the new code).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §39 roadmap items #1, #3, #6 (2026-08-29)
+**#1 security_clear re-activated** in `ACTIVE_RULES` (between `already_held`
+and `not_on_break`) — one edit, both books (LIVE_ACTIVE_RULES derives from
+ACTIVE_RULES). KNOWN-bad-only semantics: fails on live mint authority or a
+honeypot flag; None/unknown always passes (B10) — missing data can never
+block a trade. Reference parity knowingly broken by this single deliberate
+addition (documented in rules.py + docs/06/07/09). Live-verified:
+`/api/feed` breakdowns now carry 10 rules with `security_clear` present.
+
+**#3 crowd author-P&L attribution** (omo exit-liquidity-dump parity):
+`crowd.py::_is_dumped` — a thesis whose author closed at a realized profit
+(`closed AND realized_usd > 0`) is marketing, not conviction.
+`fetch_fomo_theses` returns `dumped_count` + `effective_total`;
+`enrich_crowd_heat` now feeds `heat_from_count(effective_total)` — so a
+board whose visible authors all took profits stops counting as live heat.
+Knob: `FOMO_DUMPED_THESIS_WEIGHT` (env, default 0.0; 1.0 = old behavior).
+`total` stays raw (thinker/UI/tests unchanged). Unknown authorTrade keeps
+full credit (fail-soft). +6 tests in `test_crowd.py`.
+
+**#6 pipelines unified** on new `backend/decision_pipeline.py`
+(read_candidates / enrich_candidates / think_candidate / apply_break /
+gate_candidate / entry_decision). Paper `main.run_tick` and live
+`run_live_cycle.run_cycle` are thin over the shared core; sizing, seals,
+ledgers, exits stay per-book. The extraction surfaced and fixed THREE
+live-side drifts: (a) live was missing the A7 fake-chart filter entirely;
+(b) a thinker exception killed the whole live cycle (now the paper's
+template fallback degrades that one candidate); (c) the live break handler
+called `set_break(minutes, reason)` — missing the leading `taking`
+positional, a latent TypeError (now `apply_break`, correct in both books).
+Isolation contract intact (module imports only backend/, pinned by test).
++13 backend `test_decision_pipeline.py` + 4 live
+`live_execution/tests/test_pipeline_parity.py` (paper-vs-live decisions
+differ in EXACTLY the cash rule).
+
+Verification: **550 passing** (backend 418 + live 132; +23 over the 527
+baseline), Playwright 8/8, live cycle restarted and verified (clean cycle,
+gate decisions flowing, `security_clear` in every breakdown, 0
+tracebacks). Handoff §39.
+
+## DONE (previous)
 ### §38 security audit + hardening (2026-08-28)
 Audited the whole codebase against the operator's 20-rule checklist. Verified
 CLEAN: zero secrets in full git history; all keys in untracked `.env`;

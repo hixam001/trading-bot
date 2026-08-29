@@ -297,7 +297,7 @@ the two codebases, not remembered.
 
 Their `evaluateRules()` (audit.server.ts) is the single source of truth for
 both the live gate and the audit log — the same design principle as our
-`ACTIVE_RULES`. Theirs has **9 rules; ours has 11** (the same 9, plus two).
+`ACTIVE_RULES`. Theirs has **9 rules; ours has 10** (the same 9, plus one).
 
 | # | rule | omo threshold | ours | verdict |
 |---|---|---|---|---|
@@ -310,8 +310,8 @@ both the live gate and the audit log — the same design principle as our
 | 7 | cash_available | ≥ $25 | ≥ ticket (live: real USDC balance) | ours is ticket-aware |
 | 8 | already_held | no size in name | no size in mint | parity |
 | 9 | not_on_break | loop awake | liveness break state | parity |
-| 10 | — | — | **market_regime_ok** (market-wide euphoria filter) | **ours only** |
-| 11 | — | — | **security_clear** (mint authority / honeypot known-bad) | **ours only** |
+| 10 | — | — | **security_clear** (mint authority / honeypot known-bad) | **ours only — ACTIVE since 2026-08-29** |
+| 11 | — | — | market_regime_ok (market-wide euphoria filter) | ours only — retired from gate, observability |
 
 Discovery filters before the gate: their `isFakeChart()` (13 checks) +
 `newbornFaded()` at `market.server.ts`; our `fake_chart.py` (all 13

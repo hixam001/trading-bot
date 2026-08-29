@@ -19,8 +19,8 @@ the reference bot' gate (from revealed commit payloads) vs ours:
 | 7 | `cash_available` | `cash $55817.50` | `cash_available` | YES — identical |
 | 8 | `already_held` | `no size on` | `exposure_cap` + routing | PARTIAL — see §3.3 |
 | 9 | `not_on_break` | `awake` | *(none)* | DIVERGENT — see §3.4 |
-| 10 | — | — | `market_regime_ok` | OUR ADDITION (informed by their regime concept) |
-| 11 | — | — | `security_clear` | OUR ADDITION (None-means-unknown semantics) |
+| 10 | — | — | `market_regime_ok` | OUR ADDITION — retired from gate (observability only) |
+| 11 | — | — | `security_clear` | OUR ADDITION — ACTIVE in gate since 2026-08-29 (None-means-unknown semantics) |
 
 Their extra *inputs* we don't consume: `chg6h`, a `researched` deep-dive flag,
 a numeric `socials` list, and the `fomo` index itself.

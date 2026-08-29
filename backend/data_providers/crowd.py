@@ -130,6 +130,19 @@ def _looks_like_challenge(raw: str) -> bool:
     return raw.lstrip().startswith("<!doctype html") or "just a moment" in head
 
 
+def _is_dumped(row: dict) -> bool:
+    """
+    Item #3 (omo parity — exit-liquidity-dump detection). KNOWN-data only: a
+    thesis is DUMPED when the author already closed their position at a
+    realized profit (closedAt set AND realized_usd > 0). Someone shilling a
+    token they already exited with a win is exit-liquidity marketing, not
+    live conviction. Everything else — open positions, closed-at-a-loss,
+    missing authorTrade — keeps full credit (unknown is not the same claim
+    as dumped, same B10 discipline as security_clear).
+    """
+    return bool(row.get("closed")) and float(row.get("realized_usd") or 0.0) > 0.0
+
+
 def _is_substantive(text: str) -> bool:
     """
     Junk-thesis filter (reference parity): raw invite links, single emojis and
@@ -690,12 +703,28 @@ async def fetch_fomo_theses(mint: str) -> Optional[dict]:
     where total is the board's OWN count for that token.
     Each thesis: {who, text, size_usd, unrealized_usd, realized_usd,
     pnl_pct, closed}. Junk texts are filtered — they are not conviction.
+
+    Item #3 (omo parity — exit-liquidity-dump discount): also returns
+    `dumped_count` (seen rows whose author closed at a realized profit) and
+    `effective_total` — the count crowd heat should consume, where each
+    dumped row counts at config.FOMO_DUMPED_THESIS_WEIGHT instead of 1.
+    `total` stays the board's own raw number (UI/tests/thinker unchanged);
+    only the heat count is discounted, and only over the rows we SAW.
     """
     payload = await _thesis_payload(mint)
     if payload is None:
         return None
     theses = [r for r in payload["rows"] if _is_substantive(r["text"])]
-    return {"theses": theses, "total": payload["total"]}
+    weight = float(getattr(config, "FOMO_DUMPED_THESIS_WEIGHT", 1.0))
+    dumped_seen = sum(1 for r in theses if _is_dumped(r))
+    effective_total = int(round(
+        payload["total"] - dumped_seen * (1.0 - weight)))
+    return {
+        "theses": theses,
+        "total": payload["total"],
+        "dumped_count": dumped_seen,
+        "effective_total": effective_total,
+    }
 
 
 def _norm_handle(raw) -> str:
@@ -769,7 +798,11 @@ async def enrich_crowd_heat(candidates: list) -> None:
         try:
             data = await fetch_fomo_theses(candidate.mint_address)
             if data is not None:
-                candidate.fomo_heat = heat_from_count(data["total"])
+                # Item #3: heat counts DUMPED theses (author closed at a
+                # realized profit) at FOMO_DUMPED_THESIS_WEIGHT; `total` (raw
+                # board count) stays the fallback for older payloads.
+                count = data.get("effective_total", data["total"])
+                candidate.fomo_heat = heat_from_count(count)
                 candidate.crowd_heat_source = "fomo"
                 candidate.fomo_theses = data["theses"]
         except Exception as exc:

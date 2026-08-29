@@ -26,9 +26,13 @@ from datetime import datetime, timezone
 
 import config
 from api import db
-from blocklist import filter_candidates
 from data_providers import build_provider
-from rule_engine.fake_chart import is_fake_candidate
+from decision_pipeline import (
+    apply_break,
+    enrich_candidates,
+    read_candidates,
+    think_candidate,
+)
 from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
 from llm.thinker import Thinker, ThinkResult
@@ -101,70 +105,12 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
     """
     t0 = time.monotonic()
     tick_ts = datetime.now(timezone.utc).isoformat()
-    candidates = await provider.get_candidates(config.MAX_CANDIDATES_PER_TICK)
+    # --- READ stage (shared Item #6 core): fetch + blocklist + fake-chart
+    # filter + live-only enrichment. Same code the live cycle runs.
+    candidates = await read_candidates(provider)
     if state is not None:
         state["tick"] = state.get("tick", 0) + 1
-
-    # --- BLOCKLIST: manual + auto-blocked mints never reach think/enrichment
-    # (saves qwen + stealth-scrape credits, and is the DONT churn killer).
-    candidates, blocked_now = filter_candidates(candidates)
-    for sym, reason in blocked_now:
-        log.info("BLOCKED %s skipped: %s", sym, reason)
-
-    # --- FAKE-CHART filter (A7, omo isFakeChart parity): wash-traded / dead /
-    # manufactured tapes never reach enrichment or think/gate, so they burn no
-    # scrape or LLM credits and never skew the regime. Each rejection logs its
-    # tripped threshold (defense-first rule 6).
-    real = []
-    for c in candidates:
-        fake, reason = is_fake_candidate(c)
-        if fake:
-            log.info("FAKE-CHART %s (%s) skipped: %s",
-                     c.symbol, (c.mint_address or "")[:8], reason)
-        else:
-            real.append(c)
-    if len(real) != len(candidates):
-        log.info("fake-chart filter removed %d of %d candidates",
-                 len(candidates) - len(real), len(candidates))
-    candidates = real
-
-    # --- READ stage: crowd conviction (fomo.fun board).
-    # Live feeds ONLY in live mode — mock runs stay hermetic and fast (a real
-    # feed answering for mock mints once flipped every verdict to fail).
-    # Fail-soft: a dead feed leaves the presence proxy in place.
-    if config.DATA_BACKEND == "live":
-        try:
-            from data_providers.crowd import enrich_crowd_heat
-            await enrich_crowd_heat(candidates)
-        except Exception:
-            log.warning("crowd enrichment failed — proxy heat in use (fail-soft)",
-                        exc_info=True)
-
-    # --- READ stage part 2: second-pass cross-pool research on the head of
-    # the board (the reference researches the names it cares about). Live-only so mock
-    # runs stay hermetic; fail-soft like every feed.
-    if config.DATA_BACKEND == "live":
-        try:
-            from data_providers.research import enrich_with_research
-            await enrich_with_research(candidates)
-        except Exception:
-            log.warning("token research failed - continuing without it",
-                        exc_info=True)
-        # --- READ stage part 3: realtime social read (evidence only, never a
-        # verdict). Provider-agnostic (Groq/Grok/OpenRouter); disabled when no
-        # SOCIAL_LLM_API_KEY is configured.
-        social_usages = []
-        try:
-            from llm.social import enrich_social
-            _, social_usages = await enrich_social(candidates)
-        except Exception:
-            log.warning("social read failed - continuing without it",
-                        exc_info=True)
-        try:
-            from llm.web_research import enrich_web
-            await enrich_web(candidates)
-        except Exception:
-            log.warning("web research failed - continuing without it,", exc_info=True)
+    social_usages = await enrich_candidates(candidates)
     # Regime computed ONCE per tick from the full batch (C2), logged ONCE.
     regime = compute_market_regime(candidates)
 
@@ -331,12 +277,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
             if ov is not None:
                 think = _think_from_llm(ov, brain_result)
             else:
-                try:
-                    think = await thinker.think(c, memory_line)
-                except Exception as e:
-                    log.error("thinker error on %s: %s", c.symbol, e, exc_info=True)
-                    from llm.thinker import template_think
-                    think = template_think(c)
+                # Shared Item #6 core: think with the template fallback.
+                think = await think_candidate(c, thinker, memory_line)
 
             # Record thinker LLM usage
             if getattr(think, "llm_usage", None):
@@ -361,9 +303,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                 )
 
             if think.break_taking:
-                from rule_engine import liveness
-                liveness.set_break(True, think.break_minutes, think.break_reason)
-                log.warning("self-regulating break triggered: %d mins (reason: %s)", think.break_minutes, think.break_reason)
+                # Shared Item #6 core (correct set_break arity, both books).
+                await apply_break(think)
                 
             await db.insert_event(
                 conn, "thought", tick_ts, c.symbol, c.mint_address,

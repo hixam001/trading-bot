@@ -310,6 +310,16 @@ PRIVY_APP_ID: str = "cm6h485o300n3zj9yl6vpedq7"     # fomo.family's public app i
 FOMO_NETWORK_ID: int = 1399811149                   # solana mainnet
 FOMO_THESIS_LIMIT: int = 40
 FOMO_CACHE_TTL_SECONDS: float = 60.0
+# Item #3 (omo parity — exit-liquidity-dump discount): a thesis whose author
+# ALREADY closed their position at a profit (closedAt set AND realized_usd>0)
+# is KNOWN-dumped. The board total still counts it, but crowd heat counts it
+# at this fraction (0.0 = a dumped thesis is not live conviction; 1.0 = old
+# behavior). Only applies to the rows we actually SAW — the unseen remainder
+# of the board total keeps full credit (fail-soft, same as omo's brain-level
+# discount). Applied at the count the heat formula consumes, NOT to the raw
+# `total` returned to the thinker/tests (which stays the board's own number).
+FOMO_DUMPED_THESIS_WEIGHT: float = float(
+    os.getenv("FOMO_DUMPED_THESIS_WEIGHT", "0.0"))
 # A4 (omo audit §28): the bot's OWN fomo.family handle. When set, the live
 # cycle reads the bot's own position accounting back from the thesis feed
 # (authorTrade) and cross-checks it against the journal's cost basis —

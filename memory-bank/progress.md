@@ -270,7 +270,14 @@
       hardcoded flags. No session may arm before every other task is done.
 
 ## Status
-Live calibration day ~2. A11 thesis re-authoring shipped (2026-08-27, handoff
+**As of 2026-08-29 (§39): roadmap items #1/#3/#6 shipped — security_clear is
+the live 10th gate rule (KNOWN-bad-only), crowd heat discounts dumped thesis
+authors (`FOMO_DUMPED_THESIS_WEIGHT`), and the paper + live pipelines run the
+same read/think/gate core (`backend/decision_pipeline.py`; three live-side
+drifts fixed: fake-chart filter, thinker template fallback, set_break arity).
+550 tests + Playwright 8/8 green; live cycle restarted on the new code and
+verified (security_clear in every /api/feed breakdown, 0 tracebacks).**
+Previous status: Live calibration day ~2. A11 thesis re-authoring shipped (2026-08-27, handoff
 §30): the omo re-read (full local clone) found `thesis-author.server.ts` —
 missed by the original audit — and it is now ported: open write-ups stale >6h
 are advanced against current position numbers (≤2/tick, narrative-only,

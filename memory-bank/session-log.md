@@ -1,3 +1,41 @@
+## Memory-bank update - 2026-08-29 (§39 roadmap items #1, #3, #6)
+
+- **Task**: implement the three approved roadmap items — activate
+  `security_clear` (live + paper), crowd author-P&L attribution (omo
+  exit-liquidity-dump parity), and unify the paper + live pipelines.
+- **#1 security_clear live**: added to `ACTIVE_RULES` between
+  `already_held` and `not_on_break` (10 rules now). KNOWN-bad-only (B10):
+  fails on `mint_authority_revoked is False` or `is_likely_honeypot is
+  True`; None/unknown always passes. One edit activated both books
+  (`LIVE_ACTIVE_RULES` derives from `ACTIVE_RULES`). Tests updated: the
+  `== 9` pin, the exact-list pin (now asserts `security_clear` present),
+  and the no-short-circuit expectation set. Mock `HONEYPT` archetype once
+  again exercises the honeypot refusal.
+- **#3 dumped-author heat discount**: `crowd.py::_is_dumped` (author closed
+  at realized profit) → `fetch_fomo_theses` returns `dumped_count` +
+  `effective_total`; `enrich_crowd_heat` consumes `effective_total`
+  (fallback to raw `total` for older payloads). New env knob
+  `FOMO_DUMPED_THESIS_WEIGHT` (default 0.0). `total` stays the board's raw
+  number. Unknown authorTrade = full credit (fail-soft). +6 tests.
+- **#6 unified core**: new `backend/decision_pipeline.py` —
+  `read_candidates` (blocklist + fake-chart), `enrich_candidates`
+  (live-only chain, paper order), `think_candidate` (template fallback),
+  `apply_break` (correct `set_break` arity), `gate_candidate` /
+  `entry_decision` (rule-list injection). Paper `run_tick` and live
+  `run_cycle` delegate; sizing/seals/ledger/exits stay per-book. Fixed
+  three live-side drifts found during extraction: missing fake-chart
+  filter, thinker exception killing the cycle, `set_break(minutes,
+  reason)` missing the `taking` arg (latent TypeError). Isolation intact
+  (backend imports only backend; pinned by test). +13 backend
+  characterization tests + 4 live parity tests (paper-vs-live decisions
+  differ in EXACTLY the cash rule).
+- **Verification**: **550 passing** (backend 418 + live 132), Playwright
+  8/8, live cycle restarted and verified on the new code — clean cycle,
+  `security_clear` present in every `/api/feed` rule breakdown (10 rules),
+  0 tracebacks. Docs aligned: handoff §39, docs/06/07/09,
+  FOMO_INTEGRATION.md §2, rules.py header, decisionLog #52, activeContext,
+  progress Status.
+
 ## Memory-bank update - 2026-08-28 (§38 security audit + hardening)
 
 - **Task**: operator-requested full-codebase audit against a 20-rule security

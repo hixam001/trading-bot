@@ -388,6 +388,111 @@ async def test_enrich_no_feed_leaves_proxy_intact(monkeypatch):
     assert c.fomo_heat is None and c.crowd_heat_source == ""
 
 
+# --- Item #3: author-P&L attribution — dumped theses discounted ----------------
+# omo parity: an author who closed at a realized profit and keeps shilling is
+# exit-liquidity marketing, not live conviction. KNOWN-data only — missing
+# authorTrade keeps full credit (unknown ≠ dumped).
+
+def test_is_dumped_known_data_only():
+    open_win = {"closed": False, "realized_usd": 0.0}
+    dumped = {"closed": True, "realized_usd": 250.0}
+    closed_loss = {"closed": True, "realized_usd": -40.0}
+    closed_zero = {"closed": True, "realized_usd": 0.0}
+    no_trade = {}
+    assert not crowd._is_dumped(open_win)       # still holds it
+    assert crowd._is_dumped(dumped)             # exited at a profit
+    assert not crowd._is_dumped(closed_loss)    # exited at a loss — not a dump
+    assert not crowd._is_dumped(closed_zero)    # flat exit — not a dump
+    assert not crowd._is_dumped(no_trade)       # unknown = full credit
+
+
+async def test_dumped_thesis_discounted_from_effective_total(monkeypatch):
+    """Weight 0.0: a closed-at-profit author contributes nothing to heat count."""
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "refresh-token")
+    install_fake_http(
+        monkeypatch,
+        get=FakeResponse(200, {"responseObject": {"items": [
+            {"userHandle": "holder", "comment": {"comment": "still long here",
+                                                 "olderThesis": 0, "newerThesis": 0},
+             "authorTrade": {"usdValue": 9000.0, "unrealizedPnlUsd": 100.0,
+                             "closedAt": None}},
+            {"userHandle": "dumper", "comment": {"comment": "this one goes to a dollar",
+                                                 "olderThesis": 0, "newerThesis": 0},
+             "authorTrade": {"usdValue": 0.0, "realizedPnlUsd": 800.0,
+                             "closedAt": "2026-08-20"}},
+        ]}}),
+        post=FakeResponse(200, {"token": "x.y.z"}),
+    )
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data is not None
+    assert data["total"] == 2                       # board's own count unchanged
+    assert data["dumped_count"] == 1
+    assert data["effective_total"] == 1             # dumper counts for 0
+
+
+async def test_dumped_thesis_half_credit_at_weight(monkeypatch):
+    """Weight 0.5: a dumped thesis counts half — tunable without code change."""
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "refresh-token")
+    monkeypatch.setattr(config, "FOMO_DUMPED_THESIS_WEIGHT", 0.5)
+    install_fake_http(
+        monkeypatch,
+        get=FakeResponse(200, {"responseObject": {"items": [
+            {"userHandle": "holder", "comment": {"comment": "still long here",
+                                                 "olderThesis": 0, "newerThesis": 0},
+             "authorTrade": {"usdValue": 9000.0, "unrealizedPnlUsd": 100.0,
+                             "closedAt": None}},
+            {"userHandle": "dumper", "comment": {"comment": "this one goes to a dollar",
+                                                 "olderThesis": 0, "newerThesis": 0},
+             "authorTrade": {"usdValue": 0.0, "realizedPnlUsd": 800.0,
+                             "closedAt": "2026-08-20"}},
+        ]}}),
+        post=FakeResponse(200, {"token": "x.y.z"}),
+    )
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data["dumped_count"] == 1
+    assert data["effective_total"] == 2            # 2 - 1*0.5 -> round(1.5) = 2
+
+
+async def test_unknown_author_trade_keeps_full_credit(monkeypatch):
+    """No authorTrade object at all -> unknown, full credit (fail-soft)."""
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "refresh-token")
+    install_fake_http(
+        monkeypatch,
+        get=FakeResponse(200, {"responseObject": {"items": [
+            {"userHandle": "anon", "comment": {"comment": "no trade data here",
+                                              "olderThesis": 0, "newerThesis": 0}},
+        ]}}),
+        post=FakeResponse(200, {"token": "x.y.z"}),
+    )
+    data = await crowd.fetch_fomo_theses(MINT)
+    assert data["dumped_count"] == 0
+    assert data["effective_total"] == data["total"] == 1
+
+
+async def test_enrich_consumes_effective_total(monkeypatch):
+    """Heat comes from effective_total (discounted), not the raw board count."""
+    async def fomo_data(mint):
+        return {"theses": [{"who": "w", "text": "t"}] * 5, "total": 5,
+                "dumped_count": 3, "effective_total": 2}
+    monkeypatch.setattr(crowd, "fetch_fomo_theses", fomo_data)
+
+    c = make_candidate()
+    await crowd.enrich_crowd_heat([c])
+    assert c.fomo_heat == crowd.heat_from_count(2)     # 36, not 60
+    assert c.crowd_heat_source == "fomo"
+
+
+async def test_enrich_falls_back_to_total_without_effective(monkeypatch):
+    """Older payloads without effective_total keep the raw-count behavior."""
+    async def fomo_data(mint):
+        return {"theses": [{"who": "w", "text": "t"}] * 3, "total": 3}
+    monkeypatch.setattr(crowd, "fetch_fomo_theses", fomo_data)
+
+    c = make_candidate()
+    await crowd.enrich_crowd_heat([c])
+    assert c.fomo_heat == crowd.heat_from_count(3)     # 44 — unchanged contract
+
+
 # --- the rule consumes real feed heat ---------------------------------------------------
 
 def test_crowd_heat_rule_uses_real_feed_and_tags_source():

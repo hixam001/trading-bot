@@ -355,8 +355,10 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   /chat/completions protocol). Switching provider = SOCIAL_LLM_BASE_URL + _KEY
   + _MODEL env change, zero code change. Evidence-only output (interest:
   organic/peaked/unclear + one grounded note), never a verdict.
-- **Gate is now exactly the reference bot 9 rules** (market_regime_ok and
-  security_clear retired from ACTIVE_RULES; functions kept for re-enable).
+- **Gate is the reference bot 9 rules + security_clear** (market_regime_ok
+  stays retired from ACTIVE_RULES — observability only; security_clear was
+  RE-ACTIVATED as the 10th gate rule 2026-08-29 by explicit operator
+  decision: KNOWN-bad-only semantics per B10, `None`/unknown always passes).
 - **Onchain security**: live stack fills mint/freeze authority flags from
   free Solana RPC (onchain_security.py) when Birdeye absent/silent.
 - **Discovery slot guarantees**: newborn/movers/rotation slots + boost feeds.
@@ -2234,5 +2236,71 @@ guard, size cap, empty-doc refusal, headers, no-store, CORS narrowing).
 Playwright **8/8**. Live-verified after restart: headers present; admin reset
 403 without/with-wrong token, 200 with the real token (prune_only); kb
 ingest 403 without token; all endpoints 200; 0 tracebacks.
+
+
+## 39. Roadmap items #1, #3, #6 — security_clear live, dumped-author heat discount, unified read/think/gate core (2026-08-29)
+
+**Item #1 — `security_clear` RE-ACTIVATED as the 10th gate rule** (operator
+decision, roadmap item #1). `ACTIVE_RULES` is now the reference 9 + `security_clear`
+(inserted between `already_held` and `not_on_break`; order pinned by
+`test_active_rules_are_exactly_reference_nine_plus_security_clear`). Reference
+parity is knowingly broken by this one addition — documented as such in
+`rules.py`, docs/06/07/09. Safe by construction: the rule fails only on
+KNOWN-bad values (B10) — live mint authority (`mint_authority_revoked is
+False`) or a honeypot flag (`is_likely_honeypot is True`); `None`/unknown
+ALWAYS passes, so missing data can never block a trade. Because
+`run_live_cycle.LIVE_ACTIVE_RULES` derives from `ACTIVE_RULES` via a
+comprehension, the rule went live on BOTH books with one edit. Live-verified:
+`/api/feed` rule breakdowns now carry 10 rules with `security_clear` present;
+the mock `HONEYPT` archetype once again exercises the honeypot refusal path
+(it was built for exactly this rule).
+
+**Item #3 — crowd author-P&L attribution (omo exit-liquidity-dump parity).**
+`crowd.py::_is_dumped(row)`: a thesis is DUMPED when its author closed at a
+realized profit (`closed AND realized_usd > 0`) — someone shilling a token they
+already exited with a win is marketing, not conviction. KNOWN-data only
+(closed-at-a-loss, open positions, missing `authorTrade` all keep full credit
+— unknown ≠ dumped, same discipline as `security_clear`).
+`fetch_fomo_theses` now also returns `dumped_count` + `effective_total`
+(= `total − dumped_seen × (1 − FOMO_DUMPED_THESIS_WEIGHT)`); `total` stays the
+board's raw number (thinker/UI/tests unchanged). `enrich_crowd_heat` feeds
+`heat_from_count(effective_total)` — so a board whose visible thesis authors
+all took profits and left stops counting as live crowd heat. New env knob
+`FOMO_DUMPED_THESIS_WEIGHT` (default `0.0`; `1.0` = old behavior). The
+thinker already saw author P&L per row (`thinker.py` evidence lines) — this
+closes the HEAT half of the audit gap. +6 tests in `test_crowd.py`.
+
+**Item #6 — paper + live pipelines unified on `backend/decision_pipeline.py`.**
+Both entry points now run the SAME stages through the new shared module
+(imports only backend/ — isolation contract intact, grep-pinned by test):
+  - `read_candidates(provider)` — fetch + blocklist + FAKE-CHART filter.
+    This closed a live-side drift: `run_cycle` was missing the A7 fake-chart
+    filter entirely (it ran only in the paper tick).
+  - `enrich_candidates(candidates)` — the live-only enrichment chain, paper's
+    order, fail-soft per feed; returns social usages for journaling.
+  - `think_candidate(c, thinker, memory_line)` — think + template fallback.
+    Closed live drift #2: a thinker exception used to kill the whole live
+    cycle; now the paper's fail-closed template degrades that one candidate.
+  - `apply_break(think)` — self-regulating break. Closed live drift #3: the
+    live copy called `set_break(minutes, reason)` — missing the leading
+    `taking` positional, a latent TypeError the moment a thinker ever
+    requested a break. Fixed for both books in one place.
+  - `gate_candidate(c, portfolio, regime, rules)` / `entry_decision` — one
+    gate, one rule-set injection point (paper `ACTIVE_RULES`; live swaps only
+    the cash rule via `LIVE_ACTIVE_RULES`, unchanged).
+Sizing, seals, ledgers, exits stay per-book (deliberate differences).
+`main.run_tick` and `run_live_cycle.run_cycle` are now thin over the shared
+core; parity pinned by new `test_decision_pipeline.py` (backend, 13 tests)
+and `test_pipeline_parity.py` (live side, 4 tests: source delegation, shared
+gate + LIVE rules, and paper-vs-live decisions differing in EXACTLY the
+cash rule).
+
+**Verification:** full suite **550 passing** (backend 418 + live_execution
+132; +23 over the 527 baseline: +6 crowd, +13 decision-pipeline, +4 parity).
+Playwright 8/8. Live cycle restarted on the new code: clean cycle with gate
+decisions flowing (`think=buy gate=PASS` / refused rows), `security_clear`
+in every breakdown via `/api/feed`, 0 tracebacks, process stable. Docs
+aligned: rules.py header, docs/06 §1 table, docs/07 §14.1/§14.3, docs/09 §
+"9 vs 10" + rule table, FOMO_INTEGRATION.md §2, this handoff, memory-bank.
 
 

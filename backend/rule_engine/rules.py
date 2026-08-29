@@ -213,8 +213,13 @@ def security_clear(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
 
 
 # ---------------------------------------------------------------------------
-# The active rule set - EXACTLY the reference bot 9 rules, in evaluation order.
-# order. evaluate_gate() runs ALL of them unconditionally (no short-circuiting)
+# The active rule set - the reference bot 9 rules, in evaluation order, plus
+# security_clear (re-activated 2026-08-29 by explicit operator decision; it
+# fails only on KNOWN-bad values per B10: live mint authority or a honeypot
+# flag - None/unknown always passes, so it can never block a trade on missing
+# data). market_regime_ok remains computed/logged but retired from the gate
+# (observability only).
+# evaluate_gate() runs ALL of them unconditionally (no short-circuiting)
 # so every rejection shows its full profile in the journal.
 # ---------------------------------------------------------------------------
 
@@ -227,6 +232,7 @@ ACTIVE_RULES = [
     crowd_heat,
     cash_available,
     already_held,
+    security_clear,
     not_on_break,
 ]
 

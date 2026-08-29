@@ -35,6 +35,19 @@ falls back to the presence proxy when the feed didn't answer). The rule
 detail is source-tagged in the journal: `heat 100 [fomo] ...` /
 `heat 36 [proxy]`.
 
+**Item #3 — dumped-author discount (2026-08-29, omo parity):** the thesis
+feed carries each author's live position (`authorTrade`). A thesis whose
+author **already closed at a realized profit** (`closedAt` set AND
+`realizedPnlUsd > 0`) is exit-liquidity marketing, not live conviction:
+`fetch_fomo_theses` still returns it (the thinker sees the author's P&L), but
+crowd heat counts it at `config.FOMO_DUMPED_THESIS_WEIGHT` (default **0.0** —
+dumped theses contribute nothing to the heat count) via the new
+`effective_total` key. `total` stays the board's raw number. KNOWN-data
+only: open positions, closed-at-a-loss, and rows without `authorTrade` keep
+full credit — unknown is not the same claim as dumped (same B10 discipline
+as `security_clear`). The discount applies only to rows we actually saw;
+the unseen remainder of the board total keeps full credit (fail-soft).
+
 **Live validation (2026-08-23, operator keys):** direct reads are
 Cloudflare-challenged even with a valid bearer; the Firecrawl stealth
 fallback returned REAL board data — e.g. mint F8hVFDi8…: **40 theses →

@@ -38,7 +38,6 @@ for p in (str(BACKEND), str(ROOT)):
         sys.path.insert(0, p)
 
 import config as paper_config                     # noqa: E402
-from blocklist import filter_candidates           # noqa: E402
 from data_providers import build_provider         # noqa: E402
 from data_providers.jupiter import JupiterProvider  # noqa: E402
 from llm.thinker import Thinker                   # noqa: E402
@@ -450,30 +449,12 @@ async def run_cycle(once: bool = False) -> dict:
         log.warning("thesis restatement pass failed (non-fatal)",
                     exc_info=True)
 
-    candidates = await build_provider().get_candidates(paper_config.MAX_CANDIDATES_PER_TICK)
-    candidates, blocked_now = filter_candidates(candidates)
-    if paper_config.DATA_BACKEND == "live":
-        try:
-            from data_providers.crowd import enrich_crowd_heat
-            await enrich_crowd_heat(candidates)
-        except Exception:
-            log.warning("crowd enrichment failed - proxy heat in use", exc_info=True)
-        try:
-            from data_providers.research import enrich_with_research
-            await enrich_with_research(candidates)
-        except Exception:
-            log.warning("research failed - continuing", exc_info=True)
-        try:
-            from llm.web_research import enrich_web
-            await enrich_web(candidates)
-        except Exception:
-            log.warning("web research failed - continuing without it",
-                        exc_info=True)
-        try:
-            from llm.social import enrich_social
-            await enrich_social(candidates)
-        except Exception:
-            log.warning("social read failed - continuing without it", exc_info=True)
+    # --- READ stage (shared Item #6 core, same code as the paper tick):
+    # fetch + blocklist + FAKE-CHART filter (A7 parity — the live cycle
+    # previously skipped it) + live-only enrichment. Fail-soft per feed.
+    from decision_pipeline import enrich_candidates, read_candidates
+    candidates = await read_candidates(build_provider())
+    await enrich_candidates(candidates)
 
     regime = compute_market_regime(candidates)
     # Persist the regime snapshot + a per-candidate decision feed so the
@@ -494,13 +475,13 @@ async def run_cycle(once: bool = False) -> dict:
                # A11: which open write-ups this cycle advanced (narrative only).
                "thesis_restatements": restatements}
     for c in candidates:
-        think = await thinker.think(c)
-        
-        if think.break_taking:
-            from rule_engine import liveness
-            liveness.set_break(think.break_minutes, think.break_reason)
-            log.warning("self-regulating break triggered: %d mins (reason: %s)", think.break_minutes, think.break_reason)
-            
+        # THINK via the shared core (Item #6): template fallback on thinker
+        # error instead of a killed cycle, and the break handler with the
+        # correct set_break arity (the live copy previously mis-called it).
+        from decision_pipeline import apply_break, think_candidate
+        think = await think_candidate(c, thinker)
+        await apply_break(think)
+
         gate = evaluate_gate(c, portfolio, regime, LIVE_ACTIVE_RULES)
         entry_allowed = gate.all_passed and think.wants_entry
         failed = [r.rule_id for r in gate.rules if not r.passed]

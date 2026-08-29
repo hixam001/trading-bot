@@ -428,9 +428,12 @@ P0 implementation and verification record.
 
 ### 14.1 Gate rules
 
-Gate: exactly the reference bot 9 entry rules: `liquidity_floor`, `volume_alive`,
+Gate: the reference bot 9 entry rules (`liquidity_floor`, `volume_alive`,
 `buy_pressure`, `not_newborn_fade`, `public_presence`, `crowd_heat`,
-`cash_available`, `already_held`, and `not_on_break`.
+`cash_available`, `already_held`, and `not_on_break`) plus `security_clear`
+(re-activated 2026-08-29 by explicit operator decision — a deliberate
+one-rule deviation from strict reference parity; it fails only on KNOWN-bad
+values per B10, so `None`/unknown never blocks a trade).
 
 ### 14.2 What was implemented
 
@@ -448,9 +451,14 @@ Gate: exactly the reference bot 9 entry rules: `liquidity_floor`, `volume_alive`
 
 ### 14.3 Risk and verification record
 
-The reference-parity swap retired `security_clear` from the active nine-rule gate;
-authority fields remain logged for post-hoc audit. This is an accepted the reference
-parity risk and can only be changed by an explicit operator decision.
+The reference-parity swap retired `security_clear` from the active nine-rule
+gate on 2026-08-23; it was RE-ACTIVATED as the 10th gate rule on 2026-08-29 by
+explicit operator decision (roadmap item #1). Reference parity is knowingly
+and deliberately broken by this one addition — the rule fails only on
+KNOWN-bad values (live mint authority, honeypot flag; `None`/unknown passes),
+so it protects against confirmed rugs/honeypots without ever blocking trades
+on missing data. Authority fields remain logged for post-hoc audit either
+way.
 
 The verification record contains 222 tests at the time of the current report
 (backend 192 plus live_execution 30), including commit-log tamper detection,
@@ -1249,3 +1257,39 @@ the documented empty state.
 Playwright **8/8**; live-verified after restart — headers present, admin reset
 403/403/200 (no-token/wrong/real), kb ingest 403 without token, all endpoints
 200, 0 tracebacks.
+
+## 23. Roadmap items #1, #3, #6 — security_clear live, dumped-author heat discount, unified pipeline core (2026-08-29, handoff §39)
+
+**#1 — `security_clear` re-activated as the 10th gate rule** (operator
+decision; the §14.3 retirement is reversed). It sits between `already_held`
+and `not_on_break` and fails only on KNOWN-bad values — live mint authority
+or a honeypot flag — while `None`/unknown always passes (B10), so missing
+data can never block a trade. Reference parity is knowingly broken by this
+one deliberate addition, documented everywhere the rule list appears. One
+edit activated both books because the live rule list derives from
+`ACTIVE_RULES`. Live-verified: `/api/feed` breakdowns carry 10 rules with
+`security_clear` present.
+
+**#3 — crowd author-P&L attribution** (omo's exit-liquidity-dump semantic,
+docs/10 §B): a thesis whose author already closed at a realized profit is
+marketing, not conviction. `fetch_fomo_theses` now returns `dumped_count` +
+`effective_total`; crowd heat consumes the discounted count via
+`FOMO_DUMPED_THESIS_WEIGHT` (env, default 0.0 — dumped theses contribute
+nothing to heat). `total` stays the board's raw number; unknown
+`authorTrade` keeps full credit (fail-soft, KNOWN-data only).
+
+**#6 — unified read/think/gate core** (`backend/decision_pipeline.py`):
+paper `run_tick` and live `run_cycle` now run identical
+read_candidates/enrich_candidates/think_candidate/apply_break/gate_candidate
+stages; sizing, seals, ledgers, and exits remain per-book (deliberate
+differences). The extraction surfaced and fixed three live-side drifts: the
+missing A7 fake-chart filter, a thinker exception killing the whole cycle
+(now the paper's template fallback), and a latent `set_break` arity
+TypeError in the live break handler. The isolation contract is preserved and
+pinned by test (`backend/` never imports `live_execution`).
+
+**Verification:** +23 tests → **550 passing** (backend 418 + live 132; new:
+6 crowd, 13 `test_decision_pipeline.py`, 4 `test_pipeline_parity.py`);
+Playwright **8/8**; live cycle restarted on the new code — clean cycle, gate
+decisions flowing, `security_clear` in every rule breakdown, 0
+tracebacks.
