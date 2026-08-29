@@ -1,9 +1,29 @@
 # Active Context — trading-bot
 
-**As of 2026-08-29 (§40 SECURITY_CLEAR UNBLINDED — the on-chain RPC fallback was DEAD since creation (missing JSON-RPC envelope): fixed + proven live; Birdeye quota-exhausted → both surfaces session fast-fail; security_clear now reads real mint/freeze authority from chain for every candidate; 562 tests + 8 E2E green; bot LIVE and ARMED on the fixed code).**
+**As of 2026-08-29 (§41 OUT-OF-BAND SELL REPAIR — operator's manually-sold coin (GE8q5h6e) closed via new gated tool: `close_out_of_band` + `repair_vanished` CLI, proceeds 1.11715 USDC → +$0.58 realized, Holdings clean, 0 reconcile warnings; 568 tests green; bot LIVE and ARMED, fresh genuine fill after restart).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §41 out-of-band sell repair: close_out_of_band + repair_vanished CLI (2026-08-29)
+Operator manually sold GE8q5h6e…pump during the broken-RPC window (4015.38
+tokens, $0.537 cost, 1.11715 USDC proceeds, operator-confirmed). Chain went
+0; ledger buy stayed OPEN; reconcile flagged "operator review needed"
+every cycle (by design — never mutates the money ledger) but nothing could
+COMPLETE the review, so Holdings showed the phantom forever. Shipped:
+(1) `ExecutionLedger.close_out_of_band` — closes all open buys of a mint,
+`outofband` idempotency key + note forensics, HONEST P&L (known proceeds
+realize vs summed cost; unknown = pnl None, never fabricated, skipped by
+the daily-loss breaker); (2) `repair_vanished.py` operator CLI — `list`
+(open positions + live chain balance), `close` with two safety gates
+(open-position check + chain-VERIFIABLY-0, unreadable RPC refused
+fail-closed), journals did event + retires thesis; bookkeeping only.
+Repair executed live (cycle briefly stopped to avoid the executions.json
+write race): GE8q5h6e gone from Holdings, 0 reconcile warnings in the new
+log, realized +$0.5801, and a fresh genuine fill minutes later (TIT
+$0.53 → 1306.93 tokens) proving the book healthy. +6 tests → 568 passing.
+Handoff §41, decisionLog #54.
+
+## DONE (previous)
 ### §40 security_clear unblinded: dead RPC fallback fixed + Birdeye fast-fail (2026-08-29)
 Operator asked "how does omo get token security via Dexscreener" (Birdeye
 erroring constantly). Analysis verdict: omo reads NO token security

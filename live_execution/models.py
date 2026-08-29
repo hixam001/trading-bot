@@ -263,3 +263,62 @@ class ExecutionLedger:
         records.append(rec.to_json())
         self._save(records)
         return rec
+
+    def close_out_of_band(
+        self, mint: str, proceeds_usd: Optional[float] = None,
+        note: str = "",
+    ) -> list[ExecutionRecord]:
+        """
+        Operator-review completion (2026-08-29, the vanished-position repair).
+
+        reconcile() deliberately never mutates the ledger on a chain
+        disagreement (an RPC glitch must not corrupt money records) — a
+        position that vanished on-chain is flagged `chain_excluded` and
+        logged "operator review needed" EVERY cycle until a human decides.
+        This method IS that human decision, recorded as such:
+
+          * closes EVERY open buy of `mint` (status -> "closed")
+          * appends ONE close record with `pnl_usd=None` when proceeds are
+            unknown — an out-of-band sell's proceeds are NOT fabricated; the
+            daily-loss breaker (realized_pnl_today) skips None rows, so an
+            unknown-proceeds close can never trip it on a made-up number
+          * `proceeds_usd` may be provided when the operator knows the fill
+            (e.g. from the wallet's sell tx); PnL is then realized against
+            the summed cost of the closed buys
+          * idempotency_key carries "outofband" + note for audit forensics
+
+        Refuses (ValueError) when there is nothing open for the mint — a
+        typo'd mint must not be able to invent a close.
+        """
+        records = self._load()
+        open_buys = [r for r in records
+                     if r["kind"] == "buy" and r["mint"] == mint
+                     and r["status"] in self._OPEN]
+        if not open_buys:
+            raise ValueError(f"no open position for {mint}")
+        total_cost = sum(float(r.get("usd_size") or 0.0) for r in open_buys)
+        total_tokens = sum(float(r.get("tokens_out") or 0.0) for r in open_buys)
+        for r in open_buys:
+            r["status"] = "closed"
+        rec = ExecutionRecord(
+            kind="close",
+            idempotency_key=f"close-{mint}-outofband-{new_id()}",
+            mint=mint,
+            usd_size=float(proceeds_usd) if proceeds_usd is not None else 0.0,
+            tokens_out=total_tokens,
+            price_usd=0.0,
+            signature="",
+            status="closed",
+            ts=self.now_fn(),
+            pnl_usd=(float(proceeds_usd) - total_cost)
+                     if proceeds_usd is not None else None,
+        )
+        if note:
+            # Not a dataclass field; carried in the JSON row for forensics.
+            rec_json = rec.to_json()
+            rec_json["note"] = f"out-of-band: {note}"
+            records.append(rec_json)
+        else:
+            records.append(rec.to_json())
+        self._save(records)
+        return [ExecutionRecord.from_json(r) for r in open_buys] + [rec]

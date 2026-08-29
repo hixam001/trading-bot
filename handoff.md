@@ -2362,4 +2362,53 @@ authority parsing both directions, quota-body sniff true/false/empty, and
 the two Birdeye session-disable paths).
 
 
+## 41. Out-of-band sell repair: `close_out_of_band` + `repair_vanished` CLI (2026-08-29)
+
+**The incident.** The operator manually sold a coin the bot held (their own
+wallet, during the broken-RPC window) — `GE8q5h6e…pump`, 4015.376685 tokens,
+$0.5370 cost, proceeds **1.11715 USDC** (operator-confirmed). The chain
+balance went to 0; the ExecutionLedger still showed the buy OPEN (it never
+saw the sell). reconcile() worked EXACTLY as designed — flagged the mint
+`chain_excluded`, logged "operator review needed" every cycle, never
+mutated the money ledger — but there was no sanctioned way to COMPLETE the
+review, so the position showed in Holdings forever (second occurrence of
+this class after §37's dust row; the §37 hand-fix was one-off, this time it
+got a real tool).
+
+**What shipped:**
+- `ExecutionLedger.close_out_of_band(mint, proceeds_usd=None, note="")` —
+  the operator decision, recorded as such: closes EVERY open buy of the
+  mint, appends one close record whose idempotency_key carries
+  `outofband` + a note for forensics. HONEST P&L: known proceeds realize
+  against the summed cost; unknown proceeds record `pnl_usd=None` — never
+  fabricated — and `realized_pnl_today()` skips None rows, so an
+  unknown-proceeds close can never trip the daily-loss breaker on a
+  made-up number. Refuses (ValueError) when nothing is open for the mint.
+- `live_execution/scripts/repair_vanished.py` — operator CLI
+  (`python -m live_execution.scripts.repair_vanished list|close`), mirroring
+  confirm_trade.py's conventions. `list` shows every open position with its
+  CURRENT chain balance (UNREADABLE reported as such, never guessed).
+  `close` has TWO safety gates: (1) the mint must be an open ledger
+  position; (2) the chain balance must be VERIFIABLY 0 (a live position or
+  typo is refused; an unreadable RPC is refused — fail closed). On success:
+  ledger repaired + `did` event journaled + the open thesis write-up
+  retired. Loads `.env` via the backend config import so the wallet/RPC
+  resolve exactly like the live cycle's process. NEVER executes, quotes,
+  or signs anything — bookkeeping only.
+
+**The repair (executed live):** cycle briefly stopped (avoiding a
+concurrent-write race on executions.json — last-writer-wins would lose
+records), repair run, cycle restarted. Verified: `GE8q5h6e` absent from
+Holdings, ZERO reconcile warnings in the new log (was one per cycle),
+realized P&L includes the **+$0.5801** profit, 0 tracebacks, and the cycle
+opened a fresh genuine fill (TIT, $0.53 → 1306.93 tokens) minutes later —
+proving the book is healthy end-to-end.
+
+**Tests:** +6 → **568 passing** (`test_ledger_full_close.py`:
+with-proceeds realization incl. note forensics + realized_pnl_today,
+honest None-proceeds skipped by the breaker, multi-buy summed cost,
+typo'd-mint refusal, other-mints untouched, idempotent second call).
+
+
+
 

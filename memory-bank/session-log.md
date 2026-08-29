@@ -1,3 +1,26 @@
+## Memory-bank update - 2026-08-29 (§41 out-of-band sell repair)
+
+- **Task**: the operator manually sold a coin the bot held (during the
+  broken-RPC window); it kept showing in Holdings.
+- **Diagnosis**: GE8q5h6e…pump — chain balance 0, ledger buy still OPEN.
+  reconcile() behaved exactly as designed (chain_excluded + "operator review
+  needed" every cycle, never mutating the money ledger), but no sanctioned
+  path existed to COMPLETE the review.
+- **Shipped**: `ExecutionLedger.close_out_of_band` (honest P&L: known
+  proceeds realize against summed cost; unknown = pnl None, never
+  fabricated, skipped by the daily-loss breaker) +
+  `live_execution/scripts/repair_vanished.py` (operator CLI, two safety
+  gates: open-position check + chain-VERIFIABLY-0; journals did event +
+  retires thesis; bookkeeping only — never executes/quotes/signs).
+- **Repair executed live**: cycle briefly stopped (concurrent-write race on
+  executions.json), closed with operator-confirmed proceeds 1.11715 USDC →
+  realized +$0.5801, cycle restarted. Verified: GE8q5h6e gone from
+  Holdings, 0 reconcile warnings (was 1/cycle), 0 tracebacks, and the cycle
+  opened a fresh genuine fill (TIT $0.53 → 1306.93 tokens) minutes later.
+- **Tests**: +6 → **568 passing** (ledger regression tests in
+  test_ledger_full_close.py). Docs: handoff §41, decisionLog #54,
+  session-log, project report §25.
+
 ## Memory-bank update - 2026-08-29 (§40 security_clear unblinded)
 
 - **Task**: operator asked how omo gets token security via Dexscreener

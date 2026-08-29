@@ -1334,3 +1334,34 @@ candidates per cycle → one session-disable line. 0 tracebacks.
 `test_onchain_security.py`: the envelope-shape regression test, empty-200
 rotation, non-mint rejection, authority parsing both directions,
 quota-body sniff, and both Birdeye session-disable paths).
+
+## 25. Out-of-band sell repair: `close_out_of_band` + `repair_vanished` CLI (2026-08-29, handoff §41)
+
+The operator manually sold a held coin from their own wallet (during the
+broken-RPC window): chain balance → 0, ledger buy still OPEN, reconcile
+correctly flagged it every cycle but — by design — never mutates the money
+ledger, so the phantom position lived in Holdings with no sanctioned way to
+complete the operator review. Shipped a durable, gated repair path (second
+occurrence of the class after §37's one-off hand fix):
+
+- `ExecutionLedger.close_out_of_band(mint, proceeds_usd=None, note="")`:
+  closes every open buy of the mint; one close record with `outofband`
+  idempotency key + note forensics. HONEST P&L: known proceeds realize
+  against the summed cost; unknown proceeds record `pnl=None` — never
+  fabricated — and the daily-loss breaker skips None rows.
+- `live_execution/scripts/repair_vanished.py` (operator CLI, mirrors
+  confirm_trade.py): `list` shows open positions with live chain balances;
+  `close` enforces two safety gates — the mint must be an open ledger
+  position AND the chain balance must be verifiably 0 (unreadable RPC
+  refused, fail-closed). Journals a `did` event and retires the open
+  thesis write-up. Bookkeeping only — never executes, quotes, or signs.
+
+**Repair executed live**: cycle briefly stopped (concurrent-write race on
+executions.json), GE8q5h6e… closed with operator-confirmed proceeds
+1.11715 USDC → realized **+$0.5801**; cycle restarted and verified clean
+(0 reconcile warnings, phantom gone from Holdings, and a fresh genuine
+fill minutes later proving the book healthy end-to-end).
+
+**Verification:** +6 tests → **568 passing** (`test_ledger_full_close.py`:
+proceeds realization + breaker skip, multi-buy summed cost, typo'd-mint
+refusal, other-mints untouched, idempotent second call).
