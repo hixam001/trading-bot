@@ -50,6 +50,32 @@ class ProviderAuthError(ProviderError):
     """
 
 
+class ProviderQuotaError(ProviderError):
+    """
+    The provider answered 400 with an explicit quota/body message (e.g.
+    Birdeye's {"success": false, "message": "Compute units usage limit
+    exceeded"}). The key's compute budget is spent for now — retrying is
+    pure waste, so fetch_json raises this immediately. Callers self-disable
+    the surface for the session (same treatment as 401/403).
+    """
+
+
+def _looks_like_quota_error(resp: httpx.Response) -> bool:
+    """
+    Best-effort quota-body sniff (2026-08-29). Birdeye's compute-units
+    exhaustion is a 400 whose body explicitly says so; a generic 400 (a bad
+    address, a malformed param) must keep the normal retry/fail path. Only
+    known quota phrasings trip this — never a guess.
+    """
+    body = resp.text or ""
+    if not body:
+        return False
+    needle = body[:400].lower()
+    return ("limit exceeded" in needle
+            or "compute units" in needle
+            or "quota" in needle)
+
+
 async def fetch_json(
     client: httpx.AsyncClient,
     url: str,
@@ -76,10 +102,21 @@ async def fetch_json(
                 rate_limited = True
                 failed = True
                 raise RateLimitedError(f"{provider}: HTTP 429 from {url}")
+            if resp.status_code == 400 and _looks_like_quota_error(resp):
+                # Key budget spent (Birdeye's compute-units exhaustion arrives
+                # as 400 + {"success": false, "message": "...limit exceeded"}).
+                # NOT transient — stop before the retry loop burns the tick.
+                await record_call(provider, ok=False)
+                raise ProviderQuotaError(
+                    f"{provider}: quota/compute limit exceeded from {url} "
+                    f"({resp.text[:120]})"
+                )
             resp.raise_for_status()
             data = resp.json()
             await record_call(provider, ok=True)
             return data
+        except ProviderQuotaError:
+            raise   # already counted + messaged above; never retried
         except httpx.HTTPStatusError as exc:
             failed = True
             last_exc = exc

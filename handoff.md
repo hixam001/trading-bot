@@ -2304,3 +2304,62 @@ aligned: rules.py header, docs/06 §1 table, docs/07 §14.1/§14.3, docs/09 §
 "9 vs 10" + rule table, FOMO_INTEGRATION.md §2, this handoff, memory-bank.
 
 
+## 40. security_clear unblinded: dead on-chain RPC fallback fixed + Birdeye quota fast-fail (2026-08-29)
+
+**The incident.** Asked to analyze how omo gets token security via
+Dexscreener (because "Birdeye returns errors too many times"). The analysis
+found THREE facts, two of them bugs:
+
+1. **omo reads no token security from anywhere** (no authority/honeypot
+   fields anywhere in their lib; their only rug defenses are the fake-chart
+   filter + liquidity floors). Dexscreener's API cannot provide token
+   security at all — its pair payload has no authority/honeypot fields. So
+   there was nothing to port: security is OUR advantage, and the right fix
+   was making OUR security path actually work.
+2. **The Birdeye key was quota-exhausted** — every trending AND token_security
+   call answered 400 `{"success":false,"message":"Compute units usage limit
+   exceeded"}`, each burning 3 retries + backoff (~1,371 error lines in one
+   live log).
+3. **The keyless on-chain RPC fallback (the safety net for exactly this day)
+   had NEVER worked.** `onchain_security.get_authority_flags` POSTed
+   `{"method", "params"}` WITHOUT the JSON-RPC envelope (`jsonrpc: "2.0"`,
+   `id`). mainnet-beta answers that with **200 + EMPTY body** (its
+   rate-limit masquerading as success — `x-ratelimit-endpoint-remaining`
+   negative); publicnode answers 400 "Parse error". Either way `resp.json()`
+   threw, every endpoint "failed", and every live `security_clear` detail
+   read `unknown, unknown, unknown` — the rule (activated §39!) was blind
+   since its activation. `live_execution/solana.py` has sent the full
+   envelope all along (its chain reads work — proof the pattern was known,
+   just never copied into the backend fallback).
+
+**Fixes (all proven live before commit):**
+
+- `onchain_security.py`: full JSON-RPC envelope + empty-200 treated as a
+  failure (rotate to the next RPC, never parse garbage) + non-mint parsed
+  accounts rejected. Live proof after the fix:
+  `get_authority_flags(MEW)` → `{'mint_authority_revoked': True,
+  'freeze_authority_revoked': True}` from the real chain.
+- `base.py`: new `ProviderQuotaError` — a 400 whose body says quota/limit
+  ("Compute units usage limit exceeded") raises IMMEDIATELY (zero retries;
+  same treatment as 401/403). A generic 400 (bad address) keeps the normal
+  retry/fail path. Sniff is phrase-based, never a guess.
+- `birdeye.py`: both surfaces self-disable for the session on quota-400 or
+  401/403 (they already did for security; trending now does too — operator
+  approved fast-fail on both). Birdeye answering 401 today (tier denial
+  after quota reset) still lands in the same one-line session-disable.
+  Discovery was never at risk: the keyword scanner + Dexscreener + new
+  listings carry it (Birdeye trending was already optional).
+
+**Result (live, same session):** `security_clear` details now read
+`mint authority revoked: yes, freeze authority revoked: yes` on every
+decision — real on-chain truth per candidate, keyless, omo cannot do this.
+The Birdeye burn went from 3 retries × N candidates per cycle to a single
+session-disable line. 0 tracebacks, process stable across cycles.
+
+**Tests:** +12 → **562 passing** (new `test_onchain_security.py`: the
+envelope-shape regression test, empty-200 rotation, non-mint rejection,
+authority parsing both directions, quota-body sniff true/false/empty, and
+the two Birdeye session-disable paths).
+
+
+

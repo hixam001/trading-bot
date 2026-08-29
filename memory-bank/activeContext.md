@@ -1,9 +1,34 @@
 # Active Context — trading-bot
 
-**As of 2026-08-29 (§39 ROADMAP #1/#3/#6 — security_clear re-activated as the 10th gate rule; crowd heat discounts dumped thesis authors; paper+live pipelines unified on backend/decision_pipeline.py; 550 tests + 8 E2E green; bot LIVE and ARMED on the new code).**
+**As of 2026-08-29 (§40 SECURITY_CLEAR UNBLINDED — the on-chain RPC fallback was DEAD since creation (missing JSON-RPC envelope): fixed + proven live; Birdeye quota-exhausted → both surfaces session fast-fail; security_clear now reads real mint/freeze authority from chain for every candidate; 562 tests + 8 E2E green; bot LIVE and ARMED on the fixed code).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §40 security_clear unblinded: dead RPC fallback fixed + Birdeye fast-fail (2026-08-29)
+Operator asked "how does omo get token security via Dexscreener" (Birdeye
+erroring constantly). Analysis verdict: omo reads NO token security
+anywhere (fake-chart filter + liq floors only), and Dexscreener's API has
+no authority/honeypot fields — nothing to port; security is our advantage,
+but ours was blind. Two bugs found + fixed, both proven live:
+(1) `onchain_security.get_authority_flags` never worked — it POSTed without
+the `jsonrpc/id` envelope; mainnet-beta answers that with 200 + EMPTY body
+(rate-limit masquerade), publicnode with 400 Parse error; `resp.json()`
+threw every time. Fixed: full envelope + empty-200 = rotate-to-next-RPC +
+non-mint parsed accounts rejected. Live proof: MEW → both authorities
+revoked=True from the real chain.
+(2) Birdeye key quota-exhausted ("Compute units usage limit exceeded" on
+trending AND token_security, 3 retries each → 1,371 log lines). Fixed:
+`ProviderQuotaError` in base.py (phrase-sniffed 400 quota body raises
+immediately, zero retries, like 401/403) + both Birdeye surfaces
+session-disable on it (operator approved trending fast-fail too). Birdeye
+now answers 401 (tier denial) — same one-line session-disable path.
+Live result: every `security_clear` detail reads `mint authority revoked:
+yes, freeze authority revoked: yes`; 0 tracebacks; 562 passing (+12 in new
+`test_onchain_security.py`: envelope regression, empty-200 rotation,
+non-mint rejection, authority parsing, quota sniff, both disable paths).
+Handoff §40.
+
+## DONE (previous)
 ### §39 roadmap items #1, #3, #6 (2026-08-29)
 **#1 security_clear re-activated** in `ACTIVE_RULES` (between `already_held`
 and `not_on_break`) — one edit, both books (LIVE_ACTIVE_RULES derives from

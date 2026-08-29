@@ -1,3 +1,38 @@
+## Memory-bank update - 2026-08-29 (§40 security_clear unblinded)
+
+- **Task**: operator asked how omo gets token security via Dexscreener
+  ("Birdeye returns errors too many times") — wanted omo's Dexscreener
+  wired in as replacement.
+- **Analysis verdict**: omo reads NO token security from anywhere (no
+  authority/honeypot reads in their entire lib; their rug defenses are the
+  fake-chart filter + liquidity floors). Dexscreener's API has no
+  authority/honeypot fields, so nothing CAN be ported from either source —
+  our on-chain RPC security read is a differentiator omo lacks, but ours
+  was blind.
+- **Bug 1 (critical, shipped-dead)**: `onchain_security.get_authority_flags`
+  POSTed `{"method","params"}` without the JSON-RPC envelope. mainnet-beta
+  answers 200 + EMPTY body (rate-limit masquerade — visible via negative
+  `x-ratelimit-endpoint-remaining`); publicnode answers 400 Parse error.
+  `resp.json()` threw on both, so the fallback NEVER worked and every live
+  `security_clear` read `unknown, unknown, unknown`. The full-envelope
+  pattern was already proven in-repo (`live_execution/solana.py`).
+- **Bug 2**: Birdeye key quota-exhausted — 400 "Compute units usage limit
+  exceeded" on both trending + token_security, 3 retries + backoff each,
+  1,371 error lines in one live log.
+- **Fixes**: full envelope + empty-200-rotates + non-mint-reject in
+  `onchain_security.py`; `ProviderQuotaError` in `base.py` (quota-phrase 400
+  raises immediately, generic 400 keeps retry path); session self-disable on
+  both Birdeye surfaces (security already had it for 401/403 — added quota;
+  trending gained both, operator approved).
+- **Live proof before commit**: `get_authority_flags(MEW)` → both
+  authorities revoked=True from the real chain; live cycle restarted on the
+  fixed code; every `security_clear` detail now reads `mint authority
+  revoked: yes, freeze authority revoked: yes`; Birdeye burn = one
+  session-disable line (now 401 tier-denial — same path); 0 tracebacks.
+- **Tests**: +12 → **562 passing** (new `test_onchain_security.py`).
+  Docs: handoff §40, decisionLog #53, activeContext, this log, project
+  report §24.
+
 ## Memory-bank update - 2026-08-29 (§39 roadmap items #1, #3, #6)
 
 - **Task**: implement the three approved roadmap items — activate

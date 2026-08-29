@@ -1293,3 +1293,44 @@ pinned by test (`backend/` never imports `live_execution`).
 Playwright **8/8**; live cycle restarted on the new code — clean cycle, gate
 decisions flowing, `security_clear` in every rule breakdown, 0
 tracebacks.
+
+## 24. security_clear unblinded: dead on-chain RPC fallback fixed + Birdeye quota fast-fail (2026-08-29, handoff §40)
+
+Follow-up to the operator question "how does omo get token security via
+Dexscreener" (Birdeye erroring constantly). Analysis verdict: **omo reads
+no token security from anywhere** — no authority/honeypot reads in their
+entire lib (their rug defenses are the fake-chart filter + liquidity
+floors), and **Dexscreener's API has no authority/honeypot fields at all**.
+There was nothing to port; our on-chain RPC security read is a
+differentiator omo lacks — but ours had been blind since the rule's
+activation.
+
+Two bugs found and fixed, both proven live before commit:
+
+1. **`onchain_security.get_authority_flags` shipped DEAD.** It POSTed
+   `{"method", "params"}` without the JSON-RPC envelope (`jsonrpc: "2.0"`,
+   `id`). api.mainnet-beta answers that with **200 + empty body** (its
+   rate-limit masquerading as success); publicnode answers 400 "Parse
+   error". `resp.json()` threw on both, so every read failed silently and
+   every live `security_clear` detail read `unknown, unknown, unknown`.
+   Fix: full envelope, empty-200 treated as a failure (rotate to the next
+   RPC), non-mint parsed accounts rejected. The working pattern was already
+   in-repo (`live_execution/solana.py` sends the full envelope).
+2. **Birdeye key quota-exhausted** — 400 "Compute units usage limit
+   exceeded" on BOTH trending and token_security, each burning 3 retries +
+   backoff (~1,371 error lines in one live log). Fix: new
+   `ProviderQuotaError` in `base.py` (phrase-sniffed quota-400 raises
+   immediately — zero retries, same treatment as 401/403; generic 400s keep
+   the normal retry path) + session self-disable on both Birdeye surfaces
+   (operator approved trending fast-fail too). Discovery was never at risk:
+   the keyword scanner + Dexscreener enrichment carry it.
+
+**Result (live, same session):** every `security_clear` detail now reads
+`mint authority revoked: yes, freeze authority revoked: yes` — real
+on-chain truth per candidate, keyless. Birdeye burn: 3 retries × N
+candidates per cycle → one session-disable line. 0 tracebacks.
+
+**Verification:** +12 tests → **562 passing** (new
+`test_onchain_security.py`: the envelope-shape regression test, empty-200
+rotation, non-mint rejection, authority parsing both directions,
+quota-body sniff, and both Birdeye session-disable paths).

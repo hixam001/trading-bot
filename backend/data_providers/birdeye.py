@@ -14,7 +14,13 @@ from typing import Any, Optional
 import httpx
 
 import config
-from data_providers.base import ProviderAuthError, ProviderError, fetch_json, require_type
+from data_providers.base import (
+    ProviderAuthError,
+    ProviderError,
+    ProviderQuotaError,
+    fetch_json,
+    require_type,
+)
 from models import Candidate, SecurityInfo
 
 log = logging.getLogger(__name__)
@@ -73,6 +79,7 @@ class BirdeyeProvider:
     def __init__(self, client: Optional[httpx.AsyncClient] = None) -> None:
         self._client = client
         self._security_available: bool = True   # flips off permanently on 401/403
+        self._trending_available: bool = True   # flips off on 401/403/quota-400
         # Small concurrency bound: prevents burst-429s against Birdeye's
         # strict free-tier limits when many candidates enrich at once.
         self._sec_semaphore = asyncio.Semaphore(2)
@@ -81,6 +88,12 @@ class BirdeyeProvider:
         own_client = self._client is None
         client = self._client or httpx.AsyncClient()
         try:
+            if not self._trending_available:
+                # Session-disabled (quota 400 / 401 / 403 observed earlier).
+                # Returning [] keeps the lens skipped quietly; discovery runs
+                # on the keyword scanner + new listings (already the case
+                # when the key is unset).
+                return []
             data = await fetch_json(
                 client,
                 f"{config.BIRDEYE_BASE_URL}/defi/token_trending",
@@ -89,6 +102,16 @@ class BirdeyeProvider:
                         "limit": min(limit, 50)},
                 headers=_HEADERS,
             )
+        except (ProviderAuthError, ProviderQuotaError) as exc:
+            # Quota exhaustion ("Compute units usage limit exceeded") and
+            # tier denial are both session-stable: self-disable instead of
+            # burning 3 retries + backoff every cycle.
+            self._trending_available = False
+            log.warning(
+                "birdeye trending lens disabled for this session: %s "
+                "(keyword scanner + new listings carry discovery)", exc,
+            )
+            return []
         finally:
             if own_client:
                 await client.aclose()
@@ -121,12 +144,13 @@ class BirdeyeProvider:
                     provider="birdeye",
                     headers=_HEADERS,
                 )
-        except ProviderAuthError as exc:
+        except (ProviderAuthError, ProviderQuotaError) as exc:
             self._security_available = False
             log.warning(
                 "birdeye token_security disabled for this session: %s. "
                 "Security fields will remain UNKNOWN (not False) on all "
-                "candidates.", exc,
+                "candidates; the free on-chain RPC fallback owns the "
+                "authority flags.", exc,
             )
             return SecurityInfo()
         except ProviderError:
