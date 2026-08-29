@@ -21,10 +21,7 @@ Two backends:
 from __future__ import annotations
 
 import logging
-import re
 from typing import Optional
-
-import httpx
 
 import config
 from llm.client import build_main_client, main_max_tokens, LLMResult, _is_peak_window
@@ -138,67 +135,11 @@ class Narrator:
     """One client per process, reused across every call (D3)."""
 
     def __init__(self) -> None:
-        self._client: Optional[httpx.AsyncClient] = None
         self._main_llm = build_main_client()
-        self._ollama_ok: Optional[bool] = None   # None = unchecked
-
-    @property
-    def client(self) -> httpx.AsyncClient:
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(config.OLLAMA_TIMEOUT_SECONDS)
-            )
-        return self._client
 
     async def aclose(self) -> None:
-        if self._client is not None:
-            await self._client.aclose()
-            self._client = None
         await self._main_llm.aclose()
 
-    async def check_ollama_health(self) -> bool:
-        """GET /api/tags with a short timeout; cached between ticks (D4)."""
-        try:
-            resp = await self.client.get(
-                config.OLLAMA_TAGS_ENDPOINT, timeout=httpx.Timeout(5.0)
-            )
-            ok = resp.status_code == 200 and config.MODEL_NAME in resp.text
-        except httpx.HTTPError:
-            ok = False
-        if ok != self._ollama_ok:
-            log.info("Ollama health: %s (model %s)", "UP" if ok else "DOWN",
-                     config.MODEL_NAME)
-        self._ollama_ok = ok
-        return ok
-
-    async def _ollama_generate(self, prompt: str) -> Optional[str]:
-        try:
-            resp = await self.client.post(
-                config.OLLAMA_GENERATE_ENDPOINT,
-                json={
-                    "model": config.MODEL_NAME,
-                    "prompt": prompt,
-                    "stream": False,
-                    "think": False,   # qwen3: skip the long <think> block (~23 tok/s!)
-                    "options": {
-                        "temperature": 0.2,
-                        # Explicit small context window: KV-cache RAM scales
-                        # with num_ctx, not prompt length (see config comment).
-                        "num_ctx": config.OLLAMA_NUM_CTX,
-                        "num_predict": config.OLLAMA_NUM_PREDICT,
-                    },
-                },
-            )
-            resp.raise_for_status()
-            text = (resp.json().get("response") or "").strip()
-            # Belt-and-suspenders: strip any residual <think>…</think> block
-            # (older Ollama versions ignore the think flag but honor /no_think,
-            # which is appended to the prompt in build_prompt).
-            text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL)
-            return text.strip() or None
-        except (httpx.HTTPError, ValueError) as exc:
-            log.warning("ollama generate failed: %s", exc)
-            return None
 
     async def narrate(self, gate: GateDecision) -> NarrationResult:
         """

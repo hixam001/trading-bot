@@ -122,7 +122,7 @@ async def test_system_status_endpoint(client):
     body = r.json()
     assert body["paper_trading_only"] is True
     assert body["data_backend"] == "mock"
-    assert "ollama_reachable" in body and "provider_calls_today" in body
+    assert "main_llm_reachable" in body and "provider_calls_today" in body
 
 
 async def test_knowledge_base_endpoints(client, monkeypatch):

@@ -416,15 +416,16 @@ async def test_reflection_uses_provider_off_peak(monkeypatch):
 async def status_client(tmp_path, monkeypatch):
     from api import db
     from api.main import app
+    from llm.client import LLMClient
 
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "status.db")
     monkeypatch.setattr(config, "INGESTED_KNOWLEDGE_DIR", tmp_path / "ingested")
     await db.init_db()
 
-    async def _no_ollama(self):
+    async def _no_network(self):
         return False
 
-    monkeypatch.setattr(Narrator, "check_ollama_health", _no_ollama)
+    monkeypatch.setattr(LLMClient, "health", _no_network)
     app.state.narrator = Narrator()
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:

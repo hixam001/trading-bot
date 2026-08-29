@@ -53,9 +53,19 @@ BOARD_CAP = 16
 
 
 def _is_fake_chart(liq_usd: float, vol_1h: float) -> bool:
+    """Cheap two-field pre-scrape gate: reject the most obvious wash-trades
+    before they consume enrichment or LLM credits.
+
+    This is NOT the full filter. The 13-threshold omotrades-parity filter
+    (fees-vs-FDV, vol/liq at 24h, trade-count sanity, one-sided tape, etc.)
+    lives in rule_engine/fake_chart.py and runs on every candidate AFTER
+    enrichment, before the reasoning layer. This guard only fires at keyword-
+    scan time where only liq and vol_1h are available.
+    """
     if liq_usd <= 0:
         return True
     return (vol_1h / max(liq_usd, 1.0)) > MAX_VOL_TO_LIQ_RATIO
+
 
 
 def _safe_float(v) -> Optional[float]:
