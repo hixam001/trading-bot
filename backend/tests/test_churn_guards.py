@@ -2,7 +2,8 @@
 tests/test_churn_guards.py — the anti-churn + risk-cap + audit layer:
 
   * blocklist      : manual/auto mint blocks, candidate filtering,
-                     consecutive-stop-out auto-block trigger
+                     §49 PnL-based close-outcome memory, auto-block,
+                     and 24h re-entry cooldown (both books)
   * conviction     : compute_ticket math (fixed vs conviction mode),
                      daily deploy cap refusal through a real tmp DB tick
   * seal           : decision_commits rows written BEFORE acting, hashes
@@ -14,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import inspect
 import json
+import time
 from datetime import datetime, timezone
 
 import pytest
@@ -24,10 +27,13 @@ from api import db
 from blocklist import (
     BLOCKED_SYMBOLS,
     _load,
+    _save,
     block_mint,
     filter_candidates,
     is_blocked_mint,
     is_blocked_symbol,
+    maybe_autoblock,
+    record_close_outcome,
     should_autoblock,
     unblock_mint,
 )
@@ -121,6 +127,123 @@ def test_corrupt_blocklist_file_quarantined(bl_state):
     bl_state.write_text("not-json{")
     assert not is_blocked_mint("anything")
     assert bl_state.with_suffix(".corrupt").exists()
+
+
+# --- §49: PnL-based close memory, auto-block, re-entry cooldown (both books) ------
+
+def test_record_close_outcome_appends_newest_first_and_caps(bl_state):
+    record_close_outcome("MINT_R", "RUG", "exit_stop_loss", -1.5, book="paper")
+    record_close_outcome("MINT_R", "RUG", "exit_take_profit", 2.0, book="live")
+    closes = _load()["mints"]["MINT_R"]["closes"]
+    assert len(closes) == 2
+    # newest first, with the PnL basis + book recorded
+    assert closes[0]["rule"] == "exit_take_profit"
+    assert closes[0]["loss"] is False and closes[0]["book"] == "live"
+    assert closes[1]["loss"] is True and closes[1]["book"] == "paper"
+    # a history-only entry is NOT a block
+    assert not is_blocked_mint("MINT_R")
+    # capped at 10 (newest kept, oldest trimmed)
+    for _ in range(12):
+        record_close_outcome("MINT_R", "RUG", "exit_trailing_stop", 1.0)
+    closes = _load()["mints"]["MINT_R"]["closes"]
+    assert len(closes) == 10
+    assert all(c["rule"] == "exit_trailing_stop" for c in closes)
+
+
+def test_record_close_outcome_never_raises_on_unwritable_state(
+        tmp_path, monkeypatch):
+    """Losing the memory is strictly better than losing the tick."""
+    blocker = tmp_path / "blocker"
+    blocker.write_text("a regular file, not a directory")
+    monkeypatch.setattr(config, "BLOCKLIST_STATE_FILE",
+                        str(blocker / "state.json"))
+    record_close_outcome("MINT_X", "XXX", "exit_stop_loss", -1.0)
+    assert not is_blocked_mint("MINT_X")
+
+
+def test_maybe_autoblock_fires_on_consecutive_losses_any_rule(bl_state):
+    # One loss is not a pattern.
+    record_close_outcome("MINT_A", "AAA", "exit_stop_loss", -1.0)
+    assert not maybe_autoblock("MINT_A", "AAA")
+    assert not is_blocked_mint("MINT_A")
+    # A second consecutive loss — via a DIFFERENT exit rule, PnL-based — is.
+    record_close_outcome("MINT_A", "AAA", "exit_trailing_stop", -0.5)
+    assert maybe_autoblock("MINT_A", "AAA")
+    entry = _load()["mints"]["MINT_A"]
+    assert entry["kind"] == "auto"
+    assert "2 consecutive loss closes" in entry["reason"]
+    assert "exit_stop_loss" in entry["reason"]
+    assert "exit_trailing_stop" in entry["reason"]
+
+
+def test_maybe_autoblock_win_resets_the_streak(bl_state):
+    record_close_outcome("MINT_W", "WWW", "exit_stop_loss", -1.0)
+    record_close_outcome("MINT_W", "WWW", "exit_take_profit", 2.0)
+    record_close_outcome("MINT_W", "WWW", "exit_stop_loss", -1.0)
+    assert not maybe_autoblock("MINT_W", "WWW")
+    assert not is_blocked_mint("MINT_W")
+
+
+def test_unblock_preserves_history_and_history_drives_cooldown(bl_state):
+    record_close_outcome("MINT_H", "HHH", "exit_stop_loss", -1.0)
+    record_close_outcome("MINT_H", "HHH", "exit_trailing_stop", -0.5)
+    assert maybe_autoblock("MINT_H", "HHH")
+    # Unlifting the verdict must NOT erase the evidence:
+    assert unblock_mint("MINT_H")
+    assert not is_blocked_mint("MINT_H")
+    closes = _load()["mints"]["MINT_H"]["closes"]
+    assert [c["loss"] for c in closes] == [True, True]
+    # The preserved history still feeds the self-expiring cooldown:
+    kept, blocked = filter_candidates([make_candidate("MINT_H", "HHH")])
+    assert kept == []
+    assert "re-entry cooldown" in blocked[0][1]
+
+
+def test_reentry_cooldown_filters_recent_loss_and_expires(bl_state):
+    record_close_outcome("MINT_C", "CCC", "exit_stop_loss", -1.0)
+    kept, blocked = filter_candidates([make_candidate("MINT_C", "CCC")])
+    assert kept == []
+    assert "re-entry cooldown" in blocked[0][1]
+    # Age the recorded close past the window -> free to be considered again.
+    data = _load()
+    data["mints"]["MINT_C"]["closes"][0]["ts"] = time.time() - 25 * 3600
+    _save(data)
+    kept, blocked = filter_candidates([make_candidate("MINT_C", "CCC")])
+    assert len(kept) == 1 and blocked == []
+
+
+def test_reentry_cooldown_ignores_wins(bl_state):
+    record_close_outcome("MINT_O", "OOO", "exit_take_profit", 3.0)
+    kept, blocked = filter_candidates([make_candidate("MINT_O", "OOO")])
+    assert len(kept) == 1 and blocked == []
+
+
+def test_both_books_record_then_autoblock_on_full_close():
+    """§49 parity: the paper engine's close path AND the live cycle's
+    _manage do record_close_outcome -> maybe_autoblock, in that order,
+    with the right book tag, and journal the soft loss memory."""
+    import paper_trading_engine as pte
+    import run_live_cycle as rlc
+
+    paper_src = inspect.getsource(pte.scan_and_execute_exits)
+    live_src = inspect.getsource(rlc._manage)
+    for src, book in ((paper_src, "paper"), (live_src, "live")):
+        assert "record_close_outcome as _record" in src
+        assert f'book="{book}"' in src
+        assert "maybe_autoblock as _maybe" in src
+        assert src.index("_record(") < src.index("_maybe(")
+        # reference layer 5: the thinker sees the loss lesson
+        assert "we already paid for this lesson" in src
+        assert '"loss_close"' in src
+
+
+def test_anti_churn_thresholds_are_pinned():
+    """Hardcoded, never env-settable (like every other risk number)."""
+    assert config.AUTO_BLOCK_CONSECUTIVE_LOSSES == 2
+    # legacy alias kept so old references still resolve
+    assert config.AUTO_BLOCK_CONSECUTIVE_STOPS == \
+        config.AUTO_BLOCK_CONSECUTIVE_LOSSES
+    assert config.REENTRY_COOLDOWN_HOURS == 24.0
 
 
 # --- A6 static symbol blocklist --------------------------------------------------

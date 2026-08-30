@@ -1,6 +1,69 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §49 anti-churn v2, one memory, both books (2026-08-30): audit vs
+      the reference found the LIVE book had NO loss memory (auto-block
+      existed only in the paper engine and only counted exit_stop_loss
+      rule IDs; the reference has no automatic per-mint loss counter at
+      all). blocklist.py is now the single source of truth:
+      `record_close_outcome()` (PnL-based, any exit rule, both books,
+      newest-first closes history capped at 10) feeds `maybe_autoblock()`
+      (N=2 consecutive loss closes → block until a human clears it) +
+      a 24h re-entry cooldown enforced in `filter_candidates` (read
+      stage, both books, self-expiring, zero quota). Both books wired
+      (paper close path AND `run_live_cycle._manage`): record →
+      autoblock → (on loss) soft memory (upsert_memory + loss_close
+      event — reference layer 5). Disclosure gains `anti_churn` truths.
+      Audit-surfaced hardening: conftest now isolates BLOCKLIST_STATE_FILE
+      (mock-tick tests had been polluting the operator's real sidecar
+      and auto-blocking mock mints; file cleaned, backup kept);
+      `_load()` fails OPEN on unreadable paths like on corrupt state.
+      10 new tests. **647 passing** (495 backend + 152 live). Live
+      cycle restarted; first ticks clean. NOTE: Firecrawl /v1/search is
+      returning 402 (credits exhausted) — fail-soft handled it, but
+      paid search evidence is empty until refilled.
+- [x] §48 web-search spend discipline — staged + cached (2026-08-30): the
+      Firecrawl `/v1/search` evidence stage left the unconditional read
+      chain and became stage 4 of `gate_candidate_staged` (only
+      all-passed/thinker-bound candidates get searched; §44-style
+      `web search skipped … (no quota spent)` logs), behind a two-tier
+      mint-keyed cache (hits 7200s / misses 1800s; same-ticker
+      different-mint never share). `search_web` never-raises now.
+      8 new tests; read-stage call pinned must-NOT-run. **637 passing.**
+      Live: 3 searches in first ~2 min vs ~4–6/tick before (>95% cut).
+      Deferred (designed): Brave→DDG→Firecrawl free-transport chain,
+      provider counter, 1-week shadow.
+- [x] §47 Scrapling local stealth transport — IMPLEMENTED & LIVE
+      (2026-08-30): Phase-0 drill 6/6 per hop (curl-cffi p50 0.42s,
+      browser p50 1.00s vs httpx 0/6 always-430) proved fomo's block is
+      TLS-fingerprint, not IP. New `stealth_browser.py` (curl hop + warm
+      AsyncStealthySession with CF solver, idle close 600s, recreate after
+      3 failures) + `crowd.py` chain (curl-first direct, `_scrape_scrapling`
+      before the paid providers, same bench machinery) + config knobs
+      (`SCRAPLING_ENABLED=0` reverts) + pinned dep + Dockerfile browser
+      layer + 9 new tests. **629 passing.** LIVE: every fomo read 200 via
+      scrapling, ZERO paid /v1/scrape, ZERO 430s; Firecrawl credits now
+      only fund the web-search stage. README credits added (GitHub only).
+      Follow-ups: ~1-week shadow then optionally empty paid scrape keys;
+      re-run spike on Oracle (IP-reputation check).
+- [x] §46 Oracle Always Free deployment decision + Scrapling deferred
+      (2026-08-30): engine deploys as the existing single Docker image
+      (state on named volumes); sizing corrected to the VERIFIED Always
+      Free allowance — **2 OCPU + 12 GB** always-on (1,500 OCPU-h +
+      9,000 GB-h/month), NOT the 4/24 previously documented (oversized A1
+      instances are disabled→deleted 30 days after trial end on free
+      tenancies; PAYG upgrade keeps the free allowance); docs/11 updated.
+      Frontend ships single-origin (baked SPA on :8000) or Vercel Hobby
+      (`VITE_API_BASE_URL` + `FRONTEND_ORIGIN`). Scrapling analysis
+      complete and DEFERRED to post-deploy: `scrapling[fetchers]` pip dep;
+      `AsyncStealthySession` (`solve_cloudflare=True`, Privy bearer via
+      `extra_headers`) first in the `crowd.py` chain; `_direct_get`
+      upgraded to curl-cffi impersonation; Groq social reads off + Groq
+      main code deleted; candidates 20→12, research 8→4, web-search 8→4;
+      paid keys as 1-week failover; BSD-3 credit in the GitHub README
+      ONLY (never the website); Phase-0 gate ≥80% solve success from the
+      Oracle IP. Fresh Firecrawl credits added 2026-08-30 (paid chain
+      primary until Scrapling lands).
 - [x] §45 equity-proportional live minimum ticket (handoff §45) (2026-08-30):
       fixed the "site says ENTER but nothing executes" incident — TREE passed
       the staged gate every cycle, then sizing refused the $0.4962 ticket

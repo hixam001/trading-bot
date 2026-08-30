@@ -20,3 +20,9 @@ solders>=0.29
 # Testing
 pytest>=8.3
 pytest-asyncio>=0.24
+
+# §47 — LOCAL stealth transport for the fomo.fun crowd feed (Scrapling,
+# BSD-3): curl-cffi Chrome-TLS impersonation (direct hop) + patchright
+# stealth Chromium with Cloudflare solver (browser hop). Pinned <0.5 —
+# 0.4 is Beta and minor versions have carried breaking renames.
+scrapling[fetchers]>=0.4.15,<0.5

@@ -1,12 +1,273 @@
-**Last updated:** 2026-08-30 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-08-31 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 620 passing (backend 468 + live_execution 152) + 8 Playwright E2E
+**Tests:** 647 passing (backend 495 + live_execution 152) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
+**Deployment (2026-08-30, §46):** moving to **Oracle Cloud Always Free** —
+VM sized **2 OCPU / 12 GB ARM Ampere A1** (the verified Always Free
+allowance of 1,500 OCPU-h + 9,000 GB-h/month; the 4/24 shape exceeds it
+and oversized A1 instances are disabled→deleted 30 days after trial end on
+a free tenancy). Engine = the existing Docker image; state on named
+volumes. Scrapling integration DEFERRED to post-deploy (plan in §46.1):
+local stealth fetcher (`scrapling[fetchers]`, `AsyncStealthySession`,
+`solve_cloudflare=True`, Privy bearer via `extra_headers`) first in the
+`crowd.py` chain, Groq social reads off, candidates 20→12, paid keys as
+1-week failover, BSD-3 credit in the GitHub README only. Fresh Firecrawl
+credits added 2026-08-30 — the paid chain stays primary until then.
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
+
+---
+
+## 46. Deployment & Scrapling deferral (2026-08-30, operator decisions)
+
+**46.1 — Oracle Cloud Always Free, CORRECTED sizing.** The engine moves to
+Oracle Always Free as the existing single Docker image (Dockerfile +
+docker-compose.yml, state on named volumes, per `docs/11_DEPLOYMENT.md`).
+Verified against Oracle's official docs (2026-08-30): Always Free provides
+**1,500 OCPU-hours + 9,000 GB-hours per month** for ARM Ampere A1 — for an
+always-on VM that is **2 OCPUs + 12 GB RAM**, not the "4 OCPU / 24 GB" this
+handoff previously assumed. A free tenancy that keeps A1 instances beyond
+that allowance has **all A1 instances disabled and then deleted 30 days
+after trial end** — so the VM MUST be created at 2 OCPU / 12 GB (the $300
+trial can temporarily run bigger, but the bot must never depend on it).
+Also free: 200 GB block storage, 10 TB/month egress; upgrading to
+Pay-As-You-Go keeps the Always Free allowance free and bills only above it.
+The bot's footprint (~0.3 GB engine now, ~0.8 GB peak with a headless
+Chromium post-Scrapling, ~4 GB disk) fits easily. Oracle's idle-instance
+reclaim (~7-day low-utilization window) can never trigger: the bot ticks
+every 60s and scans exits every 15s. Frontend options (both already
+implemented): single-origin (SPA baked into the image, served on :8000) or
+split deploy (Vercel Hobby + `VITE_API_BASE_URL` + engine
+`FRONTEND_ORIGIN`) — Vercel Hobby is nominally non-commercial; CF Pages is
+the stricter-safe free alternative.
+
+**46.2 — Scrapling: DEFERRED, implement after deployment.** The 2026-08-30
+analysis (components, phases, decision gates) is the approved plan; summary:
+`pip install "scrapling[fetchers]>=0.4.15,<0.5"` (BSD-3; no code vendored);
+new `backend/data_providers/stealth_browser.py` wrapping ONE module-level
+`AsyncStealthySession` (headless, `disable_resources=True`,
+`solve_cloudflare=True`, `google_search=False`, `network_idle=False`,
+Privy bearer via `extra_headers`, 10-min idle auto-close, restart after
+consecutive failures); insert `_scrape_scrapling()` FIRST in
+`crowd.py::_get_json_via()`'s chain (before firecrawl) wired into the
+existing `_bench`/`_transport_error`/`_rejection_error` machinery;
+`_direct_get()` upgraded to curl-cffi TLS impersonation
+(`scrapling.fetchers.AsyncFetcher`); hermeticity preserved (function-local
+imports, `SCRAPLING_ENABLED` import-guard, mock/tests never touch it).
+Paired changes: Groq social reads disabled (empty `SOCIAL_LLM_API_KEY`,
+stage is fail-soft off) + Groq main-path code deleted (unknown
+`MAIN_LLM_PROVIDER` values fail closed to template, never silent);
+`MAX_CANDIDATES_PER_TICK` 20→12, `RESEARCH_PER_TICK` 8→4,
+`WEB_SEARCH_PER_TICK` 8→4. ARM64 risks + fallbacks: patchright patched
+binaries → official `playwright install chromium` (arm64-supported) → apt
+`chromium` + Scrapling's `real_chrome=True`; Python 3.14 wheels — if any
+dep lacks cp314, drop the container image to `python:3.13-slim` (local dev
+unaffected). Phase-0 gate on the Oracle VM: ≥80% CF-solve success before
+retiring paid keys (40–80% keep paid failover; <40% needs a residential
+proxy or shelve). Credit in the GitHub README ONLY, never the website:
+Scrapling (BSD-3), Patchright (Apache-2.0), Playwright, curl-cffi. Fresh
+Firecrawl credits were added 2026-08-30 — the paid chain remains the
+primary crowd feed until Scrapling lands.
+
+## 47. Scrapling local stealth transport — IMPLEMENTED & LIVE (2026-08-30)
+
+**Status change from §46.2: implemented ahead of the Oracle deploy, on the
+operator's local machine, with the live cycle running the new transport.**
+
+**Phase-0 drill** (`scripts/scrapling_spike.py`, run on this machine
+2026-08-30, 6 samples/hop): httpx direct 0/6 (always HTTP 430);
+**curl-cffi impersonated GET 6/6 (p50 0.42s)**; **stealth browser 6/6
+(p50 1.00s, cold start 0.36s)**. Decisive finding: **fomo's Cloudflare
+block is a TLS-fingerprint (JA3) block, not an IP block** — `scrapling.
+fetchers.AsyncFetcher` with `impersonate="chrome"` passes 100% with no
+browser and no proxy from this residential IP. The browser hop
+(`AsyncStealthySession`, patchright patched Chromium — the ubuntu24.04-x64
+fallback build installed cleanly on CachyOS) is the free fallback for
+genuine interstitials. One spike-code lesson baked into the wrapper:
+Scrapling returns `.body` as BYTES (str-typed handling false-fails every
+read) — `stealth_browser._body_text` decodes both.
+
+**Production changes** (all test-pinned, 629 passing = 620 + 9 new):
+- `backend/data_providers/stealth_browser.py` (NEW): `curl_get` (impersonated
+  GET, never raises, None on any failure), `browser_fetch_json` (one warm
+  AsyncStealthySession; `headless=True, solve_cloudflare=True,
+  disable_resources=True, google_search=False, network_idle=False`;
+  user-agent/accept deliberately NOT forwarded — patchright's own UA must
+  match its fingerprint, a mismatched one is a detection vector), idle
+  auto-close after `SCRAPLING_IDLE_CLOSE_SECONDS` (default 600s), hard
+  recreate after 3 consecutive failures, `shutdown()` exit hook.
+- `backend/data_providers/crowd.py`: `_direct_get()` now tries the curl-cffi
+  hop FIRST (live-mode gated) and keeps the plain-httpx fallback for hosts
+  without scrapling; NEW `_scrape_scrapling()` inserted at the FRONT of
+  `_configured_scrapers()` (before firecrawl) wired into the SAME bench
+  machinery (`_transport_error`/`_transport_success`/`_rejection_error`) —
+  the §34 discipline applies to the free hop too: two consecutive
+  rejections → 30-min bench, never a per-candidate-per-tick stall.
+- `backend/config.py`: `SCRAPLING_ENABLED` (default "1"), `SCRAPLING_
+  TIMEOUT_MS` (30000), `SCRAPLING_IDLE_CLOSE_SECONDS` (600),
+  `SCRAPLING_PROXY` (empty; only if a deployment IP is ever hard-blocked).
+  `SCRAPLING_ENABLED=0` reverts to the pre-§47 paid chain, zero code
+  changes (one .env line).
+- `backend/requirements.txt`: `scrapling[fetchers]>=0.4.15,<0.5` (pinned —
+  0.4 is Beta; upgrades are deliberate). All cp314 x86_64 wheels resolved
+  (nothing compiled from source).
+- `Dockerfile`: browser layer as root before `USER bot`
+  (`patchright install --with-deps chromium` with a plain-install
+  fallback); arm64 note — if the patched arm64 build is missing at deploy
+  time, `playwright install chromium` (official arm64) covers it; verify
+  with the spike script on the target host. `python:3.13-slim` remains the
+  documented fallback if any cp314 arm64 wheel ever lags.
+- Hermeticity: BOTH free hops gated on `DATA_BACKEND=live` AND
+  `SCRAPLING_ENABLED`; imports are function-local so mock runs/tests never
+  import scrapling; `test_crowd.py`'s autouse fixture forces the off-state;
+  `tests/test_scrapling_transport.py` (NEW, 9 tests) pins chain order,
+  mock-mode isolation, never-raise, benching + paid failover, idle close.
+- README: GitHub-only "Open-source credits" section (Scrapling BSD-3,
+  Patchright Apache-2.0, Playwright, curl-cffi) — the WEBSITE stays
+  credit-free per the operator's standing constraint.
+- docs/FOMO_INTEGRATION.md §2a documents the live transport.
+
+**First production proof** (2026-08-30 21:43 restart, live ARMED cycle):
+every crowd read logged `scrapling: Fetched (200) <GET …/feed/token/thesis…>`;
+ZERO paid `/v1/scrape` calls; ZERO 430s; §44 skips still working
+(`crowd scrape skipped … (no quota spent)`). Firecrawl credits now burn
+ONLY on the web-search (`/v1/search`) stage — the crowd feed is free.
+
+**Open follow-up (operator decision, no rush):** after a ~1-week shadow
+with the paid keys as failover, empty the paid scrape keys in `.env`
+(keep FIRECRAWL_API_KEY if the web-search stage is kept). On Oracle
+migration: re-run the spike script there (datacenter-IP reality check) —
+the browser hop + `SCRAPLING_PROXY` escape hatch cover the IP-reputation
+case the TLS hop does not.
+
+## 49. Anti-churn v2 — PnL-based auto-block + 24h re-entry cooldown on BOTH books (2026-08-30)
+
+Operator audit ask: compare our anti-churn with the reference bot's. The
+audit found a GAP the reference does not have: **the live book had NO loss
+memory at all** — the auto-block existed only in the paper engine, and it
+counted `exit_stop_loss` rule IDs (a trailing-stop or manual loss exit
+re-entered freely the next tick). The reference has NO automatic per-mint
+loss counter either; ours now exceeds it on this axis — one sidecar, both
+books.
+
+**The three §49 mechanisms (`blocklist.py` — the single source of truth):**
+
+- `record_close_outcome(mint, symbol, rule_id, pnl_usd, book)` — every
+  FULL close (either book) appends `{rule, ts, pnl, loss, book}` to the
+  mint's newest-first `closes` history (capped at 10). PnL-based:
+  "sells for loss" is the operator's semantic — ANY rule closing at a
+  loss counts, not just stop-outs.
+- `maybe_autoblock(mint, symbol)` — the DONT-pattern killer: when the
+  newest `AUTO_BLOCK_CONSECUTIVE_LOSSES` (=2, hardcoded) closes are ALL
+  losses, auto-block until a human clears it. A profitable close between
+  losses resets the streak by construction.
+- RE-ENTRY COOLDOWN — a mint whose LAST close is a loss younger than
+  `REENTRY_COOLDOWN_HOURS` (=24, hardcoded) is filtered in
+  `filter_candidates` (read stage, both books, zero quota). Unlike the
+  block this self-expires: the 24h window IS the punishment for one
+  loss; the block is the punishment for a pattern.
+
+**Both books wired:** `paper_trading_engine.scan_and_execute_exits` and
+`run_live_cycle._manage` record → maybe_autoblock → (on a loss) soft
+memory: `upsert_memory` ("we already paid for this lesson", weight 2.0)
++ `insert_event({"outcome": "loss_close", ...})` — reference layer 5:
+the thinker sees the lesson via recall_memories. All wrappers
+never-raise (losing the memory is strictly better than losing the
+tick). Block/unblock PRESERVE the closes history — unlifting the
+verdict never erases the evidence, and the preserved history keeps
+driving the cooldown.
+
+**Disclosure:** `/api/disclosure.json` gains `anti_churn` (thresholds,
+PnL basis, cooldown window, state semantics) — the killer is now a
+public, auditable guarantee like the sizing formulas.
+
+**Test-isolation hardening the §49 audit itself surfaced:** the blocklist
+sidecar is REAL operator state — `backend/conftest.py`'s session
+`_isolate_live_state` now isolates `BLOCKLIST_STATE_FILE` too (the e2e
+mock tick had been writing MOCK mints into the operator's real file and
+auto-blocking them — the suite went red on the NEXT run; the operator's
+file was polluted with T/DOWN/HEALTH/BADCOIN test artifacts and was
+cleaned 2026-08-31, backup kept at
+`/tmp/blocklist_state.json.bak-20260831`). `blocklist._load()` now
+fails OPEN on an unreadable path (OSError) exactly like corrupt state —
+a tick must never die because the sidecar can't be read.
+
+**Tests: 647 passing** (backend 495 + live_execution 152). 10 new: 9 §49
+contract tests in `test_churn_guards.py` (history newest-first + cap 10;
+never-raises on unwritable state; 2-consecutive-losses-any-rule auto-
+block with reason text; win resets streak; unblock preserves history and
+history drives cooldown; cooldown expiry; win no-cooldown; BOTH-books
+source parity pin; pinned thresholds) + 1 disclosure truth test. Live
+cycle restarted on all three sections (§47–§49); first ticks clean
+(0 tracebacks, sidecar intact, skip lines firing). NOTE: Firecrawl
+`/v1/search` is currently returning 402 (credits exhausted) — §48's
+fail-soft path handled it without a crash (cached miss, never raises).
+
+---
+
+## 48. Web-search spend discipline — staged into the gate + two-tier cache (2026-08-30)
+
+Operator directive: Firecrawl's remaining burn is the web-search evidence
+stage (`/v1/search`, read-stage, unconditional, up to 8/tick); wanted it
+at minimal/no cost with no evidence-quality loss. Phase 1 (approved scope:
+avenues A+B — staging + cache; the free-transport chain Brave/DDG-via-
+curl-cffi is DESIGNED but deferred).
+
+**A — STAGED (§44 pattern applied to the search quota):** the search left
+`enrich_candidates` (read stage) and became STAGE 4 of
+`gate_candidate_staged` — it runs after the crowd rule, ONLY for a
+candidate whose merged decision is `all_passed`, i.e. exactly the
+candidates the per-candidate thinker is about to evaluate. Injected as
+`web_fetch=None` (defaulted `_default_web_fetch`, function-local import)
+so BOTH books get it with zero caller changes. §44-style log lines:
+`web search skipped for SYM: failed … (no quota spent)`.
+
+**B — TWO-TIER cross-tick cache (mint-keyed):** positive evidence cached
+`WEB_SEARCH_CACHE_TTL` (default 7200s); empty results cached only
+`WEB_SEARCH_CACHE_MISS_TTL` (default 1800s) so "nothing found" stays
+current — a fresh memecoin's attention often starts BETWEEN searches.
+Key = `mint:<mint>` (symbol fallback only when mint missing) — two
+different pump.fun mints sharing a ticker NEVER inherit each other's
+evidence. In-memory (restart = cold start, same as the fomo cache).
+DOCUMENTED DOWNSIDE (operator accepted): a cached hit can be up to TTL
+old, so attention that starts mid-window is detected at most TTL late on
+RECURRING names; fresh tickers are always cache misses and stay current.
+Knobs are env-tunable (`WEB_SEARCH_CACHE_TTL` / `_MISS_TTL`) if staleness
+ever feels wrong.
+
+**Changes:** `llm/web_research.py` — `_EvidenceCache` (hit/miss TTLs),
+`cache_key_for()`, `search_for_candidate()` (the staged entry: cache
+first, live only on miss, keyless-off, NEVER raises — `search_web` now
+broad-catches because a generic client error must not escape into the
+gate, caught by the new tests); `enrich_web` retained as a cache-aware
+legacy convenience but NO LONGER CALLED by the pipeline.
+`decision_pipeline.py` — `enrich_candidates` drops the web call (comment
+records the §48 move); `gate_candidate_staged` gains the `web_fetch` hook
++ stage 4 (live-gated, fail-soft, respects an existing `web_summary`).
+`config.py` — the two TTL knobs. 8 new tests
+(`tests/test_web_staging.py`): staging (failed candidate never searched),
+fail-soft, mock hermeticity, keyless-off, cache-hit-no-network, miss-
+expiry-on-the-SHORT-window, mint-keyed isolation, raise-free transport.
+Existing `test_decision_pipeline.py` updated: the read-stage web call is
+now pinned as must-NOT-run. **637 passing** (629 + 8).
+
+**Live proof (2026-08-30 23:34 ticks):** first ticks after restart show
+`web search skipped for STONK/Jimothy/Plumber/ARROW: failed …(rules)
+(no quota spent)` while the rule-passing candidates got staged searches
+(`web research (Billi )…`), each miss cached 1800s. 3 searches in the
+first ~2 min (vs ~4–6 PER TICK before) — an estimated >95% quota
+reduction, with ZERO evidence change for thinker-bound candidates: same
+Firecrawl engine, same query, same condensing, just bought only when it
+can be used, and re-bought at most once per TTL window.
+
+**Deferred (designed, not built):** the free-transport chain (Brave free
+tier 2000 q/mo → DDG via the §47 curl-cffi hop → Firecrawl failover,
+`WEB_SEARCH_PROVIDER` selector) + a `websearch` provider counter on
+system-status + 1-week shadow. Revisit after A+B burn data accumulates.
+
 
 ---
 

@@ -1,9 +1,100 @@
 # Active Context — trading-bot
 
-**As of 2026-08-30 (§45 EQUITY-PROPORTIONAL LIVE FLOOR — the "site says ENTER but nothing executes" incident is fixed: TREE passed the gate every cycle but the $0.4962 ticket (cash $3.31 × 0.15) was refused by the hardcoded $0.50 floor; the floor is now `min_live_ticket_usd(equity) = max($0.10, at-cost equity × 0.10)` — ONE formula driving the cash gate rule, the sizing refusal, AND the risk_budget floor threading, so gate and sizing can never disagree on the threshold again; at the $4.59 book the floor is $0.4586 and the ticket places; below-floor refusals now record in outcome["entries"] instead of vanishing; operator picked 10% (most conservative); 620 tests green. RESTART the live cycle to load it).**
+**As of 2026-08-31 (§49 ANTI-CHURN V2, ONE MEMORY, BOTH BOOKS — the live book had NO loss memory at all: a coin stopped out LIVE could be re-bought the very next tick, and the auto-block only existed in the paper engine, counting exit_stop_loss rule IDs only. `blocklist.py` is now the single source of truth: `record_close_outcome()` (PnL-based — any close at a loss, any exit rule) feeds `maybe_autoblock()` (2 consecutive loss closes → block until a human clears it) and a 24h re-entry cooldown enforced in `filter_candidates` (read stage, both books, self-expiring, zero quota). Both books wired (paper close path + live `_manage`); loss closes journal soft memories (reference layer 5) so the thinker sees the lesson; disclosure serves `anti_churn` truths. The §49 tests also surfaced and fixed REAL test-isolation bugs: conftest now isolates BLOCKLIST_STATE_FILE (tick-closing tests had been polluting the operator's real sidecar with mock mints and auto-blocking them — the polluted file was cleaned 2026-08-31, backup at /tmp/blocklist_state.json.bak-20260831) and `_load()` fails OPEN on unreadable paths. 10 new tests; suite 647 passing (495 backend + 152 live); live cycle restarted 01:15 and verified on first ticks. NOTE: Firecrawl /v1/search currently returns 402 (credits exhausted) — the fail-soft path holds (cached miss, never raises), but paid search evidence is empty until credits are refilled.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §49 Anti-churn v2 — PnL-based auto-block + re-entry cooldown on BOTH books (2026-08-30)
+Operator audit ask: compare our anti-churn with the reference. The gap
+found: the live book had NO loss memory (auto-block only in the paper
+engine, and it counted exit_stop_loss rule IDs — a trailing-stop or
+manual loss exit re-entered freely the next tick). Shipped:
+`blocklist.py` single source of truth — `record_close_outcome()` appends
+`{rule, ts, pnl, loss, book}` to the mint's newest-first closes history
+(capped 10); `maybe_autoblock()` blocks at `AUTO_BLOCK_CONSECUTIVE_LOSSES`
+= 2 consecutive LOSS closes (any rule — PnL-based, the operator's
+semantic); 24h re-entry cooldown in `filter_candidates` for a recent loss
+close (self-expiring, zero quota, both books). Both books wired: paper
+`scan_and_execute_exits` + live `_manage` do record → maybe_autoblock →
+(§49 soft memory) `upsert_memory` + loss_close event (weight 2.0) so the
+thinker sees the lesson. Block/unblock PRESERVE history — unlifting the
+verdict never erases evidence; the preserved history keeps driving the
+cooldown. Disclosure gains `anti_churn` truths (thresholds, basis,
+cooldown, state semantics). Hardening the audit surfaced:
+(1) `backend/conftest.py` `_isolate_live_state` now isolates
+BLOCKLIST_STATE_FILE — tick-closing tests had been writing mock mints
+into the OPERATOR's real sidecar and auto-blocking them (the next suite
+run then opened 0 positions; operator file polluted with
+T/DOWN/HEALTH/BADCOIN test artifacts, cleaned 2026-08-31, backup
+/tmp/blocklist_state.json.bak-20260831). (2) `_load()` fails OPEN on
+unreadable paths (OSError) like corrupt state — a tick must never die
+because the sidecar can't be read. 10 new tests (9 §49 contracts in
+`test_churn_guards.py` + 1 disclosure truth). **647 passing** (495
+backend + 152 live). Live cycle restarted 2026-08-31 01:15; first ticks
+clean (scrapling 200s, §48 skip lines, 0 tracebacks, sidecar intact).
+Firecrawl /v1/search currently 402 (credits out) — fail-soft path
+handled it (cached miss, never raises); refill to restore live search
+evidence.
+
+### §48 Web-search spend discipline: staged into the gate + two-tier cache (2026-08-30)
+Operator directive: Firecrawl's remaining burn is the web-search evidence
+stage; wanted minimal/no cost with no evidence loss. Approved scope: A
+(staging) + B (cache) — the free-transport chain (Brave/DDG) is designed
+but DEFERRED. Shipped: search left the read stage and became STAGE 4 of
+`gate_candidate_staged` (only `all_passed` candidates — the ones the
+thinker actually evaluates — get a search; `web search skipped for SYM:
+failed … (no quota spent)` log lines); two-TIER mint-keyed cache — hits
+7200s, misses only 1800s so "nothing found" stays current, mint-keyed so
+same-ticker different-mint candidates never share evidence; knobs
+`WEB_SEARCH_CACHE_TTL`/`WEB_SEARCH_CACHE_MISS_TTL`. `search_web` now
+never-raises (broad catch — the new tests caught a real escape path).
+`enrich_web` retained as cache-aware legacy convenience, no longer called
+by the pipeline. 8 new tests (`test_web_staging.py`) + the decision-
+pipeline test now pins the read-stage search as must-NOT-run. **637
+passing.** LIVE PROOF (23:34 ticks): skip lines firing for rule-failed
+candidates, staged searches only for the passers (3 in ~2 min vs ~4–6
+per tick before — >95% quota cut), misses cached 1800s. Documented
+accepted downside of B: cached hits can be up to TTL old on RECURRING
+names (fresh tickers are always misses, so stay current).
+
+### §47 Scrapling local stealth transport — IMPLEMENTED & LIVE (2026-08-30)
+Operator: implement Scrapling NOW on the local machine (not deferred to
+Oracle after all). Phase-0 drill (`scripts/scrapling_spike.py`, 6/hop):
+httpx 0/6 (always 430) · **curl-cffi impersonated 6/6 p50 0.42s** ·
+**stealth browser 6/6 p50 1.00s**. Key discovery: **fomo's CF block is
+TLS-fingerprint (JA3), not IP** — Chrome-TLS impersonation passes 100%,
+no browser, no proxy, from this machine. Shipped: `stealth_browser.py`
+(curl hop `curl_get` + warm-browser hop `browser_fetch_json` with
+`solve_cloudflare=True`, idle auto-close 600s, hard-recreate after 3
+failures, UA never forwarded); `crowd.py` `_direct_get` curl-first +
+`_scrape_scrapling()` FIRST in the paid chain, same bench machinery
+(§34 discipline); config knobs `SCRAPLING_ENABLED/TIMEOUT_MS/
+IDLE_CLOSE_SECONDS/PROXY` (`=0` reverts, one .env line); requirements
+pinned `scrapling[fetchers]>=0.4.15,<0.5` (all cp314 x86_64 wheels, no
+compiles); Dockerfile browser layer as root pre-`USER bot` (+~1.5 GB,
+arm64 fallback = official playwright chromium); 9 new tests
+(`test_scrapling_transport.py`) + legacy crowd tests forced off-state —
+**629 passing**, mock/hermetic runs byte-identical. README: GitHub-only
+"Open-source credits" (Scrapling BSD-3, Patchright Apache-2.0, Playwright,
+curl-cffi) — website stays credit-free. LIVE PROOF (21:43 restart): every
+fomo read `scrapling: Fetched (200)`, ZERO paid /v1/scrape, ZERO 430s —
+Firecrawl credits now burn only on the web-search stage. Lesson for the
+wrapper: Scrapling `.body` is BYTES — decode, don't str-check.
+
+### §46 Oracle Always Free deploy decision + Scrapling deferred (2026-08-30)
+Operator: deploy the engine to Oracle Always Free NOW; Scrapling (local
+stealth fetcher replacing the paid fomo chain + Groq social removal +
+candidate reduction 20→12) DEFERRED to implement after deployment; fresh
+Firecrawl credits added so the paid chain stays primary meanwhile. Oracle
+sizing corrected from Oracle's official docs: Always Free = **2 OCPU +
+12 GB** always-on (1,500 OCPU-h + 9,000 GB-h/month) — NOT the 4/24
+previously documented; oversized A1 instances are disabled-then-deleted 30
+days after trial end on free tenancies; 200 GB storage, 10 TB/month
+egress. Bot footprint ~0.8 GB RAM peak (engine + one headless Chromium
+later), ~4 GB disk ⇒ comfortable. Frontend: baked into the image
+(single-origin, engine serves it on :8000) or Vercel Hobby with
+`VITE_API_BASE_URL` + `FRONTEND_ORIGIN` set.
+
 ### §45 equity-proportional live minimum ticket (2026-08-30)
 Incident: operator reported a token showing ENTER on the dashboard with no
 execution. Forensics from `logs/live_cycle.log`: TREE hit

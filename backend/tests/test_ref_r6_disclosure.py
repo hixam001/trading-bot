@@ -127,6 +127,20 @@ async def test_disclosure_kill_switch_no_file_returns_active_false():
     assert state["active"] is False
 
 
+@pytest.mark.asyncio
+async def test_disclosure_anti_churn_truths():
+    """§49: the DONT-pattern killer's thresholds + semantics are public."""
+    from api.routes.disclosure import get_disclosure
+    result = await get_disclosure()
+    ac = result["anti_churn"]
+    assert ac["implemented"] is True
+    assert ac["auto_block_consecutive_losses"] == 2
+    assert ac["reentry_cooldown_hours"] == 24.0
+    assert "PnL" in ac["auto_block_basis"]
+    assert "BOTH books" in ac["auto_block_basis"]
+    assert "unblocks" in ac["state"]
+
+
 # ---------------------------------------------------------------------------
 # /api/reasoning.json
 # ---------------------------------------------------------------------------

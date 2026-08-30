@@ -114,12 +114,10 @@ async def enrich_candidates(candidates: list) -> list:
     except Exception:
         log.warning("social read failed - continuing without it",
                     exc_info=True)
-    try:
-        from llm.web_research import enrich_web
-        await enrich_web(candidates)
-    except Exception:
-        log.warning("web research failed - continuing without it",
-                    exc_info=True)
+    # §48: web research LEFT the unconditional read chain — the search is
+    # spent inside the staged gate (stage 4), only for candidates whose
+    # rules all passed, behind the two-tier TTL cache. Same §43/§44 move
+    # the crowd feed already made.
     return social_usages
 
 
@@ -177,12 +175,22 @@ async def _default_crowd_fetch(candidates: list) -> None:
     await enrich_crowd_heat(candidates)
 
 
+async def _default_web_fetch(candidate) -> None:
+    """§48: real staged web-search fetch (function-local import keeps mock
+    runs from touching the module at all)."""
+    from llm.web_research import search_for_candidate
+    evidence = await search_for_candidate(candidate)
+    if evidence:
+        candidate.web_summary = evidence
+
+
 async def gate_candidate_staged(
     candidate: Candidate,
     portfolio: PortfolioState,
     regime: MarketRegime,
     rules: list,
     crowd_fetch=None,
+    web_fetch=None,
 ) -> GateDecision:
     """
     The staged gate (§44). Returns ONE GateDecision whose `rules` list is in
@@ -193,6 +201,13 @@ async def gate_candidate_staged(
     proxy (the pre-§43 degradation) and never propagates into the tick.
     Mock/`DATA_BACKEND != live`: no fetch at all, nothing deferred, so
     hermetic runs behave exactly as they always have.
+
+    §48 (2026-08-30): a THIRD stage — the web-search evidence fetch — runs
+    after the crowd rule(s), ONLY for a candidate whose merged decision is
+    all_passed (i.e. the candidates the per-candidate thinker is about to
+    evaluate). A candidate that failed any rule never costs a search;
+    cache-fresh candidates cost nothing either (two-tier TTL inside
+    web_research). The fetch is fail-soft and never blocks the decision.
     """
     cheap = cheap_rules(rules)
     crowd = crowd_rules(rules)
@@ -235,8 +250,28 @@ async def gate_candidate_staged(
                      for fn in crowd}
 
     merged = {**cheap_results, **crowd_results}
-    return decision_from_results(candidate,
-                                 [merged[_rule_id(fn)] for fn in rules])
+    decision = decision_from_results(candidate,
+                                     [merged[_rule_id(fn)] for fn in rules])
+
+    # --- stage 4 (§48): the web-search evidence fetch — ONLY for a candidate
+    # the per-candidate thinker is about to evaluate (all rules passed AND
+    # evaluated). A candidate that failed anything above never costs a
+    # search; a cache-fresh candidate costs zero network calls. Mock runs:
+    # nothing fetched, nothing deferred — hermeticity preserved.
+    if decision.all_passed and config.DATA_BACKEND == "live":
+        try:
+            if not getattr(candidate, "web_summary", None):
+                await (web_fetch or _default_web_fetch)(candidate)
+        except Exception:
+            log.warning("web search failed for %s - thinker runs without "
+                        "the web line (fail-soft)", candidate.symbol,
+                        exc_info=True)
+    elif config.DATA_BACKEND == "live":
+        log.info("web search skipped for %s: failed %s (no quota spent)",
+                 candidate.symbol,
+                 ",".join(rid for rid, r in merged.items()
+                          if not (r.passed and r.evaluated)))
+    return decision
 
 
 async def think_candidate(candidate, thinker, memory_line: str = ""):

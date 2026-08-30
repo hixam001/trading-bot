@@ -266,7 +266,8 @@ python run_live_cycle.py --once
   decisionLog, session-log).
 - **`docs/`** — `00_BLUEPRINT`, `01_ARCHITECTURE`, `02_FEATURE_LIST`,
   `05_VERIFICATION_APPENDIX`, `06_REFERENCE_COMPARISON`,
-  `07_PROJECT_REPORT`, `08_LLM_API_MIGRATION`, `09_OMO_AUDIT_COMPARISON`.
+  `07_PROJECT_REPORT`, `08_LLM_API_MIGRATION`, `09_OMO_AUDIT_COMPARISON`,
+  `11_DEPLOYMENT` (runbook), `12_ORACLE_DEPLOY_GUIDE` (step-by-step free-tier deploy).
 
 ## Troubleshooting
 
@@ -289,6 +290,20 @@ the published `omotrades/omo` repository (full comparison in
 `docs/09_OMO_AUDIT_COMPARISON.md`). The implementation here is this project's
 own, built for its own goals and constraints (local hardware, paper-first,
 defense-first safety model).
+
+## Open-source credits
+
+- [Scrapling](https://github.com/D4Vinci/Scrapling) by Karim Shoair
+  (BSD-3-Clause) — the local stealth transport for our crowd-conviction
+  feed reads: `AsyncFetcher` (curl-cffi Chrome-TLS impersonation, the
+  direct hop) and `AsyncStealthySession` (the stealth-browser hop with
+  Cloudflare solver), via the `[fetchers]` extra.
+- [Patchright](https://github.com/Kaliiiiiiiiii-Vinyzu/patchright) by
+  Vinyzu (Apache-2.0) — the undetected Playwright fork powering Scrapling's
+  stealth engine.
+- [Playwright](https://playwright.dev) (Apache-2.0) and
+  [curl-cffi](https://github.com/lexiforest/curl_cffi) (MIT) — the
+  foundations underneath.
 
 
 

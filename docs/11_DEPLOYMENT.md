@@ -4,7 +4,7 @@
 
 | Piece | Host | Why |
 |---|---|---|
-| Engine (API + WebSocket + live cycle) | Always-on VM — **Oracle Cloud Always Free** (4 ARM OCPU / 24 GB, persistent disk) or any Docker host | The engine is a long-running stateful daemon (60s cycle, 15s exit scan, WS feed). Serverless/PaaS free tiers sleep after idle — a sleeping bot misses exit scans on real money. Persistent disk is MANDATORY for the live-execution state (kill switch, breaker, idempotency ledger). |
+| Engine (API + WebSocket + live cycle) | Always-on VM — **Oracle Cloud Always Free** (ARM Ampere A1: **2 OCPU / 12 GB** for an always-on VM — the verified allowance of 1,500 OCPU-hours + 9,000 GB-hours/month. The 4-OCPU/24-GB shape EXCEEDS Always Free: on a free tenancy such instances are disabled then deleted 30 days after trial end. Keep the VM at 2/12 — or upgrade to Pay-As-You-Go, where the Always Free allowance stays free and only usage above it is billed. Plus persistent disk) or any Docker host | The engine is a long-running stateful daemon (60s cycle, 15s exit scan, WS feed). Serverless/PaaS free tiers sleep after idle — a sleeping bot misses exit scans on real money. Persistent disk is MANDATORY for the live-execution state (kill switch, breaker, idempotency ledger). |
 | Dashboard (static SPA) | **Vercel** / Cloudflare Pages (free) | Perfect fit for a Vite static build. (Note: Vercel Hobby is nominally non-commercial; CF Pages has no such clause.) |
 | Database | SQLite on a mounted volume (default) or **Supabase Free Postgres** (`USE_SUPABASE_DB=1`) | Both paths already implemented (`api/db.py` / `api/db_pg.py`); Supabase free tier pauses only after a week of inactivity — the bot writes every tick. |
 

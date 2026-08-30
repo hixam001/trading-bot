@@ -25,6 +25,44 @@ Their gate refuses when heat is outside its act band — observed refusals at
 heat 20–24 ("fomo reading inside the range i act in" fails), action around
 25+. The band bounds are operator-tuned, not sacred.
 
+## 2a. §47 — The LOCAL stealth transport (Scrapling, 2026-08-30, LIVE)
+
+Phase-0 drill finding (scripts/scrapling_spike.py, 6/6 per hop): **fomo's
+Cloudflare block is a TLS-fingerprint (JA3) block, not an IP block.** Plain
+httpx always got 430 from this very machine, while curl-cffi speaking
+Chrome's exact TLS handshake passed 100% with no browser and no proxy.
+
+The transport inside `crowd._get_json_via()` is now, in order:
+
+1. **curl-cffi impersonated direct GET** (`stealth_browser.curl_get` →
+   `scrapling.fetchers.AsyncFetcher`, `impersonate="chrome"`) — free, ~0.4s,
+   and Phase-0 + first production ticks show it passes 100% from a
+   residential IP. This alone already removes the paid chain from the hot
+   path.
+2. **Local stealth browser** (`stealth_browser.browser_fetch_json` →
+   `AsyncStealthySession`, patchright Chromium, `solve_cloudflare=True`) —
+   the free fallback for the harder days: a REAL Cloudflare interstitial
+   gets solved locally. One warm session per process, tabs reused, idle
+   auto-close after `SCRAPLING_IDLE_CLOSE_SECONDS` (default 600s), hard
+   recreate after 3 consecutive failures. user-agent/accept are NOT
+   forwarded to the browser (patchright's UA must match its fingerprint).
+3. **Paid chain unchanged** (firecrawl → scrapingbee → scrapingdog →
+   zenrows → scrapeops) — final failover with the same benching machinery;
+   the scrapling hop reports into the same `_bench`/`_transport_error`/
+   `_rejection_error` counters as any paid provider (the §34 discipline:
+   a dead free hop costs at most a couple of failures ONCE, never one per
+   candidate per tick).
+
+Both free hops are gated on `DATA_BACKEND=live` AND `SCRAPLING_ENABLED=1`
+(default on; `=0` reverts to the pre-§47 paid chain with zero code
+changes). Mock runs and tests never touch scrapling (function-local
+imports + the gating — test-pinned in `test_scrapling_transport.py`).
+
+First production proof (2026-08-30, 21:43 restart): crowd reads logged
+`scrapling: Fetched (200)` on every fomo read, ZERO paid `/v1/scrape`
+calls, ZERO 430s — the Firecrawl credits now burn only on the separate
+web-search (`/v1/search`) stage.
+
 ## 2. Where we stand today — OPTION 1 (FOMO BOARD) IMPLEMENTED & LIVE-VALIDATED
 
 `backend/data_providers/crowd.py` implements the fomo.fun board source with

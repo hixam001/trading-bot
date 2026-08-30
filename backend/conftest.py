@@ -30,10 +30,18 @@ def _isolate_live_state(tmp_path_factory):
         "LIVE_STATE_DIR": getattr(config, "LIVE_STATE_DIR", None),
         "BREAK_STATE_FILE": getattr(config, "BREAK_STATE_FILE", None),
         "KILL_SWITCH_FILE": getattr(config, "KILL_SWITCH_FILE", None),
+        # §49: the blocklist sidecar is REAL operator state (loss memory +
+        # auto blocks). Without this, every tick-closing test (e2e mock tick,
+        # exit engine, price guards) writes mock mints into the operator's
+        # file — and auto-blocks them, so the NEXT run filters every mock
+        # candidate and the suite goes red. Same hermetic-by-default
+        # contract as the break/kill-switch state above.
+        "BLOCKLIST_STATE_FILE": getattr(config, "BLOCKLIST_STATE_FILE", None),
     }
     config.LIVE_STATE_DIR = state
     config.BREAK_STATE_FILE = str(state / "break_state.json")
     config.KILL_SWITCH_FILE = str(state / "kill_switch.json")
+    config.BLOCKLIST_STATE_FILE = str(state / "blocklist_state.json")
     yield state
     for name, value in originals.items():
         if value is not None:

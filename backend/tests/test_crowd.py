@@ -37,13 +37,18 @@ def make_candidate(**overrides) -> Candidate:
 
 @pytest.fixture(autouse=True)
 def fresh_state(monkeypatch):
-    """Reset module globals + caches so tests never see each other's data."""
+    """Reset module globals + caches so tests never see each other's data.
+    §47: scrapling stays OFF and the backend stays mock so the legacy
+    tests exercise the httpx fallback paths exactly as they always did —
+    the suite is offline/hermetic with scrapling installed or not."""
     monkeypatch.setattr(crowd, "_sessions", {})
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
     monkeypatch.setattr(crowd, "_BENCHED_UNTIL", {})
     monkeypatch.setattr(crowd, "_CONSECUTIVE_ERRORS", {})
     monkeypatch.setattr(crowd, "_CONSECUTIVE_REJECTIONS", {})
     monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
+    monkeypatch.setattr(config, "SCRAPLING_ENABLED", False)
+    monkeypatch.setattr(config, "DATA_BACKEND", "mock")
 
 
 class FakeResponse:

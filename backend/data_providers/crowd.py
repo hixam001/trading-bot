@@ -327,10 +327,27 @@ def _fomo_headers(token: str) -> dict:
 
 
 async def _direct_get(url: str, headers: dict) -> Optional[dict]:
-    """Plain GET. Returns parsed JSON, or None on any failure/challenge.
-    Two transport attempts (reference parity — their request() tries twice):
-    Cloudflare only waves an IP through occasionally, so one retry is cheap.
-    A real HTTP response (even 403) is NOT retried — only transport errors."""
+    """Direct read, curl-cffi Chrome-TLS impersonated FIRST (§47): the
+    Phase-0 drill proved fomo's Cloudflare blocks plain httpx on TLS
+    fingerprint, and impersonated curl passes 100% with no browser and no
+    credits. Falls back to plain httpx when scrapling isn't importable
+    (same two-transport-attempt + never-retry-real-HTTP semantics as
+    before). A real HTTP response (even 403/430) is NOT retried — only
+    transport errors are."""
+    try:
+        from data_providers.stealth_browser import curl_get
+        direct = None
+        if config.DATA_BACKEND == "live":
+            direct = await curl_get(url, {"accept": "*/*", **headers},
+                                    timeout_seconds=_TIMEOUT.read)
+    except ImportError:
+        direct = None
+    except Exception:
+        direct = None
+    if direct is not None:
+        return direct
+    # httpx fallback: identical to the pre-§47 direct hop (2 transport
+    # attempts; a real response is never retried).
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
@@ -575,9 +592,48 @@ async def _scrape_scrapeops(url: str, headers: dict) -> Optional[dict]:
         config.SCRAPEOPS_API_KEY, url, fwd_headers=dict(headers))
 
 
+async def _scrape_scrapling(url: str, headers: dict) -> Optional[dict]:
+    """
+    §47: the LOCAL stealth hop — free, first in the chain. Runs the warm
+    Scrapling browser (patchright Chromium + CF solver) with the Privy
+    bearer forwarded (minus user-agent/accept: the browser must keep a UA
+    matching its own fingerprint). Wired into the same bench machinery as
+    the paid providers so a dead browser costs at most a couple of timeouts
+    ONCE, never one per candidate per tick (the §34 lesson).
+    """
+    from data_providers import stealth_browser
+    try:
+        body = await stealth_browser.browser_fetch_json(url, headers)
+    except Exception as exc:
+        log.warning("scrapling: scrape error: %s",
+                    str(exc) or type(exc).__name__)
+        _transport_error("scrapling")
+        return None
+    _transport_success("scrapling")
+    if body is None:
+        # None can mean challenge/benched/unparsable — indistinguishable
+        # from an origin rejection for benching purposes, so count it as a
+        # rejection streak entry ONLY when the body looked like a refusal;
+        # the module already closes/recreates on consecutive failures.
+        _rejection_error("scrapling")
+        return None
+    _rejection_success("scrapling")
+    # Opportunistic idle close: a quiet bot must not hold a browser.
+    try:
+        await stealth_browser.idle_housekeeping()
+    except Exception:
+        pass
+    return body
+
+
 def _configured_scrapers() -> list[tuple[str, Any]]:
-    """Preference-ordered stealth scrapers with keys configured."""
+    """Preference-ordered stealth scrapers with keys configured.
+    §47: the LOCAL Scrapling browser leads (free, warm, CF solver); the
+    paid providers follow as failover during the shadow week."""
     chain: list[tuple[str, Any]] = []
+    if (getattr(config, "SCRAPLING_ENABLED", False)
+            and config.DATA_BACKEND == "live"):
+        chain.append(("scrapling", _scrape_scrapling))
     if config.FIRECRAWL_API_KEY:
         chain.append(("firecrawl", _scrape_firecrawl))
     if config.SCRAPINGBEE_API_KEY:

@@ -724,22 +724,43 @@ async def scan_and_execute_exits(
                 actions += 1
                 log.info("EXIT %s [%s] %s",
                          trade.symbol, gated.rule_id, gated.detail)
-                # Auto-block on consecutive stop-outs (the DONT pattern killer).
-                if gated.rule_id == "exit_stop_loss":
-                    from blocklist import block_mint as _block, \
-                        should_autoblock as _should
-                    reasons = await db.get_recent_closed_reasons(
-                        conn, trade.mint_address,
-                        limit=config.AUTO_BLOCK_CONSECUTIVE_STOPS)
-                    if _should(reasons):
-                        _block(trade.mint_address,
-                               f"{len(reasons)} consecutive stop-outs",
-                               kind="auto")
-                        log.warning(
-                            "AUTO-BLOCK %s (%s): %s — mint will no longer "
-                            "be considered for entry", trade.symbol,
-                            trade.mint_address[:12],
-                            "; ".join(reasons))
+                # §49 anti-churn memory (BOTH books, single sidecar source
+                # of truth): record the close outcome by realized PnL, then
+                # let the DONT-pattern killer decide. Replaces the old
+                # trades-table stop-out counter (which saw only
+                # exit_stop_loss closes and only this book).
+                from blocklist import (maybe_autoblock as _maybe,
+                                       record_close_outcome as _record)
+                pnl = getattr(result.trade, "realized_pnl_usd", None)
+                pnl_val = float(pnl) if pnl is not None else 0.0
+                _record(trade.mint_address, trade.symbol, gated.rule_id,
+                        pnl_val, book="paper")
+                _maybe(trade.mint_address, trade.symbol)
+                # §49 soft memory (reference layer 5): the thinker sees
+                # "stopped out on this at -X% yesterday" via recall_memories.
+                # Evidence only — the hard guarantees are the cooldown and
+                # the block; this just keeps the model from re-falling in
+                # love with a name it already lost money on.
+                if pnl_val < 0.0:
+                    try:
+                        await db.upsert_memory(
+                            conn, topic=trade.symbol,
+                            note=(f"closed at a ${abs(pnl_val):.2f} loss "
+                                  f"({gated.rule_id}) on "
+                                  f"{datetime.now(timezone.utc).date().isoformat()}"
+                                  f" — we already paid for this lesson"),
+                            weight=2.0,
+                        )
+                        await db.insert_event(
+                            conn, "trade", datetime.now(timezone.utc).isoformat(),
+                            symbol=trade.symbol,
+                            mint_address=trade.mint_address,
+                            payload={"outcome": "loss_close", "rule": gated.rule_id,
+                                     "pnl_usd": pnl_val, "book": "paper"},
+                        )
+                    except Exception:
+                        log.warning("loss-memory journaling failed for %s "
+                                    "(non-fatal)", trade.symbol, exc_info=True)
                 if on_close is not None:
                     try:
                         await on_close(result.trade)

@@ -356,6 +356,46 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
                     closed_at=datetime.now(timezone.utc).isoformat(),
                     realized_pnl_usd=pnl,
                 )
+            # §49 (closes the live-side anti-churn GAP): the real-money book
+            # now records every full-close outcome into the SAME blocklist
+            # sidecar the paper book writes, and the DONT-pattern killer
+            # fires identically on both books. Before §49 a coin that
+            # stopped out LIVE could be re-bought the very next tick —
+            # the live book had NO loss memory at all.
+            try:
+                from blocklist import (maybe_autoblock as _maybe,
+                                       record_close_outcome as _record)
+                _record(mint, m.get("symbol") or mint[:6],
+                        decision.rule_id, pnl, book="live")
+                _maybe(mint, m.get("symbol") or mint[:6])
+            except Exception:
+                log.warning("§49 close-outcome recording failed for %s "
+                            "(non-fatal)", mint[:8], exc_info=True)
+            # §49 soft memory on the live book too (reference layer 5): the
+            # thinker's next prompt carries the loss lesson for this symbol.
+            if pnl < 0.0:
+                try:
+                    async with db.get_db() as conn:
+                        await db.upsert_memory(
+                            conn, topic=m.get("symbol") or mint[:6],
+                            note=(f"live book closed at a ${abs(pnl):.2f} "
+                                  f"loss ({decision.rule_id}) on "
+                                  f"{datetime.now(timezone.utc).date().isoformat()}"
+                                  f" — we already paid for this lesson"),
+                            weight=2.0,
+                        )
+                        await db.insert_event(
+                            conn, "trade",
+                            datetime.now(timezone.utc).isoformat(),
+                            symbol=m.get("symbol") or mint[:6],
+                            mint_address=mint,
+                            payload={"outcome": "loss_close",
+                                     "rule": decision.rule_id,
+                                     "pnl_usd": pnl, "book": "live"},
+                        )
+                except Exception:
+                    log.warning("§49 loss-memory journaling failed for %s "
+                                "(non-fatal)", mint[:8], exc_info=True)
 
 
 async def _journal_cycle_regime(conn, regime, candidate_count: int) -> None:

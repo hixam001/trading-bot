@@ -128,7 +128,8 @@ async def test_enrich_candidates_mock_stays_hermetic(monkeypatch):
 
 async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
     """§43/§44: the crowd feed left the unconditional enrichment chain — it is
-    spent inside the staged gate, after the cheap rules pass."""
+    spent inside the staged gate, after the cheap rules pass. §48: the web
+    search left it too (staged-gate stage 4)."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
 
     import data_providers.crowd as crowd_mod
@@ -139,6 +140,9 @@ async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
     async def _must_not_run(cands):
         raise AssertionError("crowd feed ran for every candidate again")
 
+    async def _must_not_run_web(cands=None, *a, **kw):
+        raise AssertionError("web search ran in the read stage again")
+
     async def _noop(cands=None, *a, **kw):
         return None
 
@@ -148,7 +152,7 @@ async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
     monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _must_not_run)
     monkeypatch.setattr(research_mod, "enrich_with_research", _noop)
     monkeypatch.setattr(social_mod, "enrich_social", _noop_social)
-    monkeypatch.setattr(web_mod, "enrich_web", _noop)
+    monkeypatch.setattr(web_mod, "enrich_web", _must_not_run_web)
     assert await dp.enrich_candidates([make_candidate()]) == []
 
 

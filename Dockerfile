@@ -24,6 +24,14 @@ WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 
+# §47 — Scrapling stealth-browser layer (crowd-feed free transport). Browser
+# + its system deps install as ROOT, before USER bot, or Chromium cannot
+# write its profile. ~+1.5 GB image. On linux/arm64: if patchright's patched
+# build is missing, fall back to `playwright install chromium` (official
+# arm64 build) — verify with scripts/scrapling_spike.py on the target host.
+RUN python -m patchright install --with-deps chromium \
+    || python -m patchright install chromium
+
 COPY backend/ /app/backend/
 COPY --from=frontend-build /build/dist/ /app/frontend/dist/
 COPY backend/docker-entrypoint.sh /app/docker-entrypoint.sh

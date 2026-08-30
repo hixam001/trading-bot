@@ -50,7 +50,17 @@ KILL_SWITCH_FILE: str = os.getenv(
 BLOCKLIST_STATE_FILE: str = os.getenv(
     "BLOCKLIST_STATE_FILE", str(Path(__file__).parent / "blocklist_state.json")
 )
-AUTO_BLOCK_CONSECUTIVE_STOPS: int = 2
+# §49: the DONT-pattern killer is now PnL-based and BOTH books feed it.
+# A mint whose newest AUTO_BLOCK_CONSECUTIVE_LOSSES recorded closes are all
+# losses (realized PnL < 0, ANY exit rule — "sells for loss") is blocked
+# until a human clears it. Hardcoded per the risk-number philosophy.
+AUTO_BLOCK_CONSECUTIVE_LOSSES: int = 2
+# Legacy alias for the pre-§49 name (rule-ID-based "stop-outs only").
+AUTO_BLOCK_CONSECUTIVE_STOPS: int = AUTO_BLOCK_CONSECUTIVE_LOSSES
+# §49 re-entry cooldown: a mint whose LAST recorded close is a loss younger
+# than this many hours is filtered at read time on BOTH books. The 24h
+# window IS the punishment for one loss; the block is for a pattern.
+REENTRY_COOLDOWN_HOURS: float = 24.0
 # Conviction ticket sizing + daily deploy cap.
 SIZING_MODE: str = "fixed"                 # "fixed" | "conviction" | "risk_budget"
 TICKET_CASH_FRACTION: float = 0.15         # base = cash * 0.15
@@ -360,6 +370,24 @@ FIRECRAWL_API_KEY: str = os.getenv("FIRECRAWL_API_KEY", "")
 FIRECRAWL_SCRAPE_URL: str = os.getenv(
     "FIRECRAWL_SCRAPE_URL", "https://api.firecrawl.dev/v1/scrape"
 )
+# ---------------------------------------------------------------------------
+# §47 — LOCAL stealth transport (Scrapling, BSD-3). Phase-0 drill verified
+# 2026-08-30: curl-cffi Chrome-TLS impersonation passes fomo's Cloudflare
+# 100% with no browser (the block is TLS-fingerprint, not IP); the patchright
+# stealth browser is the second free hop for the harder days. SCRAPLING_*
+# knobs below are transport-tuning only — SCRAPLING_ENABLED=0 falls back to
+# the paid chain with zero code changes (reversible one .env line).
+# ---------------------------------------------------------------------------
+SCRAPLING_ENABLED: bool = os.getenv("SCRAPLING_ENABLED", "1") == "1"
+# Browser-hop budget, ms (Scrapling takes ms; curl hop uses _TIMEOUT).
+SCRAPLING_TIMEOUT_MS: int = int(os.getenv("SCRAPLING_TIMEOUT_MS", "30000"))
+# Close the warm browser after this many idle seconds (RAM hygiene).
+SCRAPLING_IDLE_CLOSE_SECONDS: float = float(
+    os.getenv("SCRAPLING_IDLE_CLOSE_SECONDS", "600"))
+# Only if a deployment IP is hard-blocked: pass a proxy to the browser hop
+# (user:pass@host:port). Empty = never used. The curl hop needs no proxy.
+SCRAPLING_PROXY: str = os.getenv("SCRAPLING_PROXY", "")
+
 # Additional stealth-scrape providers — OPTIONAL failover chain. When the
 # preferred provider runs out of credits (or errors), the next CONFIGURED
 # one takes over automatically; an exhausted provider is benched so we stop
@@ -458,6 +486,14 @@ SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
 # tbs=qdr:d limits results to the last 24h like the reference recent=true.
 WEB_SEARCH_PER_TICK: int = int(os.getenv("WEB_SEARCH_PER_TICK", "8"))
 WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "20"))
+# §48: cross-tick evidence cache (in-memory, per mint). A HIT (real
+# evidence lines) is cached this long — default 2h, well inside the search's
+# own 24h relevance window. A MISS (no results) is cached only
+# WEB_SEARCH_CACHE_MISS_TTL so "nothing found" stays reasonably current:
+# a fresh memecoin's attention often starts BETWEEN searches.
+WEB_SEARCH_CACHE_TTL: float = float(os.getenv("WEB_SEARCH_CACHE_TTL", "7200"))
+WEB_SEARCH_CACHE_MISS_TTL: float = float(
+    os.getenv("WEB_SEARCH_CACHE_MISS_TTL", "1800"))
 
 # ---------------------------------------------------------------------------
 # DB maintenance — row retention limits for append-only tables.

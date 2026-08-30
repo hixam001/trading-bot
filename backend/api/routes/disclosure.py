@@ -133,6 +133,8 @@ async def get_disclosure():
       calibration    — REF-R9 conviction factor + formula from closed outcomes
       thesis_restatement — A11 cadence truths for the write-up re-authoring
                        job (stale horizon, per-pass cap, scope)
+      anti_churn     — §49 DONT-pattern killer truths: auto-block
+                       threshold, PnL basis, re-entry cooldown window
       generated_at_utc
     """
     # Safety fields — surface them for auditability. `armed` reads the REAL
@@ -233,6 +235,22 @@ async def get_disclosure():
                      "position's current numbers; never touches size, exits, "
                      "or verdicts",
             "source": "A11 (omo audit §30), reference thesis-author.server.ts",
+        },
+        # §49: anti-churn truths. The DONT-pattern killer is now a public,
+        # auditable guarantee like the sizing formulas: thresholds are
+        # hardcoded (never env-settable), the basis is realized PnL, and
+        # the state semantics are spelled out.
+        "anti_churn": {
+            "implemented": True,
+            "auto_block_consecutive_losses": getattr(
+                config, "AUTO_BLOCK_CONSECUTIVE_LOSSES", None),
+            "auto_block_basis": "realized PnL < 0 on any exit rule, "
+                                "recorded on BOTH books (paper + live)",
+            "reentry_cooldown_hours": getattr(
+                config, "REENTRY_COOLDOWN_HOURS", None),
+            "state": "mint-keyed JSON sidecar (gitignored); auto blocks "
+                     "are lifted only by a human; close history survives "
+                     "unblocks",
         },
     }
 
