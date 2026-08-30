@@ -3,7 +3,9 @@
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
 execution package. Report updated 2026-08-30 from the current main branch
-(§43: crowd-feed quota — the metered fomo.fun lookup behind `crowd_heat` is
+(§44: the gate is now STAGED — cheap rules → fomo scrape → crowd rules → LLM,
+so a candidate that fails a cheap rule is never scraped and never costs an LLM
+call; §43: crowd-feed quota — the metered fomo.fun lookup behind `crowd_heat` is
 now spent only on candidates that already cleared every other rule, with the
 resulting audit trade-off recorded explicitly in §3.11/§10/§27; §42/§42b:
 deployable restructure — the engine is now ONE deployable module
@@ -38,7 +40,7 @@ floor instead of the paper book's $100), both live-verified ARMED. The
 frontend was rebuilt on a real design system the same day (handoff §35 —
 token-based terminal, shared primitives, Playwright E2E) and a latent
 STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
-at the repo root).** Tests: **610 passing (460 backend + 150 live_execution)
+at the repo root).** Tests: **615 passing (464 backend + 151 live_execution)
 + 8 Playwright E2E — fully green (the flag-state canary pins the committed
 ARMED state — handoff §33).**
 
@@ -220,16 +222,26 @@ calibration window tunes them.
 - **No short-circuiting:** every rule runs unconditionally on every
   candidate. A rejection shows its complete 10-rule profile — "why didn't
   it buy X" is always answerable from the journal.
-- **One documented exception — `crowd_heat` (§43, 2026-08-30):** its only
-  input is the metered fomo.fun board read, so the pipeline fetches crowd
-  data only for candidates that already cleared every OTHER rule
-  (`decision_pipeline.enrich_crowd_for_shortlist`). For the rest the rule
-  reports `evaluated=False` with detail "not evaluated — crowd feed reserved
-  for candidates that cleared every other rule". The journal still shows the
-  rule (it says *why* the field is blank), the other nine rules still always
-  run, the skip is recorded in `not_evaluated_rule_ids` rather than counted
-  as a rejection, and the gate **fails closed**: `all_passed` requires
-  `passed AND evaluated`, so a skipped rule can never contribute to an entry.
+- **One documented exception — `crowd_heat` (§43/§44, 2026-08-30):** its only
+  input is the metered fomo.fun board read, so the gate is **staged**
+  (`decision_pipeline.gate_candidate_staged`): all nine cheap rules first,
+  unconditionally → the fomo scrape ONLY if they all passed → the crowd rule
+  last, against what the scrape returned. For a candidate that was never
+  scraped the rule reports `evaluated=False` with detail "not evaluated —
+  crowd feed reserved for candidates that cleared every other rule". The
+  journal still shows the rule (it says *why* the field is blank), the other
+  nine rules still always run, the skip is recorded in
+  `not_evaluated_rule_ids` rather than counted as a rejection, and the gate
+  **fails closed**: `all_passed` requires `passed AND evaluated`, so a skipped
+  rule can never contribute to an entry.
+- **Stage order (§44):** rules → scrape → crowd rule → LLM. The once-per-tick
+  brain still grades the whole board up front (it owns watchlist/break), but
+  the per-candidate thinker is called only for candidates the rules cleared,
+  and it sees the real crowd theses because the scrape already ran. A
+  rule-refused candidate gets the deterministic template write-up
+  (`source="template:rules-refused"`, verdict forced to `pass`), so its
+  journal row is complete without paying for a call that cannot change the
+  outcome. Prompts are unchanged.
 - **Decision:** `all_passed = AND(all rules)` — the entire entry decision.
   Pass → `decide_and_act()` routes to `open_position` (no position) or
   `scale_into_position` (existing). Fail → full narrated feed event, no
@@ -438,7 +450,7 @@ boot serving PG data), stealth-chain header forwarding returning real fomo
 board data, commit-reveal hashes of the reference system recomputed
 byte-for-byte, one-click launcher start/stop cycle.
 
-**Current totals (2026-08-30): 610 passing — 460 backend + 150
+**Current totals (2026-08-30): 615 passing — 464 backend + 151
 live_execution** (`.venv/bin/python -m pytest -q` from the repo root;
 `testpaths = backend/tests backend/live_execution/tests`). The suite is
 hermetic by construction: `backend/conftest.py` forces `DATA_BACKEND=mock`,
@@ -462,21 +474,24 @@ added in §42/§42b:
   wallet, both wallet channels arm, either-half crash exits non-zero, and a
   missing `APP_DIR` aborts instead of starting in the wrong directory.
 
-§43 crowd-quota suites:
+§43/§44 crowd-quota suites:
 - `backend/tests/test_rules.py` (+6): a deferred crowd lookup yields
   `evaluated=False` / `passed=False` / `value=None` with a "not evaluated"
   detail; real board heat still wins when the feed answered; the default
   proxy path is unchanged; the gate fails closed with an EMPTY
   `failed_rule_ids` and `["crowd_heat"]` in `not_evaluated_rule_ids`; a real
   failure and a skip are reported separately; `to_dict()` carries both.
-- `backend/tests/test_decision_pipeline.py` (+6): the crowd feed is gone from
-  the unconditional enrichment chain; three candidates → ONE lookup (the two
-  rejects marked deferred); end-to-end skip produces a "not evaluated" gate
-  row while the REAL rejection reason stays in `failed_rule_ids`; mock mode is
-  a no-op (feed never called, nothing deferred); a feed exception fail-softs
-  to the proxy path; `cheap_rules()` drops exactly the crowd rule.
-- `backend/live_execution/tests/test_pipeline_parity.py` (+1): the live cycle
-  delegates to the shortlist helper with `LIVE_ACTIVE_RULES`.
+- `backend/tests/test_decision_pipeline.py` (+9): the crowd feed is gone from
+  the unconditional enrichment chain; three candidates → ONE scrape; a
+  traced-rule ordering assertion proving every cheap rule ran BEFORE the
+  scrape and the crowd rule ran AFTER it; a skipped scrape produces a
+  "not evaluated" row while the REAL rejection reason stays in
+  `failed_rule_ids`; the breakdown keeps the DECLARED rule order; mock mode
+  never scrapes and keeps proxy heat; a scrape exception fail-softs to the
+  proxy path; the default fetch really calls `data_providers.crowd`;
+  cheap/crowd partition; and `run_tick` gates before it thinks.
+- `backend/live_execution/tests/test_pipeline_parity.py` (+2): the live cycle
+  uses the staged gate with `LIVE_ACTIVE_RULES`, and gates before thinking.
 
 ## 12. Current status
 
@@ -1634,3 +1649,51 @@ covering the deferral semantics, the fail-closed gate, the one-lookup-instead
 live cycle's delegation. Frontend build clean; the dashboard shows a neutral
 `SKIP` badge for un-evaluated rules and treats pre-§43 rows (no `evaluated`
 field) as evaluated. Zero new dependencies.
+
+**Superseded by §44 (same day).** This section documents the §43 batch
+pre-pass, which was the first cut and shipped in handoff §43. Later the same
+day the operator directed the stronger property — cheap rules → fomo scrape →
+crowd rules → LLM, per candidate — which replaced the batch pre-pass with a
+staged gate (`decision_pipeline.gate_candidate_staged`). See §28.
+
+## 28. Staged gate: rules → scrape → crowd rules → LLM (2026-08-30, handoff §44)
+
+Operator directive, aimed squarely at scrape-API cost: the fomo scrape must
+happen only after the normal rules pass, then the crowd rules, and only then
+the LLM. If the first set of rules fails, the scrape never happens.
+
+§43 achieved part of that with a board-wide pre-pass. §44 makes the ordering
+explicit and per candidate inside the gate itself
+(`decision_pipeline.gate_candidate_staged`): all nine cheap rules are
+evaluated first and unconditionally; the fomo.fun scrape runs ONLY if every
+one of them passed; the crowd rule is evaluated last, against what the scrape
+returned. `cheap_rules()` / `crowd_rules()` partition the injected rule list by
+function name, so `ACTIVE_RULES` and the live cash-swapped `LIVE_ACTIVE_RULES`
+share one implementation, and the assembled decision is re-ordered back into
+the declared rule order so no journal, API or UI consumer sees any reordering.
+`gate.py` gained `decision_from_results()` as the single definition of
+`all_passed` / `failed_rule_ids` / `not_evaluated_rule_ids`; `evaluate_gate`
+still performs no I/O.
+
+The LLM moved after the gate as part of the same sequencing, with prompts
+untouched. The once-per-tick brain still grades the whole board up front (it
+owns watchlist, break and remember, and its cost is already paid), but the
+per-candidate thinker is called only for candidates the rules cleared — and it
+now sees real crowd theses, because the scrape ran before it. A rule-refused
+candidate gets the deterministic template write-up
+(`source="template:rules-refused"`, verdict forced to `pass`), so its journal
+row stays complete without paying for a call that could not change the
+outcome.
+
+Per tick the spend is now 1 brain call + N scrapes + N thinker calls where N is
+the number of candidates that passed all nine cheap rules, instead of
+`MAX_CANDIDATES_PER_TICK` of each. Evaluating `cash_available` and
+`already_held` at gate time (rather than from an up-front snapshot) means the
+saving compounds within a tick: once cash is spent or a position slot is
+taken, later candidates fail a cheap rule and skip their scrape too.
+
+Everything load-bearing is unchanged: the gate still fails closed on an
+un-evaluated rule, skips are still tracked apart from real rejections, the
+narrator still cannot cite a skipped rule, mock runs still never scrape (and
+so keep the presence-proxy behavior byte-for-byte), and a dead feed still
+degrades to proxy heat rather than raising. 615 tests passing.

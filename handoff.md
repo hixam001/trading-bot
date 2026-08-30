@@ -2,7 +2,7 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 610 passing (backend 460 + live_execution 150) + 8 Playwright E2E
+**Tests:** 615 passing (backend 464 + live_execution 151) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -69,8 +69,8 @@ docker compose up -d --build                             # with persistent state
 |---|---|
 | `backend/config.py` | ALL thresholds + safety flag + provider keys via env. Also owns the LIVE-STATE paths (`LIVE_STATE_DIR`, `BREAK_STATE_FILE`, `KILL_SWITCH_FILE`) — §42b: readers must resolve these per call, never hand-compose paths (a stale anchor silently forks a second state dir = a kill switch nothing reads) |
 | `backend/models.py` | Candidate (incl. `decimals`), Trade, FeedEvent, RuleResult, GateDecision, PortfolioState |
-| `backend/rule_engine/` | `rules.py` (11 reference-parity entry rules), `exits.py` (the reference exit engine: stop/trail/liquidity-break/invalidation/stale/TP-ladder + sell risk gate), `gate.py` (no-short-circuit AND, with the ONE §43 exception: a rule may report `evaluated=False` when the pipeline deliberately skipped its metered feed — it still appears in the breakdown and can never contribute to a PASS), `regime.py`, `liveness.py` (not_on_break) |
-| `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens) → feeds crowd_heat. **§43: lookups only for the shortlist** — `decision_pipeline.enrich_crowd_for_shortlist()` fetches only for candidates that already cleared every other rule; the rest journal `crowd_heat` as "not evaluated". Stealth fallback chain: firecrawl (forwards auth headers) → scrapingbee (keyless-only: platform consumes Authorization) → zenrows `custom_headers=true&premium_proxy=true` → scrapeops `keep_headers=true` — the last two carry the Privy bearer through Cloudflare (verified live). `_json_from_body` rejects only statusCode≥400 envelopes (prod-api sends statusCode:200 on success) |
+| `backend/rule_engine/` | `rules.py` (11 reference-parity entry rules), `exits.py` (the reference exit engine: stop/trail/liquidity-break/invalidation/stale/TP-ladder + sell risk gate), `gate.py` (no-short-circuit AND + `decision_from_results()`; ONE §43/§44 exception: a rule may report `evaluated=False` when the pipeline deliberately skipped its metered feed — it still appears in the breakdown and can never contribute to a PASS), `regime.py`, `liveness.py` (not_on_break) |
+| `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens) → feeds crowd_heat. **§44: scraped from INSIDE the staged gate** (`decision_pipeline.gate_candidate_staged`), per candidate, only after that candidate's cheap rules ALL passed; a cheap-rule failure means no scrape at all and `crowd_heat` journals "not evaluated". Stealth fallback chain: firecrawl (forwards auth headers) → scrapingbee (keyless-only: platform consumes Authorization) → zenrows `custom_headers=true&premium_proxy=true` → scrapeops `keep_headers=true` — the last two carry the Privy bearer through Cloudflare (verified live). `_json_from_body` rejects only statusCode≥400 envelopes (prod-api sends statusCode:200 on success) |
 | `backend/paper_trading_engine.py` | money math + atomic open/close/scale_in + exits + decide_and_act |
 | `backend/api/db.py` | schema + repository (SQLite default); when `USE_SUPABASE_DB=1` + `SUPABASE_DB_URL` set, transparently delegates every public function to `db_pg.py`; pytest forces SQLite |
 | `backend/api/db_pg.py` | asyncpg/Supabase Postgres twin of db.py — identical surface incl. §5.1 atomicity (rowcount from execute status); TLS via SHA-256 cert-fingerprint pinning (TOFU, `.supabase_fp.txt` gitignored); `init_db()` self-heals schema drift via `_SCHEMA_SYNC_SQL` (§17) |
@@ -2569,6 +2569,16 @@ disclosure reports `armed: true` with a clear kill switch.
 
 ## 43. Crowd-feed quota: `crowd_heat` lookups restricted to the shortlist (2026-08-30)
 
+> **Superseded by §44 (same day).** This section is the historical record of
+> the first cut (a single batch pre-pass before the per-candidate loop). §44
+> replaced it with a stronger, per-candidate contract — cheap rules → fomo
+> scrape → crowd rules → LLM — implemented in
+> `decision_pipeline.gate_candidate_staged()`. The `enrich_crowd_for_shortlist`
+> pre-pass described below no longer exists; its savings (and more) are now
+> realised inside the staged gate. The fail-closed semantics
+> (`evaluated=False` / `not_evaluated_rule_ids`) described in this section
+> remain unchanged and load-bearing under §44.
+
 **The problem the operator named.** `crowd_heat` ran for EVERY candidate on
 EVERY tick before any other rule could weigh in (deliberately — `evaluate_gate`
 has no short-circuiting, for full audit transparency). Since the rule's only
@@ -2649,6 +2659,92 @@ called); feed-exception fail-soft leaves the proxy path; `cheap_rules` drops
 exactly one rule. New in `test_pipeline_parity.py` (1): the live cycle
 delegates to the shortlist helper with `LIVE_ACTIVE_RULES`. Frontend build
 clean (tsc + vite, 44 modules).
+
+## 44. Staged gate: cheap rules → fomo scrape → crowd rules → LLM (2026-08-30)
+
+Operator directive: "after the normal rules pass I want the fomo scrape to
+happen and then the related rules, and only after that the LLM. If the first
+set of rules fail then the scrape never happens." The goal is scrape-API cost,
+not audit cosmetics.
+
+**What §43 did vs what §44 does.** §43 saved quota with a batch pre-pass over
+the whole board before the per-candidate loop. §44 replaces that with an
+explicit per-candidate cascade inside the gate itself —
+`decision_pipeline.gate_candidate_staged(candidate, portfolio, regime, rules,
+crowd_fetch=None)`:
+
+1. **stage 1** — every cheap (non-crowd) rule is evaluated, unconditionally.
+   No short-circuiting among them: a candidate that fails liquidity still gets
+   a real result for volume, buy pressure, cash, holdings, security, etc.
+2. **stage 2** — the fomo.fun scrape, ONLY if every cheap rule passed. If any
+   failed, `candidate.crowd_lookup_deferred = True` and the scrape never
+   happens (`crowd scrape skipped for SYM: failed liquidity_floor (no quota
+   spent)` in the log).
+3. **stage 3** — the crowd rule(s), evaluated against whatever stage 2
+   returned. Deferred candidate ⇒ `evaluated=False`, `value=None`, detail
+   "not evaluated — crowd feed reserved for candidates that cleared every
+   other rule".
+
+`cheap_rules()` / `crowd_rules()` partition the injected list on function name
+(`CROWD_RULE_IDS = ("crowd_heat",)`), so `ACTIVE_RULES` and the live
+cash-swapped `LIVE_ACTIVE_RULES` both work with zero duplicated rule logic.
+The assembled `GateDecision.rules` is re-ordered back into the DECLARED rule
+order, so the journal, the feed API and the dashboard see no reordering —
+only the evaluation order changed. `gate.py` gained
+`decision_from_results()`, shared by both the plain and staged paths, so
+`all_passed` / `failed_rule_ids` / `not_evaluated_rule_ids` have exactly one
+definition. `evaluate_gate` still performs no I/O; sequencing feed calls
+against rule outcomes is a pipeline concern, which is why the staged variant
+lives in `decision_pipeline`.
+
+**Why per-candidate beats the §43 batch pre-pass on cost.** `cash_available`
+and `already_held` change AS positions open during a tick. Evaluating them at
+gate time means that once cash is spent or a position slot is taken, later
+candidates fail a cheap rule and their scrape is skipped too — strictly fewer
+scrapes than a single up-front snapshot. It also evaluates the cheap rules
+once per candidate instead of twice (pre-pass + gate).
+
+**LLM placement (the deliberate deviation from the reference order).** The
+reference bot thinks BEFORE the rules; we now gate first. Both books:
+
+- the once-per-tick **brain** is unchanged — one board-wide call at the top of
+  the tick, same prompt, still owns watchlist/break/remember. Its verdict is
+  already paid for, so it is used whenever it produced one, pass or fail.
+- the per-candidate **thinker** is called only when `gate.all_passed`. Its
+  prompt is unchanged, and it now sees the REAL crowd theses because stage 2
+  already ran (previously the thinker could run before the scrape and see an
+  empty crowd block).
+- a **rule-refused** candidate gets `template_think()` with the verdict forced
+  to `pass` and `source="template:rules-refused"`. The journal row stays
+  populated with grounded text (the template only restates numbers it was
+  given) and the record never implies a model approved something it was never
+  shown. Note: a template row carries no `break_taking`, so self-regulating
+  breaks now originate only from the brain or from a candidate that reached the
+  thinker — a refused candidate could not have justified a break anyway.
+
+**Cost shape.** Per tick: 1 brain call (unchanged) + N scrapes + N thinker
+calls, where N = candidates that passed all nine cheap rules — instead of
+`MAX_CANDIDATES_PER_TICK` scrapes and thinker calls. On a typical board most
+candidates die on liquidity/volume, so N is small.
+
+**Preserved.** Fail-closed gate (`passed AND evaluated`); skips tracked in
+`not_evaluated_rule_ids`, never in `failed_rule_ids`, so the learning loop's
+rejection breakdown and `llm/reuse`'s stability signature stay honest;
+narrator never cites a skipped rule; declared rule order in every breakdown;
+mock hermeticity (no scrape off `DATA_BACKEND=live`, so `crowd_heat` keeps its
+presence-proxy behavior and mock output is unchanged); fail-soft on a dead
+feed (proxy heat, never an exception into the tick).
+
+**Tests: 615 passing** (backend 464 + live_execution 151). `test_decision_pipeline.py`: one scrape instead of
+three; a traced-rule ordering assertion proving every cheap rule ran BEFORE
+the scrape and the crowd rule ran AFTER it; deferred ⇒ "not evaluated" +
+fail-closed + real reason still in `failed_rule_ids`; declared rule order
+preserved; mock-mode no-scrape; fail-soft on a scrape exception; default fetch
+really calls `data_providers.crowd`; cheap/crowd partition; plus a
+source-level assertion that `run_tick` gates before it thinks.
+`test_pipeline_parity.py`: the live cycle uses the staged gate and also gates
+before thinking.
+
 
 
 

@@ -127,8 +127,8 @@ async def test_enrich_candidates_mock_stays_hermetic(monkeypatch):
 
 
 async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
-    """§43: the crowd feed left the unconditional enrichment chain — it is
-    spent later, only on the shortlist (enrich_crowd_for_shortlist)."""
+    """§43/§44: the crowd feed left the unconditional enrichment chain — it is
+    spent inside the staged gate, after the cheap rules pass."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
 
     import data_providers.crowd as crowd_mod
@@ -175,14 +175,12 @@ async def test_enrich_candidates_fail_soft_on_every_feed(monkeypatch):
     assert usages == []
 
 
-# --- §43 crowd shortlist ---------------------------------------------------
+# --- §44 staged gate: cheap rules → scrape → crowd rules -------------------
 #
-# The metered fomo.fun lookup is spent ONLY on candidates that already cleared
-# every other rule. Deliberate trade-off: a rejected candidate's crowd_heat
-# reads "not evaluated" instead of a proxy number.
+# The scrape happens ONLY when every cheap rule passed. A candidate that fails
+# a cheap rule is never scraped, and its crowd_heat reads "not evaluated".
 
-async def test_crowd_shortlist_only_looks_up_candidates_that_cleared_the_rest(
-        monkeypatch):
+async def test_staged_gate_scrapes_only_when_cheap_rules_all_pass(monkeypatch):
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
     from rule_engine.rules import ACTIVE_RULES
 
@@ -190,105 +188,171 @@ async def test_crowd_shortlist_only_looks_up_candidates_that_cleared_the_rest(
     thin = make_candidate(symbol="THIN", liquidity_usd=100.0)   # fails liquidity
     dead = make_candidate(symbol="DEAD", volume_1h_usd=1.0)     # fails volume
 
-    seen: list = []
+    scraped: list = []
 
-    async def _fake_enrich(cands):
-        seen.extend(c.symbol for c in cands)
+    async def _fake_fetch(cands):
+        scraped.extend(c.symbol for c in cands)
         for c in cands:
             c.fomo_heat = 60
             c.crowd_heat_source = "fomo"
 
-    import data_providers.crowd as crowd_mod
-    monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _fake_enrich)
+    portfolio = PortfolioState(cash_usd=1_000.0)
+    regime = make_regime(True)
+    for c in (good, thin, dead):
+        await dp.gate_candidate_staged(c, portfolio, regime, ACTIVE_RULES,
+                                       crowd_fetch=_fake_fetch)
 
-    shortlist = await dp.enrich_crowd_for_shortlist(
-        [good, thin, dead], PortfolioState(cash_usd=1_000.0),
-        make_regime(True), ACTIVE_RULES)
-
-    # ONE lookup instead of three.
-    assert seen == ["GOOD"]
-    assert [c.symbol for c in shortlist] == ["GOOD"]
+    # ONE scrape instead of three: the two cheap-rule failures never hit it.
+    assert scraped == ["GOOD"]
     assert good.crowd_lookup_deferred is False
     assert thin.crowd_lookup_deferred is True
     assert dead.crowd_lookup_deferred is True
 
 
-async def test_crowd_shortlist_marks_skips_so_the_rule_says_not_evaluated(
-        monkeypatch):
-    """End-to-end of the trade-off: the skipped candidate's gate row carries a
-    'not evaluated' crowd_heat (never a proxy number) and fails closed, while
-    every other rule still reports a real result."""
+async def test_staged_gate_order_cheap_then_scrape_then_crowd(monkeypatch):
+    """The ordering contract: when the scrape runs, every cheap rule has
+    already been evaluated, and the crowd rule is evaluated only afterwards
+    (so it sees the scraped heat, not the proxy)."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
-    from rule_engine.gate import evaluate_gate
     from rule_engine.rules import ACTIVE_RULES
 
+    c = make_candidate()
+    events: list = []
+
+    async def _fake_fetch(cands):
+        events.append("scrape")
+        for x in cands:
+            x.fomo_heat = 60
+            x.crowd_heat_source = "fomo"
+
+    def _traced(fn):
+        def wrapper(cand, p, r):
+            events.append(fn.__name__)
+            return fn(cand, p, r)
+        wrapper.__name__ = fn.__name__
+        return wrapper
+
+    traced = [_traced(fn) for fn in ACTIVE_RULES]
+    gate = await dp.gate_candidate_staged(
+        c, PortfolioState(cash_usd=1_000.0), make_regime(True), traced,
+        crowd_fetch=_fake_fetch)
+
+    assert "scrape" in events
+    scrape_at = events.index("scrape")
+    cheap_ids = [dp._rule_id(fn) for fn in dp.cheap_rules(ACTIVE_RULES)]
+    # every cheap rule ran BEFORE the scrape...
+    assert set(events[:scrape_at]) == set(cheap_ids)
+    # ...and the crowd rule ran AFTER it.
+    assert events[scrape_at + 1:] == ["crowd_heat"]
+    # The crowd rule consumed the scraped value, not the presence proxy.
+    heat = next(r for r in gate.rules if r.rule_id == "crowd_heat")
+    assert heat.evaluated is True and heat.value == 60
+    assert gate.all_passed
+
+
+async def test_staged_gate_reports_not_evaluated_when_scrape_skipped(
+        monkeypatch):
+    """A cheap-rule failure => never scraped => crowd_heat says so, the gate
+    fails closed, and the REAL reason stays in failed_rule_ids."""
+    monkeypatch.setattr(config, "DATA_BACKEND", "live")
+    from rule_engine.rules import ACTIVE_RULES
+
+    async def _must_not_run(cands):
+        raise AssertionError("scraped a candidate that failed a cheap rule")
+
     thin = make_candidate(symbol="THIN", liquidity_usd=100.0)
+    gate = await dp.gate_candidate_staged(
+        thin, PortfolioState(cash_usd=1_000.0), make_regime(True),
+        ACTIVE_RULES, crowd_fetch=_must_not_run)
+
+    heat = next(r for r in gate.rules if r.rule_id == "crowd_heat")
+    assert heat.evaluated is False and heat.value is None
+    assert "not evaluated" in heat.detail
+    assert gate.not_evaluated_rule_ids == ["crowd_heat"]
+    assert gate.failed_rule_ids == ["liquidity_floor"]
+    assert not gate.all_passed
+    # No short-circuiting among the cheap rules: all of them still reported.
+    assert len(gate.rules) == len(ACTIVE_RULES)
+
+
+async def test_staged_gate_preserves_rule_order_in_the_breakdown(monkeypatch):
+    """Only the EVALUATION order changed — the journal/UI breakdown must stay
+    in the declared rule order."""
+    monkeypatch.setattr(config, "DATA_BACKEND", "live")
+    from rule_engine.rules import ACTIVE_RULES
 
     async def _noop(cands):
         return None
 
-    import data_providers.crowd as crowd_mod
-    monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _noop)
-    portfolio = PortfolioState(cash_usd=1_000.0)
-    regime = make_regime(True)
-    await dp.enrich_crowd_for_shortlist([thin], portfolio, regime,
-                                        ACTIVE_RULES)
-
-    gate = evaluate_gate(thin, portfolio, regime, ACTIVE_RULES)
-    heat = next(r for r in gate.rules if r.rule_id == "crowd_heat")
-    assert heat.evaluated is False and heat.value is None
-    assert gate.not_evaluated_rule_ids == ["crowd_heat"]
-    assert gate.failed_rule_ids == ["liquidity_floor"]   # the REAL reason
-    # Every rule still evaluated for the reject except the crowd one.
-    assert len(gate.rules) == len(ACTIVE_RULES)
+    gate = await dp.gate_candidate_staged(
+        make_candidate(), PortfolioState(cash_usd=1_000.0), make_regime(True),
+        ACTIVE_RULES, crowd_fetch=_noop)
+    assert [r.rule_id for r in gate.rules] == [
+        dp._rule_id(fn) for fn in ACTIVE_RULES]
 
 
-async def test_crowd_shortlist_is_noop_in_mock_mode(monkeypatch):
-    """Hermeticity: mock runs never touch the feed and never defer anything,
-    so mock gate output is byte-identical to the pre-§43 behavior."""
+async def test_staged_gate_is_hermetic_in_mock_mode(monkeypatch):
+    """Mock mode: no scrape, nothing deferred, and crowd_heat keeps its
+    documented presence-proxy behavior (pre-§43 semantics preserved)."""
     monkeypatch.setattr(config, "DATA_BACKEND", "mock")
     from rule_engine.rules import ACTIVE_RULES
 
     async def _must_not_run(cands):
-        raise AssertionError("crowd feed ran in mock mode")
+        raise AssertionError("scraped in mock mode")
 
-    import data_providers.crowd as crowd_mod
-    monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _must_not_run)
-
-    c = make_candidate(liquidity_usd=100.0)
-    out = await dp.enrich_crowd_for_shortlist(
-        [c], PortfolioState(cash_usd=1_000.0), make_regime(True),
-        ACTIVE_RULES)
-    assert out == []
+    c = make_candidate(liquidity_usd=100.0)   # even a cheap-rule failure
+    gate = await dp.gate_candidate_staged(
+        c, PortfolioState(cash_usd=1_000.0), make_regime(True), ACTIVE_RULES,
+        crowd_fetch=_must_not_run)
     assert c.crowd_lookup_deferred is False
+    heat = next(r for r in gate.rules if r.rule_id == "crowd_heat")
+    assert heat.evaluated is True and heat.value == 36   # proxy, as always
 
 
-async def test_crowd_shortlist_fail_soft_leaves_proxy_path(monkeypatch):
-    """A crowd-feed exception degrades to the proxy heat exactly as before —
-    it never propagates into the tick."""
+async def test_staged_gate_fail_soft_on_scrape_error(monkeypatch):
+    """A scrape exception degrades to proxy heat and never propagates."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
     from rule_engine.rules import ACTIVE_RULES
 
     async def _boom(cands):
         raise RuntimeError("feed down")
 
-    import data_providers.crowd as crowd_mod
-    monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _boom)
+    c = make_candidate()
+    gate = await dp.gate_candidate_staged(
+        c, PortfolioState(cash_usd=1_000.0), make_regime(True), ACTIVE_RULES,
+        crowd_fetch=_boom)
+    assert c.crowd_lookup_deferred is False   # it WAS attempted
+    assert c.fomo_heat is None                # -> proxy fallback
+    heat = next(r for r in gate.rules if r.rule_id == "crowd_heat")
+    assert heat.evaluated is True and heat.value == 36
+    assert gate.all_passed
 
-    good = make_candidate()
-    shortlist = await dp.enrich_crowd_for_shortlist(
-        [good], PortfolioState(cash_usd=1_000.0), make_regime(True),
-        ACTIVE_RULES)
-    assert [c.symbol for c in shortlist] == ["TEST"]
-    assert good.crowd_lookup_deferred is False   # it WAS looked up (feed died)
-    assert good.fomo_heat is None                # -> proxy fallback intact
 
-
-def test_cheap_rules_drops_only_the_crowd_rule():
+async def test_staged_gate_uses_real_fetch_by_default(monkeypatch):
+    """Without an injected fetch it calls data_providers.crowd."""
+    monkeypatch.setattr(config, "DATA_BACKEND", "live")
     from rule_engine.rules import ACTIVE_RULES
-    pre = dp.cheap_rules(ACTIVE_RULES)
-    assert len(pre) == len(ACTIVE_RULES) - 1
-    assert all(getattr(r, "__name__", "") != "crowd_heat" for r in pre)
+
+    called: list = []
+
+    async def _fake(cands):
+        called.extend(c.symbol for c in cands)
+
+    import data_providers.crowd as crowd_mod
+    monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _fake)
+    await dp.gate_candidate_staged(
+        make_candidate(), PortfolioState(cash_usd=1_000.0), make_regime(True),
+        ACTIVE_RULES)
+    assert called == ["TEST"]
+
+
+def test_cheap_and_crowd_rules_partition_the_rule_list():
+    from rule_engine.rules import ACTIVE_RULES
+    cheap = dp.cheap_rules(ACTIVE_RULES)
+    crowd = dp.crowd_rules(ACTIVE_RULES)
+    assert len(cheap) + len(crowd) == len(ACTIVE_RULES)
+    assert [dp._rule_id(f) for f in crowd] == ["crowd_heat"]
+    assert all(dp._rule_id(f) != "crowd_heat" for f in cheap)
 
 
 # --- think stage ---------------------------------------------------------------
@@ -397,8 +461,24 @@ def test_main_run_tick_uses_shared_read_stage():
     src = inspect.getsource(paper_main.run_tick)
     assert "read_candidates(provider)" in src
     assert "enrich_candidates(candidates)" in src
-    # §43: crowd lookups go through the shortlist helper, not the flat chain.
-    assert "enrich_crowd_for_shortlist(candidates" in src
+    # §44: the gate is the STAGED one (cheap rules → scrape → crowd rules).
+    assert "gate_candidate_staged(c, portfolio, regime," in src
+
+
+def test_main_run_tick_gates_before_thinking():
+    """§44 ordering contract in the paper tick: the STAGED gate runs BEFORE
+    the think stage, and the per-candidate thinker is only called when the
+    gate passed (rule-refused candidates get the template write-up)."""
+    import inspect
+    import main as paper_main
+    src = inspect.getsource(paper_main.run_tick)
+    gate_at = src.index("gate_candidate_staged(c, portfolio, regime,")
+    think_at = src.index("think_candidate(c, thinker, memory_line)")
+    assert gate_at < think_at, "gate must be evaluated before the thinker call"
+    assert "elif gate.all_passed:" in src
+    assert 'think.source = "template:rules-refused"' in src
+    # The old unconditional batch pre-pass is gone.
+    assert "enrich_crowd_for_shortlist" not in src
 
 
 def test_isolation_backend_never_imports_live_execution():

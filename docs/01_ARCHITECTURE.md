@@ -54,12 +54,7 @@ def evaluate_gate(
     rules: list[RuleFn],
 ) -> GateDecision:
     results = [rule(candidate, portfolio, regime) for rule in rules]
-    failed = [r.rule_id for r in results if not r.passed and r.evaluated]
-    skipped = [r.rule_id for r in results if not r.evaluated]
-    return GateDecision(candidate, results,
-                        all_passed=all(r.passed and r.evaluated for r in results),
-                        failed_rule_ids=failed,
-                        not_evaluated_rule_ids=skipped)
+    return decision_from_results(candidate, results)   # §43: fail-closed on skips
 ```
 
 Every rule in `rules` is evaluated independently and unconditionally —
@@ -68,18 +63,30 @@ every later rule's result is still computed and logged, so a rejected
 candidate's *full* profile is visible in the journal, not just the first
 reason it failed.
 
-**One documented exception (§43, 2026-08-30): `crowd_heat`.** Its only input
-is the metered fomo.fun board read, and running it for every candidate meant
-spending quota on names that were about to fail liquidity or volume anyway.
-The pipeline now fetches crowd data only for candidates that already cleared
-every other rule (`decision_pipeline.enrich_crowd_for_shortlist`), and for
-the rest the rule reports `evaluated=False` with an explicit "not evaluated"
-detail. The property given up is precise and limited to this one field: a
-rejected candidate's journal row shows "not evaluated" for `crowd_heat`
-instead of a real number. Everything else holds — the rule is still in the
-breakdown, the other nine rules still always run, and a non-evaluated rule
-**can never contribute to a PASS** (`all_passed` requires
+**One documented exception (§43/§44, 2026-08-30): `crowd_heat`.** Its only
+input is the metered fomo.fun board read. The gate is therefore **staged** in
+`decision_pipeline.gate_candidate_staged()`:
+
+1. every cheap (non-crowd) rule is evaluated first, unconditionally — no
+   short-circuiting among them;
+2. the fomo.fun scrape happens ONLY if all of those passed;
+3. the crowd rule is evaluated last, against whatever the scrape returned.
+
+For a candidate that was never scraped the rule reports `evaluated=False`
+with detail "not evaluated — crowd feed reserved for candidates that cleared
+every other rule". The property given up is precise and limited to this one
+field: a rejected candidate's journal row shows "not evaluated" for
+`crowd_heat` instead of a real number. Everything else holds — the rule is
+still in the breakdown, the other nine rules still always run, and a
+non-evaluated rule **can never contribute to a PASS** (`all_passed` requires
 `passed and evaluated`, so the gate fails closed on it).
+
+`evaluate_gate` itself never performs I/O: it evaluates whatever rules it is
+handed against the candidate as it stands. Sequencing feed calls against rule
+outcomes is a pipeline concern, which is why the staged variant lives in
+`decision_pipeline`. Both share `decision_from_results()`, so there is exactly
+one definition of `all_passed` / `failed_rule_ids` /
+`not_evaluated_rule_ids`.
 
 ### 2.3 The rule set
 

@@ -1,9 +1,53 @@
 # Active Context — trading-bot
 
-**As of 2026-08-30 (§43 CROWD-FEED QUOTA — the metered fomo.fun lookup behind `crowd_heat` now runs ONLY for candidates that already cleared every other rule (`decision_pipeline.enrich_crowd_for_shortlist`); rejects journal `crowd_heat` as "not evaluated" (`RuleResult.evaluated=False`) instead of a presence-proxy number; `evaluate_gate` fails closed on un-evaluated rules and tracks them in the new `GateDecision.not_evaluated_rule_ids` so skips never pollute `failed_rule_ids`; 610 tests green).**
+**As of 2026-08-30 (§44 STAGED GATE — the decision cascade is now cheap rules → fomo scrape → crowd rules → LLM, per candidate, in `decision_pipeline.gate_candidate_staged`: a candidate that fails ANY cheap rule is never scraped and never costs an LLM call; rule-refused rows get the deterministic `template:rules-refused` write-up; brain still runs once per tick over the whole board; prompts unchanged; 615 tests green. Builds on §43: `RuleResult.evaluated` + `GateDecision.not_evaluated_rule_ids`, fail-closed on skips).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §44 staged gate: rules → scrape → crowd rules → LLM (2026-08-30)
+Operator directive (cost, not cosmetics): the fomo scrape must happen only
+after the normal rules pass, then the crowd rules, then the LLM; if the first
+set fails, no scrape.
+
+`decision_pipeline.gate_candidate_staged(candidate, portfolio, regime, rules,
+crowd_fetch=None)` is the new layer:
+1. every cheap (non-crowd) rule, unconditionally — no short-circuiting among
+   them, so a reject still shows real results for all of them;
+2. the fomo.fun scrape ONLY if all of those passed (else
+   `crowd_lookup_deferred=True` and the log records
+   `crowd scrape skipped for SYM: failed liquidity_floor (no quota spent)`);
+3. the crowd rule(s), against whatever the scrape returned.
+
+`cheap_rules()` / `crowd_rules()` partition the injected list on `__name__`
+(`CROWD_RULE_IDS`), so `ACTIVE_RULES` and `LIVE_ACTIVE_RULES` share one
+implementation; the assembled `GateDecision.rules` is re-ordered back into the
+DECLARED order, so journal/API/UI see no reordering. `gate.py` gained
+`decision_from_results()` — one definition of `all_passed` /
+`failed_rule_ids` / `not_evaluated_rule_ids`, shared by the plain and staged
+paths; `evaluate_gate` still does no I/O.
+
+LLM placement (deliberate deviation from the reference's think-first order):
+the once-per-tick brain is UNCHANGED (whole board, same prompt, owns
+watchlist/break/remember, cost already paid); the per-candidate thinker runs
+only when `gate.all_passed` — and now sees REAL crowd theses because the
+scrape already ran; a rule-refused candidate gets `template_think()` with
+verdict forced to `pass` and `source="template:rules-refused"`, so its journal
+row stays populated without paying for a call that cannot change the outcome.
+
+Cost per tick: 1 brain call + N scrapes + N thinker calls, N = candidates that
+passed all nine cheap rules (was `MAX_CANDIDATES_PER_TICK` of each). Because
+`cash_available`/`already_held` are evaluated at gate time, the saving
+compounds within a tick — once cash or a slot is gone, later candidates fail a
+cheap rule and skip their scrape too.
+
+Preserved: fail-closed gate, skips tracked apart from real rejections
+(learning loop + `llm/reuse` stay honest), narrator never cites a skipped
+rule, declared rule order, mock hermeticity (no scrape off live ⇒ unchanged
+proxy behavior), fail-soft on a dead feed. 615 passing (backend 464 + live
+151). Docs: handoff §44, report §3.11/§11/§28, architecture §2.2,
+FOMO_INTEGRATION.
+
+## DONE (previous)
 ### §43 crowd-feed quota: shortlist-only crowd lookups (2026-08-30)
 Operator named the burn: `crowd_heat` ran for every candidate every tick
 before any other rule could weigh in (deliberate — no short-circuiting for

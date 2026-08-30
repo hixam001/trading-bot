@@ -8,8 +8,9 @@ liveness.set_break, having no template-thinker fallback, never journaling
 sizing refusals). This module is the SINGLE source of truth for the stages
 both books must run identically:
 
-    filter (blocklist + fake-chart) → enrich → regime → crowd shortlist →
-    think (with fallback) → gate (same rule set) → entry_allowed → journal
+    filter (blocklist + fake-chart) → enrich → regime → think (with
+    fallback) → gate (STAGED: cheap rules → crowd scrape → crowd rules) →
+    entry_allowed → journal
 
 Isolation contract preserved: this module imports ONLY backend/ modules —
 never live_execution (backend must stay importable without the live stack).
@@ -39,7 +40,7 @@ import config
 from blocklist import filter_candidates
 from models import Candidate, GateDecision, PortfolioState
 from rule_engine.fake_chart import is_fake_candidate
-from rule_engine.gate import evaluate_gate
+from rule_engine.gate import decision_from_results, evaluate_gate
 from rule_engine.regime import MarketRegime, compute_market_regime
 
 log = logging.getLogger(__name__)
@@ -90,11 +91,12 @@ async def enrich_candidates(candidates: list) -> list:
     per feed. Returns the social read's LLM usages (paper journals them;
     [] when not live or the read failed).
 
-    §43: the CROWD feed is deliberately NOT part of this chain any more. Its
-    fomo.fun lookup is metered and used to run for every candidate on every
+    §43/§44: the CROWD feed is deliberately NOT part of this chain. Its
+    fomo.fun scrape is metered and used to run for every candidate on every
     tick, before any rule could rule the candidate out — so quota burned on
-    names that were about to fail liquidity or volume anyway. It now runs in
-    `enrich_crowd_for_shortlist()` below, after the cheap rules have spoken.
+    names that were about to fail liquidity or volume anyway. It now runs
+    INSIDE the staged gate (`gate_candidate_staged` below), per candidate,
+    only after that candidate's cheap rules have ALL passed.
     """
     social_usages: list = []
     if not candidates or config.DATA_BACKEND != "live":
@@ -122,88 +124,119 @@ async def enrich_candidates(candidates: list) -> list:
 
 
 # ---------------------------------------------------------------------------
-# §43 — crowd lookups only for candidates the cheap rules already cleared
+# §44 — STAGED gate: cheap rules → (only if they ALL pass) crowd scrape →
+# crowd rules. One assembled GateDecision, original rule order preserved.
 #
-# The trade-off, recorded explicitly (operator decision 2026-08-30): the
-# "every rule always evaluated, even for rejects" property is GIVEN UP for
-# `crowd_heat` alone. A candidate that fails any other rule now shows
-# "not evaluated" for that one field in its journal row instead of a real
-# number. Everything else is unchanged: all nine other rules still run
-# unconditionally with no short-circuiting, the rule still appears in the
-# breakdown, and a non-evaluated rule can never contribute to a PASS
-# (gate.evaluate_gate fails closed on it).
+# Ordering contract (operator decision 2026-08-30):
+#   1. every non-crowd rule is evaluated first, unconditionally, for EVERY
+#      candidate — exactly as before, no short-circuiting among them;
+#   2. the fomo.fun scrape happens ONLY if all of those passed. A candidate
+#      that failed any cheap rule is never scraped — that is the whole point:
+#      scrape quota is the cost being cut;
+#   3. the crowd rule(s) are then evaluated against whatever the scrape
+#      returned. For a candidate that was never scraped, `crowd_heat` reports
+#      `evaluated=False` ("not evaluated"), which fails the gate closed
+#      without pretending to be a measurement.
 #
-# Why it is worth it: the fomo.fun board read is the only metered per-candidate
-# network call inside the rule inputs, and most candidates fail something local
-# and free first — so this cuts fomo calls to the shortlist that could actually
-# enter, with no new dependency and no new failure mode.
+# The LLM is untouched: the brain still runs once per tick over the whole
+# board and the per-candidate thinker still runs before the gate, with the
+# same prompts. This layer only sequences rule evaluation against feed I/O.
+#
+# Why per-candidate rather than one batch pre-pass: `cash_available` and
+# `already_held` change AS positions open during the tick. Evaluating at gate
+# time means that once cash is spent or a slot is taken, later candidates fail
+# a cheap rule and their scrape is skipped too — strictly fewer scrapes than a
+# single snapshot pre-pass, and the cheap rules are evaluated once instead of
+# twice.
 # ---------------------------------------------------------------------------
 
-_CROWD_RULE_ID = "crowd_heat"
+# Rules whose ONLY input comes from the metered crowd feed. Matched by
+# function name so the split works for `ACTIVE_RULES` and the live
+# cash-swapped `LIVE_ACTIVE_RULES` alike.
+CROWD_RULE_IDS = ("crowd_heat",)
+
+
+def _rule_id(fn) -> str:
+    return getattr(fn, "__name__", "")
 
 
 def cheap_rules(rules: list) -> list:
-    """Every injected rule EXCEPT the crowd rule (matched by function name, so
-    it works for both ACTIVE_RULES and the live cash-swapped list)."""
-    return [r for r in rules
-            if getattr(r, "__name__", "") != _CROWD_RULE_ID]
+    """The rules that need no external feed — evaluated first, always."""
+    return [r for r in rules if _rule_id(r) not in CROWD_RULE_IDS]
 
 
-async def enrich_crowd_for_shortlist(
-    candidates: list,
+def crowd_rules(rules: list) -> list:
+    """The feed-backed rules — evaluated only after the cheap ones passed."""
+    return [r for r in rules if _rule_id(r) in CROWD_RULE_IDS]
+
+
+async def _default_crowd_fetch(candidates: list) -> None:
+    """Real crowd fetch (function-local import keeps mock runs from touching
+    the module at all)."""
+    from data_providers.crowd import enrich_crowd_heat
+    await enrich_crowd_heat(candidates)
+
+
+async def gate_candidate_staged(
+    candidate: Candidate,
     portfolio: PortfolioState,
     regime: MarketRegime,
     rules: list,
-) -> list:
+    crowd_fetch=None,
+) -> GateDecision:
     """
-    Spend crowd-feed quota ONLY on candidates that already pass every other
-    rule, and mark the rest `crowd_lookup_deferred` so `crowd_heat` reports
-    "not evaluated" for them instead of a presence-proxy number.
+    The staged gate (§44). Returns ONE GateDecision whose `rules` list is in
+    the same order as the injected rule list, so the journal/UI see no
+    reordering — only the EVALUATION order changed.
 
-    Live-only and fail-soft, exactly like the rest of the enrichment chain:
-      - mock/DATA_BACKEND != live: no-op, nothing is deferred, behavior is
-        the pre-§43 proxy path (hermeticity preserved);
-      - the pre-pass uses the SAME evaluate_gate on the SAME injected rule
-        list minus the crowd rule — no second copy of any rule's logic;
-      - a crowd-feed exception leaves the shortlist on the proxy fallback
-        (the old degradation), never blocks the tick.
-
-    The pre-pass portfolio/regime are this tick's snapshot. Cash and holdings
-    only move AGAINST entry within a tick (opens debit cash and add holdings),
-    so a candidate skipped here could never have become entry-eligible later
-    in the same tick; the reverse (fetched, then refused on cash) costs at
-    most one call.
-
-    Returns the shortlist that was actually looked up.
+    Fail-soft: a crowd-feed exception leaves the candidate on the presence
+    proxy (the pre-§43 degradation) and never propagates into the tick.
+    Mock/`DATA_BACKEND != live`: no fetch at all, nothing deferred, so
+    hermetic runs behave exactly as they always have.
     """
-    if not candidates or config.DATA_BACKEND != "live":
-        return []
+    cheap = cheap_rules(rules)
+    crowd = crowd_rules(rules)
 
-    pre_rules = cheap_rules(rules)
-    shortlist: list = []
-    for c in candidates:
-        pre = evaluate_gate(c, portfolio, regime, pre_rules)
-        if pre.all_passed:
-            c.crowd_lookup_deferred = False
-            shortlist.append(c)
+    # --- stage 1: every cheap rule, unconditionally (no short-circuiting).
+    cheap_results = {_rule_id(fn): fn(candidate, portfolio, regime)
+                     for fn in cheap}
+
+    if not crowd:
+        # No feed-backed rule in this list — nothing to stage.
+        return decision_from_results(candidate,
+                                     [cheap_results[_rule_id(fn)]
+                                      for fn in rules])
+
+    # --- stage 2: the scrape, ONLY when every cheap rule passed.
+    # Staging applies to the LIVE feed only. In mock/tests there is no scrape
+    # to save, so nothing is deferred and `crowd_heat` keeps its documented
+    # presence-proxy behavior — hermetic runs are bit-for-bit unchanged.
+    if config.DATA_BACKEND == "live":
+        cheap_ok = all(r.passed and r.evaluated
+                       for r in cheap_results.values())
+        if cheap_ok:
+            candidate.crowd_lookup_deferred = False
+            try:
+                await (crowd_fetch or _default_crowd_fetch)([candidate])
+            except Exception:
+                log.warning("crowd fetch failed for %s - proxy heat in use "
+                            "(fail-soft)", candidate.symbol, exc_info=True)
         else:
-            # Deliberate skip — recorded on the candidate so the rule can be
-            # honest about it in the journal.
-            c.crowd_lookup_deferred = True
+            # Never scraped -> the crowd rule reports "not evaluated" instead
+            # of scoring the presence proxy. This is the quota saving.
+            candidate.crowd_lookup_deferred = True
+            log.info("crowd scrape skipped for %s: failed %s (no quota spent)",
+                     candidate.symbol,
+                     ",".join(rid for rid, r in cheap_results.items()
+                              if not (r.passed and r.evaluated)))
 
-    log.info("crowd feed: %d of %d candidate(s) cleared the other %d rules — "
-             "%d fomo lookup(s) skipped (quota saved)",
-             len(shortlist), len(candidates), len(pre_rules),
-             len(candidates) - len(shortlist))
+    # --- stage 3: the crowd rule(s), against whatever stage 2 produced.
+    crowd_results = {_rule_id(fn): fn(candidate, portfolio, regime)
+                     for fn in crowd}
 
-    if shortlist:
-        try:
-            from data_providers.crowd import enrich_crowd_heat
-            await enrich_crowd_heat(shortlist)
-        except Exception:
-            log.warning("crowd enrichment failed - proxy heat in use "
-                        "(fail-soft)", exc_info=True)
-    return shortlist
+    merged = {**cheap_results, **crowd_results}
+    return decision_from_results(candidate,
+                                 [merged[_rule_id(fn)] for fn in rules])
 
 
 async def think_candidate(candidate, thinker, memory_line: str = ""):

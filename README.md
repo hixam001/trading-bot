@@ -102,7 +102,7 @@ arm flags) are deliberately hardcoded in `backend/config.py` /
 | `DEEPSEEK_API_KEY` | for `deepseek` | **the main model** — DeepSeek V4 Flash direct API (non-thinking mode) |
 | `GROQ_API_KEY`, `GROQ_MODEL` | for `groq` | warm rollback provider (qwen3.8-27b on Groq) |
 | `SOCIAL_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | optional | realtime social read stage (OpenAI-compatible; Groq today). Empty key = stage off |
-| `FOMO_PRIVY_REFRESH_TOKEN` + `FIRECRAWL_API_KEY` | optional | REAL crowd-conviction feed (fomo.fun board via stealth proxy). Empty = crowd_heat degrades to a presence proxy. Since §43 the board is only queried for candidates that already cleared every other rule (quota saver); rejects journal crowd_heat as "not evaluated" |
+| `FOMO_PRIVY_REFRESH_TOKEN` + `FIRECRAWL_API_KEY` | optional | REAL crowd-conviction feed (fomo.fun board via stealth proxy). Empty = crowd_heat degrades to a presence proxy. Since §44 the board is scraped only AFTER a candidate passes every other rule, and only if it then passes the crowd rule does the LLM see it (quota saver); rejects journal crowd_heat as "not evaluated" |
 | `SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS_API_KEY` | optional | stealth-scrape failover chain for the crowd feed (auto-benching on 402/429) |
 | `USE_SUPABASE_DB`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run `migrations/supabase/001_init.sql` once first) |
 | `TICK_INTERVAL_SECONDS`, `MAX_CANDIDATES_PER_TICK`, `INITIAL_CASH_USD` | optional | tick cadence + paper book starting cash (defaults 60 / 20 / 1000) |

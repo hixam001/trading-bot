@@ -1,3 +1,54 @@
+## Memory-bank update - 2026-08-30 (§44 staged gate: rules → scrape → crowd rules → LLM)
+
+- **Task**: operator directive, cost-driven — "after the normal rules pass I
+  want the fomo scrape to happen and then the related rules, and only after
+  that the LLM; if the first set of rules fail then the scrape never happens".
+  The point is scrape-API spend, not audit cosmetics.
+- **Shipped**: `decision_pipeline.gate_candidate_staged(candidate, portfolio,
+  regime, rules, crowd_fetch=None)` — stage 1 every cheap (non-crowd) rule
+  unconditionally, stage 2 the fomo scrape ONLY if all of them passed, stage 3
+  the crowd rule(s) against what the scrape returned. `cheap_rules()` /
+  `crowd_rules()` partition the injected list on `__name__` so `ACTIVE_RULES`
+  and `LIVE_ACTIVE_RULES` share one implementation; the assembled decision is
+  re-ordered into the DECLARED rule order (journal/API/UI unchanged);
+  `gate.py::decision_from_results()` is now the single definition of
+  `all_passed`/`failed_rule_ids`/`not_evaluated_rule_ids`, shared by the plain
+  and staged paths. Both books wired (paper `run_tick`, live `run_cycle`); the
+  §43 batch pre-pass and `enrich_crowd_for_shortlist` are gone.
+- **LLM**: moved AFTER the gate, prompts untouched. Brain unchanged (one
+  board-wide call per tick, owns watchlist/break/remember, already paid for).
+  Per-candidate thinker only when `gate.all_passed` — and it now sees REAL
+  crowd theses because the scrape ran first. Rule-refused candidates get
+  `template_think()` with verdict forced to `pass` and
+  `source="template:rules-refused"`: journal row stays populated, no call paid
+  for an outcome that cannot change, and the record never implies a model
+  approved something it never saw.
+- **Why per-candidate, not a batch pre-pass**: `cash_available` and
+  `already_held` move AS positions open during a tick, so gate-time evaluation
+  makes the saving compound (once cash or a slot is gone, later candidates fail
+  a cheap rule and skip their scrape too) and evaluates the cheap rules once
+  instead of twice.
+- **Cost shape**: 1 brain call + N scrapes + N thinker calls per tick, N =
+  candidates passing all nine cheap rules, vs `MAX_CANDIDATES_PER_TICK` of
+  each before.
+- **Preserved**: fail-closed gate (`passed AND evaluated`), skips in
+  `not_evaluated_rule_ids` not `failed_rule_ids`, narrator never cites a
+  skipped rule, declared rule order in every breakdown, mock hermeticity (no
+  scrape off `DATA_BACKEND=live`, proxy behavior byte-identical), fail-soft on
+  a dead feed.
+- **Known behavioral note**: template rows carry no `break_taking`, so
+  self-regulating breaks now originate only from the brain or from a candidate
+  that reached the thinker. A rule-refused candidate could not have justified a
+  break anyway.
+- **Verification**: 615 passing (464 backend + 151 live_execution). New: one
+  scrape instead of three; a traced-rule assertion proving every cheap rule ran
+  BEFORE the scrape and the crowd rule AFTER it; skipped-scrape row reads
+  "not evaluated" with the real reason still in `failed_rule_ids`; declared
+  order preserved; mock never scrapes; scrape-exception fail-soft; default
+  fetch hits `data_providers.crowd`; cheap/crowd partition; both pipelines
+  gate before thinking (source-level).
+
+
 ## Memory-bank update - 2026-08-30 (§43 crowd-feed quota)
 
 - **Task**: operator identified the quota burn — `crowd_heat` ran for every

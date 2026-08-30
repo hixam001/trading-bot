@@ -789,7 +789,12 @@ async def enrich_crowd_heat(candidates: list) -> None:
     """
     Fill candidate.fomo_heat / crowd_heat_source / fomo_theses from the live feeds.
     Fail-soft everywhere: any exception leaves the proxy fallback intact.
-    Called from main.run_tick's read stage (before think/gate).
+
+    §44: no longer called for the whole board up front. The pipeline calls this
+    from INSIDE the staged gate (`decision_pipeline.gate_candidate_staged`),
+    with just the one candidate that has already passed every cheap rule — so a
+    candidate rejected on liquidity/volume/cash/etc. never costs a scrape. The
+    function itself is unchanged and still accepts a list.
     """
     if not candidates:
         return

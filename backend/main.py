@@ -30,13 +30,13 @@ from data_providers import build_provider
 from decision_pipeline import (
     apply_break,
     enrich_candidates,
-    enrich_crowd_for_shortlist,
+    gate_candidate_staged,
     read_candidates,
     think_candidate,
 )
 from llm.narrator import generate_reflection
 from llm.reuse import REUSE_TICK_WINDOW, reused_if_stable, stats_signature
-from llm.thinker import Thinker, ThinkResult
+from llm.thinker import Thinker, ThinkResult, template_think
 from llm.llm_brain import LLMBrain, LLMVerdict, LLMBrainResult
 from models import FeedEvent
 from calibration import FLAT_CALIBRATION, compute_calibration
@@ -48,7 +48,6 @@ from paper_trading_engine import (
     portfolio_equity_and_unrealized,
     scan_and_execute_exits,
 )
-from rule_engine.gate import evaluate_gate
 from rule_engine.regime import compute_market_regime
 from rule_engine.rules import ACTIVE_RULES
 
@@ -267,37 +266,52 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
             log.warning("thesis restatement pass failed (non-fatal)",
                         exc_info=True)
 
-        # --- §43 CROWD SHORTLIST: spend fomo.fun quota only on candidates
-        # that already cleared every OTHER rule. Deliberate trade-off: a
-        # candidate rejected by a cheap rule shows "not evaluated" for
-        # crowd_heat in its journal row instead of a proxy number (all nine
-        # other rules still always run, and a non-evaluated rule can never
-        # contribute to a PASS). Live-only + fail-soft; mock stays hermetic.
-        try:
-            crowd_portfolio = await load_portfolio_state(conn)
-            await enrich_crowd_for_shortlist(candidates, crowd_portfolio,
-                                             regime, ACTIVE_RULES)
-        except Exception:
-            log.warning("crowd shortlist pass failed - proxy heat in use "
-                        "(fail-soft)", exc_info=True)
-
+        # --- §43/§44: crowd scraping now happens INSIDE the staged gate, per
+        # candidate, only after that candidate's cheap rules have all passed.
+        # Nothing to do here any more.
         for c in candidates:
-            # --- THINK (the reference order): the model writes its assessment BEFORE
-            # any rule is evaluated. Its verdict is a necessary veto layer.
-            memories = await db.recall_memories(conn, topic=c.symbol, limit=3)
-            memory_line = ""
-            if memories:
-                memory_line = "Memory (context only): " + " | ".join(
-                    f"{m['topic']}: {m['note']}" for m in memories)
-            # the reference BRAIN verdict if the brain produced a valid one for this
-            # candidate; otherwise the per-candidate thinker (fail-closed path).
+            # --- GATE FIRST (§44), STAGED: every cheap rule → (only if they
+            # ALL passed) the fomo.fun scrape → the crowd rule(s). A candidate
+            # that fails a cheap rule is NEVER scraped; its crowd_heat reads
+            # "not evaluated" (fail-closed, never a proxy number). Rule ORDER
+            # in the journal breakdown is unchanged — only the evaluation
+            # order, the feed spend, and the think placement below moved.
+            portfolio = await load_portfolio_state(conn)
+            gate = await gate_candidate_staged(c, portfolio, regime,
+                                               ACTIVE_RULES)
+
+            # --- THINK. Still a necessary veto (entry needs model-buy AND
+            # all-rules-pass) and the prompt is unchanged. What changed (§44):
+            # the per-candidate call is spent only on candidates the rules
+            # already cleared.
+            #   * brain verdict — already paid for (ONE board-wide call at the
+            #     top of the tick), so it is used whenever the brain produced
+            #     one, pass or fail;
+            #   * gate passed, no brain verdict — spend the per-candidate
+            #     thinker (unchanged prompt + template fallback), and it now
+            #     sees the REAL crowd theses because the scrape ran first;
+            #   * gate already failed — no LLM call at all. The row gets the
+            #     deterministic template write-up (grounded by construction)
+            #     with the verdict forced to "pass" and the source tagged, so
+            #     the record never implies a model approved something it was
+            #     never shown.
             ov = (brain_result.verdict_for(c.symbol)
                   if (use_brain and brain_result is not None) else None)
             if ov is not None:
                 think = _think_from_llm(ov, brain_result)
-            else:
+            elif gate.all_passed:
+                memories = await db.recall_memories(conn, topic=c.symbol,
+                                                    limit=3)
+                memory_line = ""
+                if memories:
+                    memory_line = "Memory (context only): " + " | ".join(
+                        f"{m['topic']}: {m['note']}" for m in memories)
                 # Shared Item #6 core: think with the template fallback.
                 think = await think_candidate(c, thinker, memory_line)
+            else:
+                think = template_think(c)
+                think.verdict = "pass"
+                think.source = "template:rules-refused"
 
             # Record thinker LLM usage
             if getattr(think, "llm_usage", None):
@@ -333,10 +347,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                  "break_reason": think.break_reason},
             )
 
-            portfolio = await load_portfolio_state(conn)
-            gate = evaluate_gate(c, portfolio, regime, ACTIVE_RULES)
-
             # --- GATE: think→gate intersection. Either side alone refuses.
+            # (the gate itself already ran above, before THINK — §44)
             entry_allowed = gate.all_passed and think.wants_entry
 
             # --- SIZING + daily deploy cap -----------------------------------

@@ -1,6 +1,28 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §44 staged gate: rules → fomo scrape → crowd rules → LLM (handoff §44)
+      (2026-08-30): `decision_pipeline.gate_candidate_staged()` sequences the
+      decision per candidate — every cheap (non-crowd) rule first
+      (unconditionally), the fomo.fun scrape ONLY if they all passed, the
+      crowd rule last against whatever the scrape returned. A candidate that
+      fails any cheap rule is never scraped (`crowd scrape skipped for SYM:
+      failed liquidity_floor (no quota spent)` in the log) and never costs an
+      LLM call: the once-per-tick brain is unchanged, but the per-candidate
+      thinker runs only when `gate.all_passed` (and now sees REAL crowd
+      theses), while a rule-refused candidate gets the deterministic template
+      write-up (`source="template:rules-refused"`, verdict forced "pass") so
+      its journal row stays complete. `cheap_rules()`/`crowd_rules()`
+      partition the injected list on `__name__` (incl. `LIVE_ACTIVE_RULES`);
+      `gate.py::decision_from_results()` is the single definition of
+      `all_passed`/`failed_rule_ids`/`not_evaluated_rule_ids`; assembled
+      breakdowns keep the DECLARED rule order. Per-tick spend is now 1 brain
+      call + N scrapes + N thinker calls, N = candidates passing all nine cheap
+      rules, and the saving compounds within a tick (cash/slot exhaustion makes
+      later candidates fail cheaply). Preserved: fail-closed skips, honest
+      rejection stats, mock hermeticity (no scrape off live), dead-feed
+      fail-soft. **615 tests green (464 backend + 151 live: staged-gate
+      ordering/proxy/defer tests, both pipelines gate-before-think).**
 - [x] §43 crowd-feed quota: shortlist-only `crowd_heat` lookups (handoff §43)
       (2026-08-30): the metered fomo.fun board read left the unconditional
       enrichment chain — `decision_pipeline.enrich_crowd_for_shortlist()` runs

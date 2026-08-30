@@ -44,10 +44,9 @@ if str(BACKEND) not in sys.path:
 import config as paper_config                     # noqa: E402
 from data_providers import build_provider         # noqa: E402
 from data_providers.jupiter import JupiterProvider  # noqa: E402
-from llm.thinker import Thinker                   # noqa: E402
+from llm.thinker import Thinker, template_think     # noqa: E402
 from models import Candidate, FeedEvent, PortfolioState, RuleResult, Trade  # noqa: E402
 from rule_engine.exits import ExitInput, evaluate_exits  # noqa: E402
-from rule_engine.gate import evaluate_gate        # noqa: E402
 from rule_engine.regime import MarketRegime, compute_market_regime  # noqa: E402
 from rule_engine.rules import ACTIVE_RULES, cash_available  # noqa: E402
 from api import db                                # noqa: E402
@@ -464,18 +463,6 @@ async def run_cycle(once: bool = False) -> dict:
     await enrich_candidates(candidates)
 
     regime = compute_market_regime(candidates)
-    # --- §43 CROWD SHORTLIST: the fomo.fun lookup now runs ONLY for candidates
-    # that already cleared every other rule (same helper, same rule list the
-    # gate below uses — minus the crowd rule itself). Deliberate trade-off:
-    # a candidate rejected by a cheap rule journals "not evaluated" for
-    # crowd_heat instead of a proxy number. Fail-soft; live-only.
-    from decision_pipeline import enrich_crowd_for_shortlist
-    try:
-        await enrich_crowd_for_shortlist(candidates, portfolio, regime,
-                                         LIVE_ACTIVE_RULES)
-    except Exception:
-        log.warning("crowd shortlist pass failed - proxy heat in use "
-                    "(fail-soft)", exc_info=True)
     # Persist the regime snapshot + a per-candidate decision feed so the
     # dashboard (regime panel + decision feed + WebSocket) shows live data.
     # Fail-soft: observability never blocks the trade path.
@@ -494,14 +481,32 @@ async def run_cycle(once: bool = False) -> dict:
                # A11: which open write-ups this cycle advanced (narrative only).
                "thesis_restatements": restatements}
     for c in candidates:
+        # --- GATE FIRST (§44), STAGED: every cheap rule → (only if they ALL
+        # passed) the fomo.fun scrape → the crowd rule(s). A candidate that
+        # fails a cheap rule is NEVER scraped; its crowd_heat reads
+        # "not evaluated" (fail-closed). Same rule list, same breakdown order.
+        from decision_pipeline import gate_candidate_staged
+        gate = await gate_candidate_staged(c, portfolio, regime,
+                                           LIVE_ACTIVE_RULES)
+
         # THINK via the shared core (Item #6): template fallback on thinker
         # error instead of a killed cycle, and the break handler with the
         # correct set_break arity (the live copy previously mis-called it).
+        # §44: the LLM call is spent only on candidates the rules cleared; a
+        # rule-refused candidate gets the deterministic template write-up
+        # (verdict forced to "pass", source tagged) so its journal row is
+        # still populated without paying for a call that cannot change the
+        # outcome. The thinker now also sees the REAL crowd theses, because
+        # the scrape above already ran.
         from decision_pipeline import apply_break, think_candidate
-        think = await think_candidate(c, thinker)
+        if gate.all_passed:
+            think = await think_candidate(c, thinker)
+        else:
+            think = template_think(c)
+            think.verdict = "pass"
+            think.source = "template:rules-refused"
         await apply_break(think)
 
-        gate = evaluate_gate(c, portfolio, regime, LIVE_ACTIVE_RULES)
         entry_allowed = gate.all_passed and think.wants_entry
         failed = [r.rule_id for r in gate.rules if not r.passed and r.evaluated]
         # §43: a deliberately un-evaluated rule is reported as skipped, never

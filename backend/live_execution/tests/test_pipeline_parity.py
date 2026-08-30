@@ -55,12 +55,25 @@ def test_run_cycle_delegates_to_shared_read_stage():
     assert "enrich_candidates(candidates)" in src
 
 
-def test_run_cycle_defers_crowd_lookups_to_the_shortlist():
-    """§43: the live cycle spends fomo quota through the shared shortlist
-    helper (after the cheap rules), never on every candidate up front."""
+def test_run_cycle_uses_the_staged_gate():
+    """§44: the live cycle gates through the shared STAGED gate, so the
+    fomo scrape happens only after that candidate's cheap rules all passed."""
     src = inspect.getsource(rlc.run_cycle)
-    assert "enrich_crowd_for_shortlist(candidates, portfolio, regime," in src
+    assert "gate_candidate_staged(c, portfolio, regime," in src
     assert "LIVE_ACTIVE_RULES)" in src
+    # The unconditional pre-gate evaluation is gone.
+    assert "evaluate_gate(c, portfolio, regime, LIVE_ACTIVE_RULES)" not in src
+
+
+def test_run_cycle_gates_before_thinking():
+    """§44 ordering contract in the live cycle: the STAGED gate runs BEFORE
+    the think stage, and the thinker is only called when the gate passed."""
+    src = inspect.getsource(rlc.run_cycle)
+    gate_at = src.index("gate_candidate_staged(c, portfolio, regime,")
+    think_at = src.index("think_candidate(c, thinker)")
+    assert gate_at < think_at, "gate must be evaluated before the thinker call"
+    assert "if gate.all_passed:" in src
+    assert 'think.source = "template:rules-refused"' in src
 
 
 def test_run_cycle_delegates_to_shared_think_and_break():

@@ -98,10 +98,11 @@ class Candidate:
     fomo_theses: Optional[list[dict]] = None
     # §43 (2026-08-30): True when the pipeline DELIBERATELY did not spend a
     # fomo.fun lookup on this candidate because it already failed one of the
-    # cheap local rules. The crowd_heat rule then reports evaluated=False
-    # ("not evaluated") instead of falling back to the presence proxy — an
-    # honest "we didn't look" beats a number nobody measured. Never set in
-    # mock mode (no feed runs there at all).
+    # cheap local rules (§44 sequencing: cheap rules → scrape → crowd rules).
+    # The crowd_heat rule then reports evaluated=False ("not evaluated")
+    # instead of falling back to the presence proxy — an honest "we didn't
+    # look" beats a number nobody measured. Never set in mock mode (no feed
+    # runs there at all).
     crowd_lookup_deferred: bool = False
     # Discovery provenance ONLY — observability field. The rule engine never
     # reads or branches on this. "trending" | "new_listing" | "both" |

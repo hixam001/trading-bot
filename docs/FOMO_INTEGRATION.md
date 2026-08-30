@@ -52,12 +52,34 @@ the unseen remainder of the board total keeps full credit (fail-soft).
 the board read used to run for EVERY candidate in the read stage, before any
 rule could rule the candidate out, so quota burned on names that were about to
 fail `liquidity_floor` or `volume_alive` anyway. `enrich_crowd_heat` is no
-longer part of the flat enrichment chain; `decision_pipeline.enrich_crowd_for_shortlist()`
-runs the same `evaluate_gate` on the same injected rule list **minus the crowd
-rule**, and only candidates that clear all of it get a fomo lookup. The rest
-are marked `candidate.crowd_lookup_deferred = True`, and `crowd_heat` then
+longer part of the flat enrichment chain.
+
+**§44 — the scrape is SEQUENCED inside the gate (2026-08-30):** the ordering
+is now explicit and per candidate, in
+`decision_pipeline.gate_candidate_staged()`:
+
+1. every **cheap rule** (all nine non-crowd rules) is evaluated first,
+   unconditionally — no short-circuiting among them;
+2. the **fomo.fun scrape** runs ONLY if all of those passed. A candidate that
+   failed any cheap rule is never scraped — that is the cost being cut;
+3. the **crowd rule** is evaluated afterwards, against whatever the scrape
+   returned (so it sees real board heat, never a stale/proxy value when the
+   feed did answer).
+
+`cheap_rules()` / `crowd_rules()` split the injected list on function name, so
+the same code serves `ACTIVE_RULES` and the live cash-swapped
+`LIVE_ACTIVE_RULES`. For a candidate that was never scraped, `crowd_heat`
 returns `evaluated=False` with detail `"not evaluated — crowd feed reserved
 for candidates that cleared every other rule"`.
+
+The LLM stage moved to AFTER the gate as part of the same sequencing (prompts
+unchanged): the once-per-tick brain still grades the whole board up front, but
+the per-candidate thinker is only called for candidates the rules cleared —
+and it now sees the real crowd theses, because the scrape already ran. A
+rule-refused candidate gets the deterministic `template_think` write-up with
+the verdict forced to `pass` and the source tagged `template:rules-refused`,
+so its journal row is still populated and the record never implies a model
+approved something it was never shown.
 
 The trade-off, stated plainly: a rejected candidate's journal row shows
 "not evaluated" for this ONE field instead of a real number. What is
@@ -66,9 +88,9 @@ still always run for every candidate (no short-circuiting anywhere else),
 the skip is recorded in `not_evaluated_rule_ids` rather than counted as a
 rejection (so the learning loop's rejection breakdown stays honest), and a
 non-evaluated rule can never contribute to a PASS — `evaluate_gate` requires
-`passed and evaluated`, so it fails closed. Mock mode is untouched (the
-helper is a no-op when `DATA_BACKEND != live`), and a dead feed still
-degrades the shortlist to proxy heat exactly as before.
+`passed and evaluated`, so it fails closed. Mock mode is untouched (no scrape
+happens off `DATA_BACKEND=live`, so `crowd_heat` keeps its presence-proxy
+behavior), and a dead feed still degrades to proxy heat exactly as before.
 
 **Live validation (2026-08-23, operator keys):** direct reads are
 Cloudflare-challenged even with a valid bearer; the Firecrawl stealth

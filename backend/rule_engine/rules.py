@@ -147,12 +147,13 @@ def compute_crowd_heat(c: Candidate) -> int:
 
 
 def crowd_heat(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
-    # §43: the fomo.fun lookup that feeds this rule is metered, so the pipeline
-    # only spends it on candidates that already cleared every other rule. When
-    # it was deliberately skipped we say so instead of scoring the presence
-    # proxy — a rejected candidate's journal reads "not evaluated" for this one
-    # field. Fail-closed by construction: passed=False + evaluated=False can
-    # never contribute to all_passed (see gate.evaluate_gate).
+    # §43/§44: the fomo.fun lookup that feeds this rule is metered, so the
+    # pipeline only spends it AFTER every cheap rule has passed (see
+    # decision_pipeline.gate_candidate_staged). When it was deliberately
+    # skipped we say so instead of scoring the presence proxy — a rejected
+    # candidate's journal reads "not evaluated" for this one field.
+    # Fail-closed by construction: passed=False + evaluated=False can never
+    # contribute to all_passed (see gate.evaluate_gate).
     if c.crowd_lookup_deferred and c.fomo_heat is None:
         return RuleResult(
             "crowd_heat", False,
