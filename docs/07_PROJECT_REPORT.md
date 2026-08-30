@@ -3,7 +3,10 @@
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
 execution package. Report updated 2026-08-30 from the current main branch
-(§44: the gate is now STAGED — cheap rules → fomo scrape → crowd rules → LLM,
+(§45: the live minimum ticket is now EQUITY-PROPORTIONAL — max($0.10, 10% of
+at-cost equity) — fixing the "ENTER but nothing executes" incident where a
+fixed $0.50 floor froze every entry on a sub-$3.33-cash book; §44: the gate is
+now STAGED — cheap rules → fomo scrape → crowd rules → LLM,
 so a candidate that fails a cheap rule is never scraped and never costs an LLM
 call; §43: crowd-feed quota — the metered fomo.fun lookup behind `crowd_heat` is
 now spent only on candidates that already cleared every other rule, with the
@@ -40,7 +43,7 @@ floor instead of the paper book's $100), both live-verified ARMED. The
 frontend was rebuilt on a real design system the same day (handoff §35 —
 token-based terminal, shared primitives, Playwright E2E) and a latent
 STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
-at the repo root).** Tests: **615 passing (464 backend + 151 live_execution)
+at the repo root).** Tests: **620 passing (468 backend + 152 live_execution)
 + 8 Playwright E2E — fully green (the flag-state canary pins the committed
 ARMED state — handoff §33).**
 
@@ -450,7 +453,7 @@ boot serving PG data), stealth-chain header forwarding returning real fomo
 board data, commit-reveal hashes of the reference system recomputed
 byte-for-byte, one-click launcher start/stop cycle.
 
-**Current totals (2026-08-30): 615 passing — 464 backend + 151
+**Current totals (2026-08-30): 620 passing — 468 backend + 152
 live_execution** (`.venv/bin/python -m pytest -q` from the repo root;
 `testpaths = backend/tests backend/live_execution/tests`). The suite is
 hermetic by construction: `backend/conftest.py` forces `DATA_BACKEND=mock`,
@@ -1697,3 +1700,37 @@ un-evaluated rule, skips are still tracked apart from real rejections, the
 narrator still cannot cite a skipped rule, mock runs still never scrape (and
 so keep the presence-proxy behavior byte-for-byte), and a dead feed still
 degrades to proxy heat rather than raising. 615 tests passing.
+
+## 29. Equity-proportional live minimum ticket (2026-08-30, handoff §45)
+
+**The incident.** The dashboard showed a token as ENTER with no execution
+following it. Live-log forensics: TREE passed the full staged gate every
+cycle, then sizing refused the order — `ticket $0.4962 below live floor $0.50`
+(cash $3.31 × 0.15, against the hardcoded `MIN_LIVE_TICKET_USD = 0.50`). Two
+defects: a fixed floor cannot adapt to book size (any live book with cash
+under ~$3.33 is structurally frozen out of every entry in `fixed` sizing
+mode), and the below-floor refusal vanished from `outcome["entries"]` while
+the ENTER feed row is journalled before sizing — so the dashboard kept
+showing ENTER with nothing after it.
+
+**The fix — one formula, three consumers.**
+`live_execution/config.py::min_live_ticket_usd(equity) =
+max($0.10 dust floor, at-cost equity × 0.10)` (operator chose 10%, the most
+conservative of the ratios considered). At-cost equity = cash + Σ open
+position cost — never price-dependent, never raises, fails closed to the dust
+floor on unreadable input. The SAME function now drives the
+`_live_cash_available` gate rule, the sizing refusal, and the
+`compute_ticket`/`compute_risk_budget` floor threading, so the gate and the
+sizing layer can never disagree about the threshold again — that disagreement
+was the root cause. The paper $25 floor stays frozen; the helper lives in
+`live_execution/` (isolation contract intact); hardcoded, never env-settable.
+
+**Behavior.** At the incident book ($4.59 at-cost equity) the floor is $0.4586
+and the $0.4962 TREE ticket now places. The floor grows with the book ($100 →
+$10), so positions stay meaningful relative to the book, and once more than
+~⅓ is deployed, new entries pause until cash recovers. Below-floor refusals
+are now recorded in `outcome["entries"]` with the reason, and the log line
+carries ticket/floor/equity at 4 decimals so sub-cent margins are never
+misread as equality. 620 tests passing (+§45 formula suite, dust clamp,
+fail-closed inputs, the incident regression, and the over-deployed-book gate
+failure).

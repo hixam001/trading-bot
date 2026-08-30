@@ -69,19 +69,27 @@ log = logging.getLogger("run_live_cycle")
 # --- LIVE gate rules (micro-bootstrap parity) --------------------------------
 # The paper `cash_available` rule checks cash against INTENDED_POSITION_SIZE_USD
 # ($100 — sized for the $1,000 paper book). The live book starts from a few
-# USDC (REF-R11 micro-bootstrap) and sizes from MIN_LIVE_TICKET_USD ($0.50), so
-# the paper threshold would refuse every live entry before sizing even runs.
-# Swap in a live cash rule that checks the live floor; every other rule stays
-# verbatim. Paper ACTIVE_RULES + INTENDED_POSITION_SIZE_USD are untouched
+# USDC (REF-R11 micro-bootstrap), so the paper threshold would refuse every
+# live entry before sizing even runs. Swap in a live cash rule that checks
+# the §45 EQUITY-PROPORTIONAL live floor; every other rule stays verbatim.
+# Paper ACTIVE_RULES + INTENDED_POSITION_SIZE_USD are untouched
 # (calibration-frozen) — the same "paper frozen, live threads its own floor"
 # pattern as compute_ticket(min_ticket_usd=...).
 def _live_cash_available(c: Candidate, p: PortfolioState,
                          r: MarketRegime) -> RuleResult:
-    floor = live_config.MIN_LIVE_TICKET_USD
+    # At-cost equity: cash + open position cost. Never price-dependent, never
+    # raises — the same definition the sizing path uses, so the gate and the
+    # sizing refusal can never disagree about the threshold (the §45 root
+    # cause was exactly that disagreement: gate passed at $3.31 cash, then
+    # sizing refused the $0.496 ticket against a fixed $0.50 floor).
+    equity = float(p.cash_usd) + sum(
+        float(t.position_size_usd) for t in p.open_positions)
+    floor = live_config.min_live_ticket_usd(equity)
     ok = p.cash_usd >= floor
     return RuleResult(
         "cash_available", ok,
-        f"cash ${p.cash_usd:,.2f} vs live floor ${floor:,.2f}",
+        f"cash ${p.cash_usd:,.2f} vs live floor ${floor:,.2f} "
+        f"(10% of at-cost equity ${equity:,.2f})",
         value=p.cash_usd,
     )
 
@@ -538,6 +546,11 @@ async def run_cycle(once: bool = False) -> dict:
         price_map = {mint: m["last_price_usd"] for mint, m in meta.items()
                      if m.get("last_price_usd")}
         eq, unrl = portfolio_equity_and_unrealized(portfolio, price_map)
+        # §45: ONE floor formula for gate + sizing + risk_budget threading.
+        # Computed from the same at-cost equity the cash rule gates on, so a
+        # gate PASS can no longer be followed by a sizing refusal on a
+        # threshold disagreement (the "ENTER but no execution" incident).
+        live_floor = live_config.min_live_ticket_usd(eq)
         if paper_config.SIZING_MODE == "risk_budget":
             try:
                 async with db.get_db() as conn:
@@ -549,9 +562,9 @@ async def run_cycle(once: bool = False) -> dict:
                 cf = 1.0
             usd = compute_ticket(cash, None, equity_usd=eq,
                                  unrealized_usd=unrl, conviction_factor=cf,
-                                 min_ticket_usd=live_config.MIN_LIVE_TICKET_USD)
+                                 min_ticket_usd=live_floor)
             budget = compute_risk_budget(
-                eq, unrl, min_ticket_usd=live_config.MIN_LIVE_TICKET_USD)
+                eq, unrl, min_ticket_usd=live_floor)
             deployed_today = ledger.deployed_today_usd()
             if deployed_today + usd > budget.max_daily_usd:
                 log.info("%s refused: daily risk budget reached "
@@ -564,9 +577,16 @@ async def run_cycle(once: bool = False) -> dict:
         else:
             usd = min(cash * paper_config.TICKET_CASH_FRACTION,
                       paper_config.TICKET_MAX_USD)
-        if usd < live_config.MIN_LIVE_TICKET_USD:
-            log.info("%s refused: ticket $%.2f below live floor $%.2f",
-                     c.symbol, usd, live_config.MIN_LIVE_TICKET_USD)
+        if usd < live_floor:
+            log.info("%s refused: ticket $%.4f below live floor $%.4f "
+                     "(equity $%.2f)", c.symbol, usd, live_floor, eq)
+            # §45 visibility fix: a skipped trade must be as visible as an
+            # executed one — this refusal previously vanished from the
+            # cycle outcome even though the daily-budget refusal records.
+            outcome["entries"].append(
+                {"symbol": c.symbol, "status": "refused",
+                 "reason": f"ticket ${usd:.2f} below live floor "
+                           f"${live_floor:.2f}"})
             continue
         result = await place_order(
             side="buy", mint=c.mint_address, symbol=c.symbol, usd=usd,

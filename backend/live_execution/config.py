@@ -129,12 +129,54 @@ MAX_PRICE_IMPACT_PCT: float = 2.5      # block quotes above this impact
 # at or below the floor every order blocks BEFORE any network call.
 MIN_SOL_RESERVE: float = float(os.getenv("SOLANA_MIN_SOL_RESERVE", "0.01"))
 
-# Micro-bootstrap minimum live ticket (handoff §26). The live book starts
-# from $3-5 USDC and must compound from there; the paper side's $25 floor
-# (backend config.MIN_TICKET_USD, frozen for calibration comparability) would
-# permanently skip every live entry at this scale. Hardcoded like the other
-# risk numbers in this file — deliberately never env-settable.
+# Minimum live ticket — EQUITY-PROPORTIONAL (§45, operator decision 2026-08-30).
+# The old fixed $0.50 (MIN_LIVE_TICKET_USD below, kept for historical
+# reference only) froze every entry on a live book whose cash dipped under
+# ~$3.33: with SIZING_MODE="fixed" the ticket is cash * 0.15, and 0.496 < 0.50
+# refuses the order — the "site says ENTER but nothing executes" incident.
+# A fixed floor cannot adapt to book size, so the floor now scales with the
+# book: whatever the equity is, there is a formula for the minimum ticket.
+#
+#     min_live_ticket(equity) = max(ABS_FLOOR_USD, equity * EQUITY_FRACTION)
+#
+#   * equity is AT-COST equity (cash + sum of open position cost) — never
+#     price-dependent, never raises, always available from the ledger;
+#   * equity <= 0 / unreadable fails closed to the dust floor (a dead book
+#     cannot authorise size, but a $0.10 order is still deliberately possible
+#     only while cash covers it — the cash gate checks that separately);
+#   * the cash_available gate rule AND the sizing refusal AND the
+#     risk_budget floor threading all use this ONE formula, so the gate and
+#     sizing can never disagree about the threshold again.
+#
+# Operator chose 10% (the most conservative of the ratios considered): a
+# position below a tenth of the book is not worth placing, and once more than
+# ~1/3 of the book is deployed, new entries pause until cash recovers.
+# Hardcoded like the other risk numbers in this file — never env-settable.
+MIN_LIVE_TICKET_EQUITY_FRACTION: float = 0.10
+MIN_LIVE_TICKET_ABS_FLOOR_USD: float = 0.10
+
+# Legacy constant (handoff §26 micro-bootstrap). SUPERSEDED by the formula
+# above as the operative floor — kept so historical docs/tests citing $0.50
+# remain readable. Nothing reads this in the trade path any more.
 MIN_LIVE_TICKET_USD: float = 0.5
+
+
+def min_live_ticket_usd(equity_usd) -> float:
+    """
+    The §45 live minimum ticket: max(dust floor, at-cost equity * fraction).
+
+    Pure arithmetic over one public number. Malformed input (None / NaN /
+    inf / negative) fails closed to the dust floor — never raises, never
+    guesses. The model decides WHETHER to enter; this only bounds the size.
+    """
+    try:
+        eq = float(equity_usd)
+    except (TypeError, ValueError):
+        return MIN_LIVE_TICKET_ABS_FLOOR_USD
+    if eq != eq or eq in (float("inf"), float("-inf")) or eq <= 0.0:
+        return MIN_LIVE_TICKET_ABS_FLOOR_USD
+    return round(max(MIN_LIVE_TICKET_ABS_FLOOR_USD,
+                     eq * MIN_LIVE_TICKET_EQUITY_FRACTION), 4)
 
 # Rolling UTC-day notional cap on NEW deployments (the reference maxDailyUsd parity,
 # scaled to this book). Checked against the execution ledger.

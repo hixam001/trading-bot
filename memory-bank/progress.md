@@ -1,6 +1,24 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §45 equity-proportional live minimum ticket (handoff §45) (2026-08-30):
+      fixed the "site says ENTER but nothing executes" incident — TREE passed
+      the staged gate every cycle, then sizing refused the $0.4962 ticket
+      (cash $3.31 × 0.15) against the hardcoded $0.50 `MIN_LIVE_TICKET_USD`.
+      New formula `live_execution/config.py::min_live_ticket_usd(equity) =
+      max($0.10, at-cost equity × 0.10)` (operator chose 10% of 3.5%/5%/10%);
+      ONE function drives the `_live_cash_available` gate rule, the sizing
+      refusal, AND the risk_budget floor threading, so the gate and sizing can
+      never disagree on the threshold (that disagreement was the root cause).
+      Below-floor refusals now record in `outcome["entries"]` + a 4dp log
+      line instead of vanishing. At-cost equity (cash + Σ position cost) —
+      never price-dependent, fails closed to the $0.10 dust floor. Paper $25
+      floor frozen; isolation intact; hardcoded never-env-settable. At the
+      $4.59 incident book the floor is $0.4586 → the TREE ticket places.
+      **620 tests green (468 backend + 152 live: §45 formula suite — scaling,
+      dust clamp, fail-closed inputs, incident regression; cash-rule rewrite
+      incl. over-deployed-book failure).** Live cycle needs a restart to load
+      the new constants.
 - [x] §44 staged gate: rules → fomo scrape → crowd rules → LLM (handoff §44)
       (2026-08-30): `decision_pipeline.gate_candidate_staged()` sequences the
       decision per candidate — every cheap (non-crowd) rule first

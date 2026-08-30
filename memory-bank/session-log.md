@@ -1,3 +1,44 @@
+## Memory-bank update - 2026-08-30 (§45 equity-proportional live floor)
+
+- **Task**: operator reported "on the site there shows a token that it says
+  enter, yet there's no execution for it". Then directed the fix shape: "put
+  min compute ticket in ratio to equity — no matter what the equity is,
+  there's a formula to find out min compute ticket according to it", and
+  chose 10% (the most conservative of 3.5%/5%/10%).
+- **Diagnosis** (live-log forensics): TREE hit `think=buy gate=PASS` every
+  cycle since 15:07 (feed row journalled ENTER — that's what the dashboard
+  shows), then sizing refused: `ticket $0.4962 below live floor $0.50`. Cash
+  $3.3078 × TICKET_CASH_FRACTION 0.15 = $0.4962 < the hardcoded
+  `MIN_LIVE_TICKET_USD=0.50`. Two defects: (1) a FIXED floor can't adapt to
+  book size — any live book under ~$3.33 cash is structurally frozen out of
+  every entry in `SIZING_MODE="fixed"`; (2) the below-floor refusal
+  `continue`d WITHOUT an `outcome["entries"]` record (the daily-budget
+  refusal records one), and the ENTER feed row is journalled BEFORE sizing —
+  so the dashboard showed ENTER with nothing following it.
+- **Shipped**: `live_execution/config.py::min_live_ticket_usd(equity) =
+  max(MIN_LIVE_TICKET_ABS_FLOOR_USD=$0.10, equity ×
+  MIN_LIVE_TICKET_EQUITY_FRACTION=0.10)`. At-cost equity (cash + Σ open
+  position cost) — never price-dependent, never raises, fails closed to the
+  dust floor on None/NaN/inf/negative/non-numeric. ONE function drives the
+  `_live_cash_available` gate rule (detail shows floor + equity), the sizing
+  refusal, and the `compute_ticket`/`compute_risk_budget` floor threading —
+  the gate-vs-sizing threshold disagreement WAS the root cause. Sizing log
+  line now 4dp with equity. Legacy `MIN_LIVE_TICKET_USD=0.50` kept as a
+  documented historical constant; nothing in the trade path reads it.
+- **Verification**: 620 passing (468 backend + 152 live). New §45 suite:
+  formula at $5/$100/$1000, dust clamp, fail-closed inputs, incident
+  regression (equity $4.5864 → floor $0.4586 < ticket $0.4962 → places);
+  cash-rule tests rewritten for the dynamic floor (passes at $5 and at the
+  incident book; FAILS when over-deployed: $0.05 cash + $3.00 deployed →
+  floor $0.305 > cash); historical $0.50-threading cases kept verbatim (they
+  test mode-independent floor threading). Live sanity: formula computed
+  against the real wallet (equity 4.5863 → floor 0.4586, ticket 0.4962 →
+  places).
+- **Operator action required**: the RUNNING live cycle holds the old
+  constants in memory — `./stop.sh && ./start.sh` before TREE's next cycle
+  can place the real order.
+
+
 ## Memory-bank update - 2026-08-30 (§44 staged gate: rules → scrape → crowd rules → LLM)
 
 - **Task**: operator directive, cost-driven — "after the normal rules pass I

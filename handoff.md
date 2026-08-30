@@ -2,7 +2,7 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 615 passing (backend 464 + live_execution 151) + 8 Playwright E2E
+**Tests:** 620 passing (backend 468 + live_execution 152) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -2744,6 +2744,74 @@ really calls `data_providers.crowd`; cheap/crowd partition; plus a
 source-level assertion that `run_tick` gates before it thinks.
 `test_pipeline_parity.py`: the live cycle uses the staged gate and also gates
 before thinking.
+
+## 45. Equity-proportional live minimum ticket — fixes "ENTER but nothing executes" (2026-08-30)
+
+**The incident.** Operator report: "on the site there shows a token that it
+says enter, yet there's no execution for it." Live-log forensics: TREE passed
+the full staged gate every cycle (`think=buy gate=PASS`, feed row journalled
+ENTER), then sizing refused it — `TREE refused: ticket $0.50 below live floor
+$0.50`. The ticket was actually $0.4962 (`cash × 0.15`, cash $3.3078) and the
+hardcoded `MIN_LIVE_TICKET_USD = 0.50` blocked it. Two defects:
+
+1. **A fixed floor cannot adapt to book size.** With `SIZING_MODE="fixed"`,
+   any live book whose cash dips under ~$3.33 is structurally frozen out of
+   every entry — gate passes, sizing refuses, forever.
+2. **The refusal was invisible.** The below-floor refusal `continue`d
+   without an `outcome["entries"]` record (the daily-budget refusal records
+   one), violating "a skipped trade must be as visible as an executed one".
+   The ENTER feed row is journalled BEFORE sizing runs, so the dashboard kept
+   showing ENTER with nothing following it.
+
+**The §45 formula (operator decision: 10% of equity, the most conservative
+of the ratios considered).** Whatever the equity is, there is a formula for
+the minimum ticket:
+
+    min_live_ticket(equity) = max(MIN_LIVE_TICKET_ABS_FLOOR_USD,
+                                  equity × MIN_LIVE_TICKET_EQUITY_FRACTION)
+                            = max($0.10, at-cost equity × 0.10)
+
+- **at-cost equity** = `cash + Σ position_size_usd` — never price-dependent,
+  never raises, always derivable from the ledger;
+- equity ≤ 0 / unreadable fails closed to the $0.10 dust floor;
+- ONE definition in `live_execution/config.py::min_live_ticket_usd()`, used
+  by ALL THREE consumers — the `_live_cash_available` gate rule, the sizing
+  refusal, and the `compute_ticket`/`compute_risk_budget` floor threading —
+  so the gate and sizing can never disagree about the threshold again (that
+  disagreement was the root cause);
+- the paper side's `$25 MIN_TICKET_USD` is untouched (calibration-frozen);
+  the helper lives in `live_execution/`, so the isolation contract holds;
+- hardcoded, never env-settable, like every other risk number.
+
+**Behavior.** At the incident book ($3.31 cash + $1.28 deployed = $4.59
+at-cost equity) the floor is $0.4586, so the $0.4962 TREE ticket now places.
+As the book grows the floor grows with it ($100 book → $10 floor), enforcing
+that positions stay meaningful relative to the book; once more than ~⅓ of
+the book is deployed, new entries pause until cash recovers (10% ratio).
+
+**Files.** `live_execution/config.py` (formula + constants; the legacy
+`MIN_LIVE_TICKET_USD = 0.50` stays as a documented historical reference,
+nothing in the trade path reads it), `run_live_cycle.py`
+(`_live_cash_available` gates on the dynamic floor with the equity shown in
+the detail; sizing + risk_budget threading use `min_live_ticket_usd(eq)`;
+below-floor refusals now append `{"status": "refused", "reason": ...}` to
+`outcome["entries"]` and the log line carries ticket/floor/equity at 4dp so
+sub-cent refusals are never misread as equality).
+
+**Tests: 620 passing** (backend 468 + live_execution 152). New §45 suite in
+`backend/tests/test_live_ticket_floor.py`: the formula at $5/$100/$1000
+equity, dust clamp, fail-closed on None/NaN/inf/negative/non-numeric, and
+the incident regression (equity $4.5864 → floor $0.4586, the $0.4962 ticket
+clears). `test_live_cash_rule.py` rewritten for the dynamic floor: passes at
+$5; passes at the exact incident book with the computed floor + equity in
+the detail; FAILS when the book is over-deployed ($0.05 cash + $3.00
+deployed → floor $0.305 > cash). Historical $0.50-floor threading cases
+kept verbatim (they test `compute_ticket`/`compute_risk_budget` floor
+threading, which is mode-independent).
+
+**Operator action required:** the RUNNING live cycle holds the old constants
+in memory — restart it (`./stop.sh && ./start.sh`) for TREE's next cycle to
+place the real order.
 
 
 

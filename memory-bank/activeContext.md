@@ -1,9 +1,50 @@
 # Active Context — trading-bot
 
-**As of 2026-08-30 (§44 STAGED GATE — the decision cascade is now cheap rules → fomo scrape → crowd rules → LLM, per candidate, in `decision_pipeline.gate_candidate_staged`: a candidate that fails ANY cheap rule is never scraped and never costs an LLM call; rule-refused rows get the deterministic `template:rules-refused` write-up; brain still runs once per tick over the whole board; prompts unchanged; 615 tests green. Builds on §43: `RuleResult.evaluated` + `GateDecision.not_evaluated_rule_ids`, fail-closed on skips).**
+**As of 2026-08-30 (§45 EQUITY-PROPORTIONAL LIVE FLOOR — the "site says ENTER but nothing executes" incident is fixed: TREE passed the gate every cycle but the $0.4962 ticket (cash $3.31 × 0.15) was refused by the hardcoded $0.50 floor; the floor is now `min_live_ticket_usd(equity) = max($0.10, at-cost equity × 0.10)` — ONE formula driving the cash gate rule, the sizing refusal, AND the risk_budget floor threading, so gate and sizing can never disagree on the threshold again; at the $4.59 book the floor is $0.4586 and the ticket places; below-floor refusals now record in outcome["entries"] instead of vanishing; operator picked 10% (most conservative); 620 tests green. RESTART the live cycle to load it).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §45 equity-proportional live minimum ticket (2026-08-30)
+Incident: operator reported a token showing ENTER on the dashboard with no
+execution. Forensics from `logs/live_cycle.log`: TREE hit
+`think=buy gate=PASS` every cycle (feed row journalled ENTER), then sizing
+refused — `ticket $0.4962 below live floor $0.50` (cash $3.3078 × 0.15 vs the
+hardcoded `MIN_LIVE_TICKET_USD=0.50`). Two defects: (1) a FIXED floor cannot
+adapt to book size — in `SIZING_MODE="fixed"` any book with cash under ~$3.33
+is structurally frozen out of every entry; (2) the below-floor refusal
+`continue`d WITHOUT an `outcome["entries"]` record (the daily-budget refusal
+records one), violating "a skipped trade must be as visible as an executed
+one".
+
+Fix (operator decision: 10% of equity, most conservative of 3.5%/5%/10%):
+`live_execution/config.py::min_live_ticket_usd(equity) =
+max(MIN_LIVE_TICKET_ABS_FLOOR_USD=$0.10, equity ×
+MIN_LIVE_TICKET_EQUITY_FRACTION=0.10)`. At-cost equity = cash + Σ
+position_size_usd (never price-dependent, never raises; equity ≤ 0 /
+unreadable fails closed to the dust floor). ONE function now drives: the
+`_live_cash_available` gate rule (detail shows the computed floor + equity),
+the sizing refusal, and the `compute_ticket`/`compute_risk_budget` floor
+threading — the gate-vs-sizing threshold disagreement WAS the root cause.
+Paper $25 floor untouched (calibration-frozen); helper lives in
+`live_execution/` (isolation intact); hardcoded never-env-settable. The
+legacy `MIN_LIVE_TICKET_USD=0.50` stays as a documented historical constant —
+nothing in the trade path reads it. Sizing log line now 4dp
+(`ticket $0.4962 below live floor $0.4586 (equity $4.59)`) so sub-cent margins
+are never misread as equality.
+
+Behavior: floor grows with the book ($100 → $10), so positions stay
+meaningful relative to the book; once > ~⅓ deployed, new entries pause until
+cash recovers. 620 passing (backend 468 + live 152): §45 formula suite
+(scaling, dust clamp, fail-closed on None/NaN/inf/neg/non-numeric,
+incident regression equity $4.5864 → floor $0.4586 < ticket $0.4962),
+cash-rule rewrite (passes at $5 and at the incident book; FAILS when
+over-deployed: $0.05 cash + $3.00 deployed → floor $0.305 > cash), historical
+$0.50-threading cases kept (they test mode-independent floor threading).
+Docs: handoff §45, report §29 + header/totals. **Operator action: restart the
+live cycle (`./stop.sh && ./start.sh`) — the running process holds the old
+constants in memory.**
+
+## DONE (previous)
 ### §44 staged gate: rules → scrape → crowd rules → LLM (2026-08-30)
 Operator directive (cost, not cosmetics): the fomo scrape must happen only
 after the normal rules pass, then the crowd rules, then the LLM; if the first

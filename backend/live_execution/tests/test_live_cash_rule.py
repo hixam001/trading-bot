@@ -1,17 +1,17 @@
 """
-tests/test_live_cash_rule.py — micro-bootstrap gate parity (2026-08-28).
+tests/test_live_cash_rule.py — micro-bootstrap gate parity (2026-08-28),
+floor now §45 equity-proportional (2026-08-30).
 
 The paper `cash_available` rule checks cash against
 INTENDED_POSITION_SIZE_USD ($100 — sized for the $1,000 paper book). The live
-book starts from a few USDC (REF-R11 micro-bootstrap) and sizes from
-MIN_LIVE_TICKET_USD ($0.50), so the paper threshold refused EVERY live entry
-before sizing even ran (a $5 book could never buy anything that passed the
-other ten rules — "not working as intended").
+book starts from a few USDC (REF-R11 micro-bootstrap), so the paper threshold
+refused EVERY live entry before sizing even ran (a $5 book could never buy
+anything that passed the other ten rules — "not working as intended").
 
-run_live_cycle swaps in `_live_cash_available` (checks the live floor) via
-LIVE_ACTIVE_RULES; every other rule stays verbatim and the paper ACTIVE_RULES
-+ INTENDED_POSITION_SIZE_USD are untouched (calibration-frozen). These tests
-pin that contract.
+run_live_cycle swaps in `_live_cash_available` (checks the §45 floor:
+max($0.10, 10% of at-cost equity)) via LIVE_ACTIVE_RULES; every other rule
+stays verbatim and the paper ACTIVE_RULES + INTENDED_POSITION_SIZE_USD are
+untouched (calibration-frozen). These tests pin that contract.
 
 Hermetic: no network, no ledger, no DB — pure rule evaluation.
 """
@@ -82,25 +82,47 @@ def test_paper_cash_rule_unchanged():
 # --- the live cash rule ------------------------------------------------------
 
 def test_live_cash_rule_passes_at_micro_bootstrap_floor():
-    """$5 (and even $0.50) clears the live floor — the exact incident."""
+    """A few USDC clears the §45 equity-proportional floor — the exact
+    incident: $5 cash, no positions -> equity $5 -> floor $0.50 -> pass."""
     res = rlc._live_cash_available(
         _candidate(), PortfolioState(cash_usd=5.0), _regime())
     assert res.passed is True
     assert res.value == 5.0
     assert "live floor" in res.detail
+    assert "at-cost equity" in res.detail
 
-    at_floor = rlc._live_cash_available(
+
+def test_live_cash_rule_passes_at_the_incident_book():
+    """§45 regression: $3.31 cash + $1.28 deployed = $4.59 equity -> floor
+    $0.459 -> the gate that used to pass at a fixed $0.50 still passes, and
+    the detail shows the equity-derived floor for audit transparency."""
+    res = rlc._live_cash_available(
         _candidate(),
-        PortfolioState(cash_usd=live_config.MIN_LIVE_TICKET_USD), _regime())
-    assert at_floor.passed is True
+        PortfolioState(cash_usd=3.3078,
+                       open_positions=[_pos(1.2786)]),
+        _regime())
+    assert res.passed is True
+    assert "vs live floor $0.46" in res.detail
+    assert "at-cost equity $4.59" in res.detail
 
 
 def test_live_cash_rule_fails_below_floor():
+    # $0.30 cash, nothing deployed -> equity $0.30 -> floor $0.10 (dust);
+    # $0.30 >= $0.10 passes. To FAIL the cash rule the book must be nearly
+    # empty AND mostly deployed — e.g. $0.05 cash + $3.00 deployed ->
+    # equity $3.05 -> floor $0.305 > $0.05 cash -> fail (book is over-deployed).
     res = rlc._live_cash_available(
         _candidate(),
-        PortfolioState(cash_usd=live_config.MIN_LIVE_TICKET_USD - 0.01),
+        PortfolioState(cash_usd=0.05, open_positions=[_pos(3.00)]),
         _regime())
     assert res.passed is False
+    assert "vs live floor $0.30" in res.detail
+
+
+def _pos(cost_usd: float):
+    from models import Trade
+    return Trade(mint_address="MintBBBB22222222222222222222222222222222222",
+                 position_size_usd=cost_usd)
 
 
 # --- end-to-end through the gate --------------------------------------------
