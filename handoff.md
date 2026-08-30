@@ -51,6 +51,10 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 448 test
                                                         # (448 backend + 149 live; fully green while armed — §33 canary)
 cd frontend && npm run test:e2e                          # Playwright E2E: 5 tests vs the
                                                          # running backend on :8000 (§35)
+
+# Deploy (see docs/11_DEPLOYMENT.md for the full runbook):
+docker build -t trading-bot .                            # engine + dashboard, one image
+docker compose up -d --build                             # with persistent state volumes
 ```
 
 - Dashboard/API: http://localhost:8000 (single origin; backend serves the
@@ -63,7 +67,7 @@ cd frontend && npm run test:e2e                          # Playwright E2E: 5 tes
 
 | Path | Purpose |
 |---|---|
-| `backend/config.py` | ALL thresholds + safety flag + provider keys via env |
+| `backend/config.py` | ALL thresholds + safety flag + provider keys via env. Also owns the LIVE-STATE paths (`LIVE_STATE_DIR`, `BREAK_STATE_FILE`, `KILL_SWITCH_FILE`) — §42b: readers must resolve these per call, never hand-compose paths (a stale anchor silently forks a second state dir = a kill switch nothing reads) |
 | `backend/models.py` | Candidate (incl. `decimals`), Trade, FeedEvent, RuleResult, GateDecision, PortfolioState |
 | `backend/rule_engine/` | `rules.py` (11 reference-parity entry rules), `exits.py` (the reference exit engine: stop/trail/liquidity-break/invalidation/stale/TP-ladder + sell risk gate), `gate.py` (no-short-circuit AND), `regime.py`, `liveness.py` (not_on_break) |
 | `backend/data_providers/crowd.py` | fomo.fun board reader (Privy session, auto-renewing rotated refresh tokens) → feeds crowd_heat. Stealth fallback chain: firecrawl (forwards auth headers) → scrapingbee (keyless-only: platform consumes Authorization) → zenrows `custom_headers=true&premium_proxy=true` → scrapeops `keep_headers=true` — the last two carry the Privy bearer through Cloudflare (verified live). `_json_from_body` rejects only statusCode≥400 envelopes (prod-api sends statusCode:200 on success) |
@@ -78,7 +82,11 @@ cd frontend && npm run test:e2e                          # Playwright E2E: 5 tes
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
 | `backend/live_execution/` | REAL-MONEY execution package (moved INSIDE backend/ 2026-08-30 so the engine deploys as one module; the paper pipeline still never imports it — test-pinned). Fully wired: `backend/run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Wallet secrets: `WALLET_KEYPAIR_PATH` (file, preferred) or `WALLET_KEYPAIR_JSON` (env, in-memory) — deployment parity, still infrastructure-not-safety-flag. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI (from backend/): `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Deployment: `docs/11_DEPLOYMENT.md` + root `Dockerfile`. |
-| `live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
+| `Dockerfile` (root) | Multi-stage image for the WHOLE engine: Node stage builds the SPA → python-slim runtime, non-root user, `$PORT`-aware healthcheck, SPA baked at `/app/frontend/dist` (single-origin serving still works). Contains NO secrets/state (`.dockerignore`) |
+| `backend/docker-entrypoint.sh` | Container entrypoint: uvicorn ALWAYS; live cycle ONLY when the hardcoded ARM flag is True AND a wallet secret is configured (same double-gate as start.sh). Supervises both with `wait -n` and exits non-zero if either dies — an ARMED deployment must never serve a green dashboard over a dead decision cycle. Aborts if `APP_DIR` is missing. Pinned by `backend/tests/test_docker_entrypoint.py` (12 tests) |
+| `docker-compose.yml` | Local/VM parity run: named volumes for `backend/live_execution/state` (real-money state MUST persist) + the SQLite book, `env_file` for secrets |
+| `docs/11_DEPLOYMENT.md` | THE deployment runbook: hosting verdict (always-on VM + persistent disk for the engine; Vercel/CF Pages for the SPA; SQLite-on-volume or Supabase Free), secret runbook for both wallet channels, persistence rules, pre-flight checklist |
+| `backend/live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
 | `frontend/DESIGN.md` | the frontend design system: tokens, component anatomy, five required states, a11y criteria, anti-patterns, QA checklist. All UI work must conform |
 | `frontend/src/` | live-trading terminal (rebuilt §35): `lib/format.ts` (verbatim-value formatters, `—` for null), `components/ui.tsx` (Panel/Stat/Badge/Skeleton/Empty/ErrorState), `LiveBook` (headline real-money panel), `LiveFeed` (WS + REST-hydrated decision feed), `MarketRegimePanel`, `SystemStatus`; paper panels (stats/holdings/journal/gate) removed 2026-08-28 when the system went live |
 | `frontend/e2e/dashboard.spec.ts` | Playwright E2E (5 tests): zero console errors, all panels reach data/empty (never blank), feed expand/collapse + aria-expanded, keyboard operability, offline banner on API loss. `npm run test:e2e` (needs backend on :8000) |
@@ -607,6 +615,14 @@ and 14 above.
 
 ### Rejected or deferred — do not implement without approval
 
+> **⚠ SUPERSEDED (kept for history).** This block reflects the pre-arming
+> state. Current truth: REF-R10 live execution is IMPLEMENTED and this repo
+> is committed **ARMED** (§31/§33), the REF-R11 on-chain memo was
+> operator-approved and shipped (§26), and since §42 the engine is packaged
+> for deployment. The standing safety conditions below are restated
+> correctly in §1 and §42; `PAPER_TRADING_ONLY=True` still holds, but
+> `LIVE_TRADING_ENABLED` is now **True** by operator direction.
+
 - **Rejected:** on-chain memo commitments and reveal protocol. Local
   CommitLog sealing remains the chosen mechanism. *(Re-opened ONLY as planning
   item REF-R11 in §22 per the 2026-08-27 audit; still requires explicit operator
@@ -623,10 +639,39 @@ and 14 above.
 
 ### Standing safety conditions
 
-- `PAPER_TRADING_ONLY=True` and `LIVE_TRADING_ENABLED=False` remain hardcoded.
+*(As of §42: read these together with the superseded note above — the arming
+flag has since been flipped by the operator.)*
+
+- `PAPER_TRADING_ONLY=True` remains hardcoded (still true today).
+- `LIVE_TRADING_ENABLED=False` was the state when this was written; it is
+  **True** today (§33), still hardcoded and human-edit-only — no env bypass.
 - Deterministic rules, exits, cash guards, kill switches, and manual approval
   retain authority over every execution path.
 - No automatic threshold, prompt, model, or live-trading promotion changes.
+
+## Next steps (as of 2026-08-30, §42/§42b)
+
+The code queue is EMPTY. What remains is operator-side deployment, not code:
+
+1. **Provision the engine host** — an always-on box with a persistent disk
+   (Oracle Cloud Always Free fits the "free" requirement). Follow
+   `docs/11_DEPLOYMENT.md`: `docker build`, mount a volume at
+   `/app/backend/live_execution/state`, pass secrets via `--env-file` or a
+   mounted keypair, set `EXPECTED_WALLET_ADDRESS` and `ADMIN_TOKEN`.
+2. **Deploy the dashboard** (optional split) — Vercel/CF Pages with
+   `VITE_API_BASE_URL` pointed at the engine, and `FRONTEND_ORIGIN` on the
+   engine set to that domain. Or skip it: the image serves the SPA
+   same-origin.
+3. **First armed run on the host** — verify `/api/disclosure.json` reports
+   `armed: true` with a clear kill switch, confirm state files are being
+   written to the mounted volume, and keep the local instance stopped so two
+   armed cycles never share one wallet/ledger.
+4. **Docker build itself is unverified here** — this environment has no
+   Docker daemon. The entrypoint's gating logic is covered by 12 hermetic
+   tests, but the first `docker build` + boot should be watched by a human.
+
+Nothing in this list touches the safety model: arming stays a hardcoded,
+human-edited flag, and no wallet secret means no real-money cycle.
 
 ## 16. DB maintenance (2026-08-27)
 

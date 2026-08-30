@@ -1,11 +1,13 @@
 # 07 — Project Report
 
-**trading-bot** — a local, AI-assisted paper-trading research system for
-Solana memecoins. Report updated 2026-08-28 from the current main branch
-(§38: 20-rule security audit + hardening — token-gated operator endpoints,
-ingest size cap, security headers, CORS narrowed, file perms locked).
-Status: **live** (real market data,
-simulated funds; optional Supabase Postgres persistence).
+**trading-bot** — an AI-assisted trading research system for Solana
+memecoins, with a paper-trading pipeline and an operator-ARMED real-money
+execution package. Report updated 2026-08-30 from the current main branch
+(§42/§42b: deployable restructure — the engine is now ONE deployable module
+(`backend/`, Docker-packaged) with a separately deployable static dashboard;
+env-resolvable wallet secrets; live-state paths unified in config; container
+entrypoint hardened). Status: **live** (real market data, REAL funds ARMED;
+optional Supabase Postgres persistence).
 **Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
 risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
 precommit memo, commit–reveal) + micro-bootstrap implemented 2026-08-27
@@ -33,8 +35,9 @@ floor instead of the paper book's $100), both live-verified ARMED. The
 frontend was rebuilt on a real design system the same day (handoff §35 —
 token-based terminal, shared primitives, Playwright E2E) and a latent
 STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
-at the repo root).** Tests: **501 backend + 5 Playwright E2E — fully green
-(the flag-state canary pins the committed ARMED state — handoff §33).**
+at the repo root).** Tests: **597 passing (448 backend + 149 live_execution)
++ 8 Playwright E2E — fully green (the flag-state canary pins the committed
+ARMED state — handoff §33).**
 
 ---
 
@@ -351,19 +354,38 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 
 ## 10. Safety invariants (non-negotiable)
 
-1. The paper backend contains no real execution path, wallet, or transaction
-  construction. Real execution is isolated in root `live_execution/`, which
-  remains hard-disabled by `LIVE_TRADING_ENABLED = False`.
+1. The paper pipeline contains no real execution path, wallet, or transaction
+   construction. Real execution is isolated in `backend/live_execution/` (a
+   sibling package inside the deployable module since §42; the paper pipeline
+   never imports it — test-pinned), gated by hardcoded, human-edit-only
+   `LIVE_TRADING_ENABLED` / `REQUIRE_MANUAL_CONFIRMATION` flags with no env
+   bypass. This repo ships ARMED by explicit operator direction (§33).
 2. `PAPER_TRADING_ONLY = True` hardcoded + runtime-asserted in every
    position-opening function.
 3. `promotion_gate.py` is read-only; no "promote"/"activate" can exist.
 4. Fail-closed everywhere: unknown data skips/rejects, never guesses.
 5. Atomicity pattern on all money-touching state changes (see §5).
 6. Every rejection logged at the same detail level as acceptances.
+7. **Wallet secrets are infrastructure, never an arming path** (§42): the
+   keypair resolves from `WALLET_KEYPAIR_PATH` (mounted file, preferred) or
+   `WALLET_KEYPAIR_JSON` (in-memory env channel for file-less hosts), with
+   neither set failing closed. `EXPECTED_WALLET_ADDRESS` pins identity on
+   both channels; keypair material is never written to disk or logged.
+8. **One live-state directory, one truth** (§42b): every live-state path
+   (kill switch, breaker, idempotency ledger, commit log, operator break)
+   resolves from config (`LIVE_STATE_DIR` / `BREAK_STATE_FILE` /
+   `KILL_SWITCH_FILE`, and the package's `STATE_DIR`) and is read per call.
+   Hand-composed paths are forbidden: a stale anchor does not raise, it
+   silently forks a second state directory — an operator-tripped kill switch
+   nothing reads. Persistence of that directory is mandatory on any host.
+9. **Deployment cannot silently arm or silently stop trading**: the container
+   entrypoint starts the live cycle only when the ARM flag is True AND a
+   wallet secret is configured, and exits non-zero if either the API or the
+   live cycle dies (no green dashboard over a dead decision cycle).
 
 ## 11. Testing & verification
 
-**290 backend tests passing** (<2s, fully hermetic): both branches of all
+**Historical snapshot (2026-08-26, 290 backend tests):** both branches of all
 ten rules; regime incl. empty batch; money math known-correct values +
 raise-on-invalid; atomicity (double-open/double-close/crash-replay/
 scale-cap/flag assert); API shape+pagination on seeded DBs; end-to-end mock
@@ -388,9 +410,10 @@ single-timeout transient, success resets streak, firecrawl transport error
 fails soft + benches, direct-get retries transport once but never a 403,
 stealth timeout == 25s reference budget, ScrapingDog custom_headers forwards
 the Privy bearer).
-48 live_execution tests (**338 combined** via root pytest.ini). The live
-execution bridge is wired
-and remains disarmed; its offline/mock flow covers execution guards, Jupiter
+48 live_execution tests (**338 combined** via root pytest.ini, as of that
+snapshot). The live execution bridge is wired
+and — at the time of that snapshot — disarmed; its offline/mock flow covers
+execution guards, Jupiter
 request shapes, confirmation, ledger recording, and commit binding.
 Live-verified separately: providers
 against real APIs, Supabase Postgres backend (full atomicity smoke + uvicorn
@@ -398,18 +421,55 @@ boot serving PG data), stealth-chain header forwarding returning real fomo
 board data, commit-reveal hashes of the reference system recomputed
 byte-for-byte, one-click launcher start/stop cycle.
 
+**Current totals (2026-08-30): 597 passing — 448 backend + 149
+live_execution** (`.venv/bin/python -m pytest -q` from the repo root;
+`testpaths = backend/tests backend/live_execution/tests`). The suite is
+hermetic by construction: `backend/conftest.py` forces `DATA_BACKEND=mock`,
+its own tmp databases, AND (since §42b) a tmp live-state directory — before
+that fixture existed the suite read the operator's REAL break state, so
+`not_on_break` and every tick/gate/churn/risk-budget test behind it failed
+whenever the live bot happened to be on a break. Deployment-specific suites
+added in §42/§42b:
+- `live_execution/tests/test_wallet_secrets.py` (11): both secret channels,
+  path-wins precedence, identity pin on the env channel, fail-closed
+  refusals, material never written to disk, log-redactor unit + root-logger
+  integration.
+- `backend/tests/test_state_path_colocation.py` (6): shipped defaults
+  co-locate break state, kill switch and package `STATE_DIR` in
+  `backend/live_execution/state/`; readers resolve config per call; a
+  codebase-wide guard forbids `BASE_DIR.parent` live-state anchors.
+- `backend/tests/test_docker_entrypoint.py` (12): the entrypoint's live-money
+  gate, exercised with stub `python`/`uvicorn` on PATH — API always starts,
+  `$PORT` honoured, armed-without-wallet and disarmed-with-wallet stay
+  read-only, a configured-but-missing keypair file does not count as a
+  wallet, both wallet channels arm, either-half crash exits non-zero, and a
+  missing `APP_DIR` aborts instead of starting in the wrong directory.
+
 ## 12. Current status
 
-- **Live calibration window: day 0–1.** Real candidates evaluated each
-  tick; entries occur only when rules AND regime pass. Persistence:
-  Supabase Postgres active (USE_SUPABASE_DB=1); fresh $1,000 book there;
-  legacy SQLite book retained locally as fallback.
+- **Deployable as of 2026-08-30 (§42/§42b).** The engine is one module
+  (`backend/`: paper pipeline + `live_execution/` + `run_live_cycle.py`),
+  Docker-packaged with a hardened entrypoint; the dashboard deploys
+  separately as a static SPA or is served same-origin by the engine.
+  Recommended free topology (runbook: `docs/11_DEPLOYMENT.md`): always-on VM
+  with a persistent disk for the engine, Vercel/Cloudflare Pages for the
+  dashboard, SQLite-on-volume or Supabase Free Postgres for the book.
+  Wallet secrets resolve from a mounted file or the env JSON channel, both
+  fail-closed and identity-pinned.
+- **Live and ARMED** (`LIVE_TRADING_ENABLED=True`,
+  `REQUIRE_MANUAL_CONFIRMATION=False`, committed by operator direction —
+  handoff §33). Real candidates evaluated each tick; entries require every
+  deterministic rule AND the model's buy verdict. Persistence: Supabase
+  Postgres active (USE_SUPABASE_DB=1); legacy SQLite book retained locally
+  as fallback.
 - Known limitations: Birdeye free tier lacks token_security (fields remain
   unknown); ScrapingBee stealth fallback is keyless-only; ZenRows premium
   tier costs ~10–25 credits/request; regime thresholds are placeholders
-  pending calibration data; partial scaling (E8/E9), advisory LLM layer
-  (D7), and the commit-reveal proof (appendix) are deliberately
-  post-calibration scope.
+  pending calibration data; partial scaling (E8/E9) and the advisory LLM
+  layer (D7) are deliberately post-calibration scope. Deployment itself is
+  verified locally (Docker build not executed in this environment — no
+  Docker daemon available here; the entrypoint's gating logic is covered by
+  12 hermetic tests).
 
 ## 13. REF-R5 memory and events
 
@@ -496,9 +556,9 @@ All seven approved Reference parity items are now implemented:
 | REF-R7 | Retro audit-log signature matching | ✅ | `retro_matcher.py`, `db.py` `bind_commit_signature` |
 | REF-R8 | Drawdown-adaptive risk budget | ✅ | `paper_trading_engine.py` `compute_risk_budget` (2026-08-27) |
 | REF-R9 | Closed-loop conviction factor | ✅ | `calibration.py`, `patch_daily_stats` (2026-08-27) |
-| REF-R11 | On-chain precommit memo (commit–reveal) | ✅ | `live_execution/memo.py`, `proof.py` `/api/verify.json` memo checks (2026-08-27) |
+| REF-R11 | On-chain precommit memo (commit–reveal) | ✅ | `backend/live_execution/memo.py`, `proof.py` `/api/verify.json` memo checks (2026-08-27) |
 | A11 | Thesis re-authoring (omo audit re-read) | ✅ | `thesis_restate.py`, `db.py`/`db_pg.py` `get_open_theses/update_thesis_text` (2026-08-27) |
-| REF-R10 | Live execution (promotion path) | ⏸ deferred-by-design | operator's final manual task (handoff §27) |
+| REF-R10 | Live execution (promotion path) | ✅ ARMED | devnet drill 5/5 then operator-directed arming (handoff §31/§33); packaged for deployment as one module (§42) |
 
 ### REF-R4 bug fix (2026-08-26)
 
@@ -1375,3 +1435,124 @@ fill minutes later proving the book healthy end-to-end).
 **Verification:** +6 tests → **568 passing** (`test_ledger_full_close.py`:
 proceeds realization + breaker skip, multi-buy summed cost, typo'd-mint
 refusal, other-mints untouched, idempotent second call).
+
+## 26. Deployable restructure: single-module engine, Docker, env wallet secrets (2026-08-30, handoff §42)
+
+Operator goal: make the repo deployable, preferably starting on free
+services, with a clean frontend/backend split and live execution living
+inside the backend so the engine is one self-contained module.
+
+### Hosting verdict (why not just Vercel)
+
+The engine is a long-running stateful daemon: a ~60s decision cycle, a 15s
+exit scan, a WebSocket feed, and real-money state files. Serverless request
+handlers cannot host that (Vercel Hobby functions are request-scoped, capped
+at 300s, with an ephemeral filesystem), and free PaaS web services sleep on
+idle — a sleeping bot misses exit scans on real money. Free tiers were also
+disqualified for state: `live_execution/state/` holds the kill switch,
+daily-loss breaker, idempotency ledger and commit log; on an ephemeral
+filesystem a vanished kill-switch file reads as "clear" and a vanished
+ledger weakens replay protection. Recommendation recorded in
+`docs/11_DEPLOYMENT.md`: an always-on VM with a persistent disk for the
+engine (Oracle Cloud Always Free fits), Vercel/Cloudflare Pages for the
+static dashboard, SQLite-on-volume or Supabase Free Postgres for the book.
+Single-origin deployment remains supported — the image bakes the built SPA
+in, so one URL and zero CORS is still an option.
+
+### Layout
+
+`live_execution/` moved INSIDE `backend/`, and `run_live_cycle.py` with it
+(git mv, history preserved). The isolation contract is re-stated, not
+abandoned: the PAPER pipeline (`main.py`, `paper_trading_engine.py`,
+`decision_pipeline.py`, `rule_engine/`, `data_providers/`, `llm/`) still
+never imports `live_execution` — pinned by `test_decision_pipeline.py`'s
+source scan — and `PAPER_TRADING_ONLY = True` stays hardcoded and
+runtime-asserted. What changed is placement: one `sys.path` root
+(`backend/`), so every cross-package path hack is gone (`jupiter_executor`,
+`solana._usdc_mint`, `executor.raw_units`, the operator scripts,
+`run_live_cycle`, and `api/main.py`'s `_REPO_ROOT` insert). `conftest.py`
+now puts `backend/` on `sys.path` deterministically instead of relying on
+import-order side effects, and `pytest.ini` points at
+`backend/tests backend/live_execution/tests`.
+
+### Packaging
+
+- Root `Dockerfile`: multi-stage (Node builds the SPA → python-slim runtime),
+  non-root user, `$PORT`-aware health check, SPA at `/app/frontend/dist`.
+- `backend/docker-entrypoint.sh`: starts uvicorn always; starts the live
+  cycle ONLY when the hardcoded ARM flag is True AND a wallet secret is
+  configured — the same double-gate `start.sh` enforces, so "no wallet, no
+  real money" holds in a container too.
+- `docker-compose.yml`: named volumes for `live_execution/state` and the
+  SQLite book, `env_file` for secrets.
+- `.dockerignore`: the image contains no `.env`, no keypair, no state, no
+  runtime sidecars (`blocklist_state.json`, `*.corrupt`, `*.bak-dust`).
+- `solders` finally pinned in `requirements.txt` — it was installed locally
+  but unlisted, so a fresh deploy would have crashed on the first wallet
+  load.
+
+### Wallet secrets (operator requirement: resolvable via env)
+
+`live_execution/wallet.py` resolves the keypair fail-closed in this order:
+explicit path argument → `WALLET_KEYPAIR_PATH` (a mounted, chmod-600 file;
+PREFERRED, because the material never appears in `docker inspect` or process
+env) → `WALLET_KEYPAIR_JSON` (the JSON byte array straight from the
+environment, for hosts that cannot mount files; parsed in memory, never
+written to disk) → `WalletError` ("no wallet configured"). Both channels
+share one validation path (exactly 64 ints, 0–255) and both enforce the
+`EXPECTED_WALLET_ADDRESS` identity pin. A `_KeypairRedactor` log filter (the
+same idempotent-filter pattern as the API-key redactor in `crowd.py`) masks
+any accidentally-logged 64-int array. These are INFRASTRUCTURE knobs like
+`SOLANA_RPC_URL`: there is still no environment path to arming.
+
+### Frontend split
+
+`VITE_API_BASE_URL` (empty = same-origin, unchanged local behaviour) routes
+REST and WebSocket traffic via a new `src/lib/api.ts`; the backend's
+`FRONTEND_ORIGIN` now accepts a comma-separated origin list. Nothing secret
+may ever live in a `VITE_*` variable — those are inlined into the public
+bundle.
+
+### §42b — live-state paths and entrypoint defects (same session)
+
+Two paper-side readers still composed live-state paths off
+`config.BASE_DIR.parent` (the OLD repo root): `rule_engine/liveness.py`
+(break state) and `api/routes/disclosure.py` (kill switch). A stale anchor
+does not raise — the running live cycle simply RECREATED
+`live_execution/state/` at the old path, so break state and the kill switch
+could live in different directories. The first fix repointed both, which was
+insufficient: the defect was hand-composed paths in every reader. Root-cause
+fix: `config` owns `LIVE_STATE_DIR`, `BREAK_STATE_FILE` and
+`KILL_SWITCH_FILE` (env-overridable, defaults inside
+`backend/live_execution/state/`), and both readers resolve them PER CALL —
+the pattern `blocklist._path()` already used.
+
+That indirection exposed a second, worse bug: the **test suite had been
+reading the operator's real break state**, so `not_on_break` and every
+tick/gate/churn/risk-budget test behind it went red the moment the live bot
+took a break (6 failures), and a test could in principle have written to
+live state. `backend/conftest.py` now retargets all three live-state paths
+to a tmp directory (session-scoped autouse).
+
+Writing the entrypoint's tests found four more defects, all deploy-fatal or
+silently unsafe: (1) **no shebang** — with `ENTRYPOINT
+["/app/docker-entrypoint.sh"]` the kernel refuses to exec it, so the image
+would not have booted at all; (2) `cd "$APP_DIR"` unchecked — a wrong image
+layout would continue and start uvicorn from `/`, loading the wrong config
+and writing state to the wrong place (now a FATAL non-zero abort, with
+`APP_DIR` overridable for tests); (3) `wait "$API_PID"` only — a crashed
+live cycle left the container up and healthy, i.e. an ARMED deployment
+silently not trading while every health check stayed green (now `wait -n`
+supervises both halves and exits non-zero so the platform restarts the
+engine); (4) the health check hardcoded port 8000 while the app honours
+`$PORT`.
+
+### Verification
+
+**597 passing** (448 backend + 149 live_execution) — see §11 for the three
+new deployment suites. Frontend build clean (tsc + vite, 44 modules).
+Engine restarted on the new layout and verified live: the stale state
+directory stays gone, all writes land in `backend/live_execution/state/`,
+and `/api/system-status`, `/api/live/portfolio`, `/api/live/executions`,
+`/api/disclosure.json` and `/api/feed` all return 200 with disclosure
+reporting `armed: true` and a clear kill switch.

@@ -47,6 +47,17 @@ backend/live_execution/state/, endpoints 200, disclosure armed=true with a
 clear kill switch. 597 passing (448 backend + 149 live: +11 wallet-secrets,
 +6 state-path co-location, +12 docker-entrypoint).
 
+## NEXT (operator-side, no code)
+Deployment only — the code queue is empty. See handoff "Next steps":
+provision an always-on host with a persistent volume for
+`backend/live_execution/state`, build the image, pass secrets at runtime
+(mounted keypair or `WALLET_KEYPAIR_JSON`), set `EXPECTED_WALLET_ADDRESS` +
+`ADMIN_TOKEN`, optionally deploy the SPA to Vercel/CF Pages with
+`VITE_API_BASE_URL`, then confirm `/api/disclosure.json` shows `armed: true`
+with a clear kill switch and stop the local cycle so two armed instances
+never share one wallet/ledger. `docker build` is unverified in this
+environment (no Docker daemon) — watch the first build/boot.
+
 ## DONE (previous)
 ### §41 out-of-band sell repair: close_out_of_band + repair_vanished CLI (2026-08-29)
 ### §41 out-of-band sell repair: close_out_of_band + repair_vanished CLI (2026-08-29)

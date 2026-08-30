@@ -279,14 +279,34 @@
       shadow-replay-gated 8/8); Groq remains the rollback main provider and
       powers the evidence-only social reads. Usage/outcome accounting,
       shadow replay, and canary gates are implemented.
-- Live execution is wired (now incl. the REF-R11 on-chain commit memo) but
-      remains DISARMED; no mainnet execution is authorized. Arming is the
-      operator's FINAL task (handoff §27): fund wallet (0.03 SOL + $3–5 USDC) →
-      funded throwaway-keypair devnet drill (incl. memo step) → hand-flip the two
-      hardcoded flags. No session may arm before every other task is done.
+- Live execution is fully wired (incl. the REF-R11 on-chain commit memo) and
+      this repo is committed **ARMED** (§31/§33: devnet drill 5/5, then the
+      operator's own hand-edit + explicit direction). Arming remains hardcoded
+      and human-edit-only — no env bypass. Since §42 the engine is packaged
+      for deployment (Docker + entrypoint double-gate: ARM flag AND a wallet
+      secret), with wallet secrets resolvable from a mounted file or the env
+      JSON channel, both fail-closed and identity-pinned.
+      *(This bullet previously said DISARMED / arming-is-the-final-task —
+      superseded on 2026-08-28.)*
 
 ## Status
-**As of 2026-08-29 (§39): roadmap items #1/#3/#6 shipped — security_clear is
+**As of 2026-08-30 (§42/§42b): the repo is DEPLOYABLE.** `live_execution/`
+and `run_live_cycle.py` moved inside `backend/`, so the engine is one
+Docker-packaged module (entrypoint starts the live cycle only when armed AND
+a wallet secret is configured, and exits non-zero if either half dies); the
+dashboard deploys separately via `VITE_API_BASE_URL` or is served
+same-origin. Wallet secrets resolve via `WALLET_KEYPAIR_PATH` (preferred) or
+`WALLET_KEYPAIR_JSON` (in-memory), fail-closed, identity-pinned, redacted
+from logs. §42b made `config` the single source of truth for live-state
+paths after finding that two readers composed them off the old repo root —
+which also revealed the suite had been reading the operator's REAL break
+state (now a tmp dir, hermetic). Four entrypoint defects fixed (missing
+shebang = image could not exec, unchecked `cd`, single-process `wait`,
+hardcoded health port). **597 tests green (448 backend + 149
+live_execution)**; engine restarted and verified on the new layout, all
+endpoints 200, disclosure `armed: true` with a clear kill switch. Remaining
+work is operator-side deployment only — `docs/11_DEPLOYMENT.md`.
+Previous status (§39): roadmap items #1/#3/#6 shipped — security_clear is
 the live 10th gate rule (KNOWN-bad-only), crowd heat discounts dumped thesis
 authors (`FOMO_DUMPED_THESIS_WEIGHT`), and the paper + live pipelines run the
 same read/think/gate core (`backend/decision_pipeline.py`; three live-side
