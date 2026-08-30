@@ -3,25 +3,30 @@
 ## Stack
 - Python 3.14 (system) + `.venv/` at repo root; deps in backend/requirements.txt
   (fastapi, uvicorn[standard], httpx, aiosqlite, asyncpg, python-dotenv,
-  pytest, pytest-asyncio)
+  solders (Solana signing — live_execution), pytest, pytest-asyncio)
 - DB: SQLite via aiosqlite (WAL; backend/trading_bot.db) — DEFAULT — OR
   Supabase Postgres via asyncpg (USE_SUPABASE_DB=1 + SUPABASE_DB_URL;
   schema migrations/supabase/001_init.sql; TLS fingerprint-pinned)
 - Node 26 + Vite/React 18/TypeScript/Tailwind 3 (frontend/)
-- Ollama + qwen3:8b (local; narration; think mode disabled)
+- LLM: DeepSeek/Groq cloud APIs only — Ollama RETIRED 2026-08-28, nothing
+  local runs
 
 ## Layout
-backend/ (all Python; run commands from inside it) · frontend/ · docs/ ·
-memory-bank/ · handoff.md · start.sh / stop.sh / trading-bot.desktop ·
+backend/ (all Python; THE deployable module — paper pipeline + live_execution/
+subpackage + run_live_cycle.py; run commands from inside it) · frontend/
+(deployable to Vercel/CF Pages) · Dockerfile + docker-compose.yml +
+.dockerignore (root) · backend/docker-entrypoint.sh · docs/ (…,
+11_DEPLOYMENT.md) · memory-bank/ · handoff.md · start.sh / stop.sh ·
 .env (root, GITIGNORED — real API keys live here only)
 
 ## Commands
 - One click: ./start.sh | ./stop.sh
-- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (145, <2s)
-- All suites from repo root: .venv/bin/python -m pytest -q  (193 = 145 backend
-  + 48 live_execution; root pytest.ini sets asyncio_mode=auto)
+- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (434, ~5s)
+- All suites from repo root: .venv/bin/python -m pytest -q  (583 = 434 backend
+  + 149 live_execution; root pytest.ini sets asyncio_mode=auto)
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
 - KB ingest: cd backend && ../.venv/bin/python scripts/ingest_directory.py <dir>
+- Deploy (Docker/VM): docker build -t trading-bot . && see docs/11_DEPLOYMENT.md
 
 ## External services & keys (in .env)
 - Birdeye (BIRDEYE_API_KEY, X-API-KEY header) — REQUIRED for DATA_BACKEND=live;

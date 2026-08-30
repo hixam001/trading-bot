@@ -1,7 +1,9 @@
 """
 live_execution/scripts/confirm_trade.py — operator CLI for the human side of
-the safety model. Run from the repo root:
+the safety model. Run from backend/ (the package is inside the deployable
+module now):
 
+    cd backend
     python -m live_execution.scripts.confirm_trade list
     python -m live_execution.scripts.confirm_trade approve <id>
     python -m live_execution.scripts.confirm_trade deny <id>

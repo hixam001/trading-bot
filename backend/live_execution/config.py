@@ -36,8 +36,14 @@ REQUIRE_MANUAL_CONFIRMATION: bool = False
 # Operator infrastructure (NOT safety flags — arming still requires the
 # hardcoded master switch above plus manual confirmation per trade).
 # ---------------------------------------------------------------------------
-# Local JSON keypair file (solders Keypair.from_json). Never commit it.
+# Wallet secret resolution (INFRASTRUCTURE, not a safety flag — arming still
+# requires the hardcoded master switches above). Two channels; set exactly
+# one. WALLET_KEYPAIR_PATH wins when both are set (a mounted secret file is
+# the safer channel); WALLET_KEYPAIR_JSON exists for hosts that cannot mount
+# files (its material is parsed in-memory, never written to disk, never
+# logged). Neither set → wallet load fails closed → nothing real-money starts.
 WALLET_KEYPAIR_PATH: str = os.getenv("WALLET_KEYPAIR_PATH", "")
+WALLET_KEYPAIR_JSON: str = os.getenv("WALLET_KEYPAIR_JSON", "")
 
 # RPC for sendTransaction + confirmation polling. Public endpoint works but
 # rate-limits hard; set SOLANA_RPC_URL to a paid RPC for real use.

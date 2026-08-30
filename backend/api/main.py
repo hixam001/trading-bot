@@ -16,7 +16,6 @@ import asyncio
 import contextlib
 import logging
 import os
-import sys
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -25,13 +24,10 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 
-# The repo ROOT on sys.path so the sanctioned function-local optional imports
-# of live_execution (proof.py, disclosure.py, live_book.py) can resolve when
-# the app runs from inside backend/. Optional only — a paper-only checkout
-# still boots (the imports stay try/except ImportError at every call site).
-_REPO_ROOT = str(config.BASE_DIR.parent)
-if _REPO_ROOT not in sys.path:
-    sys.path.insert(0, _REPO_ROOT)
+# live_execution is a sibling package inside backend/ (single deployable
+# module), so the sanctioned function-local optional imports of live_execution
+# (proof.py, disclosure.py, live_book.py) resolve natively. They stay
+# try/except ImportError at every call site: a paper-only checkout still boots.
 from api.routes import (
     feed,
     holdings,
@@ -75,7 +71,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="trading-bot", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[config.FRONTEND_ORIGIN],
+    # Split deployments (dashboard on Vercel, API elsewhere) may need more
+    # than one origin: FRONTEND_ORIGIN accepts a comma-separated list.
+    allow_origins=config.FRONTEND_ORIGINS,
     # §38 F6: only the verbs/headers the dashboard actually uses.
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type"],

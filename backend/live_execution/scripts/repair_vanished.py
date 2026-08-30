@@ -38,9 +38,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent.parent.parent
-BACKEND = ROOT / "backend"
-for p in (str(BACKEND), str(ROOT)):
+ROOT = Path(__file__).resolve().parent.parent.parent   # backend/ (package home)
+for p in (str(ROOT),):
     if p not in sys.path:
         sys.path.insert(0, p)
 

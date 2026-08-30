@@ -1,8 +1,9 @@
-**Last updated:** 2026-08-28 · **Branch:** main · **Status:** LIVE
-(real market data, simulated funds; Supabase Postgres persistence active) ·
-**App:** http://localhost:8000
-**Tests:** 516 backend/live_execution passing + 8 Playwright E2E (suite
-fully green; the flag-state canary now pins the committed ARMED state — §33)
+**Last updated:** 2026-08-30 · **Branch:** main · **Status:** LIVE
+(real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
+**App:** http://localhost:8000 · **Deployable:** single-module `backend/`
+engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
+**Tests:** 583 passing (backend 434 + live_execution 149) + 8 Playwright E2E
+(suite fully green; the flag-state canary pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
@@ -27,14 +28,16 @@ and visible in a React dashboard served by the backend itself.
 **Non-negotiable:** the paper-trading pipeline (`backend/`) is paper only —
 no wallet, no transaction construction anywhere there.
 `PAPER_TRADING_ONLY = True` is hardcoded in `backend/config.py` and
-runtime-asserted inside every position-opening function. The separate
-`live_execution/` package at the repo ROOT (never imported by backend/) is
-the only real-execution code. **Since 2026-08-28 it is committed ARMED**
-(`LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False`) by
+runtime-asserted inside every position-opening function. The
+`live_execution/` package — moved INSIDE `backend/` on 2026-08-30 (§42) so
+the engine deploys as ONE module — is the only real-execution code; the
+paper pipeline still never imports it (test-pinned). **Since 2026-08-28 it
+is committed ARMED** (`LIVE_TRADING_ENABLED = True`,
+`REQUIRE_MANUAL_CONFIRMATION = False`) by
 explicit operator direction after the §27 devnet drill passed 5/5 (§31/§33);
 kill switch + daily-loss breaker + caps + identity pin all remain active.
 The flags stay human-edit-only (no env bypass). If a task ever
-seems to require real execution inside backend/ — stop and flag it.
+seems to require real execution in the paper pipeline — stop and flag it.
 
 ## 2. How to run / stop / test
 
@@ -43,9 +46,9 @@ seems to require real execution inside backend/ — stop and flag it.
                   # :8000 (serves dashboard), opens browser. Idempotent.
                   # No local model: LLM = DeepSeek/Groq cloud APIs via .env.
 ./stop.sh         # stops the backend (+ tick loop)
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 385 tests
-.venv/bin/python -m pytest -q                           # full suite: 501 tests, ~2s
-                                                         # (fully green while armed — §33 canary)
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 434 tests
+.venv/bin/python -m pytest -q                           # full suite: 583 tests, ~6s
+                                                        # (434 backend + 149 live; fully green while armed — §33 canary)
 cd frontend && npm run test:e2e                          # Playwright E2E: 5 tests vs the
                                                          # running backend on :8000 (§35)
 ```
@@ -74,7 +77,7 @@ cd frontend && npm run test:e2e                          # Playwright E2E: 5 tes
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
-| `live_execution/` | REAL-MONEY execution package at repo ROOT (never imported by backend/). Fully wired: `run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI: `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. |
+| `backend/live_execution/` | REAL-MONEY execution package (moved INSIDE backend/ 2026-08-30 so the engine deploys as one module; the paper pipeline still never imports it — test-pinned). Fully wired: `backend/run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Wallet secrets: `WALLET_KEYPAIR_PATH` (file, preferred) or `WALLET_KEYPAIR_JSON` (env, in-memory) — deployment parity, still infrastructure-not-safety-flag. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI (from backend/): `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Deployment: `docs/11_DEPLOYMENT.md` + root `Dockerfile`. |
 | `live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
 | `frontend/DESIGN.md` | the frontend design system: tokens, component anatomy, five required states, a11y criteria, anti-patterns, QA checklist. All UI work must conform |
 | `frontend/src/` | live-trading terminal (rebuilt §35): `lib/format.ts` (verbatim-value formatters, `—` for null), `components/ui.tsx` (Panel/Stat/Badge/Skeleton/Empty/ErrorState), `LiveBook` (headline real-money panel), `LiveFeed` (WS + REST-hydrated decision feed), `MarketRegimePanel`, `SystemStatus`; paper panels (stats/holdings/journal/gate) removed 2026-08-28 when the system went live |
@@ -314,8 +317,8 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
   (place_order buy+sell with unarmed/blocked/failed/filled statuses, price-
   impact floor 2.5%%, SOL reserve, daily deploy cap $300, idempotent buys,
   pro-rata ledger.reduce_position for TP trims), wallet address verification.
-- **run_live_cycle.py** (ROOT): autonomous manage->read->think->gate->execute
-  bridge; backend never imports live_execution (isolation intact).
+- **run_live_cycle.py** (backend/ since §42): autonomous manage->read->think->gate->execute
+  bridge; the paper pipeline never imports live_execution (isolation intact, test-pinned).
 - **LLM**: OLLAMA_NUM_PREDICT knob (512 default) wired into thinker+narrator.
 - Tests: 202 passing (7 new: executor guards, ledger sell math, research
   aggregation, discovery composition). Live UNARMED cycle smoke-tested.
@@ -2408,6 +2411,84 @@ proving the book is healthy end-to-end.
 with-proceeds realization incl. note forensics + realized_pnl_today,
 honest None-proceeds skipped by the breaker, multi-buy summed cost,
 typo'd-mint refusal, other-mints untouched, idempotent second call).
+
+## 42. Deployable restructure: live execution INTO backend/ + Docker + env wallet secrets (2026-08-30)
+
+Operator-directed (plan approved in-session, then executed): make the repo
+deployable to free hosting with the engine as ONE deployable module. Layout
+change: `live_execution/` moved INSIDE `backend/` (git mv, history preserved)
+and `run_live_cycle.py` → `backend/run_live_cycle.py`. The isolation contract
+is re-stated, not abandoned: the PAPER pipeline (main.py,
+paper_trading_engine.py, decision_pipeline.py, rule_engine/,
+data_providers/, llm/) still never imports live_execution — test-pinned
+(`test_decision_pipeline.py` source scan) — and `PAPER_TRADING_ONLY=True`
+stays hardcoded + runtime-asserted. What changed is placement: one sys.path
+root (backend/), all cross-package sys.path juggling removed
+(jupiter_executor, solana, executor.raw_units, repair_vanished,
+run_live_cycle, api/main.py's `_REPO_ROOT`); `disclosure.py` kill-switch path
+is now `BASE_DIR/live_execution/state/...`. conftest.py rewritten to put
+backend/ on sys.path deterministically; pytest.ini testpaths updated.
+
+Deployment artifacts: root `Dockerfile` (multi-stage — builds the SPA and
+bakes it at /app/frontend/dist so single-origin serving keeps working),
+`backend/docker-entrypoint.sh` (uvicorn always; live cycle ONLY when the
+hardcoded ARM flag is True AND a wallet secret is configured — same
+double-gate as start.sh), `docker-compose.yml` (persistent volumes for
+live_execution/state + SQLite), `.dockerignore` (image contains no
+.env/keypair/state). Hosting verdict (docs/11_DEPLOYMENT.md): Vercel is
+frontend-only (serverless cannot host a 60s tick + 15s exit scan + WS feed);
+the engine needs an ALWAYS-ON host with persistent disk — recommendation:
+Oracle Cloud Always Free VM, Vercel/CF Pages for the dashboard, SQLite-
+on-volume or Supabase Free Postgres for the book.
+
+**Wallet secrets (operator requirement: "resolve via env"):**
+`WALLET_KEYPAIR_JSON` env channel added. Resolution order in
+`live_execution/wallet.py` (fail-closed): explicit path arg →
+WALLET_KEYPAIR_PATH (file, preferred — mounted chmod-600 secret on a VM,
+never visible in `docker inspect`) → WALLET_KEYPAIR_JSON (in-memory, for
+file-less PaaS hosts; never written to disk) → WalletError ("no wallet
+configured"). A log redactor (`_KeypairRedactor`, crowd.py filter pattern)
+masks any accidentally-logged 64-int keypair array. Identity pin
+(`EXPECTED_WALLET_ADDRESS`) enforced on BOTH channels. The keypair channels
+are INFRASTRUCTURE (like SOLANA_RPC_URL) — arming stays human-edit-only in
+config.py, never env. CORS: `FRONTEND_ORIGIN` now accepts a comma-separated
+origin list (`FRONTEND_ORIGINS`). `solders` finally pinned in
+requirements.txt (was installed but unlisted — a fresh deploy would have
+crashed). Frontend: `VITE_API_BASE_URL` (empty = same-origin, unchanged)
+via new `src/lib/api.ts` (+ vite-env.d.ts, frontend/.env.example).
+
+**Live incident during the move (caught + fixed):** the RUNNING cycle held
+the old in-memory STATE_DIR and RECREATED `live_execution/state/` at the old
+path (split-brain risk: a CLI kill switch would not have reached it). Cycle
+stopped, break_state.json (newest write — break expired, taking=false)
+carried across, stale dir removed, cycle relaunched on the new layout (log
+verified: FAKE-CHART filters, Privy mint, graceful firecrawl-402 bench). API
+brought up (was down); all endpoints 200 incl. /api/live/portfolio and
+/api/live/executions (function-local live imports proven under the new
+layout).
+
+**Post-move safety catch (same session, before commit):** two paper-side
+readers still anchored live state on `config.BASE_DIR.parent` (the OLD repo
+root): `rule_engine/liveness.py` `_state_path()` (break state) and
+`api/routes/disclosure.py` `_kill_switch_state()`. A stale anchor does not
+raise — the live cycle happily RECREATED `live_execution/state/` at the old
+path, so break state and the kill switch could live in different
+directories (an operator-tripped kill switch that nothing reads). Both
+repointed to `BASE_DIR / "live_execution" / "state"`, the stale directory
+removed, and pinned by a new regression suite
+(`backend/tests/test_state_path_colocation.py`): break state + kill-switch
+path + `live_execution.config.STATE_DIR` must resolve to the same dir, plus
+a codebase-wide guard that no module resolves live state via
+`BASE_DIR.parent`. Engine restarted afterwards: old dir stays gone, all
+state writes land in `backend/live_execution/state/`, endpoints 200.
+
+**Tests:** backend/tests 434 + live_execution/tests 149 = **583 passing**
+(+11 `test_wallet_secrets.py`: env-JSON load, path-wins precedence, JSON
+fallback, identity pin on JSON, neither-refuses, invalid/wrong-shape
+refusals, no-disk-write, redactor unit + root-logger integration,
+short-array pass-through; +4 `test_state_path_colocation.py`; one wording
+update: garbage-file JSON now "not valid JSON"). Frontend build clean
+(tsc + vite, 44 modules).
 
 
 

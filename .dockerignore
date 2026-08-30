@@ -1,0 +1,26 @@
+# Build context: the repo ROOT (this file builds the frontend too):
+#   docker build -t trading-bot .
+#   docker run --env-file .env -p 8000:8000 -v bot_state:/app/backend/live_execution/state trading-bot
+.git
+.venv
+.env
+.env.*
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+**/__pycache__
+**/*.py[cod]
+.pytest_cache
+.run
+logs
+.clinerules
+memory-bank
+docs
+frontend/node_modules
+frontend/dist
+frontend/test-results
+frontend/playwright-report
+frontend/.env.local
+backend/live_execution/state
+backend/knowledge_base/ingested

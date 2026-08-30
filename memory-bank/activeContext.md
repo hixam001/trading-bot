@@ -1,9 +1,44 @@
 # Active Context — trading-bot
 
-**As of 2026-08-29 (§41 OUT-OF-BAND SELL REPAIR — operator's manually-sold coin (GE8q5h6e) closed via new gated tool: `close_out_of_band` + `repair_vanished` CLI, proceeds 1.11715 USDC → +$0.58 realized, Holdings clean, 0 reconcile warnings; 568 tests green; bot LIVE and ARMED, fresh genuine fill after restart).**
+**As of 2026-08-30 (§42 DEPLOYABLE RESTRUCTURE — `live_execution/` moved inside `backend/` + `run_live_cycle.py` → `backend/` so the engine is ONE deployable module: Dockerfile + entrypoint + compose + `.dockerignore`; `WALLET_KEYPAIR_JSON` env secret channel + keypair log redactor + identity pin on both channels; `VITE_API_BASE_URL` split-frontend support; `docs/11_DEPLOYMENT.md` (Oracle Always-Free VM for the engine, Vercel/CF Pages for the SPA, Supabase Free Postgres); two stale `BASE_DIR.parent` live-state anchors found + fixed + pinned (break state / kill switch co-location); 583 tests green; bot LIVE and ARMED on the new layout — live cycle + API verified running, all endpoints 200).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §42 deployable restructure: single-module backend + Docker + env wallet secrets (2026-08-30)
+Operator approved a deployment plan, then directed execution. Layout:
+`live_execution/` → `backend/live_execution/`, `run_live_cycle.py` →
+`backend/run_live_cycle.py` (git mv, history preserved). Isolation contract
+re-stated: the paper pipeline never imports live_execution (test-pinned) and
+stays `PAPER_TRADING_ONLY=True` hardcoded; all cross-package sys.path
+juggling removed (jupiter_executor, solana, executor.raw_units,
+repair_vanished, run_live_cycle, api/main.py); disclosure.py kill-switch
+path → `BASE_DIR/live_execution/state/...`; conftest.py rewritten
+(deterministic backend/ on sys.path); pytest.ini testpaths updated. Artifacts:
+root Dockerfile (SPA baked in for single-origin), backend/docker-entrypoint.sh
+(API always; live cycle ONLY if armed AND wallet configured — same double-gate
+as start.sh), docker-compose.yml (persistent volumes for live state + book),
+.dockerignore (image contains zero secrets), docs/11_DEPLOYMENT.md runbook.
+Secrets: `WALLET_KEYPAIR_JSON` env channel (resolution: path file preferred →
+env JSON in-memory → fail-closed), keypair log redactor (`_KeypairRedactor`),
+identity pin enforced on both channels; arming stays human-edit-only — never
+env. CORS `FRONTEND_ORIGIN` comma-list; `solders` pinned in requirements
+(was unlisted — deploys would have crashed); frontend `VITE_API_BASE_URL` +
+`src/lib/api.ts` + vite-env.d.ts + frontend/.env.example. POST-MOVE SAFETY
+CATCH: `rule_engine/liveness.py` (break state) and
+`api/routes/disclosure.py` (kill switch) still anchored on
+`BASE_DIR.parent`, so the live cycle RECREATED the old state dir —
+break state and kill switch in two places (a tripped kill switch nothing
+reads). Both repointed to `BASE_DIR/live_execution/state`, stale dir
+removed, pinned by `backend/tests/test_state_path_colocation.py` (3 path
+assertions + codebase-wide `BASE_DIR.parent` guard). LIVE INCIDENT
+caught + fixed: the running cycle recreated the old `live_execution/state/`
+(split-brain with the kill-switch reader) — stopped, newest break_state
+carried across, relaunched on the new layout; API started (was down), all
+endpoints 200. 583 passing (434 backend + 149 live, +11 test_wallet_secrets,
++4 state-path co-location).
+
+## DONE (previous)
+### §41 out-of-band sell repair: close_out_of_band + repair_vanished CLI (2026-08-29)
 ### §41 out-of-band sell repair: close_out_of_band + repair_vanished CLI (2026-08-29)
 Operator manually sold GE8q5h6e…pump during the broken-RPC window (4015.38
 tokens, $0.537 cost, 1.11715 USDC proceeds, operator-confirmed). Chain went

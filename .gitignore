@@ -13,7 +13,7 @@ __pycache__/
 .fomo_privy.json
 .supabase_fp.txt
 blocklist_state.json
-live_execution/state/
+backend/live_execution/state/
 wallet-keypair.json
 # Live execution ledgers (real order nonces) — never commit, wherever they land
 commits.json

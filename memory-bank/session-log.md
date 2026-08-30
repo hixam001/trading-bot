@@ -1,3 +1,35 @@
+## Memory-bank update - 2026-08-30 (§42 deployable restructure)
+
+- **Task**: make the repo deployable (operator-approved plan): separate
+  frontend/backend deploys, live execution moved INSIDE backend/ so the
+  engine is one module, private keys resolvable via env for deployment.
+- **Shipped**: `live_execution/` → `backend/live_execution/` +
+  `run_live_cycle.py` → `backend/` (git mv); all sys.path juggling removed
+  (jupiter_executor, solana, executor, scripts, run_live_cycle,
+  api/main.py `_REPO_ROOT`); disclosure.py kill-switch path repointed;
+  conftest.py rewritten; pytest.ini testpaths; root Dockerfile (multi-stage,
+  SPA baked in) + backend/docker-entrypoint.sh (armed+wallet double-gate) +
+  docker-compose.yml (persistent volumes) + .dockerignore;
+  `WALLET_KEYPAIR_JSON` env secret channel (file preferred, env in-memory
+  fallback, fail-closed) + `_KeypairRedactor` + identity pin on both
+  channels; FRONTEND_ORIGIN comma-list; solders pinned; frontend
+  VITE_API_BASE_URL (`src/lib/api.ts`) + vite-env.d.ts + .env.example;
+  docs/11_DEPLOYMENT.md (Oracle Always-Free VM + Vercel + Supabase runbook).
+- **Incident**: mid-move the RUNNING live cycle recreated the old
+  `live_execution/state/` (old in-memory STATE_DIR) — kill-switch split-brain
+  risk. Cycle stopped, newest break_state.json carried across, stale dir
+  removed, cycle relaunched on the new layout; API brought up (was down).
+- **Post-move catch**: `rule_engine/liveness.py` (break state) and
+  `api/routes/disclosure.py` (kill switch) still anchored live state on
+  `BASE_DIR.parent` (old repo root) — a stale anchor silently recreates a
+  SECOND state dir, so break state and the kill switch could diverge (a
+  tripped kill switch nothing reads). Both repointed; pinned by
+  `backend/tests/test_state_path_colocation.py`.
+- **Verification**: 583 tests passing (434 backend + 149 live, +11 new
+  `test_wallet_secrets.py`, +4 new `test_state_path_colocation.py`); frontend build clean; live cycle + API running,
+  /api/live/portfolio + /api/live/executions + /api/system-status all 200.
+
+
 ## Memory-bank update - 2026-08-29 (§41 out-of-band sell repair)
 
 - **Task**: the operator manually sold a coin the bot held (during the

@@ -230,7 +230,10 @@ def test_wallet_missing_path_refuses(state):
 def test_wallet_garbage_json_refuses(state):
     p = state / "kp.json"
     p.write_text("{not a byte array")
-    with pytest.raises(wallet.WalletError, match="unreadable"):
+    # 2026-08-30 secret-resolution refactor: JSON syntax errors now surface
+    # as "not valid JSON" (shared _parse_material for file AND env channels)
+    # — same fail-closed refusal, more precise message.
+    with pytest.raises(wallet.WalletError, match="not valid JSON"):
         wallet.load_keypair(str(p))
 
 
@@ -298,6 +301,9 @@ def test_wallet_verify_expected_address_match_passes(state):
 
 
 def test_wallet_config_default_missing_refuses(monkeypatch, tmp_path):
+    # Deployment parity: with BOTH secret channels empty the wallet refuses.
     monkeypatch.setattr(le_config, "WALLET_KEYPAIR_PATH", "")
-    with pytest.raises(wallet.WalletError, match="WALLET_KEYPAIR_PATH"):
+    monkeypatch.setattr(le_config, "WALLET_KEYPAIR_JSON", "")
+    with pytest.raises(wallet.WalletError,
+                       match="no wallet configured|WALLET_KEYPAIR_PATH"):
         wallet.load_keypair()

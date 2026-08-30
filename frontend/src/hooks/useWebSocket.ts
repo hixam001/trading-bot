@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { apiUrl, wsUrl } from '../lib/api'
 import type { FeedEventRow } from '../types'
 
 /**
@@ -24,7 +25,7 @@ export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } 
   // 1) Hydrate history (fail-soft: a REST hiccup just leaves the WS path).
   useEffect(() => {
     let cancelled = false
-    fetch('/api/feed?limit=50')
+    fetch(apiUrl('/api/feed?limit=50'))
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (cancelled || !d || !Array.isArray(d.events)) return
@@ -38,8 +39,7 @@ export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } 
 
   // 2) Live push over WebSocket.
   useEffect(() => {
-    const proto = location.protocol === 'https:' ? 'wss' : 'ws'
-    const ws = new WebSocket(`${proto}://${location.host}/ws/feed`)
+    const ws = new WebSocket(wsUrl('/ws/feed'))
     wsRef.current = ws
     ws.onopen = () => setConnected(true)
     ws.onclose = () => setConnected(false)

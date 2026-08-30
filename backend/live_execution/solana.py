@@ -176,7 +176,8 @@ def _usdc_mint() -> str:
     """Single source of truth: the backend config USDC mint (no drift)."""
     import sys
     from pathlib import Path
-    backend = Path(__file__).resolve().parent.parent / "backend"
+    # The package lives inside backend/: backend/ is the grandparent dir.
+    backend = Path(__file__).resolve().parent.parent
     if str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
     from config import USDC_MINT

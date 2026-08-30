@@ -94,17 +94,24 @@ fi
 #      committed armed state — human-edit-only, never env), and
 #   b) .env points WALLET_KEYPAIR_PATH at a wallet file that exists.
 # Without a funded wallet configured, nothing real-money ever starts.
-ARMED="$(grep -E '^LIVE_TRADING_ENABLED' "$ROOT/live_execution/config.py" 2>/dev/null | grep -c 'True')"
+ARMED="$(grep -E '^LIVE_TRADING_ENABLED' "$ROOT/backend/live_execution/config.py" 2>/dev/null | grep -c 'True')"
 KP="$(grep -E '^WALLET_KEYPAIR_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
+KPJ="$(grep -E '^WALLET_KEYPAIR_JSON=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
+# Wallet configured = secret file exists (preferred channel) OR the env JSON
+# channel is set (deployment parity with file-less hosts).
+WALLET_OK=0
+if { [ -n "$KP" ] && [ -f "$KP" ]; } || [ -n "$KPJ" ]; then
+  WALLET_OK=1
+fi
 LIVE_STATE="not started (disarmed or no wallet configured)"
-if [ "$ARMED" -ge 1 ] && [ -n "$KP" ] && [ -f "$KP" ]; then
+if [ "$ARMED" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
   if pgrep -f "run_live_cycle.py" >/dev/null 2>&1; then
     echo "[live] live cycle already running — reusing"
     LIVE_STATE="running (reused)"
   else
     echo "[live] ARMED + wallet configured — starting live decision cycle..."
     (
-      cd "$ROOT"
+      cd "$ROOT/backend"
       # setsid: same detachment contract as the backend — a closed terminal
       # tab or Ctrl+C here can never take the live cycle down with it.
       nohup setsid "$ROOT/.venv/bin/python" run_live_cycle.py \
@@ -117,7 +124,7 @@ fi
 
 echo ""
 echo "==========================================================="
-if [ "$ARMED" -ge 1 ] && [ -n "$KP" ] && [ -f "$KP" ]; then
+if [ "$ARMED" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
   echo " trading-bot is live   (LIVE TRADING ARMED — REAL FUNDS)"
 else
   echo " trading-bot is live   (PAPER TRADING — NO REAL FUNDS)"

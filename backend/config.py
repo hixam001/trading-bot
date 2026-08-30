@@ -383,6 +383,11 @@ PROMOTION_MAX_DRAWDOWN_PCT: float = 20.0
 API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
 API_PORT: int = int(os.getenv("API_PORT", "8000"))
 FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+# Split deployments (dashboard on Vercel/CF Pages, API elsewhere) may need
+# more than one allowed origin: FRONTEND_ORIGIN accepts a comma-separated
+# list (e.g. "https://bot.vercel.app,http://localhost:5173"). Empty entries
+# are dropped; the local dev origin remains the fail-closed default.
+FRONTEND_ORIGINS: list = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()]
 WS_POLL_INTERVAL_SECONDS: float = 2.0
 
 

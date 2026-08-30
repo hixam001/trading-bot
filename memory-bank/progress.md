@@ -1,6 +1,20 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §42 deployable restructure (handoff §42) (2026-08-30): `live_execution/`
+      → `backend/live_execution/` + `run_live_cycle.py` → `backend/` (git mv,
+      history kept); cross-package sys.path juggling removed everywhere;
+      Dockerfile (SPA baked in) + docker-entrypoint.sh (armed+wallet gate) +
+      docker-compose.yml (persistent state volumes) + .dockerignore;
+      `WALLET_KEYPAIR_JSON` env channel + keypair log redactor + identity pin
+      on both channels; `FRONTEND_ORIGIN` comma-list CORS; `solders` pinned
+      in requirements; frontend `VITE_API_BASE_URL` + .env.example;
+      docs/11_DEPLOYMENT.md; live incident (old-path state recreation →
+      split-brain) caught + fixed: `liveness.py` + `disclosure.py` stale
+      `BASE_DIR.parent` anchors repointed and pinned by
+      `test_state_path_colocation.py`; cycle relaunched, API up, endpoints 200.
+      **583 tests green (434 backend + 149 live, +11 wallet-secrets, +4
+      state-path co-location).**
 - [x] §38 security audit + hardening (handoff §38) (2026-08-28): 20-rule
       checklist → 11 pass / 3 partial / 2 gaps / 4 N-A. Zero secrets in full
       git history; RLS ON everywhere; parameterized queries; npm+pip audits

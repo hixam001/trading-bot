@@ -54,7 +54,8 @@ def raw_units(decimals: int) -> int:
     """10**decimals via the shared backend unit-math identity (no drift)."""
     import sys
     from pathlib import Path
-    backend = Path(__file__).resolve().parent.parent / "backend"
+    # The package lives inside backend/: backend/ is the grandparent dir.
+    backend = Path(__file__).resolve().parent.parent
     if str(backend) not in sys.path:
         sys.path.insert(0, str(backend))
     from data_providers.jupiter import raw_units_for_one_token

@@ -71,7 +71,8 @@ async def test_shared_gate_with_live_rules_passes_micro_bootstrap_cash():
     $5 book: paper rules would refuse, live rules pass the cash floor."""
     import sys
     from pathlib import Path
-    backend = str(Path(rlc.__file__).resolve().parent.parent / "backend")
+    # run_live_cycle lives inside backend/ now: its own dir IS the backend root.
+    backend = str(Path(rlc.__file__).resolve().parent)
     if backend not in sys.path:
         sys.path.insert(0, backend)
     from decision_pipeline import gate_candidate

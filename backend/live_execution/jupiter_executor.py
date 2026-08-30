@@ -44,8 +44,10 @@ from pathlib import Path
 
 import httpx
 
-_REPO_ROOT = Path(__file__).resolve().parent.parent
-_BACKEND = _REPO_ROOT / "backend"
+# The package lives INSIDE backend/ now (single deployable module): backend/
+# is this file's grandparent. Keep the defensive insert so the module stays
+# importable from any working directory (tests, operator CLIs, container).
+_BACKEND = Path(__file__).resolve().parent.parent
 if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 

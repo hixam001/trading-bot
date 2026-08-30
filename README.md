@@ -11,11 +11,11 @@ A local trading research system for Solana memecoins with two layers:
    liquidity-break / invalidation / stale / take-profit ladder) scanned every
    15s. All money is simulated — `PAPER_TRADING_ONLY = True` is hardcoded and
    runtime-asserted inside every position-opening function.
-2. **Live-execution package (operator-ARMED in this repo)** — `live_execution/`
+2. **Live-execution package (operator-ARMED in this repo)** — `backend/live_execution/`
    routes the same brain into real Jupiter swaps from a funded wallet.
    This repo is committed ARMED by its operator (2026-08-28, after the §27
    devnet drill passed 5/5); the flags are editable **only by a human in
-   `live_execution/config.py`** (see [Live trading](#live-trading-operator-armed)).
+   `backend/live_execution/config.py`** (see [Live trading](#live-trading-operator-armed)).
 
 **The LLM never trades.** Decisions are made by pure, testable code; the
 model (DeepSeek by default) performs a pre-trade think/veto stage, narrates
@@ -34,14 +34,18 @@ on a React dashboard served by the backend itself.
 
 - `backend/` (the paper pipeline) contains **no wallet and no transaction
   construction anywhere**. It cannot touch real funds by construction.
-- `live_execution/` is the only real-execution code. It ships with
+- `backend/live_execution/` is the only real-execution code (a subpackage
+  INSIDE backend/ so the engine deploys as one module — the paper pipeline
+  itself still never imports it, test-pinned). It ships with
   `LIVE_TRADING_ENABLED = False` and `REQUIRE_MANUAL_CONFIRMATION = True`
   hardcoded — deliberately **not** settable via environment variables, so one
   stray `.env` line can never arm it. A kill switch, daily-loss breaker,
   per-trade/per-day caps, wallet identity pin, and an idempotency ledger
   guard it.
 - Secrets live only in the gitignored root `.env` and (for live) a keypair
-  file outside the repo. API keys are redacted from logs.
+  file outside the repo **or** the `WALLET_KEYPAIR_JSON` env channel
+  (in-memory only) for file-less hosts. API keys and keypair material are
+  redacted from logs.
 
 ---
 
@@ -154,7 +158,7 @@ model, and more.
 ```bash
 .venv/bin/python -m pytest -q                            # full suite (~2s)
 cd backend && ../.venv/bin/python -m pytest tests/ -q    # backend only
-cd live_execution && ../.venv/bin/python -m pytest tests/ -q   # live package only
+cd backend && ../.venv/bin/python -m pytest live_execution/tests/ -q   # live package only
 ```
 
 Tests are hermetic: they force `DATA_BACKEND=mock` and their own tmp
@@ -182,7 +186,7 @@ on-chain commit memo published BEFORE every fill (commit–reveal proof).
 
 | What | Where | Notes |
 |---|---|---|
-| Wallet keypair | a JSON file OUTSIDE the repo (e.g. `~/.config/solana/trading-keypair.json`), path in `.env` `WALLET_KEYPAIR_PATH` | 64-byte JSON array (solana-cli format) or base58. **Never commit it.** Fund it with a small SOL fee reserve (~0.03 SOL) + separate USDC capital ($3–5 to start) |
+| Wallet keypair | a JSON file OUTSIDE the repo (e.g. `~/.config/solana/trading-keypair.json`), path in `.env` `WALLET_KEYPAIR_PATH` — or, on file-less hosts, `WALLET_KEYPAIR_JSON` in the env (in-memory only; see `docs/11_DEPLOYMENT.md`) | 64-byte JSON array (solana-cli format) or base58. **Never commit it.** Fund it with a small SOL fee reserve (~0.03 SOL) + separate USDC capital ($3–5 to start) |
 | Wallet identity pin | `.env` `EXPECTED_WALLET_ADDRESS` | the loaded keypair MUST derive this exact pubkey or loading refuses loudly |
 | RPC | `.env` `SOLANA_RPC_URL` | public endpoint rate-limits hard; use a paid RPC for real use |
 
@@ -209,7 +213,7 @@ real swaps — the chain is the source of truth.
 ## Repository layout
 
 ```
-backend/                 paper pipeline (ALL Python; run from inside backend/)
+backend/                 paper pipeline + LIVE execution — THE single deployable module
   rule_engine/           deterministic entry rules, exit engine, gate, regime, liveness
   paper_trading_engine.py  atomic money math (rowcount decides whether cash moves)
   data_providers/        birdeye / dexscreener / jupiter / crowd / mock / live stack
@@ -217,12 +221,16 @@ backend/                 paper pipeline (ALL Python; run from inside backend/)
   thesis_restate.py      A11 write-up re-authoring job (narrative-only)
   calibration.py         closed-loop conviction factor (bounds 0.6–1.2)
   api/                   FastAPI app + repository layer (db.py SQLite / db_pg.py Postgres)
+  live_execution/        REAL-money package (operator-ARMED; paper pipeline never imports it)
+  run_live_cycle.py      live decision cycle runner + --drill
   tests/                 backend test suite
-frontend/                React + Vite + Tailwind dashboard
-live_execution/          REAL-money package (operator-ARMED; never imported by backend/)
-run_live_cycle.py        root bridge: live decision cycle + --drill
+  live_execution/tests/  live-package test suite
+  docker-entrypoint.sh   container entrypoint (API always; live cycle only if armed + wallet)
+frontend/                React + Vite + Tailwind dashboard (deployable to Vercel/CF Pages)
+Dockerfile               single-module engine image (frontend baked in for same-origin)
+docker-compose.yml       local parity / VM run (persistent volumes for state + book)
 migrations/supabase/     one-time SQL for the optional Postgres book
-docs/                    00 blueprint → 09 omo audit comparison
+docs/                    00 blueprint → 11 DEPLOYMENT runbook
 memory-bank/             structured context for future sessions
 handoff.md               complete state/decisions/invariants — READ FIRST
 logs/                    backend.log, frontend-build.log

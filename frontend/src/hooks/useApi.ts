@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { apiUrl } from '../lib/api'
 
 /**
  * Polling fetch hook (I10: graceful degraded state — an unreachable API
@@ -11,7 +12,7 @@ export function useApi<T>(url: string, intervalMs?: number) {
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(url)
+      const r = await fetch(apiUrl(url))
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       setData((await r.json()) as T)
       setError(null)

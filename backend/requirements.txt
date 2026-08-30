@@ -14,6 +14,9 @@ asyncpg>=0.30
 # Environment config (operator-facing settings only)
 python-dotenv>=1.0
 
+# Solana primitives — live_execution signing/wallet/RPC (keypair, tx build)
+solders>=0.29
+
 # Testing
 pytest>=8.3
 pytest-asyncio>=0.24

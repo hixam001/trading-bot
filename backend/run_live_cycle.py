@@ -1,5 +1,5 @@
 """
-run_live_cycle.py - ONE autonomous reference-style decision cycle (root bridge).
+run_live_cycle.py - ONE autonomous reference-style decision cycle (backend bridge).
 
 Option-A arming: after a human edits live_execution/config.py to flip
 LIVE_TRADING_ENABLED (and, for fully autonomous flow,
@@ -7,15 +7,19 @@ REQUIRE_MANUAL_CONFIRMATION=False), this runner drives the full pipeline:
 
     manage -> read -> think -> gate -> execute
 
-The isolation contract stays intact: backend/ never imports live_execution.
-This ROOT script imports the paper side READ-ONLY (providers, thinker, pure
-rule functions are the shared brain) and routes entries/exits through
-live_execution.executor.place_order into the REAL book. The paper tick loop
-keeps running its own simulated book independently - two books, one brain.
+The runner lives INSIDE backend/ (single deployable module) and imports the
+paper side READ-ONLY (providers, thinker, pure rule functions are the shared
+brain), routing entries/exits through live_execution.executor.place_order
+into the REAL book. The isolation contract is preserved in its enforced
+form: the PAPER pipeline (main.py, paper_trading_engine.py,
+decision_pipeline.py, rule_engine/, data_providers/, llm/) never imports
+live_execution — pinned by backend/tests/test_decision_pipeline.py — and
+paper trading can never touch real funds. The paper tick loop keeps running
+its own simulated book independently - two books, one brain.
 
-Usage:
-    .venv/bin/python run_live_cycle.py --once   # one cycle, then exit
-    .venv/bin/python run_live_cycle.py          # loop at TICK_INTERVAL_SECONDS
+Usage (from backend/, or anywhere — the path below is self-bootstrapping):
+    .venv/bin/python backend/run_live_cycle.py --once   # one cycle, then exit
+    .venv/bin/python backend/run_live_cycle.py          # loop at TICK_INTERVAL_SECONDS
 
 DISARMED by default: while LIVE_TRADING_ENABLED is False every order comes
 back "unarmed" and only reads happen. Devnet first. Always.
@@ -31,11 +35,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 
-ROOT = Path(__file__).resolve().parent
-BACKEND = ROOT / "backend"
-for p in (str(BACKEND), str(ROOT)):
-    if p not in sys.path:
-        sys.path.insert(0, p)
+# This script's own directory IS the backend root (single deployable module).
+# Defensive insert so the runner works from any working directory.
+BACKEND = Path(__file__).resolve().parent
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
 
 import config as paper_config                     # noqa: E402
 from data_providers import build_provider         # noqa: E402

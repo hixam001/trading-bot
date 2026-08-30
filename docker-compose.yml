@@ -1,0 +1,34 @@
+# ============================================================================
+# trading-bot — local parity / VM deployment (same image as prod).
+#   docker compose up -d --build
+# The engine state (kill switch, breakers, idempotency ledger, commit log)
+# and the SQLite book live on NAMED VOLUMES: a container restart must NEVER
+# reset real-money safety state. For managed Postgres instead of SQLite set
+# USE_SUPABASE_DB=1 + SUPABASE_DB_URL in .env and drop the engine_data mount.
+# ============================================================================
+services:
+  engine:
+    build: .
+    image: trading-bot:latest
+    container_name: trading-bot-engine
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-8000}:8000"
+    env_file:
+      - .env
+    volumes:
+      # Real-money state — MUST be persistent (see docs/11_DEPLOYMENT.md).
+      - engine_state:/app/backend/live_execution/state
+      # SQLite book (only used when USE_SUPABASE_DB is not 1).
+      - engine_data:/app/data
+    environment:
+      - DB_PATH=/app/data/trading_bot.db
+      # Alternative secret channel (preferred on a VM): bind-mount a chmod-600
+      # keypair file read-only and point WALLET_KEYPAIR_PATH at it:
+      #   - ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro
+      #   WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair
+      # File-less hosts (PaaS) use WALLET_KEYPAIR_JSON in env_file instead.
+
+volumes:
+  engine_state:
+  engine_data:

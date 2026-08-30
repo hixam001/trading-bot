@@ -21,8 +21,12 @@ import config
 
 
 def _state_path() -> Path:
-    # As requested by REF-R4, state file is beside kill_switch.json
-    return config.BASE_DIR.parent / "live_execution" / "state" / "break_state.json"
+    # As requested by REF-R4, state file is beside kill_switch.json.
+    # live_execution is a sibling package INSIDE backend/ since 2026-08-30
+    # (§42 deployable restructure), so BASE_DIR is the correct anchor —
+    # BASE_DIR.parent would silently recreate a SECOND state dir at the old
+    # repo-root path, splitting break state from the kill switch.
+    return config.BASE_DIR / "live_execution" / "state" / "break_state.json"
 
 
 def _read() -> Optional[dict]:

@@ -64,20 +64,30 @@ validated against the reference system (the reference site — see
 deciding *between* rules and action; this project deliberately closes that
 gap.
 
-**Safety:** no real funds, no wallet, no transaction construction anywhere.
-`PAPER_TRADING_ONLY = True` is hardcoded and re-asserted inside every
-position-opening function.
+**Safety:** the paper pipeline (`backend/` minus `live_execution/`) is
+hardcoded `PAPER_TRADING_ONLY = True` and re-asserts it inside every
+position-opening function — it cannot touch real funds. Real-money execution
+lives exclusively in `backend/live_execution/` (operator-ARMED; the ARM flags
+are hardcoded, human-edit-only, never env; test-pinned canary).
 
 ---
 
 ## 2. Architecture at a glance
 
-- **Backend** (`backend/`): Python 3.14, FastAPI, aiosqlite (WAL), httpx.
-- **Frontend** (`frontend/`): React + Vite + Tailwind, built and served by
-  the backend itself at http://localhost:8000 (single origin, one process).
-- **Launcher**: `./start.sh` (ollama serve if needed → backend + tick loop →
-  browser), `./stop.sh`, `trading-bot.desktop` app-menu entry.
-- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections/thesis restatements + the reference-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost).
+- **Backend** (`backend/`): Python 3.14, FastAPI, aiosqlite (WAL) /
+  asyncpg (Supabase), httpx, solders — THE single deployable module: the
+  paper pipeline plus the real-money `live_execution/` subpackage and its
+  decision-cycle runner, packaged for Docker.
+- **Frontend** (`frontend/`): React + Vite + Tailwind. Served by the backend
+  itself (single origin), or deployed standalone to Vercel/CF Pages via
+  `VITE_API_BASE_URL` (split mode; CORS on the backend via
+  `FRONTEND_ORIGIN`).
+- **Launcher**: `./start.sh` / `./stop.sh` (backend API + live decision
+  cycle; ARM flag + wallet double-gate). Deployment: root `Dockerfile` +
+  `backend/docker-entrypoint.sh` + `docker-compose.yml` — runbook in
+  `docs/11_DEPLOYMENT.md` (always-on VM for the engine, free static hosting
+  for the dashboard).
+- **LLM**: DeepSeek V4 Flash (direct API, non-thinking) for the main thinker/narrator/reflections/thesis restatements + the reference-style brain, Groq for evidence-only social reads (all provider-selectable + fail-closed), with comprehensive usage logging (latency, tokens, cost). Ollama retired 2026-08-28 — no local model.
 - **Data**: Birdeye memepool trending (discovery + decimals + security),
   Dexscreener pairs (all rule numerics + age + socials), Jupiter lite-api
   (execution-quality price for open positions).
