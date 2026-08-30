@@ -390,7 +390,8 @@ async def _journal_feed_event(conn, c, think, gate, regime,
         thesis=full_thesis,
         rule_breakdown=[
             {"rule_id": r.rule_id, "passed": r.passed,
-             "detail": r.detail, "value": r.value}
+             "detail": r.detail, "value": r.value,
+             "evaluated": r.evaluated}
             for r in gate.rules
         ],
         failed_rule_ids=gate.failed_rule_ids,
@@ -408,6 +409,8 @@ async def _journal_feed_event(conn, c, think, gate, regime,
         c.symbol, c.mint_address,
         {"entry_allowed": entry_allowed,
          "failed_rule_ids": list(gate.failed_rule_ids),
+         # §43: skipped rules are recorded separately from real rejections.
+         "not_evaluated_rule_ids": list(gate.not_evaluated_rule_ids),
          "model_verdict": think.verdict, "book": "live"},
     )
 
@@ -461,6 +464,18 @@ async def run_cycle(once: bool = False) -> dict:
     await enrich_candidates(candidates)
 
     regime = compute_market_regime(candidates)
+    # --- §43 CROWD SHORTLIST: the fomo.fun lookup now runs ONLY for candidates
+    # that already cleared every other rule (same helper, same rule list the
+    # gate below uses — minus the crowd rule itself). Deliberate trade-off:
+    # a candidate rejected by a cheap rule journals "not evaluated" for
+    # crowd_heat instead of a proxy number. Fail-soft; live-only.
+    from decision_pipeline import enrich_crowd_for_shortlist
+    try:
+        await enrich_crowd_for_shortlist(candidates, portfolio, regime,
+                                         LIVE_ACTIVE_RULES)
+    except Exception:
+        log.warning("crowd shortlist pass failed - proxy heat in use "
+                    "(fail-soft)", exc_info=True)
     # Persist the regime snapshot + a per-candidate decision feed so the
     # dashboard (regime panel + decision feed + WebSocket) shows live data.
     # Fail-soft: observability never blocks the trade path.
@@ -488,9 +503,15 @@ async def run_cycle(once: bool = False) -> dict:
 
         gate = evaluate_gate(c, portfolio, regime, LIVE_ACTIVE_RULES)
         entry_allowed = gate.all_passed and think.wants_entry
-        failed = [r.rule_id for r in gate.rules if not r.passed]
+        failed = [r.rule_id for r in gate.rules if not r.passed and r.evaluated]
+        # §43: a deliberately un-evaluated rule is reported as skipped, never
+        # as a failure (it still blocks entry — evaluate_gate fails closed).
+        skipped = list(gate.not_evaluated_rule_ids)
+        verdict_txt = "PASS" if gate.all_passed else (
+            "FAIL:" + ",".join(failed) if failed
+            else "SKIP:" + ",".join(skipped))
         log.info("%s think=%s gate=%s%s", c.symbol, think.verdict,
-                 "PASS" if gate.all_passed else "FAIL:" + ",".join(failed),
+                 verdict_txt,
                  "" if entry_allowed else " -> refused")
         # Persist the decision to the public feed (dashboard + WebSocket).
         # Fail-soft: a feed write must never block or alter the trade path.

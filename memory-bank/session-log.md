@@ -1,3 +1,40 @@
+## Memory-bank update - 2026-08-30 (§43 crowd-feed quota)
+
+- **Task**: operator identified the quota burn — `crowd_heat` ran for every
+  candidate every tick before any other rule could weigh in, and its only
+  real input is the metered fomo.fun board read, so calls were spent on names
+  about to fail liquidity/volume anyway. Directive: fetch crowd data only for
+  candidates that already cleared the other rules, accepting the audit
+  trade-off for that one field.
+- **Shipped**: crowd enrichment out of `decision_pipeline.enrich_candidates`
+  → new `enrich_crowd_for_shortlist(candidates, portfolio, regime, rules)`
+  (same `evaluate_gate`, same injected rule list minus the crowd rule via
+  `cheap_rules()` matched on `__name__`, so `ACTIVE_RULES` and
+  `LIVE_ACTIVE_RULES` both work with zero duplicated rule logic); non-clearers
+  marked `Candidate.crowd_lookup_deferred`; `rules.crowd_heat` returns
+  `evaluated=False / passed=False / value=None` + a "not evaluated" detail;
+  `RuleResult.evaluated` + `GateDecision.not_evaluated_rule_ids` added;
+  `evaluate_gate` fails closed (`all_passed` = `passed AND evaluated`) and
+  keeps skips OUT of `failed_rule_ids`; narrator never cites a skipped rule
+  (template + prompt label `NOT EVALUATED`); both books wired; live log
+  distinguishes `FAIL:` from `SKIP:`; feed rows carry `evaluated`; dashboard
+  `SKIP` badge (missing field on old rows = evaluated).
+- **Trade-off recorded, not glossed**: the "every rule always evaluated, even
+  for rejects" property is given up for `crowd_heat` ALONE. What survives: the
+  rule still appears in the breakdown (it explains why the field is blank),
+  the other nine rules still always run, the gate fails closed on a skip, the
+  learning loop's rejection breakdown and `llm/reuse`'s stability signature
+  stay honest, mock runs stay hermetic (helper is a no-op off `live`), and a
+  dead feed still degrades the shortlist to proxy heat.
+- **Ordering reasoning**: the pre-pass uses this tick's portfolio/regime
+  snapshot; within a tick cash/holdings only move AGAINST entry, so a skipped
+  candidate could not have become eligible later in the same tick.
+- **Verification**: 610 passing (460 backend + 150 live_execution; +13 tests:
+  6 rule/gate semantics, 6 pipeline behavior incl. one-lookup-instead-of-three
+  and mock-mode hermeticity, 1 live-cycle delegation). Frontend build clean
+  (tsc + vite, 44 modules). Zero new dependencies.
+
+
 ## Memory-bank update - 2026-08-30 (§42 deployable restructure)
 
 - **Task**: make the repo deployable (operator-approved plan): separate

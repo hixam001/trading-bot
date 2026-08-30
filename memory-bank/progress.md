@@ -1,6 +1,22 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §43 crowd-feed quota: shortlist-only `crowd_heat` lookups (handoff §43)
+      (2026-08-30): the metered fomo.fun board read left the unconditional
+      enrichment chain — `decision_pipeline.enrich_crowd_for_shortlist()` runs
+      the same `evaluate_gate` on the same injected rule list MINUS the crowd
+      rule (`cheap_rules()`) and fetches only for candidates that already
+      cleared everything else; the rest get `crowd_lookup_deferred=True` and
+      `crowd_heat` reports `evaluated=False` / "not evaluated" instead of a
+      presence-proxy number. New `RuleResult.evaluated` +
+      `GateDecision.not_evaluated_rule_ids`; the gate FAILS CLOSED on skips
+      (`all_passed` = `passed AND evaluated`) and keeps them out of
+      `failed_rule_ids`. Deliberate, scoped trade-off: rejects no longer show a
+      real crowd number for that one field; everything else (all nine other
+      rules always evaluated, breakdown completeness, honest rejection stats,
+      mock hermeticity, dead-feed proxy fallback) preserved. Both books wired;
+      dashboard shows a neutral `SKIP`. **610 tests green (460 backend + 150
+      live: +6 rule/gate semantics, +6 pipeline behavior, +1 live delegation).**
 - [x] §42 deployable restructure (handoff §42) (2026-08-30): `live_execution/`
       → `backend/live_execution/` + `run_live_cycle.py` → `backend/` (git mv,
       history kept); cross-package sys.path juggling removed everywhere;

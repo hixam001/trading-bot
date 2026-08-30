@@ -30,6 +30,7 @@ from data_providers import build_provider
 from decision_pipeline import (
     apply_break,
     enrich_candidates,
+    enrich_crowd_for_shortlist,
     read_candidates,
     think_candidate,
 )
@@ -63,7 +64,11 @@ def setup_logging() -> None:
 
 
 def _rule_summary(gate) -> str:
-    return "; ".join(f"{r.rule_id}:{'PASS' if r.passed else 'FAIL'}" for r in gate.rules)
+    return "; ".join(
+        f"{r.rule_id}:"
+        + ("SKIP" if not r.evaluated else ("PASS" if r.passed else "FAIL"))
+        for r in gate.rules
+    )
 
 
 def _think_from_llm(ov: "LLMVerdict", brain_result: "LLMBrainResult") -> ThinkResult:
@@ -262,6 +267,20 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
             log.warning("thesis restatement pass failed (non-fatal)",
                         exc_info=True)
 
+        # --- §43 CROWD SHORTLIST: spend fomo.fun quota only on candidates
+        # that already cleared every OTHER rule. Deliberate trade-off: a
+        # candidate rejected by a cheap rule shows "not evaluated" for
+        # crowd_heat in its journal row instead of a proxy number (all nine
+        # other rules still always run, and a non-evaluated rule can never
+        # contribute to a PASS). Live-only + fail-soft; mock stays hermetic.
+        try:
+            crowd_portfolio = await load_portfolio_state(conn)
+            await enrich_crowd_for_shortlist(candidates, crowd_portfolio,
+                                             regime, ACTIVE_RULES)
+        except Exception:
+            log.warning("crowd shortlist pass failed - proxy heat in use "
+                        "(fail-soft)", exc_info=True)
+
         for c in candidates:
             # --- THINK (the reference order): the model writes its assessment BEFORE
             # any rule is evaluated. Its verdict is a necessary veto layer.
@@ -378,7 +397,8 @@ async def run_tick(provider, thinker: Thinker, state: dict | None = None,
                 thesis=thesis_text,
                 rule_breakdown=[
                     {"rule_id": r.rule_id, "passed": r.passed,
-                     "detail": r.detail, "value": r.value}
+                     "detail": r.detail, "value": r.value,
+                     "evaluated": r.evaluated}
                     for r in gate.rules
                 ],
                 failed_rule_ids=gate.failed_rule_ids,

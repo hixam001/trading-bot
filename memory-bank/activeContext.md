@@ -1,9 +1,41 @@
 # Active Context — trading-bot
 
-**As of 2026-08-30 (§42 DEPLOYABLE RESTRUCTURE — `live_execution/` moved inside `backend/` + `run_live_cycle.py` → `backend/` so the engine is ONE deployable module: Dockerfile + entrypoint + compose + `.dockerignore`; `WALLET_KEYPAIR_JSON` env secret channel + keypair log redactor + identity pin on both channels; `VITE_API_BASE_URL` split-frontend support; `docs/11_DEPLOYMENT.md` (Oracle Always-Free VM for the engine, Vercel/CF Pages for the SPA, Supabase Free Postgres); two stale `BASE_DIR.parent` live-state anchors found + fixed + pinned (break state / kill switch co-location); 583 tests green; bot LIVE and ARMED on the new layout — live cycle + API verified running, all endpoints 200).**
+**As of 2026-08-30 (§43 CROWD-FEED QUOTA — the metered fomo.fun lookup behind `crowd_heat` now runs ONLY for candidates that already cleared every other rule (`decision_pipeline.enrich_crowd_for_shortlist`); rejects journal `crowd_heat` as "not evaluated" (`RuleResult.evaluated=False`) instead of a presence-proxy number; `evaluate_gate` fails closed on un-evaluated rules and tracks them in the new `GateDecision.not_evaluated_rule_ids` so skips never pollute `failed_rule_ids`; 610 tests green).**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §43 crowd-feed quota: shortlist-only crowd lookups (2026-08-30)
+Operator named the burn: `crowd_heat` ran for every candidate every tick
+before any other rule could weigh in (deliberate — no short-circuiting for
+audit transparency), and its only real input is the metered fomo.fun board
+read, so quota went to names about to fail liquidity or volume anyway.
+
+Shipped: crowd enrichment removed from `decision_pipeline.enrich_candidates`
+(research/social/web still unconditional) and moved to new
+`enrich_crowd_for_shortlist(candidates, portfolio, regime, rules)`, which runs
+the SAME `evaluate_gate` on the SAME injected rule list minus the crowd rule
+(`cheap_rules()`, matched on `__name__` so it works for `ACTIVE_RULES` and
+`LIVE_ACTIVE_RULES` alike — no duplicated rule logic), fetches only for the
+clearers, marks the rest `Candidate.crowd_lookup_deferred=True`, and logs the
+saving per tick. `rules.crowd_heat` returns `evaluated=False, passed=False,
+value=None` + "not evaluated — crowd feed reserved for candidates that cleared
+every other rule" for deferred candidates; a real `fomo_heat` always wins.
+
+The trade-off is explicit and scoped to ONE field: a reject's journal row shows
+"not evaluated" for `crowd_heat`. Preserved — the rule stays in every
+breakdown (says why it is blank), the other nine rules still always run,
+`all_passed` now requires `passed AND evaluated` (fail closed), skips go to
+`not_evaluated_rule_ids` not `failed_rule_ids` (learning-loop rejection
+breakdown + `llm/reuse` signature stay honest), narrator never cites a skipped
+rule, mock mode is a no-op (hermetic), dead feed still degrades to proxy heat.
+Both books wired (`main.run_tick` with `ACTIVE_RULES`, `run_live_cycle` with
+`LIVE_ACTIVE_RULES`); live log distinguishes `FAIL:` from `SKIP:`; feed rows
+carry `evaluated`; dashboard shows a neutral `SKIP` badge (missing field on
+pre-§43 rows = evaluated). Docs: handoff §43, report §3.11/§10/§11/§27,
+`docs/01_ARCHITECTURE.md` §2.1/§2.2, `docs/FOMO_INTEGRATION.md`.
+610 passing (+13); frontend build clean. Zero new dependencies.
+
+## DONE (previous)
 ### §42 deployable restructure: single-module backend + Docker + env wallet secrets (2026-08-30)
 Operator approved a deployment plan, then directed execution. Layout:
 `live_execution/` → `backend/live_execution/`, `run_live_cycle.py` →

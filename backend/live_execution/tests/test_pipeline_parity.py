@@ -55,6 +55,14 @@ def test_run_cycle_delegates_to_shared_read_stage():
     assert "enrich_candidates(candidates)" in src
 
 
+def test_run_cycle_defers_crowd_lookups_to_the_shortlist():
+    """§43: the live cycle spends fomo quota through the shared shortlist
+    helper (after the cheap rules), never on every candidate up front."""
+    src = inspect.getsource(rlc.run_cycle)
+    assert "enrich_crowd_for_shortlist(candidates, portfolio, regime," in src
+    assert "LIVE_ACTIVE_RULES)" in src
+
+
 def test_run_cycle_delegates_to_shared_think_and_break():
     src = inspect.getsource(rlc.run_cycle)
     assert "think_candidate(c, thinker)" in src

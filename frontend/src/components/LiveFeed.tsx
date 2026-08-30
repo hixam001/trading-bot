@@ -4,11 +4,16 @@ import { Badge, Empty, Panel } from './ui'
 import { clock } from '../lib/format'
 
 function RuleLine({ r }: { r: RuleResultRow }) {
+  // §43: a rule the engine deliberately did not evaluate (metered crowd feed,
+  // reserved for candidates that cleared every other rule) is shown as SKIP —
+  // never as a failure it did not actually report. Rows written before §43
+  // have no `evaluated` field; missing means evaluated.
+  const skipped = r.evaluated === false
+  const label = skipped ? 'SKIP' : r.passed ? 'PASS' : 'FAIL'
+  const tone = skipped ? 'text-dim' : r.passed ? 'text-pos' : 'text-neg'
   return (
     <div className="flex gap-2 text-xs items-baseline">
-      <span className={`shrink-0 w-10 font-semibold ${r.passed ? 'text-pos' : 'text-neg'}`}>
-        {r.passed ? 'PASS' : 'FAIL'}
-      </span>
+      <span className={`shrink-0 w-10 font-semibold ${tone}`}>{label}</span>
       <span className="w-44 shrink-0 text-info">{r.rule_id}</span>
       <span className="text-dim">{r.detail}</span>
     </div>

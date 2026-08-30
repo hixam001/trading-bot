@@ -102,7 +102,10 @@ class NarrationResult:
 def build_prompt(gate: GateDecision) -> str:
     verdict = "ENTER" if gate.all_passed else "REJECT"
     lines = [
-        f"- {r.rule_id}: {'PASS' if r.passed else 'FAIL'} ({r.detail})"
+        f"- {r.rule_id}: "
+        + ("NOT EVALUATED" if not r.evaluated
+           else ("PASS" if r.passed else "FAIL"))
+        + f" ({r.detail})"
         for r in gate.rules
     ]
     base = NARRATION_PROMPT.format(verdict=verdict, rules_block="\n".join(lines))
@@ -125,7 +128,17 @@ def _template_thesis(gate: GateDecision) -> str:
         bits = "; ".join(r.detail for r in supporting)
         opener = _ENTER_OPENERS[_next_angle() % len(_ENTER_OPENERS)]
         return opener.format(sym=c.symbol, bits=bits)
-    failing = [r for r in gate.rules if not r.passed]
+    # §43: a rule the pipeline deliberately did not evaluate (crowd feed
+    # reserved for shortlisted candidates) is NOT a rejection reason — never
+    # cite it as one. It still appears in the journal's rule breakdown.
+    failing = [r for r in gate.rules if not r.passed and r.evaluated]
+    if not failing:
+        # Only an un-evaluated rule stands between this candidate and entry
+        # (§43 fail-closed path — e.g. the crowd feed was never queried).
+        skipped = [r for r in gate.rules if not r.evaluated]
+        named = "; ".join(f"{r.rule_id} ({r.detail})" for r in skipped[:2])
+        return f"Passing on {c.symbol}: {named}." if named else (
+            f"Passing on {c.symbol}: no rule cleared it for entry.")
     named = "; ".join(f"{r.rule_id} ({r.detail})" for r in failing[:2])
     opener = _REJECT_OPENERS[_next_angle() % len(_REJECT_OPENERS)]
     return opener.format(sym=c.symbol, n=len(failing), named=named)

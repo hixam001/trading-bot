@@ -96,6 +96,13 @@ class Candidate:
     fomo_heat: Optional[int] = None
     crowd_heat_source: str = ""            # "fomo" | "pumpfun" | "" (= proxy)
     fomo_theses: Optional[list[dict]] = None
+    # §43 (2026-08-30): True when the pipeline DELIBERATELY did not spend a
+    # fomo.fun lookup on this candidate because it already failed one of the
+    # cheap local rules. The crowd_heat rule then reports evaluated=False
+    # ("not evaluated") instead of falling back to the presence proxy — an
+    # honest "we didn't look" beats a number nobody measured. Never set in
+    # mock mode (no feed runs there at all).
+    crowd_lookup_deferred: bool = False
     # Discovery provenance ONLY — observability field. The rule engine never
     # reads or branches on this. "trending" | "new_listing" | "both" |
     # "unknown" (explicit unknown; never silently defaulted to trending).
@@ -109,6 +116,7 @@ class Candidate:
             "fomo_heat": self.fomo_heat,
             "crowd_heat_source": self.crowd_heat_source,
             "fomo_theses": self.fomo_theses,
+            "crowd_lookup_deferred": self.crowd_lookup_deferred,
             "price_usd": self.price_usd,
             "liquidity_usd": self.liquidity_usd,
             "volume_24h_usd": self.volume_24h_usd,
@@ -167,6 +175,12 @@ class RuleResult:
     passed: bool
     detail: str                                 # human-readable, includes real numbers
     value: float | int | bool | None = None     # raw underlying value for logging/calibration
+    # evaluated=False means this rule was NOT actually run for this candidate
+    # (§43: the crowd_heat feed is only queried for candidates that already
+    # cleared every other rule, so a reject's crowd number is "not evaluated"
+    # rather than a fabricated proxy). A non-evaluated rule ALWAYS carries
+    # passed=False and value=None — it can never contribute a pass claim.
+    evaluated: bool = True
 
 
 @dataclass(frozen=True)
@@ -175,16 +189,23 @@ class GateDecision:
     rules: list[RuleResult]
     all_passed: bool
     failed_rule_ids: list[str]
+    # Rules deliberately not evaluated for this candidate (§43). Kept apart
+    # from failed_rule_ids so the learning loop's rejection breakdown and the
+    # thesis-reuse signature never read a skipped rule as a real rejection —
+    # while the full rule list (incl. the skipped one) stays in `rules`.
+    not_evaluated_rule_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "candidate": self.candidate.to_dict(),
             "rules": [
-                {"rule_id": r.rule_id, "passed": r.passed, "detail": r.detail, "value": r.value}
+                {"rule_id": r.rule_id, "passed": r.passed, "detail": r.detail,
+                 "value": r.value, "evaluated": r.evaluated}
                 for r in self.rules
             ],
             "all_passed": self.all_passed,
             "failed_rule_ids": self.failed_rule_ids,
+            "not_evaluated_rule_ids": self.not_evaluated_rule_ids,
         }
 
 

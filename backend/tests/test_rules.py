@@ -310,6 +310,71 @@ def test_gate_full_decision_sample_all_pass(capsys):
         print(f"  {r.rule_id:24s} {'PASS' if r.passed else 'FAIL'}  {r.detail}")
 
 
+# --- §43 crowd_heat deferral: "not evaluated" instead of a proxy number -----
+
+def test_crowd_heat_not_evaluated_when_lookup_deferred():
+    """The §43 trade-off, pinned: a candidate the pipeline deliberately did
+    not spend a fomo lookup on reports evaluated=False with an explicit
+    'not evaluated' detail — NOT a presence-proxy number."""
+    r = rules_mod.crowd_heat(
+        make_candidate(crowd_lookup_deferred=True),
+        make_portfolio(), REGIME)
+    assert r.evaluated is False
+    assert r.passed is False           # fail closed
+    assert r.value is None             # no number is claimed
+    assert "not evaluated" in r.detail
+
+
+def test_crowd_heat_still_uses_real_heat_when_feed_answered():
+    """Deferred flag is irrelevant once the feed actually answered (a
+    shortlisted candidate carries fomo_heat): the real number wins."""
+    r = rules_mod.crowd_heat(
+        make_candidate(crowd_lookup_deferred=True, fomo_heat=100,
+                       crowd_heat_source="fomo"),
+        make_portfolio(), REGIME)
+    assert r.evaluated is True and r.passed and r.value == 100
+    assert "[fomo]" in r.detail
+
+
+def test_crowd_heat_default_is_unchanged_proxy_behavior():
+    """No deferral (mock mode, or the feed simply didn't answer) = the
+    pre-§43 proxy path, byte for byte."""
+    r = rules_mod.crowd_heat(make_candidate(), make_portfolio(), REGIME)
+    assert r.evaluated is True and r.passed and r.value == 36
+
+
+def test_gate_not_evaluated_rule_fails_closed_and_is_not_a_rejection():
+    """A skipped rule blocks entry but is NOT reported as a failed rule:
+    it lands in not_evaluated_rule_ids, and the other rules still all run."""
+    decision = evaluate_gate(make_candidate(crowd_lookup_deferred=True),
+                             make_portfolio(), REGIME, ACTIVE_RULES)
+    assert not decision.all_passed                      # fail closed
+    assert decision.failed_rule_ids == []               # nothing truly failed
+    assert decision.not_evaluated_rule_ids == ["crowd_heat"]
+    # No short-circuiting for anything else: every rule is still present.
+    assert len(decision.rules) == len(ACTIVE_RULES)
+    assert all(r.passed for r in decision.rules if r.rule_id != "crowd_heat")
+
+
+def test_gate_reports_both_real_failures_and_skips():
+    decision = evaluate_gate(
+        make_candidate(crowd_lookup_deferred=True, liquidity_usd=100.0),
+        make_portfolio(), REGIME, ACTIVE_RULES)
+    assert decision.failed_rule_ids == ["liquidity_floor"]
+    assert decision.not_evaluated_rule_ids == ["crowd_heat"]
+    assert not decision.all_passed
+
+
+def test_gate_decision_to_dict_carries_evaluated_flags():
+    decision = evaluate_gate(make_candidate(crowd_lookup_deferred=True),
+                             make_portfolio(), REGIME, ACTIVE_RULES)
+    d = decision.to_dict()
+    assert d["not_evaluated_rule_ids"] == ["crowd_heat"]
+    by_id = {r["rule_id"]: r for r in d["rules"]}
+    assert by_id["crowd_heat"]["evaluated"] is False
+    assert by_id["liquidity_floor"]["evaluated"] is True
+
+
 def test_gate_already_held_blocks_pyramiding():
     """the reference bot parity: any size on the name fails the gate (no scale-ins)."""
     pos = Trade(mint_address=MINT, position_size_usd=10.0)

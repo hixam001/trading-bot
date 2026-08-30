@@ -48,6 +48,28 @@ full credit — unknown is not the same claim as dumped (same B10 discipline
 as `security_clear`). The discount applies only to rows we actually saw;
 the unseen remainder of the board total keeps full credit (fail-soft).
 
+**§43 — crowd lookups are now shortlist-only (2026-08-30, operator decision):**
+the board read used to run for EVERY candidate in the read stage, before any
+rule could rule the candidate out, so quota burned on names that were about to
+fail `liquidity_floor` or `volume_alive` anyway. `enrich_crowd_heat` is no
+longer part of the flat enrichment chain; `decision_pipeline.enrich_crowd_for_shortlist()`
+runs the same `evaluate_gate` on the same injected rule list **minus the crowd
+rule**, and only candidates that clear all of it get a fomo lookup. The rest
+are marked `candidate.crowd_lookup_deferred = True`, and `crowd_heat` then
+returns `evaluated=False` with detail `"not evaluated — crowd feed reserved
+for candidates that cleared every other rule"`.
+
+The trade-off, stated plainly: a rejected candidate's journal row shows
+"not evaluated" for this ONE field instead of a real number. What is
+preserved: the rule still appears in the breakdown, the other nine rules
+still always run for every candidate (no short-circuiting anywhere else),
+the skip is recorded in `not_evaluated_rule_ids` rather than counted as a
+rejection (so the learning loop's rejection breakdown stays honest), and a
+non-evaluated rule can never contribute to a PASS — `evaluate_gate` requires
+`passed and evaluated`, so it fails closed. Mock mode is untouched (the
+helper is a no-op when `DATA_BACKEND != live`), and a dead feed still
+degrades the shortlist to proxy heat exactly as before.
+
 **Live validation (2026-08-23, operator keys):** direct reads are
 Cloudflare-challenged even with a valid bearer; the Firecrawl stealth
 fallback returned REAL board data — e.g. mint F8hVFDi8…: **40 theses →

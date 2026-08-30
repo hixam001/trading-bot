@@ -8,8 +8,8 @@ liveness.set_break, having no template-thinker fallback, never journaling
 sizing refusals). This module is the SINGLE source of truth for the stages
 both books must run identically:
 
-    filter (blocklist + fake-chart) → enrich → regime → think (with
-    fallback) → gate (same rule set) → entry_allowed → journal
+    filter (blocklist + fake-chart) → enrich → regime → crowd shortlist →
+    think (with fallback) → gate (same rule set) → entry_allowed → journal
 
 Isolation contract preserved: this module imports ONLY backend/ modules —
 never live_execution (backend must stay importable without the live stack).
@@ -85,20 +85,20 @@ async def read_candidates(provider) -> list:
 
 async def enrich_candidates(candidates: list) -> list:
     """
-    Live-only enrichment chain (crowd/research/social/web), paper-tick order.
+    Live-only enrichment chain (research/social/web), paper-tick order.
     Mock runs stay hermetic: nothing runs when DATA_BACKEND != live. Fail-soft
     per feed. Returns the social read's LLM usages (paper journals them;
     [] when not live or the read failed).
+
+    §43: the CROWD feed is deliberately NOT part of this chain any more. Its
+    fomo.fun lookup is metered and used to run for every candidate on every
+    tick, before any rule could rule the candidate out — so quota burned on
+    names that were about to fail liquidity or volume anyway. It now runs in
+    `enrich_crowd_for_shortlist()` below, after the cheap rules have spoken.
     """
     social_usages: list = []
     if not candidates or config.DATA_BACKEND != "live":
         return social_usages
-    try:
-        from data_providers.crowd import enrich_crowd_heat
-        await enrich_crowd_heat(candidates)
-    except Exception:
-        log.warning("crowd enrichment failed - proxy heat in use (fail-soft)",
-                    exc_info=True)
     try:
         from data_providers.research import enrich_with_research
         await enrich_with_research(candidates)
@@ -119,6 +119,91 @@ async def enrich_candidates(candidates: list) -> list:
         log.warning("web research failed - continuing without it",
                     exc_info=True)
     return social_usages
+
+
+# ---------------------------------------------------------------------------
+# §43 — crowd lookups only for candidates the cheap rules already cleared
+#
+# The trade-off, recorded explicitly (operator decision 2026-08-30): the
+# "every rule always evaluated, even for rejects" property is GIVEN UP for
+# `crowd_heat` alone. A candidate that fails any other rule now shows
+# "not evaluated" for that one field in its journal row instead of a real
+# number. Everything else is unchanged: all nine other rules still run
+# unconditionally with no short-circuiting, the rule still appears in the
+# breakdown, and a non-evaluated rule can never contribute to a PASS
+# (gate.evaluate_gate fails closed on it).
+#
+# Why it is worth it: the fomo.fun board read is the only metered per-candidate
+# network call inside the rule inputs, and most candidates fail something local
+# and free first — so this cuts fomo calls to the shortlist that could actually
+# enter, with no new dependency and no new failure mode.
+# ---------------------------------------------------------------------------
+
+_CROWD_RULE_ID = "crowd_heat"
+
+
+def cheap_rules(rules: list) -> list:
+    """Every injected rule EXCEPT the crowd rule (matched by function name, so
+    it works for both ACTIVE_RULES and the live cash-swapped list)."""
+    return [r for r in rules
+            if getattr(r, "__name__", "") != _CROWD_RULE_ID]
+
+
+async def enrich_crowd_for_shortlist(
+    candidates: list,
+    portfolio: PortfolioState,
+    regime: MarketRegime,
+    rules: list,
+) -> list:
+    """
+    Spend crowd-feed quota ONLY on candidates that already pass every other
+    rule, and mark the rest `crowd_lookup_deferred` so `crowd_heat` reports
+    "not evaluated" for them instead of a presence-proxy number.
+
+    Live-only and fail-soft, exactly like the rest of the enrichment chain:
+      - mock/DATA_BACKEND != live: no-op, nothing is deferred, behavior is
+        the pre-§43 proxy path (hermeticity preserved);
+      - the pre-pass uses the SAME evaluate_gate on the SAME injected rule
+        list minus the crowd rule — no second copy of any rule's logic;
+      - a crowd-feed exception leaves the shortlist on the proxy fallback
+        (the old degradation), never blocks the tick.
+
+    The pre-pass portfolio/regime are this tick's snapshot. Cash and holdings
+    only move AGAINST entry within a tick (opens debit cash and add holdings),
+    so a candidate skipped here could never have become entry-eligible later
+    in the same tick; the reverse (fetched, then refused on cash) costs at
+    most one call.
+
+    Returns the shortlist that was actually looked up.
+    """
+    if not candidates or config.DATA_BACKEND != "live":
+        return []
+
+    pre_rules = cheap_rules(rules)
+    shortlist: list = []
+    for c in candidates:
+        pre = evaluate_gate(c, portfolio, regime, pre_rules)
+        if pre.all_passed:
+            c.crowd_lookup_deferred = False
+            shortlist.append(c)
+        else:
+            # Deliberate skip — recorded on the candidate so the rule can be
+            # honest about it in the journal.
+            c.crowd_lookup_deferred = True
+
+    log.info("crowd feed: %d of %d candidate(s) cleared the other %d rules — "
+             "%d fomo lookup(s) skipped (quota saved)",
+             len(shortlist), len(candidates), len(pre_rules),
+             len(candidates) - len(shortlist))
+
+    if shortlist:
+        try:
+            from data_providers.crowd import enrich_crowd_heat
+            await enrich_crowd_heat(shortlist)
+        except Exception:
+            log.warning("crowd enrichment failed - proxy heat in use "
+                        "(fail-soft)", exc_info=True)
+    return shortlist
 
 
 async def think_candidate(candidate, thinker, memory_line: str = ""):

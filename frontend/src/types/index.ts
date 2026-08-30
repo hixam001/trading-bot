@@ -5,6 +5,10 @@ export interface RuleResultRow {
   passed: boolean
   detail: string
   value: number | string | boolean | null
+  // §43: false = the rule was deliberately not evaluated for this candidate
+  // (the metered crowd feed is only queried for candidates that cleared every
+  // other rule). Absent on rows written before §43 — treat missing as true.
+  evaluated?: boolean
 }
 
 export interface FeedEventRow {

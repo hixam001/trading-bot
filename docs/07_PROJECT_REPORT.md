@@ -3,7 +3,10 @@
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
 execution package. Report updated 2026-08-30 from the current main branch
-(§42/§42b: deployable restructure — the engine is now ONE deployable module
+(§43: crowd-feed quota — the metered fomo.fun lookup behind `crowd_heat` is
+now spent only on candidates that already cleared every other rule, with the
+resulting audit trade-off recorded explicitly in §3.11/§10/§27; §42/§42b:
+deployable restructure — the engine is now ONE deployable module
 (`backend/`, Docker-packaged) with a separately deployable static dashboard;
 env-resolvable wallet secrets; live-state paths unified in config; container
 entrypoint hardened). Status: **live** (real market data, REAL funds ARMED;
@@ -35,7 +38,7 @@ floor instead of the paper book's $100), both live-verified ARMED. The
 frontend was rebuilt on a real design system the same day (handoff §35 —
 token-based terminal, shared primitives, Playwright E2E) and a latent
 STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
-at the repo root).** Tests: **597 passing (448 backend + 149 live_execution)
+at the repo root).** Tests: **610 passing (460 backend + 150 live_execution)
 + 8 Playwright E2E — fully green (the flag-state canary pins the committed
 ARMED state — handoff §33).**
 
@@ -217,6 +220,16 @@ calibration window tunes them.
 - **No short-circuiting:** every rule runs unconditionally on every
   candidate. A rejection shows its complete 10-rule profile — "why didn't
   it buy X" is always answerable from the journal.
+- **One documented exception — `crowd_heat` (§43, 2026-08-30):** its only
+  input is the metered fomo.fun board read, so the pipeline fetches crowd
+  data only for candidates that already cleared every OTHER rule
+  (`decision_pipeline.enrich_crowd_for_shortlist`). For the rest the rule
+  reports `evaluated=False` with detail "not evaluated — crowd feed reserved
+  for candidates that cleared every other rule". The journal still shows the
+  rule (it says *why* the field is blank), the other nine rules still always
+  run, the skip is recorded in `not_evaluated_rule_ids` rather than counted
+  as a rejection, and the gate **fails closed**: `all_passed` requires
+  `passed AND evaluated`, so a skipped rule can never contribute to an entry.
 - **Decision:** `all_passed = AND(all rules)` — the entire entry decision.
   Pass → `decide_and_act()` routes to `open_position` (no position) or
   `scale_into_position` (existing). Fail → full narrated feed event, no
@@ -365,7 +378,11 @@ gitignored; mismatch hard-aborts). Tests force SQLite regardless of .env.
 3. `promotion_gate.py` is read-only; no "promote"/"activate" can exist.
 4. Fail-closed everywhere: unknown data skips/rejects, never guesses.
 5. Atomicity pattern on all money-touching state changes (see §5).
-6. Every rejection logged at the same detail level as acceptances.
+6. Every rejection logged at the same detail level as acceptances. §43 adds
+   the single, explicit exception: `crowd_heat` may be reported as
+   "not evaluated" (never as a number nobody measured) when its metered feed
+   was deliberately skipped — and a non-evaluated rule can never contribute
+   to a PASS.
 7. **Wallet secrets are infrastructure, never an arming path** (§42): the
    keypair resolves from `WALLET_KEYPAIR_PATH` (mounted file, preferred) or
    `WALLET_KEYPAIR_JSON` (in-memory env channel for file-less hosts), with
@@ -421,7 +438,7 @@ boot serving PG data), stealth-chain header forwarding returning real fomo
 board data, commit-reveal hashes of the reference system recomputed
 byte-for-byte, one-click launcher start/stop cycle.
 
-**Current totals (2026-08-30): 597 passing — 448 backend + 149
+**Current totals (2026-08-30): 610 passing — 460 backend + 150
 live_execution** (`.venv/bin/python -m pytest -q` from the repo root;
 `testpaths = backend/tests backend/live_execution/tests`). The suite is
 hermetic by construction: `backend/conftest.py` forces `DATA_BACKEND=mock`,
@@ -444,6 +461,22 @@ added in §42/§42b:
   read-only, a configured-but-missing keypair file does not count as a
   wallet, both wallet channels arm, either-half crash exits non-zero, and a
   missing `APP_DIR` aborts instead of starting in the wrong directory.
+
+§43 crowd-quota suites:
+- `backend/tests/test_rules.py` (+6): a deferred crowd lookup yields
+  `evaluated=False` / `passed=False` / `value=None` with a "not evaluated"
+  detail; real board heat still wins when the feed answered; the default
+  proxy path is unchanged; the gate fails closed with an EMPTY
+  `failed_rule_ids` and `["crowd_heat"]` in `not_evaluated_rule_ids`; a real
+  failure and a skip are reported separately; `to_dict()` carries both.
+- `backend/tests/test_decision_pipeline.py` (+6): the crowd feed is gone from
+  the unconditional enrichment chain; three candidates → ONE lookup (the two
+  rejects marked deferred); end-to-end skip produces a "not evaluated" gate
+  row while the REAL rejection reason stays in `failed_rule_ids`; mock mode is
+  a no-op (feed never called, nothing deferred); a feed exception fail-softs
+  to the proxy path; `cheap_rules()` drops exactly the crowd rule.
+- `backend/live_execution/tests/test_pipeline_parity.py` (+1): the live cycle
+  delegates to the shortlist helper with `LIVE_ACTIVE_RULES`.
 
 ## 12. Current status
 
@@ -1556,3 +1589,48 @@ directory stays gone, all writes land in `backend/live_execution/state/`,
 and `/api/system-status`, `/api/live/portfolio`, `/api/live/executions`,
 `/api/disclosure.json` and `/api/feed` all return 200 with disclosure
 reporting `armed: true` and a clear kill switch.
+
+## 27. Crowd-feed quota: shortlist-only `crowd_heat` lookups (2026-08-30, handoff §43)
+
+**The problem.** `crowd_heat` ran for every candidate on every tick before any
+other rule could weigh in — deliberately, since `evaluate_gate` has no
+short-circuiting. But that rule's only real input is the metered fomo.fun
+board read (one prod-api call per mint through a 220 ms sequential queue and,
+when Cloudflare challenges, a stealth-proxy hop), so quota burned on names
+that were about to fail `liquidity_floor` or `volume_alive` for free.
+
+**The change.** The crowd feed left the unconditional enrichment chain. New
+`decision_pipeline.enrich_crowd_for_shortlist(candidates, portfolio, regime, rules)`
+runs the SAME `evaluate_gate` on the SAME injected rule list **minus the crowd
+rule** (`cheap_rules()`, matched on function name so it covers both
+`ACTIVE_RULES` and the live cash-swapped `LIVE_ACTIVE_RULES` — no second copy
+of any rule's logic), fetches board data only for candidates that cleared all
+of it, marks the rest `crowd_lookup_deferred`, and logs the per-tick saving.
+`crowd_heat` then returns `evaluated=False`, `value=None` and the detail
+"not evaluated — crowd feed reserved for candidates that cleared every other
+rule (this one did not; no quota spent)". When the feed did answer, the real
+number always wins.
+
+**The trade-off, stated plainly.** The "every rule always evaluated, even for
+rejects" property is given up for `crowd_heat` ALONE: a rejected candidate's
+journal row shows "not evaluated" for that one field instead of a number.
+Preserved: the rule still appears in every rule breakdown (it explains why the
+field is blank rather than going silent), the other nine rules still run
+unconditionally for every candidate, the skip lands in the new
+`GateDecision.not_evaluated_rule_ids` instead of `failed_rule_ids` (so the
+learning loop's rejection breakdown and `llm/reuse.py`'s stability signature
+stay truthful), narration cannot cite a skipped rule as a failure reason, mock
+mode is a no-op (hermeticity intact), a dead feed still degrades to proxy heat,
+and the gate **fails closed** — `all_passed` requires `passed AND evaluated`,
+so a skipped rule can never contribute to an entry.
+
+Within a tick the pre-pass reads that tick's portfolio/regime snapshot; cash
+and holdings only ever move against entry as positions open, so a candidate
+skipped here could not have become entry-eligible later in the same tick.
+
+**Verification.** 610 passing (460 backend + 150 live_execution), +13 tests
+covering the deferral semantics, the fail-closed gate, the one-lookup-instead
+-of-three behavior, mock-mode hermeticity, feed-exception fail-soft, and the
+live cycle's delegation. Frontend build clean; the dashboard shows a neutral
+`SKIP` badge for un-evaluated rules and treats pre-§43 rows (no `evaluated`
+field) as evaluated. Zero new dependencies.
