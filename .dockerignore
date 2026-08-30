@@ -24,3 +24,8 @@ frontend/playwright-report
 frontend/.env.local
 backend/live_execution/state
 backend/knowledge_base/ingested
+# Runtime state that must never be baked into an image (stale blocklist /
+# break state / ledgers would ship as if they were code).
+backend/blocklist_state.json
+**/*.corrupt
+**/*.bak-dust

@@ -19,14 +19,24 @@
   `live_execution/state/` (old in-memory STATE_DIR) — kill-switch split-brain
   risk. Cycle stopped, newest break_state.json carried across, stale dir
   removed, cycle relaunched on the new layout; API brought up (was down).
-- **Post-move catch**: `rule_engine/liveness.py` (break state) and
-  `api/routes/disclosure.py` (kill switch) still anchored live state on
+- **Post-move catch (§42b)**: `rule_engine/liveness.py` (break state) and
+  `api/routes/disclosure.py` (kill switch) composed live-state paths off
   `BASE_DIR.parent` (old repo root) — a stale anchor silently recreates a
   SECOND state dir, so break state and the kill switch could diverge (a
-  tripped kill switch nothing reads). Both repointed; pinned by
+  tripped kill switch nothing reads). Root cause was hardcoded path
+  composition: `config.LIVE_STATE_DIR` / `BREAK_STATE_FILE` /
+  `KILL_SWITCH_FILE` are now the single source of truth and both readers
+  resolve per call. This exposed that the SUITE had been reading the
+  operator's REAL break state (6 tests fail whenever the bot takes a break);
+  `conftest.py` now retargets live state to a tmp dir. Pinned by
   `backend/tests/test_state_path_colocation.py`.
-- **Verification**: 583 tests passing (434 backend + 149 live, +11 new
-  `test_wallet_secrets.py`, +4 new `test_state_path_colocation.py`); frontend build clean; live cycle + API running,
+- **Entrypoint fixes** (found by writing `test_docker_entrypoint.py`):
+  missing shebang (image could not exec it), unchecked `cd "$APP_DIR"`,
+  `wait` on the API only (a crashed live cycle left an ARMED container
+  healthy but not trading), health check hardcoded to port 8000.
+- **Verification**: 597 tests passing (448 backend + 149 live: +11
+  `test_wallet_secrets.py`, +6 `test_state_path_colocation.py`, +12
+  `test_docker_entrypoint.py`); frontend build clean; live cycle + API running,
   /api/live/portfolio + /api/live/executions + /api/system-status all 200.
 
 

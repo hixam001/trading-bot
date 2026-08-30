@@ -9,12 +9,14 @@
       `WALLET_KEYPAIR_JSON` env channel + keypair log redactor + identity pin
       on both channels; `FRONTEND_ORIGIN` comma-list CORS; `solders` pinned
       in requirements; frontend `VITE_API_BASE_URL` + .env.example;
-      docs/11_DEPLOYMENT.md; live incident (old-path state recreation →
-      split-brain) caught + fixed: `liveness.py` + `disclosure.py` stale
-      `BASE_DIR.parent` anchors repointed and pinned by
-      `test_state_path_colocation.py`; cycle relaunched, API up, endpoints 200.
-      **583 tests green (434 backend + 149 live, +11 wallet-secrets, +4
-      state-path co-location).**
+      docs/11_DEPLOYMENT.md; §42b root-cause fix of the live-state paths:
+      `config.LIVE_STATE_DIR`/`BREAK_STATE_FILE`/`KILL_SWITCH_FILE` as the
+      single source of truth, readers resolve per call, suite retargeted to a
+      tmp dir (it had been reading the operator's REAL break state — 6 tests
+      failed whenever the bot took a break); entrypoint fixes (missing
+      shebang, unchecked `cd`, single-process `wait`, hardcoded health port).
+      **597 tests green (448 backend + 149 live: +11 wallet-secrets, +6
+      state-path co-location, +12 docker-entrypoint).**
 - [x] §38 security audit + hardening (handoff §38) (2026-08-28): 20-rule
       checklist → 11 pass / 3 partial / 2 gaps / 4 N-A. Zero secrets in full
       git history; RLS ON everywhere; parameterized queries; npm+pip audits

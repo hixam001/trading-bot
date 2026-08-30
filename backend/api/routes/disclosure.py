@@ -19,6 +19,7 @@ import hashlib
 import json
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 
 import config
 from fastapi import APIRouter
@@ -34,9 +35,11 @@ def _now_iso() -> str:
 
 def _kill_switch_state() -> dict:
     """Read kill switch file. Fail-closed: if file unreadable, treat as KILL."""
-    # live_execution is a sibling package inside backend/ now: its state dir
-    # is BASE_DIR/live_execution/state (BASE_DIR == the backend directory).
-    ks_path = config.BASE_DIR / "live_execution" / "state" / "kill_switch.json"
+    # Single source of truth for the live state dir (config.LIVE_STATE_DIR);
+    # resolved per call so tests never read the operator's live kill switch.
+    ks_path = Path(str(getattr(
+        config, "KILL_SWITCH_FILE",
+        str(config.LIVE_STATE_DIR / "kill_switch.json"))))
     try:
         if ks_path.is_file():
             data = json.loads(ks_path.read_text())

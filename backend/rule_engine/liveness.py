@@ -21,12 +21,18 @@ import config
 
 
 def _state_path() -> Path:
-    # As requested by REF-R4, state file is beside kill_switch.json.
-    # live_execution is a sibling package INSIDE backend/ since 2026-08-30
-    # (§42 deployable restructure), so BASE_DIR is the correct anchor —
-    # BASE_DIR.parent would silently recreate a SECOND state dir at the old
-    # repo-root path, splitting break state from the kill switch.
-    return config.BASE_DIR / "live_execution" / "state" / "break_state.json"
+    """Resolved per call (like blocklist._path) so tests and isolated drills
+    can retarget it via config — the suite must never read or mutate the
+    operator's live break state.
+
+    Anchor comes from config.BREAK_STATE_FILE, whose default sits in
+    config.LIVE_STATE_DIR (= backend/live_execution/state) beside
+    kill_switch.json, as REF-R4 requires. Composing the path here instead
+    would risk a stale anchor silently forking a second state directory.
+    """
+    return Path(str(getattr(
+        config, "BREAK_STATE_FILE",
+        str(config.LIVE_STATE_DIR / "break_state.json"))))
 
 
 def _read() -> Optional[dict]:

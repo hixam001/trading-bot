@@ -23,6 +23,30 @@ load_dotenv()
 # Blocklist — manual + auto (see blocklist.py). Auto-blocks after N
 # consecutive stop-outs on the same mint (the DONT pattern killer).
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# LIVE-EXECUTION STATE (single source of truth for the paper-side READERS).
+#
+# live_execution/ is a sibling package inside backend/ (§42), and its mutable
+# state — kill switch, daily-loss breaker, idempotency ledger, commit log,
+# operator break — lives in ONE directory. Paper-side readers (rule_engine/
+# liveness.py for the break, api/routes/disclosure.py for the kill switch)
+# must resolve that directory from here rather than composing their own
+# paths: a stale anchor does not raise, it silently forks a SECOND state
+# directory, so the bot and the operator can end up looking at different
+# kill switches. Overridable per process so tests (and isolated drills) never
+# touch the operator's live state.
+# ---------------------------------------------------------------------------
+LIVE_STATE_DIR: Path = Path(
+    os.getenv("LIVE_STATE_DIR")
+    or str(Path(__file__).parent / "live_execution" / "state")
+)
+BREAK_STATE_FILE: str = os.getenv(
+    "BREAK_STATE_FILE", str(LIVE_STATE_DIR / "break_state.json")
+)
+KILL_SWITCH_FILE: str = os.getenv(
+    "KILL_SWITCH_FILE", str(LIVE_STATE_DIR / "kill_switch.json")
+)
+
 BLOCKLIST_STATE_FILE: str = os.getenv(
     "BLOCKLIST_STATE_FILE", str(Path(__file__).parent / "blocklist_state.json")
 )

@@ -96,12 +96,26 @@ spin-down. On Oracle's always-on VM this is unnecessary.
 ## 5. Persistence rules (real-money safety)
 
 On ANY host, these must survive restarts or the engine must not be armed:
-- `live_execution/state/` — kill switch, daily-loss breaker, idempotency
-  ledger, commit log. A vanished kill-switch file reads as "clear"; a vanished
-  idempotency ledger weakens replay protection.
+- `backend/live_execution/state/` — kill switch, daily-loss breaker,
+  idempotency ledger, commit log, operator break. A vanished kill-switch file
+  reads as "clear"; a vanished idempotency ledger weakens replay protection.
 - The SQLite book (or Supabase).
 Free PaaS filesystems are ephemeral — that is exactly why the recommendation
 is an always-on VM with a persistent disk/volume.
+
+**One directory, one truth.** Every live-state path resolves from
+`backend/config.py` (`LIVE_STATE_DIR`, `BREAK_STATE_FILE`,
+`KILL_SWITCH_FILE`) and `live_execution/config.py` (`STATE_DIR`, via
+`LIVE_EXECUTION_STATE_DIR`). If you relocate state on a host, override the
+env vars — never hand-edit paths in code. A stale path does not error; it
+silently forks a second state directory, and an operator-tripped kill switch
+in the wrong directory is a kill switch nothing reads.
+`backend/tests/test_state_path_colocation.py` pins this.
+
+**Container supervision.** The entrypoint runs the API *and* (when armed +
+wallet configured) the live cycle, and exits non-zero if EITHER dies, so the
+platform's restart policy recovers the whole engine. An armed deployment must
+never keep serving a green dashboard while the decision cycle is dead.
 
 ## 6. Pre-flight checklist
 

@@ -24,18 +24,28 @@ identity pin enforced on both channels; arming stays human-edit-only — never
 env. CORS `FRONTEND_ORIGIN` comma-list; `solders` pinned in requirements
 (was unlisted — deploys would have crashed); frontend `VITE_API_BASE_URL` +
 `src/lib/api.ts` + vite-env.d.ts + frontend/.env.example. POST-MOVE SAFETY
-CATCH: `rule_engine/liveness.py` (break state) and
-`api/routes/disclosure.py` (kill switch) still anchored on
-`BASE_DIR.parent`, so the live cycle RECREATED the old state dir —
-break state and kill switch in two places (a tripped kill switch nothing
-reads). Both repointed to `BASE_DIR/live_execution/state`, stale dir
-removed, pinned by `backend/tests/test_state_path_colocation.py` (3 path
-assertions + codebase-wide `BASE_DIR.parent` guard). LIVE INCIDENT
-caught + fixed: the running cycle recreated the old `live_execution/state/`
-(split-brain with the kill-switch reader) — stopped, newest break_state
-carried across, relaunched on the new layout; API started (was down), all
-endpoints 200. 583 passing (434 backend + 149 live, +11 test_wallet_secrets,
-+4 state-path co-location).
+CATCH (§42b): `rule_engine/liveness.py` (break state) and
+`api/routes/disclosure.py` (kill switch) composed their own paths off
+`BASE_DIR.parent`, so the live cycle RECREATED the old state dir — break
+state and kill switch in two places (a tripped kill switch nothing reads).
+Root-cause fix: `config` is the single source of truth
+(`LIVE_STATE_DIR` / `BREAK_STATE_FILE` / `KILL_SWITCH_FILE`, env-overridable)
+and both readers resolve it per call (the `blocklist._path()` pattern). That
+exposed a second bug: the SUITE was reading the operator's REAL break state,
+so `not_on_break` + every tick/gate/churn/risk-budget test behind it went
+red whenever the live bot took a break (6 failures) — `conftest.py` now
+retargets all three live-state paths to a tmp dir (session autouse), making
+the suite hermetic. Pinned by `backend/tests/test_state_path_colocation.py`.
+ENTRYPOINT BUGS found by writing its tests: missing shebang (image would not
+exec at all), unchecked `cd "$APP_DIR"` (would start uvicorn from `/` with
+the wrong config/state), `wait "$API_PID"` only (a crashed live cycle left
+an ARMED container up + healthy but not trading — now `wait -n` on both,
+non-zero exit so the platform restarts), HEALTHCHECK hardcoded to 8000 while
+the app honours `$PORT`; `.dockerignore` extended for runtime state.
+Engine restarted and verified: old dir gone, state in
+backend/live_execution/state/, endpoints 200, disclosure armed=true with a
+clear kill switch. 597 passing (448 backend + 149 live: +11 wallet-secrets,
++6 state-path co-location, +12 docker-entrypoint).
 
 ## DONE (previous)
 ### §41 out-of-band sell repair: close_out_of_band + repair_vanished CLI (2026-08-29)

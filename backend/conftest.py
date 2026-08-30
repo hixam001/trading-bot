@@ -8,3 +8,33 @@ from pathlib import Path
 _BACKEND = str(Path(__file__).resolve().parent)
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
+
+import pytest
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_live_state(tmp_path_factory):
+    """Point every live-state reader at a throwaway directory for the suite.
+
+    The break state and kill switch are REAL operator state written by the
+    running live cycle. Without this, `not_on_break` (and every tick test
+    that depends on the gate) reads whatever the bot happens to be doing:
+    the suite goes red the moment the operator's bot takes a break, and a
+    test could in principle write to live state. Hermetic by default —
+    individual tests can still monkeypatch these config values.
+    """
+    import config
+
+    state = tmp_path_factory.mktemp("live_state")
+    originals = {
+        "LIVE_STATE_DIR": getattr(config, "LIVE_STATE_DIR", None),
+        "BREAK_STATE_FILE": getattr(config, "BREAK_STATE_FILE", None),
+        "KILL_SWITCH_FILE": getattr(config, "KILL_SWITCH_FILE", None),
+    }
+    config.LIVE_STATE_DIR = state
+    config.BREAK_STATE_FILE = str(state / "break_state.json")
+    config.KILL_SWITCH_FILE = str(state / "kill_switch.json")
+    yield state
+    for name, value in originals.items():
+        if value is not None:
+            setattr(config, name, value)

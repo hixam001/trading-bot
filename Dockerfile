@@ -35,8 +35,10 @@ RUN useradd --uid 10001 --create-home bot \
 USER bot
 
 EXPOSE 8000
+# Health check honours $PORT (platforms often inject their own).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-  CMD python -c "import urllib.request,sys; \
-sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/system-status', timeout=4).status == 200 else 1)"
+  CMD python -c "import os,sys,urllib.request; \
+url='http://127.0.0.1:%s/api/system-status' % os.getenv('PORT','8000'); \
+sys.exit(0 if urllib.request.urlopen(url, timeout=4).status == 200 else 1)"
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

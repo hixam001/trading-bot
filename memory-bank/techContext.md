@@ -21,8 +21,8 @@ subpackage + run_live_cycle.py; run commands from inside it) · frontend/
 
 ## Commands
 - One click: ./start.sh | ./stop.sh
-- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (434, ~5s)
-- All suites from repo root: .venv/bin/python -m pytest -q  (583 = 434 backend
+- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (448, ~12s)
+- All suites from repo root: .venv/bin/python -m pytest -q  (597 = 448 backend
   + 149 live_execution; root pytest.ini sets asyncio_mode=auto)
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
 - KB ingest: cd backend && ../.venv/bin/python scripts/ingest_directory.py <dir>

@@ -2,7 +2,7 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 583 passing (backend 434 + live_execution 149) + 8 Playwright E2E
+**Tests:** 597 passing (backend 448 + live_execution 149) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
 
 Read this top-to-bottom before touching anything. It contains everything a
@@ -46,9 +46,9 @@ seems to require real execution in the paper pipeline — stop and flag it.
                   # :8000 (serves dashboard), opens browser. Idempotent.
                   # No local model: LLM = DeepSeek/Groq cloud APIs via .env.
 ./stop.sh         # stops the backend (+ tick loop)
-cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 434 tests
-.venv/bin/python -m pytest -q                           # full suite: 583 tests, ~6s
-                                                        # (434 backend + 149 live; fully green while armed — §33 canary)
+cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 448 tests
+.venv/bin/python -m pytest -q                           # full suite: 597 tests, ~12s
+                                                        # (448 backend + 149 live; fully green while armed — §33 canary)
 cd frontend && npm run test:e2e                          # Playwright E2E: 5 tests vs the
                                                          # running backend on :8000 (§35)
 ```
@@ -2473,22 +2473,54 @@ root): `rule_engine/liveness.py` `_state_path()` (break state) and
 `api/routes/disclosure.py` `_kill_switch_state()`. A stale anchor does not
 raise — the live cycle happily RECREATED `live_execution/state/` at the old
 path, so break state and the kill switch could live in different
-directories (an operator-tripped kill switch that nothing reads). Both
-repointed to `BASE_DIR / "live_execution" / "state"`, the stale directory
-removed, and pinned by a new regression suite
-(`backend/tests/test_state_path_colocation.py`): break state + kill-switch
-path + `live_execution.config.STATE_DIR` must resolve to the same dir, plus
-a codebase-wide guard that no module resolves live state via
-`BASE_DIR.parent`. Engine restarted afterwards: old dir stays gone, all
-state writes land in `backend/live_execution/state/`, endpoints 200.
+directories (an operator-tripped kill switch that nothing reads).
 
-**Tests:** backend/tests 434 + live_execution/tests 149 = **583 passing**
+**Root-cause fix (§42b, after the first attempt only repointed paths):**
+hardcoded path composition in the readers was the actual defect, so `config`
+is now the single source of truth — `LIVE_STATE_DIR`, `BREAK_STATE_FILE`,
+`KILL_SWITCH_FILE` (env-overridable, defaults inside
+`backend/live_execution/state/`) — and both readers resolve it PER CALL, the
+same pattern `blocklist._path()` already used. That also closed a second,
+worse bug the first fix exposed: the test suite was reading the OPERATOR'S
+REAL break state, so `not_on_break` (and every tick/gate/churn/risk-budget
+test behind it) went red the moment the live bot took a break — 6 tests
+failed for that reason alone, and a test could in principle have written to
+live state. `backend/conftest.py` now has a session-scoped autouse fixture
+pointing all three live-state paths at a tmp dir, so the suite is hermetic
+by construction.
+
+**Entrypoint bugs found by writing its tests:**
+`backend/docker-entrypoint.sh` had (1) no shebang — with `ENTRYPOINT
+["/app/docker-entrypoint.sh"]` the kernel would refuse to exec it, so the
+image simply would not boot; (2) `cd "$APP_DIR"` unchecked — a wrong image
+layout would keep going and start uvicorn from `/`, loading the wrong
+config and writing state to the wrong place (now a FATAL non-zero abort,
+with `APP_DIR` overridable for testing); (3) `wait "$API_PID"` only — a
+crashed live cycle left the container up and healthy, i.e. an ARMED
+deployment silently not trading while every health check stayed green (now
+`wait -n` supervises both halves and exits non-zero so the platform
+restarts the engine); (4) the HEALTHCHECK hardcoded port 8000 while the app
+honours `$PORT` (now `$PORT`-aware). `.dockerignore` also grew
+runtime-state entries (`blocklist_state.json`, `*.corrupt`, `*.bak-dust`)
+so no operator state can be baked into an image.
+
+**Tests:** backend/tests 448 + live_execution/tests 149 = **597 passing**
 (+11 `test_wallet_secrets.py`: env-JSON load, path-wins precedence, JSON
 fallback, identity pin on JSON, neither-refuses, invalid/wrong-shape
 refusals, no-disk-write, redactor unit + root-logger integration,
-short-array pass-through; +4 `test_state_path_colocation.py`; one wording
-update: garbage-file JSON now "not valid JSON"). Frontend build clean
-(tsc + vite, 44 modules).
+short-array pass-through; +6 `test_state_path_colocation.py`: shipped
+defaults co-locate all three files, package STATE_DIR identity, per-call
+config resolution for break state and kill switch, repo-root anchor guard;
++12 `test_docker_entrypoint.py`: shebang/exec/bash-syntax, API always up,
+`$PORT` honoured, armed-without-wallet and disarmed-with-wallet stay
+read-only, missing keypair file does not count, both wallet channels arm,
+either-half crash takes the container down, missing APP_DIR aborts; one
+wording update: garbage-file JSON now "not valid JSON"). Frontend build
+clean (tsc + vite, 44 modules). Engine restarted and verified on the new
+layout: old dir stays gone, state writes land in
+`backend/live_execution/state/`, `/api/system-status`, `/api/live/portfolio`,
+`/api/live/executions`, `/api/disclosure.json`, `/api/feed` all 200, and
+disclosure reports `armed: true` with a clear kill switch.
 
 
 
