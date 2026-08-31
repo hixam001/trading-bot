@@ -137,3 +137,50 @@ def test_out_of_band_idempotent_second_call_refuses(tmp_path):
     closes = [r for r in ledger._load() if r["kind"] == "close"]
     assert len(closes) == 1   # no second close record
     assert ledger.realized_pnl_today() == pytest.approx(0.5)   # counted once
+
+
+# --- §49: the repair CLI records the manual close into anti-churn memory -------
+# A manual out-of-band close is a FULL close of the live book — it must land
+# in the SAME loss memory a bot-driven close lands in, or a manually-sold
+# coin could be re-bought next tick with no memory of the loss.
+
+async def test_repair_close_records_49_memory(tmp_path, monkeypatch):
+    import config as paper_config
+    from blocklist import _load as bl_load, is_blocked_mint
+    from live_execution import config as le_config
+    from live_execution.scripts import repair_vanished as rv
+
+    monkeypatch.setattr(le_config, "STATE_DIR", tmp_path)
+    monkeypatch.setattr(paper_config, "BLOCKLIST_STATE_FILE",
+                        tmp_path / "bl.json")
+    monkeypatch.setattr(paper_config, "DB_PATH", tmp_path / "journal.db")
+
+    # One open buy on a mint whose chain balance has gone to 0.
+    ledger = rv._ledger()
+    ledger.record_buy("b1", "MINTMAN", 0.47, 2371.635125, 0.000198, "sig",
+                      status="confirmed")
+    # Hermetic chain: wallet loads, and the mint is verifiably gone (absent
+    # from the balances map == balance 0 — the CLI's exact semantics).
+    monkeypatch.setattr(rv.wallet, "load_keypair", lambda: object())
+    monkeypatch.setattr(rv.wallet, "pubkey_string", lambda _k: "PUBKEY")
+
+    async def fake_balances(_pubkey):
+        return {}
+
+    monkeypatch.setattr(rv.solana, "get_token_balances", fake_balances)
+
+    rc = await rv._close("MINTMAN", 0.1645, "manual -65% close")
+    assert rc == 0
+
+    # Ledger: closed with honest PnL realized against the cost.
+    close = [r for r in ledger._load() if r["kind"] == "close"][-1]
+    assert close["pnl_usd"] == pytest.approx(0.1645 - 0.47)
+
+    # §49 memory: outcome recorded on the LIVE book with the manual rule.
+    entry = bl_load()["mints"]["MINTMAN"]
+    assert entry["closes"][0]["book"] == "live"
+    assert entry["closes"][0]["rule"] == "exit_manual_out_of_band"
+    assert entry["closes"][0]["loss"] is True
+    assert entry["closes"][0]["pnl"] == pytest.approx(0.1645 - 0.47)
+    # ONE loss = cooldown territory, not yet a block (N=2 pattern).
+    assert not is_blocked_mint("MINTMAN")

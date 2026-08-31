@@ -31,6 +31,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -46,7 +47,7 @@ from data_providers import build_provider         # noqa: E402
 from data_providers.jupiter import JupiterProvider  # noqa: E402
 from llm.thinker import Thinker, template_think     # noqa: E402
 from models import Candidate, FeedEvent, PortfolioState, RuleResult, Trade  # noqa: E402
-from rule_engine.exits import ExitInput, evaluate_exits  # noqa: E402
+from rule_engine.exits import ExitInput, evaluate_exits, sell_risk_gate  # noqa: E402
 from rule_engine.regime import MarketRegime, compute_market_regime  # noqa: E402
 from rule_engine.rules import ACTIVE_RULES, cash_available  # noqa: E402
 from api import db                                # noqa: E402
@@ -322,7 +323,14 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
             candidate_snapshot={}, thesis="live book", is_open=True,
             high_water_usd=hwm[mint],
         )
-        decision = evaluate_exits(ExitInput(trade=trade, price_usd=price, high_water_usd=hwm[mint]))
+        # §50: feed the engine the tranche counter from the ledger itself —
+        # before, tranches_taken was silently 0 on every cycle, so a TP rung
+        # would have re-trimmed 33% every 60s until the position was gone.
+        tranches = ledger.tranches_taken(mint)
+        decision = evaluate_exits(ExitInput(
+            trade=trade, price_usd=price, high_water_usd=hwm[mint],
+            tranches_taken=tranches,
+        ))
         if decision.action == "hold":
             continue
         fraction = decision.fraction
@@ -333,11 +341,37 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
             fraction = min(fraction, chain_tokens / m["tokens"])
             log.info("manage %s: sell fraction clamped to chain balance "
                      "(%.6f/%.6f)", mint[:8], chain_tokens, m["tokens"])
+        # §50: the reference sell gate, live-side. Paper's $25 min clip would
+        # refuse EVERY trim on this book (33% of a $0.50 ticket is $0.17), so
+        # the floor is the §45 equity-proportional live ticket — same formula
+        # that gates entries, hardcoded, never env. RISK-OFF rules (stop,
+        # liquidity break) bypass the gate inside sell_risk_gate itself, so an
+        # emergency exit is never delayed by a cooldown or clip check.
+        est_value = (m["tokens"] or 0.0) * price * fraction
+        cash_eq = m["cost"]
+        min_clip = live_config.min_live_ticket_usd(
+            cash_eq + (m["tokens"] or 0.0) * price)
+        last_close = ledger.last_close_ts(mint)
+        last_close_dt = (
+            datetime.fromtimestamp(last_close, tz=timezone.utc)
+            if last_close is not None else None
+        )
+        closes_24h = ledger.closes_since(time.time() - 24 * 3600.0)
+        gated, gate_note = sell_risk_gate(
+            decision, est_value, last_close_dt, closes_24h,
+            datetime.now(timezone.utc), min_clip_usd=min_clip,
+        )
+        if gated.action == "hold":
+            log.info("EXIT GATE held %s [%s]: %s (%s)",
+                     mint[:8], decision.rule_id, gate_note, decision.detail)
+            continue
+        decision = gated
         log.info("EXIT %s %s (%s)", decision.action, mint[:8], decision.detail)
         result = await place_order(
             side="sell", mint=mint, symbol=mint[:6],
             fraction=fraction,
             full_close=(decision.action == "close_full"),
+            rule_id=decision.rule_id,
         )
         log.info("sell -> %s %s", result.status, result.reason)
         if result.status == "filled":

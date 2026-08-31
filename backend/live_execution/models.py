@@ -65,13 +65,21 @@ class ExecutionRecord:
     status: str = "recorded"         # recorded|sent|confirmed|failed|closed
     ts: float = field(default_factory=time.time)
     pnl_usd: Optional[float] = None  # closes only
+    # §50: the exit rule that produced this close ("exit_stop_loss",
+    # "exit_take_profit", "outofband", ...) for exit-mix forensics + tranche
+    # counting. Absent on pre-§50 rows (treated as unknown), buys, and
+    # hand-written records — never fabricated.
+    rule_id: Optional[str] = None
 
     def to_json(self) -> dict:
         return asdict(self)
 
     @classmethod
     def from_json(cls, d: dict) -> "ExecutionRecord":
-        return cls(**d)
+        # §50: pre-§50 rows lack rule_id — the field filter lets the
+        # dataclass default fill it; unknown stray keys are dropped too.
+        return cls(**{k: v for k, v in d.items()
+                      if k in cls.__dataclass_fields__})
 
 
 class ExecutionLedger:
@@ -184,6 +192,49 @@ class ExecutionLedger:
     def total_open_exposure(self) -> float:
         return sum(self.open_positions().values())
 
+    # -- §50 exit forensics ---------------------------------------------------------
+    def tranches_taken(self, mint: str) -> int:
+        """
+        Take-profit tranches taken against the CURRENT open buy of `mint`:
+        the count of `exit_take_profit` close records newer than the open
+        buy's own timestamp. Kills the latent re-trim bug at the source —
+        before §50 the live path passed tranches_taken=0 to the exit engine
+        on every cycle, so a TP rung would have re-trimmed every 60s until
+        the position was gone.
+        """
+        records = self._load()
+        open_ts = None
+        for r in records:
+            if (r.get("kind") == "buy" and r.get("mint") == mint
+                    and r.get("status") in self._OPEN):
+                open_ts = r.get("ts")
+                break
+        if open_ts is None:
+            return 0
+        n = 0
+        for r in records:
+            if (r.get("kind") == "close" and r.get("mint") == mint
+                    and (r.get("rule_id") or "") == "exit_take_profit"
+                    and float(r.get("ts") or 0.0) >= float(open_ts)):
+                n += 1
+        return n
+
+    def last_close_ts(self, mint: str) -> Optional[float]:
+        """§50: newest close record ts for the mint (sell-gate cooldown input)."""
+        ts = None
+        for r in self._load():
+            if r.get("kind") == "close" and r.get("mint") == mint:
+                t = float(r.get("ts") or 0.0)
+                if ts is None or t > ts:
+                    ts = t
+        return ts
+
+    def closes_since(self, ts: float) -> int:
+        """§50: count of close records newer than `ts` (sell-gate 24h ceiling)."""
+        return sum(1 for r in self._load()
+                   if r.get("kind") == "close"
+                   and float(r.get("ts") or 0.0) >= float(ts))
+
     def realized_pnl_today(self) -> float:
         """Sum of pnl on close entries stamped today (local date)."""
         import datetime as _dt
@@ -217,7 +268,8 @@ class ExecutionLedger:
         return total
 
     def reduce_position(self, mint: str, fraction: float, proceeds_usd: float,
-                        full_close: bool = False) -> ExecutionRecord:
+                        full_close: bool = False,
+                        rule_id: Optional[str] = None) -> ExecutionRecord:
         # Partial-or-full SELL against the OLDEST open buy (FIFO). fraction=1.0
         # closes; smaller fractions shrink the open buy pro-rata - trims need this.
         #
@@ -228,6 +280,9 @@ class ExecutionLedger:
         # journal-vs-chain dust (buy fill slightly under quote) is left as a
         # phantom OPEN position that pollutes holdings and counts against
         # MAX_OPEN_POSITIONS forever (the stale-holdings bug).
+        #
+        # rule_id (§50): the exit rule that produced this close, stored for
+        # exit-mix forensics and take-profit tranche counting.
         records = self._load()
         open_buys = [r for r in records if r["kind"] == "buy" and r["mint"] == mint and r["status"] in self._OPEN]
         if not open_buys:
@@ -241,6 +296,7 @@ class ExecutionLedger:
             usd_size=proceeds_usd,
             pnl_usd=None,
             ts=self.now_fn(),
+            rule_id=rule_id,
         )
         for r in records:
             if (r["kind"] == "buy" and r["mint"] == mint
@@ -312,6 +368,7 @@ class ExecutionLedger:
             ts=self.now_fn(),
             pnl_usd=(float(proceeds_usd) - total_cost)
                      if proceeds_usd is not None else None,
+            rule_id="outofband",
         )
         if note:
             # Not a dataclass field; carried in the JSON row for forensics.

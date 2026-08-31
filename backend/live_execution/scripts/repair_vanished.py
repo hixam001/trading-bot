@@ -143,6 +143,22 @@ async def _close(mint: str, proceeds_usd, note: str) -> int:
     print(f"ledger: {len(closed) - 1} buy(s) closed + 1 out-of-band close "
           f"record written")
 
+    # §49 anti-churn parity: a manual close is a FULL close of the live
+    # book — it must land in the SAME loss memory a bot-driven close
+    # lands in, or a manually-sold coin could be re-bought next tick
+    # with no memory of the loss (the exact gap §49 closed). Never
+    # fatal: a memory failure must not block the bookkeeping repair.
+    pnl = (proceeds_usd - cost) if proceeds_usd is not None else None
+    try:
+        from blocklist import (maybe_autoblock as _maybe,
+                               record_close_outcome as _record)
+        _record(mint, mint[:6], "exit_manual_out_of_band",
+                pnl if pnl is not None else 0.0, book="live")
+        _maybe(mint, mint[:6])
+        print("§49: close outcome recorded into anti-churn memory")
+    except Exception as exc:
+        print(f"§49 memory recording skipped (non-fatal): {exc}")
+
     # Journal the repair so the dashboard/public record shows it.
     try:
         from api import db
@@ -153,13 +169,13 @@ async def _close(mint: str, proceeds_usd, note: str) -> int:
                 conn, "did", now, mint[:6], mint,
                 {"action": "out_of_band_close", "mint": mint,
                  "proceeds_usd": proceeds_usd, "cost_usd": cost,
-                 "chain_verified_zero": True, "note": note},
+                 "chain_verified_zero": True, "note": note,
+                 "pnl_usd": pnl},
             )
             await db.retire_thesis(
                 conn, trade_id=f"live-{mint[:8]}",
                 closed_at=now,
-                realized_pnl_usd=(proceeds_usd - cost)
-                                 if proceeds_usd is not None else 0.0,
+                realized_pnl_usd=pnl if pnl is not None else 0.0,
             )
         print("journal: did event + thesis retired")
     except Exception as exc:

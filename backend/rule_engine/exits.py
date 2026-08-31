@@ -193,6 +193,7 @@ def sell_risk_gate(
     last_exit_for_mint: Optional[datetime],
     closes_last_24h: int,
     now: datetime,
+    min_clip_usd: Optional[float] = None,
 ) -> tuple[ExitDecision, str]:
     """
     Applies the reference's narrow sell gate: minimum $25 clip, 30-minute per-mint
@@ -203,7 +204,15 @@ def sell_risk_gate(
     cooldown and daily ceiling. Blocking a stop during a cascade is exactly
     how a book bleeds out; profit trims — the only optional sells — carry
     the gate in full. Returns (possibly-downgraded decision, gate_note).
+
+    min_clip_usd (§50): the LIVE book overrides the paper $25 clip with the
+    §45 equity-proportional live ticket floor (33% of a $0.50 ticket is
+    $0.17 — a $25 clip would structurally refuse every trim on this book).
+    None keeps config.SELL_MIN_CLIP_USD so every paper expectation stays
+    bit-identical.
     """
+    min_clip = (config.SELL_MIN_CLIP_USD if min_clip_usd is None
+                else float(min_clip_usd))
     if decision.action == "hold":
         return decision, ""
 
@@ -227,11 +236,11 @@ def sell_risk_gate(
                          "24h exit ceiling reached"),
             f"daily cap: {closes_last_24h} exits in rolling 24h",
         )
-    if trim_value_usd < config.SELL_MIN_CLIP_USD:
+    if trim_value_usd < min_clip:
         return (
             ExitDecision(decision.rule_id, "hold", 0.0,
                          f"trim ${trim_value_usd:.2f} below "
-                         f"${config.SELL_MIN_CLIP_USD:.2f} minimum clip"),
+                         f"${min_clip:.2f} minimum clip"),
             "min clip",
         )
     return decision, ""

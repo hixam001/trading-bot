@@ -36,8 +36,10 @@ def _meta(price_usd: float = 0.04022) -> dict:
 
 
 @pytest.fixture
-def manage_env(monkeypatch):
-    """Stub chain reads + order routing; record any sell attempt."""
+def manage_env(monkeypatch, tmp_path):
+    """Stub chain reads + order routing; record any sell attempt. §50: _manage
+    is ledger-aware now (tranches_taken + sell-gate inputs), so the fixture
+    supplies a real tmp ledger — never the operator's live one."""
     calls = []
 
     async def fake_decimals(mint):
@@ -48,34 +50,40 @@ def manage_env(monkeypatch):
         return SimpleNamespace(status="unarmed", reason="test stub",
                                usd_value=0.0)
 
+    from live_execution.models import ExecutionLedger
+    ledger = ExecutionLedger(tmp_path / "manage_exec.json")
+
     monkeypatch.setattr(rlc.solana, "get_mint_decimals", fake_decimals)
     monkeypatch.setattr(rlc, "place_order", fake_place_order)
-    return calls
+    return calls, ledger
 
 
 async def test_manage_skips_bad_quote_and_does_not_ratchet_hwm(manage_env):
+    calls, ledger = manage_env
     hwm: dict = {}
     meta = _meta()
     # The exact incident shape: entry $0.04022, poisoned quote $119.0648.
-    await rlc._manage(StubJupiter(119.0648), None, hwm, meta)
+    await rlc._manage(StubJupiter(119.0648), ledger, hwm, meta)
     assert MINT not in hwm                     # peak NOT poisoned
-    assert manage_env == []                    # no sell attempted
+    assert calls == []                         # no sell attempted
     assert "last_price_usd" not in meta[MINT]  # risk-budget mark untouched
 
 
 async def test_manage_ratchets_on_legitimate_move(manage_env):
+    calls, ledger = manage_env
     hwm: dict = {}
     meta = _meta()
     # +24% in one cycle: real moves do this; far below the 50x jump cap.
-    await rlc._manage(StubJupiter(0.05), None, hwm, meta)
+    await rlc._manage(StubJupiter(0.05), ledger, hwm, meta)
     assert hwm[MINT] == pytest.approx(0.05)
-    assert manage_env == []                    # no rule fires at +24%
+    assert calls == []                         # no rule fires at +24%
 
 
 async def test_manage_genuine_collapse_still_exits(manage_env):
+    calls, ledger = manage_env
     hwm = {MINT: 0.08}                          # established peak
     meta = _meta()
     # -50% vs entry: the guard is upward-only, the stop must still fire.
-    await rlc._manage(StubJupiter(0.02), None, hwm, meta)
-    assert len(manage_env) == 1
-    assert manage_env[0]["side"] == "sell"
+    await rlc._manage(StubJupiter(0.02), ledger, hwm, meta)
+    assert len(calls) == 1
+    assert calls[0]["side"] == "sell"

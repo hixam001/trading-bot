@@ -2,7 +2,7 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 647 passing (backend 495 + live_execution 152) + 8 Playwright E2E
+**Tests:** 660 passing (backend 495 + live_execution 165) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
 **Deployment (2026-08-30, §46):** moving to **Oracle Cloud Always Free** —
 VM sized **2 OCPU / 12 GB ARM Ampere A1** (the verified Always Free
@@ -142,6 +142,59 @@ with the paid keys as failover, empty the paid scrape keys in `.env`
 migration: re-run the spike script there (datacenter-IP reality check) —
 the browser hop + `SCRAPLING_PROXY` escape hatch cover the IP-reputation
 case the TLS hop does not.
+
+## 50. Exit-engine overhaul Phase 0 — forensics, live sell gate, the honest scorecard (2026-08-31)
+
+Operator context: funds withdrawn from the live book; performance is the
+focus. The omo re-audit (docs/09 §F) proved the two leaks: our **avg win
++57.88% is already at their +59.71%** and our **hit rate 12.5% beats their
+9.4%** — the entire expectancy gap (−15.56% vs −1.11%) is the **loss shape**
+(−26.05% avg vs their −7.4%) and the **missing refusal layer** (their model
+declines 74%; ours passes everything the gate lets through). §50 fixes the
+structure; Phase 0 makes the structure observable + kills two latent live
+bugs found in the audit.
+
+**0a — exit-rule forensics on the ledger** (`live_execution/models.py`):
+`ExecutionRecord.rule_id` (§50 additive; pre-§50 rows load as None,
+never fabricated) threaded through `reduce_position` → `place_sell`/
+`place_order` → `_manage`, and `close_out_of_band` stamps `outofband`.
+New ledger reads: `tranches_taken(mint)` (TP closes newer than the current
+open buy — kills the latent re-trim-every-60s bug), `last_close_ts`,
+`closes_since`. The exit-rule mix is now computable — before §50 the close
+rows carried no rule and the mix was inferred from PnL signs.
+
+**0b — the reference sell gate ON THE LIVE BOOK** (`run_live_cycle._manage` +
+`rule_engine/exits.sell_risk_gate(min_clip_usd=…)`): live sells now pass the
+30-min per-mint cooldown, 8-exits/24h ceiling, and a minimum clip — floored
+at the **§45 equity-proportional live ticket** instead of paper's $25 (a $25
+clip would structurally refuse every trim on a $0.50 book). RISK-OFF rules
+(stop, liquidity break) bypass inside the gate itself — an emergency exit
+is never delayed. Paper's default path stays bit-identical (None override).
+
+**0c — `scripts/perf_report.py`** (read-only): the honest scorecard in the
+omo disclosure format from our own ledger + journal (samples, hit rate, avg
+win/loss %, expectancy, conviction factor, exit-rule mix, refusal funnel;
+backend-agnostic — works against sqlite AND the active Supabase journal).
+First run (the baseline): 24 samples, 12.5% hit, +57.88% avg win, **−26.05%
+avg loss**, −15.56% expectancy, feed fail-share 95.2% (gate), think-refusals
+≈ 0. Every later phase is measured against this.
+
+**0d — docs truth-maintenance** (the omo re-audit): docs/09 gains §F
+(2026-08-31 live-disclosure ground truth — their numbers, our baseline, the
+honest reading of "how they are successful", the cache-cleanup verification)
+and the stale "we're paper + disarmed" §B.2 claim is superseded (26 real
+closes since 2026-08-28). No omo clone/cache existed anywhere; nothing to
+delete beyond the docs' stale claims.
+
+**Tests:** +12 (`test_50_exit_forensics.py`: rule_id roundtrip incl.
+pre-§50-row tolerance, outofband stamp, tranche counting incl. the
+new-position reset, last_close_ts/closes_since, gate default-vs-live clip,
+risk-off bypass, cooldown, source-pinned _manage wiring, signature pins) +
+the `test_manage_jump_guard` fixture upgraded to a real tmp ledger (_manage
+is ledger-aware now). **660 passing.** Live cycle intentionally stays OFF
+while the wallet is empty — Phase 0 code loads on next start.
+
+---
 
 ## 49. Anti-churn v2 — PnL-based auto-block + 24h re-entry cooldown on BOTH books (2026-08-30)
 

@@ -275,9 +275,12 @@ async def place_sell(
     queue=None,
     ledger: Optional[ExecutionLedger] = None,
     full_close: bool = False,
+    rule_id: Optional[str] = None,
 ) -> OrderResult:
     """reference-style SELL: fraction of the open position, decimals read from chain.
-    UNKNOWN decimals refuse - never a default (the decimals lesson)."""
+    UNKNOWN decimals refuse - never a default (the decimals lesson).
+    rule_id (§50): the exit rule driving this sell, journaled on the close
+    record for exit-mix forensics + take-profit tranche counting."""
     base = OrderResult(side="sell", symbol=symbol, mint=mint)
     if not config.LIVE_TRADING_ENABLED:
         return OrderResult(**{**base.to_json(), "status": "unarmed", "reason": "disarmed"})
@@ -396,7 +399,8 @@ async def place_sell(
 
     if outcome.status == "filled":
         try:
-            ledger.reduce_position(mint, frac, proceeds_usd, full_close=full_close)
+            ledger.reduce_position(mint, frac, proceeds_usd,
+                                   full_close=full_close, rule_id=rule_id)
         except ValueError as exc:
             log.error("post-fill ledger reduce failed: %s", exc)
         outcome.usd_value = proceeds_usd
@@ -424,6 +428,7 @@ async def place_order(
     confirmation_id: Optional[str] = None,
     idempotency_key: Optional[str] = None,
     full_close: bool = False,
+    rule_id: Optional[str] = None,
 ) -> OrderResult:
     """the reference OrderIntent parity: buys sized in USD, sells as a position fraction."""
     if side == "buy":
@@ -437,5 +442,6 @@ async def place_order(
         return await place_sell(mint, symbol,
                                 1.0 if fraction is None else float(fraction),
                                 confirmation_id=confirmation_id,
-                                full_close=full_close)
+                                full_close=full_close,
+                                rule_id=rule_id)
     return OrderResult(status="blocked", reason=f"unknown side {side!r}", side=side, mint=mint)

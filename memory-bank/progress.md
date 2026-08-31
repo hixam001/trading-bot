@@ -1,6 +1,26 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §50 Exit-engine overhaul Phase 0 — forensics + live sell gate +
+      the honest scorecard (2026-08-31): the omo re-audit (live public
+      disclosure — source unchanged since 48a86f9) proved our avg win
+      (+57.88% vs their +59.71%) and hit rate (12.5% vs 9.4%) are ALREADY
+      at/above theirs; the whole expectancy gap is the LOSS SHAPE (−26.05%
+      vs −7.4%) + the missing LLM refusal layer (they decline 74%). Shipped
+      Phase 0: (a) ledger exit-rule forensics — `ExecutionRecord.rule_id`
+      threaded reduce_position→place_sell/place_order→_manage, outofband
+      stamped; `tranches_taken/last_close_ts/closes_since` reads kill the
+      latent re-trim-every-60s bug and make the exit-rule mix computable;
+      (b) the reference sell gate ON live — cooldown + 8/24h + min clip
+      floored at the §45 equity-proportional live ticket (paper $25 kept
+      bit-identical via the None default; risk-off bypasses inside the
+      gate); (c) `scripts/perf_report.py` — read-only scorecard in omo's
+      disclosure format, backend-agnostic (sqlite + Supabase), baseline
+      recorded; (d) docs/09 §F ground truth + §B.2 superseded, no omo
+      cache/clone existed to clean. +12 tests (`test_50_exit_forensics`) +
+      jump-guard fixture on a real tmp ledger. **660 passing** (495 backend +
+      165 live). Live cycle stays off while the wallet is empty; Phase 0
+      loads on next start.
 - [x] §49 anti-churn v2, one memory, both books (2026-08-30): audit vs
       the reference found the LIVE book had NO loss memory (auto-block
       existed only in the paper engine and only counted exit_stop_loss

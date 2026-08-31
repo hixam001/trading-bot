@@ -56,6 +56,11 @@ omotrades/omo" instruction.
 2. **Live track record:** they have real mainnet fills, a public wallet with real
    equity, venue-labeled journal, off-book disclosure. We're paper + disarmed —
    *by our own sequencing choice*, but a factual gap today.
+   **[SUPERSEDED 2026-08-31: we have been live-armed with 26 real mainnet
+   closes since 2026-08-28 — 24 bot-driven + 2 operator out-of-band repairs;
+   the measured track record now lives in `scripts/perf_report.py` and §F
+   below. Their live disclosure (§F) shows THEM paused/unarmed as of
+   2026-08-31.]**
 3. **Fomo data depth (A4):** per-author P&L weighting and own-basis read-back are
    richer than our scraped heat. *(Now closed.)*
 4. **Public presentation:** their proof terminal (105KB SSR page, clock panel,
@@ -378,5 +383,63 @@ Their act band is **[25, 90]**; ours is **[36, 100]**. Consequences:
   config change — recorded here as the only candidate follow-up this audit
   found, and deliberately NOT applied without an operator decision.
 
+
+
+---
+
+## F. 2026-08-31 live-disclosure ground truth (the re-audit that matters)
+
+The operator asked: *"audit omotrades from start, clean any cache/docs, and
+figure out how they are so successful."* The source re-audit found `main`
+unchanged since our 2026-08-27 clone (commit `48a86f9`, 9 commits) — **the new
+evidence is their LIVE public disclosure**, which went up after our audit was
+written. Read from `omotrades.com/api/public/disclosure.json` +
+`/api/public/exits.json`, 2026-08-31:
+
+| their number | value |
+|---|---|
+| equity | $220,674 |
+| closed samples | 32 |
+| **hit rate** | **9.4%** |
+| **avg win** | **+59.71%** |
+| **avg loss** | **−7.4%** |
+| expectancy | −1.11% |
+| conviction factor | 0.956 (expectancy-scaled, clamped 0.6–1.2) |
+| order intents vs declines | 175 vs 504 (**74% decline rate**) |
+| per-order limit | equity×0.035×drawdown×conviction = $7,384, clamped [25, equity×0.08 backstop] |
+| per-day limit | per-order × 4 |
+| exit thresholds | stop −35%, trail arm +60%/give-back 40pp, TP +100/300/900 (33/33/50%), stale 14d, min clip $25, cooldown 30m, 8/day |
+| armed | **false** (paused; their marks 5.4h stale at read time) |
+
+**The honest reading — "how they are so successful":** they are NOT
+per-trade profitable either (−1.11% expectancy). What they have is a
+**structure that survives and catches tails**: (1) losses are CUT early by a
+manage loop that re-prices every position every cycle and an exit-notes LLM
+in the loop — the −35% stop realizes at **−7.4% avg** because something
+almost always acts before the stop; (2) the model declines **74%** of
+candidates (a bouncer, not a rubber stamp); (3) winners run to a +60% trail
+arm (avg win +59.71% — the tail pays for the book); (4) tickets scale with
+the machine's own expectancy × drawdown.
+
+**Our measured baseline on the same format** (`scripts/perf_report.py`,
+§50 Phase 0, 2026-08-31, 24 closed live trades): hit rate 12.5% (*higher than
+theirs*), avg win **+57.88%** (≈ theirs), avg loss **−26.05%** (vs −7.4%),
+expectancy −15.56%, think-pass ≈ everything, feed fail-share 95.2% (gate
+refusals — the LLM almost never refuses what the gate lets through).
+
+**Conclusion recorded:** our gap is NOT the win side (already at parity) and
+NOT the hit rate (already higher). It is (a) the **loss shape** — nothing
+between entry and the −20% stop ever acts on the live book — and (b) the
+**missing refusal layer** (the LLM passes everything). §50 targets exactly
+these two; the TP ladder (+100/300/900) and trail (+50/40pp) stay verbatim —
+re-raking them down (an earlier plan idea) would have killed the tail that
+pays for the book, exactly the edge omo's numbers prove.
+
+**Cache cleanup verified (2026-08-31):** no local omo clone exists
+(`~/Downloads/Projects` holds only `trading-bot` + `community-edify`); no omo
+code vendored anywhere (parity ports only, with attribution); no omo-related
+`/tmp` artifacts; the fomo/scrapling caches are OURS and stay. This section
+supersedes any earlier characterization of their performance in this file
+and in docs/10.
 
 

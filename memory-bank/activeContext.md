@@ -1,9 +1,25 @@
 # Active Context — trading-bot
 
-**As of 2026-08-31 (§49 ANTI-CHURN V2, ONE MEMORY, BOTH BOOKS — the live book had NO loss memory at all: a coin stopped out LIVE could be re-bought the very next tick, and the auto-block only existed in the paper engine, counting exit_stop_loss rule IDs only. `blocklist.py` is now the single source of truth: `record_close_outcome()` (PnL-based — any close at a loss, any exit rule) feeds `maybe_autoblock()` (2 consecutive loss closes → block until a human clears it) and a 24h re-entry cooldown enforced in `filter_candidates` (read stage, both books, self-expiring, zero quota). Both books wired (paper close path + live `_manage`); loss closes journal soft memories (reference layer 5) so the thinker sees the lesson; disclosure serves `anti_churn` truths. The §49 tests also surfaced and fixed REAL test-isolation bugs: conftest now isolates BLOCKLIST_STATE_FILE (tick-closing tests had been polluting the operator's real sidecar with mock mints and auto-blocking them — the polluted file was cleaned 2026-08-31, backup at /tmp/blocklist_state.json.bak-20260831) and `_load()` fails OPEN on unreadable paths. 10 new tests; suite 647 passing (495 backend + 152 live); live cycle restarted 01:15 and verified on first ticks. NOTE: Firecrawl /v1/search currently returns 402 (credits exhausted) — the fail-soft path holds (cached miss, never raises), but paid search evidence is empty until credits are refilled.)**
+**As of 2026-08-31 (§50 PHASE 0 SHIPPED — funds withdrawn, performance is the focus. The omo live-disclosure re-audit proved: our avg win +57.88% ≈ their +59.71%, our hit rate 12.5% > their 9.4% — the ENTIRE gap is the loss shape (−26.05% vs −7.4%) and the missing refusal layer (they decline 74%, we decline ~0%). Phase 0 shipped: ledger `rule_id` forensics + `tranches_taken` (kills the latent re-trim bug), the reference sell gate live-side with the §45 equity-proportional clip floor, `scripts/perf_report.py` (the honest scorecard, omo-format, backend-agnostic; baseline recorded), docs/09 §F ground truth. 660 passing. Live cycle OFF while the wallet is empty — everything loads on next start. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants (0.035/4×/8%); Phase 3 = LLM as bouncer (entry conviction + exit consult, Option B machine floor); Phase 4 = churn tightening + re-fund.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §50 Phase 0 — exit forensics, live sell gate, the honest scorecard (2026-08-31)
+Baseline (perf_report): 24 samples, hit 12.5%, avg win +57.88%, avg loss
+−26.05%, expectancy −15.56%, think-refusals ≈ 0, feed fail-share 95.2%
+(the GATE refuses; the model never does). Two latent live bugs killed:
+(1) `tranches_taken` was silently 0 every cycle → a TP rung would have
+re-trimmed 33% every 60s; now derived from the ledger's own rule-attributed
+close records (`ExecutionRecord.rule_id`, threaded through
+reduce_position/place_sell/place_order/_manage; outofband stamped; pre-§50
+rows load as None). (2) Live sells had NO risk gate at all (no min clip,
+no cooldown, no daily ceiling) — now the reference sell gate with the clip
+floored at `min_live_ticket_usd(equity)` (§45) instead of paper's $25;
+paper stays bit-identical via the None default. `scripts/perf_report.py`
+is the ongoing scorecard (omo disclosure format, works on sqlite AND the
+active Supabase journal). docs/09 §F records their live numbers + our
+baseline + the honest reading; §B.2 "paper + disarmed" superseded. No omo
+clone/cache existed anywhere. +12 tests, **660 passing**.
 ### §49 Anti-churn v2 — PnL-based auto-block + re-entry cooldown on BOTH books (2026-08-30)
 Operator audit ask: compare our anti-churn with the reference. The gap
 found: the live book had NO loss memory (auto-block only in the paper
