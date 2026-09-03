@@ -17,6 +17,8 @@ echoed in error bodies).
 from __future__ import annotations
 
 import hmac
+import time
+from collections import defaultdict
 
 from fastapi import HTTPException, Request
 
@@ -24,9 +26,30 @@ import config
 
 ADMIN_TOKEN_HEADER = "X-Admin-Token"
 
+# Brute-force mitigation: track recent failed attempts per client host
+_FAILED_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+_MAX_FAILED_ATTEMPTS = 5
+_LOCKOUT_WINDOW_SECONDS = 60.0
+
 
 def require_admin_token(request: Request) -> None:
-    """Raise 403 unless the request carries the configured operator token."""
+    """Raise 403 unless the request carries the configured operator token.
+
+    Enforces rate limiting on repeated failed attempts (brute-force defense).
+    """
+    client_ip = getattr(getattr(request, "client", None), "host", "unknown")
+    now = time.time()
+
+    # Prune expired attempts outside the sliding window
+    attempts = [t for t in _FAILED_ATTEMPTS[client_ip] if now - t < _LOCKOUT_WINDOW_SECONDS]
+    _FAILED_ATTEMPTS[client_ip] = attempts
+
+    if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="too many failed authentication attempts — rate limited",
+        )
+
     configured = config.ADMIN_TOKEN
     if not configured:
         # Fail closed: no token configured -> endpoint disabled.
@@ -36,4 +59,9 @@ def require_admin_token(request: Request) -> None:
         )
     supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
     if not supplied or not hmac.compare_digest(supplied, configured):
+        _FAILED_ATTEMPTS[client_ip].append(now)
         raise HTTPException(status_code=403, detail="invalid operator token")
+
+    # Clear recorded failures on successful authentication
+    _FAILED_ATTEMPTS.pop(client_ip, None)
+

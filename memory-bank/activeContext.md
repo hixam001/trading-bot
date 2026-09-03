@@ -1,12 +1,15 @@
 # Active Context — trading-bot
 
 **As of 2026-09-03 (§53 SHIPPED — SECURITY HARDENING: remediated 7 vulnerabilities across blind transaction signing, live book access control, DoS prompt injection break clamping, CSWSH & connection concurrency, CORS headers, cryptographic endpoint TTL caching, and Solana base58 mint sanitization. 666 passing. PREVIOUS: §52 single-book restructure. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants; Phase 3 = LLM as bouncer; Phase 4 = churn tightening + re-fund.)**
+**As of 2026-09-03 (§53 SHIPPED — SECURITY HARDENING: remediated 7 vulnerabilities across blind transaction signing, live book access control, DoS prompt injection break clamping, CSWSH & connection concurrency, CORS headers, cryptographic endpoint TTL caching, and Solana base58 mint sanitization; full verification of 20-point security checklist including failed-auth rate limiting 429 lockout, FORCE_HTTPS redirection, enhanced security headers HSTS/Permissions-Policy/X-XSS-Protection, and clean pip-audit/npm-audit. 669 passing. PREVIOUS: §52 single-book restructure. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants; Phase 3 = LLM as bouncer; Phase 4 = churn tightening + re-fund.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
 ### §53 Security hardening & vulnerability remediation (2026-09-03)
 Operator directive: "audit the repo and find security flaws and make a implementation plan for them".
 Remediated 7 vulnerabilities with dedicated tests (`backend/tests/test_security_audit_remediations.py`):
+Operator directive: "audit the repo and find security flaws and make a implementation plan for them" followed by 20-point checklist verification.
+Remediated 7 vulnerabilities + verified 20-point checklist with dedicated tests (`backend/tests/test_security_audit_remediations.py` + `backend/tests/test_security_hardening.py`):
 (1) **SEC-01 (Critical) — Blind Signing Guard**: `APPROVED_SWAP_PROGRAM_IDS` whitelist in `live_execution/config.py` + `inspect_swap_transaction()` in `jupiter_executor.py` verifying fee payer matches keypair and all instruction program IDs are whitelisted before signing.
 (2) **SEC-02 (High) — Live Book Access Control**: `LIVE_BOOK_PUBLIC: bool = False` configuration + `_check_access()` gating `/api/live/portfolio` and `/api/live/executions` so non-public access requires loopback or `X-Admin-Token`.
 (3) **SEC-03 (High) — Unbounded Break Clamping (Prompt Injection DoS)**: Clamped break duration to `[5, 60]` minutes in `rule_engine/liveness.py`, `llm/thinker.py`, and `llm/llm_brain.py`; disallowed `float("inf")`; isolated untrusted data with `<untrusted_data>` delimiters.
@@ -15,6 +18,9 @@ Remediated 7 vulnerabilities with dedicated tests (`backend/tests/test_security_
 (6) **SEC-06 (Medium) — Cryptographic Route TTL Caching**: Added 3-second in-memory TTL caching on `/api/verify.json` and `/api/binding.json` in `api/routes/proof.py` to prevent RPC quota exhaustion.
 (7) **SEC-07 (Low) — Solana Base58 Mint Sanitization**: Added syntactic Base58 pubkey validation (`is_valid_solana_address`) in `data_providers/discovery.py`.
 **666 passing.**
+(8) **20-Point Checklist**: Failed auth brute-force rate-limiting lockout (429) in `api/auth.py`; `FORCE_HTTPS` redirect middleware + HSTS / Permissions-Policy / X-XSS-Protection headers in `api/main.py`; parameterized SQL verified; zero cookies/passwords; pip-audit (0 vulns) & npm-audit (0 vulns).
+**669 passing.**
+
 
 ### §52 Single-book restructure — paper retired, live retains everything (2026-09-03)
 

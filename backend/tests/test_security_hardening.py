@@ -141,3 +141,41 @@ def test_cors_narrowed():
     assert cors.kwargs["allow_headers"] == ["Content-Type", "X-Admin-Token"]
     assert cors.kwargs["allow_origins"] == [config.FRONTEND_ORIGIN]
 
+
+async def test_auth_rate_limiting_lockout(client, monkeypatch):
+    from api import auth
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "valid-token")
+    auth._FAILED_ATTEMPTS.clear()
+
+    # 4 bad attempts should get 403
+    for _ in range(4):
+        r = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "bad"})
+        assert r.status_code == 403
+
+    # 5th bad attempt triggers lockout
+    r5 = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "bad"})
+    assert r5.status_code == 403
+
+    # Subsequent attempt within window gets 429 Too Many Requests
+    r6 = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "bad"})
+    assert r6.status_code == 429
+    assert "rate limited" in r6.json()["detail"]
+
+    auth._FAILED_ATTEMPTS.clear()
+
+
+async def test_additional_security_headers(client):
+    r = await client.get("/api/system-status", headers={"x-forwarded-proto": "https"})
+    assert r.status_code == 200
+    assert r.headers["x-xss-protection"] == "1; mode=block"
+    assert "geolocation=()" in r.headers["permissions-policy"]
+    assert "max-age=" in r.headers["strict-transport-security"]
+
+
+async def test_force_https_redirect(client, monkeypatch):
+    monkeypatch.setattr(config, "FORCE_HTTPS", True)
+    r = await client.get("/api/system-status", headers={"x-forwarded-proto": "http"}, follow_redirects=False)
+    assert r.status_code == 301
+    assert r.headers["location"].startswith("https://")
+
+

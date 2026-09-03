@@ -16,7 +16,13 @@
       (6) SEC-06: in-memory 3s TTL caching on `/api/verify.json` and `/api/binding.json`;
       (7) SEC-07: Solana Base58 mint address sanitization in discovery.
       **666 passing.**
+      (7) SEC-07: Solana Base58 mint address sanitization in discovery;
+      (8) 20-point security checklist: sliding-window auth brute-force lockout
+      (429) in auth.py; FORCE_HTTPS 301 redirection + HSTS/Permissions-Policy/
+      X-XSS-Protection headers in main.py; pip-audit + npm-audit clean.
+      **669 passing.**
 - [x] §52 Single-book restructure — paper retired, live retains everything
+
 
       (2026-09-03): operator directive "remove paper trade completely, but
       make sure live execution retains all features" + audit gaps 1.3/1.8.

@@ -10,8 +10,11 @@
   6. **SEC-06 (Medium)**: 3-second TTL caching added to `/api/verify.json` and `/api/binding.json` to prevent RPC quota exhaustion.
   7. **SEC-07 (Low)**: Base58 Solana mint validation added in `data_providers/discovery.py`.
 - **Tests**: 7 new dedicated security tests (`backend/tests/test_security_audit_remediations.py`). Full suite green at **666 passing** (backend + live_execution).
+  8. **20-Point Security Checklist**: Failed auth brute-force lockout (HTTP 429) added to `api/auth.py`; `FORCE_HTTPS` 301 redirection + enhanced security headers (HSTS on HTTPS, Permissions-Policy, X-XSS-Protection) in `api/main.py`; verified parameterized SQL throughout; verified clean `pip-audit` (0 vulns) and `npm audit` (0 vulns).
+- **Tests**: 10 new security tests across `test_security_audit_remediations.py` and `test_security_hardening.py`. Full suite green at **669 passing** (backend + live_execution).
 
 ## Memory-bank update - 2026-09-03 (§52 single-book restructure + fresh omo audit)
+
 
 
 - **Task**: operator directive — implement omo-audit gaps 1.3 (skin-in-the-game

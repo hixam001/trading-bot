@@ -444,6 +444,9 @@ WS_POLL_INTERVAL_SECONDS: float = 2.0
 # Live book public access (SEC-02): when False (default), live portfolio and
 # executions endpoints require the X-Admin-Token operator header or loopback.
 LIVE_BOOK_PUBLIC: bool = os.getenv("LIVE_BOOK_PUBLIC", "false").strip().lower() == "true"
+# HTTPS enforcement: when True, non-loopback HTTP requests are redirected to HTTPS.
+FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "false").strip().lower() == "true"
+
 
 
 

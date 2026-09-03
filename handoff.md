@@ -2,8 +2,9 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 666 passing (backend + live_execution) + 8 Playwright E2E
+**Tests:** 669 passing (backend + live_execution) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
+
 
 **§52 SINGLE BOOK:** the paper tick + paper engine are RETIRED; the live
 cycle retains every feature they had (brain, memories, reflections, learning,
@@ -207,8 +208,15 @@ WebSocket security, and input sanitization were remediated and verified with ded
      malformed strings or injection payloads before board construction.
 
 **Test Suite:** 666 passing (7 new security tests in `backend/tests/test_security_audit_remediations.py`).
+**20-Point Security Checklist Verification:**
+- *Auth Rate Limiting:* Sliding window lockout added in `backend/api/auth.py` (5 failed attempts within 60s triggers HTTP 429 Too Many Requests).
+- *HTTPS Enforcement & Headers:* Added `FORCE_HTTPS` redirect middleware in `backend/api/main.py` (301 redirect for non-loopback HTTP) + enhanced headers (`Strict-Transport-Security` on HTTPS, `Permissions-Policy`, `X-XSS-Protection: 1; mode=block`).
+- *Audits & Hygiene:* `pip-audit` clean (0 vulns), `npm audit --omit=dev` clean (0 vulns), RLS locked on all Supabase tables, parameterized queries verified throughout, zero cookies/passwords by design.
+
+**Test Suite:** 669 passing (14 security hardening tests in `test_security_hardening.py` + 7 in `test_security_audit_remediations.py`).
 
 ---
+
 
 ## 52. SINGLE-BOOK restructure — paper retired, live retains everything (2026-09-03)
 

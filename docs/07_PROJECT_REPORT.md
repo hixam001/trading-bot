@@ -46,6 +46,15 @@ STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
 at the repo root).** Tests: **620 passing (468 backend + 152 live_execution)
 + 8 Playwright E2E — fully green (the flag-state canary pins the committed
 ARMED state — handoff §33).**
+execution package. Report updated 2026-09-03 from the current main branch
+(§53: security audit hardening — blind signing program whitelist guard, live book access control,
+DoS break clamping, CSWSH origin/concurrency caps, auth brute-force rate-limiting lockout, FORCE_HTTPS
+redirection, and security headers; §52: single-book restructure — paper retired, live retains all features;
+§51: free social stack — Brave→SearXNG chain + staged social read; §45: equity-proportional live ticket;
+§44: staged gate; §42/§42b: deployable restructure). Status: **live** (real market data, REAL funds ARMED;
+Supabase Postgres persistence). Tests: **669 passing (backend + live_execution) + 8 Playwright E2E** —
+fully green (the flag-state canary pins the committed ARMED state — handoff §33).
+
 
 ---
 
@@ -1787,3 +1796,29 @@ needed.
 `test_live_features_retained.py`, +1 reworked). Both parity suites green;
 the isolation contract (the shared brain never imports live_execution)
 re-verified after the restructure.
+
+---
+
+## 31. Security Hardening & 20-Point Checklist Remediation (2026-09-03)
+
+Comprehensive security audit hardening remediating 7 core vulnerabilities and verifying compliance with the 20-point production security checklist:
+
+### 31.1 Remediated Vulnerabilities (SEC-01 through SEC-07)
+1. **SEC-01 (Critical) — Blind Transaction Signing Guard:** Added `APPROVED_SWAP_PROGRAM_IDS` in `backend/live_execution/config.py` and `inspect_swap_transaction(tx, payer_pubkey)` in `jupiter_executor.py`. Fee payer must match loaded keypair and all instruction program IDs must belong to the approved whitelist (Jupiter v6/v4, Raydium, Meteora, Orca, Pump.fun, Moonshot, System, Token, ATA, Memo). Unknown programs immediately abort execution with `ExecutionError`.
+2. **SEC-02 (High) — Live Book Access Control:** `/api/live/portfolio` and `/api/live/executions` restricted behind loopback (`127.0.0.1`, `::1`, `localhost`) or `X-Admin-Token` operator header when `LIVE_BOOK_PUBLIC=False`.
+3. **SEC-03 (High) — Unbounded Break Clamping (Prompt Injection DoS):** Self-regulating break duration clamped to `[5, 60]` minutes across `liveness.py`, `thinker.py`, and `llm_brain.py`. Disallowed `float("inf")`. Untrusted candidate/crowd payloads isolated inside `<untrusted_data>` delimiters.
+4. **SEC-04 (Medium) — CSWSH & Concurrency Ceiling:** WebSocket `/ws/feed` validates `Origin` against `config.FRONTEND_ORIGINS` (refuses mismatch with WS 1008) and enforces `MAX_WS_CLIENTS = 32`.
+5. **SEC-05 (Medium) — CORS Preflight Rejection:** Updated `allow_headers` to include `X-Admin-Token` so operator browser requests clear preflight.
+6. **SEC-06 (Medium) — Cryptographic Route TTL Caching:** Added 3-second in-memory TTL caching on `/api/verify.json` and `/api/binding.json` to prevent RPC quota exhaustion from rapid queries.
+7. **SEC-07 (Low) — Solana Base58 Mint Sanitization:** Added syntactic Base58 regex validation (`is_valid_solana_address`) in `data_providers/discovery.py`.
+
+### 31.2 20-Point Production Security Checklist Compliance
+- **Hide API keys & Git secrets:** All credentials kept in untracked `.env` (permissions `600`). Active regex log redactors (`_ApiKeyRedactor` and `_KeypairRedactor`) scrub keys and keypairs from logs.
+- **Database & RLS:** Server-side connection pooler with SHA-256 fingerprint pinning. Supabase RLS enabled on all 13 tables with zero permissive public policies.
+- **Server-Side Auth & Rate Limiting:** Constant-time `hmac.compare_digest` in `require_admin_token()`. Sliding-window brute-force lockout (HTTP 429 after 5 failed attempts in 60s).
+- **Injection & Tampering Protection:** 100% of database queries parameterized (`?` for SQLite, `$1, $2` for asyncpg). React JSX auto-escaping eliminates XSS (0 `dangerouslySetInnerHTML`/`innerHTML`/`eval`). Pydantic input models enforce schema boundaries.
+- **Network & Headers:** `FORCE_HTTPS` middleware issues HTTP 301 redirects for non-loopback connections. Defense-in-depth headers: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer`, `X-XSS-Protection: 1; mode=block`, `Permissions-Policy`, and `Strict-Transport-Security` (on HTTPS).
+- **Dependency Hygiene:** Clean audit runs with 0 vulnerabilities (`pip-audit` for Python backend, `npm audit --omit=dev` for frontend).
+
+**Test Suite:** **669 passing (backend + live_execution) + 8 Playwright E2E**.
+

@@ -19,8 +19,9 @@ import os
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
+
 
 import config
 
@@ -82,11 +83,25 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def security_headers(request, call_next):
-    """§38 F5: baseline security headers on every response.
+async def force_https_middleware(request, call_next):
+    """Force HTTPS redirect on non-loopback connections when configured."""
+    if getattr(config, "FORCE_HTTPS", False):
+        forwarded_proto = request.headers.get("x-forwarded-proto", "")
+        client_host = getattr(getattr(request, "client", None), "host", "")
+        if forwarded_proto == "http" or (
+            request.url.scheme == "http"
+            and client_host not in ("127.0.0.1", "::1", "localhost", "testclient")
+        ):
+            https_url = str(request.url.replace(scheme="https"))
+            return RedirectResponse(url=https_url, status_code=301)
+    return await call_next(request)
 
-    The dashboard is served same-origin and never renders raw HTML, so these
-    are defense-in-depth: nosniff stops MIME-confusion, DENY blocks click-
+
+@app.middleware("http")
+async def security_headers(request, call_next):
+    """Baseline security headers on every response (F5 & security checklist).
+
+    Defense-in-depth: nosniff stops MIME-confusion, DENY blocks click-
     jacking framing, no-referrer keeps local URLs out of third-party logs,
     and no-store keeps book/wallet data out of any cache.
     """
@@ -94,10 +109,21 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    if request.url.path.startswith("/api/"):
+    response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+    response.headers.setdefault(
+        "Permissions-Policy",
+        "geolocation=(), microphone=(), camera=(), payment=()",
+    )
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if request.url.scheme == "https" or forwarded_proto == "https":
         response.headers.setdefault(
-            "Cache-Control", "no-store")
+            "Strict-Transport-Security",
+            "max-age=63072000; includeSubDomains; preload",
+        )
+    if request.url.path.startswith("/api/"):
+        response.headers.setdefault("Cache-Control", "no-store")
     return response
+
 
 for module in (feed, holdings, journal, stats, market_regime,
                promotion_gate, knowledge_base, system_status):
