@@ -388,3 +388,36 @@ def test_daily_loss_breaker_trips_and_blocks_execution(env, monkeypatch):
     no_network(monkeypatch)
     with pytest.raises(kill_switch.KillSwitchTripped):
         asyncio.run(je.preflight(10.0, "NEW", 6, ledger))
+
+
+def test_inspect_swap_transaction_guards():
+    from solders.keypair import Keypair
+    from solders.transaction import VersionedTransaction
+    from solders.message import MessageV0
+    from solders.instruction import Instruction, AccountMeta
+    from solders.pubkey import Pubkey
+    from solders.hash import Hash
+
+    kp = Keypair()
+    other_kp = Keypair()
+    valid_prog = Pubkey.from_string("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4")
+    rogue_prog = Pubkey.from_string("11111111111111111111111111111112")  # not in whitelist
+
+    # 1. Valid transaction with approved program and matching fee payer
+    ix_valid = Instruction(valid_prog, b"", [AccountMeta(kp.pubkey(), True, False)])
+    msg_valid = MessageV0.try_compile(kp.pubkey(), [ix_valid], [], Hash.default())
+    tx_valid = VersionedTransaction(msg_valid, [kp])
+    # Should not raise
+    je.inspect_swap_transaction(tx_valid, str(kp.pubkey()))
+
+    # 2. Fee payer mismatch
+    with pytest.raises(je.ExecutionError, match="fee payer mismatch"):
+        je.inspect_swap_transaction(tx_valid, str(other_kp.pubkey()))
+
+    # 3. Unapproved program ID
+    ix_rogue = Instruction(rogue_prog, b"", [AccountMeta(kp.pubkey(), True, False)])
+    msg_rogue = MessageV0.try_compile(kp.pubkey(), [ix_rogue], [], Hash.default())
+    tx_rogue = VersionedTransaction(msg_rogue, [kp])
+    with pytest.raises(je.ExecutionError, match="unapproved program ID"):
+        je.inspect_swap_transaction(tx_rogue, str(kp.pubkey()))
+

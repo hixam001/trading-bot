@@ -49,6 +49,10 @@ def _read() -> Optional[dict]:
         )
 
 
+MIN_BREAK_MINUTES: int = 5
+MAX_BREAK_MINUTES: int = 60
+
+
 def _write(taking: bool, minutes: int, reason: str) -> None:
     path = _state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -56,10 +60,16 @@ def _write(taking: bool, minutes: int, reason: str) -> None:
     
     break_until = 0.0
     if taking:
-        if minutes > 0:
-            break_until = time.time() + (minutes * 60)
-        else:
-            break_until = float("inf")
+        # SEC-03: Clamp break minutes to [MIN_BREAK_MINUTES, MAX_BREAK_MINUTES]
+        # (5m to 60m) to prevent unbounded trading freeze from prompt injection
+        # or rogue LLM outputs.
+        try:
+            m = int(minutes)
+        except (ValueError, TypeError):
+            m = 15
+        clamped = min(max(m if m > 0 else 15, MIN_BREAK_MINUTES), MAX_BREAK_MINUTES)
+        break_until = time.time() + (clamped * 60)
+        minutes = clamped
         
     tmp.write_text(json.dumps({
         "taking": taking,
@@ -73,6 +83,7 @@ def _write(taking: bool, minutes: int, reason: str) -> None:
 
 def set_break(taking: bool, minutes: int = 0, reason: str = "") -> None:
     _write(taking, minutes, reason)
+
 
 
 def is_on_break() -> bool:

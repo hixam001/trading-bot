@@ -14,9 +14,13 @@ import logging
 
 from fastapi import WebSocket, WebSocketDisconnect
 
+import config
 from api import db
 
 log = logging.getLogger(__name__)
+
+MAX_WS_CLIENTS: int = 32
+
 
 
 class FeedBroadcaster:
@@ -65,18 +69,35 @@ class FeedBroadcaster:
                 await self._task
             self._task = None
 
-    async def connect(self, ws: WebSocket) -> None:
+    async def connect(self, ws: WebSocket) -> bool:
+        if len(self._clients) >= MAX_WS_CLIENTS:
+            log.warning("websocket rejected: maximum client capacity (%d) reached", MAX_WS_CLIENTS)
+            await ws.close(code=1008, reason="maximum connections reached")
+            return False
         await ws.accept()
         self._clients.add(ws)
+        return True
 
     def disconnect(self, ws: WebSocket) -> None:
         self._clients.discard(ws)
 
 
 async def websocket_endpoint(ws: WebSocket, broadcaster: FeedBroadcaster) -> None:
-    await broadcaster.connect(ws)
+    # SEC-04: Cross-Site WebSocket Hijacking (CSWSH) origin validation
+    origin = ws.headers.get("origin")
+    if origin:
+        allowed = set(config.FRONTEND_ORIGINS)
+        if origin not in allowed:
+            log.warning("websocket rejected from unallowed origin: %s", origin)
+            await ws.close(code=1008, reason="origin not allowed")
+            return
+
+    connected = await broadcaster.connect(ws)
+    if not connected:
+        return
     try:
         while True:
             await ws.receive_text()   # keepalive; ignore client messages
     except WebSocketDisconnect:
         broadcaster.disconnect(ws)
+

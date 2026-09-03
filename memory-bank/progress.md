@@ -1,7 +1,23 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §53 Security hardening & vulnerability remediation (2026-09-03):
+      operator directive "audit the repo and find security flaws and make a
+      implementation plan for them". Remediated 7 vulnerabilities:
+      (1) SEC-01: blind transaction signing guard in live execution with
+      `APPROVED_SWAP_PROGRAM_IDS` whitelist and fee payer verification;
+      (2) SEC-02: live book access control (`LIVE_BOOK_PUBLIC: bool = False`,
+      gating `/api/live/portfolio` and `/api/live/executions` to loopback or
+      `X-Admin-Token`);
+      (3) SEC-03: unbounded break duration clamped to `[5, 60]` minutes in
+      liveness/thinker/llm_brain, mitigating prompt injection DoS;
+      (4) SEC-04: CSWSH origin validation + `MAX_WS_CLIENTS = 32` capacity ceiling;
+      (5) SEC-05: CORS `allow_headers` updated to include `X-Admin-Token`;
+      (6) SEC-06: in-memory 3s TTL caching on `/api/verify.json` and `/api/binding.json`;
+      (7) SEC-07: Solana Base58 mint address sanitization in discovery.
+      **666 passing.**
 - [x] §52 Single-book restructure — paper retired, live retains everything
+
       (2026-09-03): operator directive "remove paper trade completely, but
       make sure live execution retains all features" + audit gaps 1.3/1.8.
       (A) `backend/sizing.py` — the money math both books shared, extracted

@@ -17,12 +17,14 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Optional
 
 import httpx
 
 import config
+
 from models import Candidate
 
 log = logging.getLogger(__name__)
@@ -51,8 +53,17 @@ MOVER_SLOTS = 2        # top 1h movers that flow ranking may have buried
 RESERVED_ROTATION_SLOTS = 5   # guaranteed rotation from the remainder
 BOARD_CAP = 16
 
+# SEC-07: Syntactic validation for Solana base58 public keys (32-44 base58 chars).
+_BASE58_MINT_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{32,44}$")
+
+
+def is_valid_solana_address(address: str) -> bool:
+    """Validate that a token mint is a syntactically valid Solana base58 address."""
+    return bool(address and isinstance(address, str) and _BASE58_MINT_RE.match(address.strip()))
+
 
 def _is_fake_chart(liq_usd: float, vol_1h: float) -> bool:
+
     """Cheap two-field pre-scrape gate: reject the most obvious wash-trades
     before they consume enrichment or LLM credits.
 
@@ -164,8 +175,9 @@ class KeywordScanner:
         for pair in all_pairs:
             base = pair.get("baseToken") or {}
             mint = base.get("address")
-            if not mint or mint in best:
+            if not mint or not is_valid_solana_address(mint) or mint in best:
                 continue
+
             liq = (pair.get("liquidity") or {}).get("usd") or 0
             vol_1h = (pair.get("volume") or {}).get("h1") or 0
             if _is_fake_chart(liq_usd=liq, vol_1h=vol_1h):

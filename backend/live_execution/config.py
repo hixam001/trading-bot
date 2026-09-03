@@ -99,6 +99,33 @@ CONFIRM_TIMEOUT_SECONDS: float = 60.0
 
 
 
+# Whitelist of approved Solana programs that may be invoked by Jupiter swap transactions.
+# Transactions invoking unapproved or arbitrary third-party program IDs fail closed
+# and will NOT be signed (SEC-01 anti-drainer / blind-signing guard).
+APPROVED_SWAP_PROGRAM_IDS: frozenset[str] = frozenset({
+    "11111111111111111111111111111111",                     # System Program
+    "ComputeBudget111111111111111111111111111111",           # Compute Budget Program
+    "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",           # SPL Token Program
+    "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb",           # SPL Token-2022 Program
+    "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL",           # Associated Token Account Program
+    "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",           # SPL Memo Program
+    "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",           # Jupiter Aggregator v6
+    "JUP4Fb2cqiRUcaTHdrPC8h2gNsA2ETXiPDD33WcGuJB",           # Jupiter Aggregator v4
+    "675kPX9MHTjS2zt1qfr1NYHuzeLXfQM9H24wFSUt1Mp8",           # Raydium AMM v4
+    "CPMMoo8L3F4NbTegBCKVNunggL7H1ZpdTHKxQB5qKP1C",           # Raydium CPMM
+    "CAMMCzo5YL8w4VFF8KVHrK22GGUsp5VTaW7grrKgrWqK",           # Raydium CLMM
+    "whirLbMiicVdio4qvUfM5KAg6Ct8VwpYzGff3uctyCc",           # Orca Whirlpool
+    "LBUZKhRxPF3XUpBCjp4YzTKgLccjZhTSDM9YuVaPwxo",           # Meteora DLMM
+    "Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB",           # Meteora Dynamic Pools
+    "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",           # Pump.fun AMM
+    "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",           # Pump.fun Bonding Curve
+    "MSPC8t9vL7iQc4JzJjS9KqR7vC8bZpUuJ9G7r5vB2pD",           # Moonshot
+    "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",           # Phoenix
+    "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",           # OpenBook
+    "EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S",           # Lifinity
+})
+
+
 # ---------------------------------------------------------------------------
 # reference-parity execution plumbing (2026-08-25).
 # ---------------------------------------------------------------------------

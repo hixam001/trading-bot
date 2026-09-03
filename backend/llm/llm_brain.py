@@ -464,9 +464,10 @@ def parse_llm_tick(raw: str, valid_symbols: set) -> Optional[dict]:
                      if isinstance(m, dict)][:2],
         "fomo": fomo,
         "break_taking": bool(brk.get("taking")),
-        "break_minutes": int(brk.get("minutes") or 0),
+        "break_minutes": min(max(int(brk.get("minutes") or 0), 0), 60),
         "break_reason": str(brk.get("reason") or ""),
     }
+
 
 
 class LLMBrain:

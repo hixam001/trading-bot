@@ -1,10 +1,23 @@
 # Active Context — trading-bot
 
-**As of 2026-09-03 (§52 SHIPPED — SINGLE-BOOK: the paper tick (main.py), the paper engine (paper_trading_engine.py) and 27 paper-only tests are DELETED; the live cycle retains every paper feature — trades-table mirror (ledger→DB one-way, idempotent) so calibration/learning/perf_report/reflections/stats keep their queryable home, the role-routed brain with LIVE portfolio context, §49 loss-memory recall in the thinker (was written-never-read), closed-trade reflections, daily learning; sizing math extracted to sizing.py; stats/holdings routes read the live book (mirrored trades + chain USDC); disclosure single_book:true; audit gap 1.3 closed (thinker tags closed-at-profit thesis authors as exit-liquidity marketing — the heat discount already existed); audit gap 1.8 verified pre-built (A2 reconcile). 658 passing. Live arming unchanged: LIVE_TRADING_ENABLED in live_execution/config.py, human-edit-only. PREVIOUS: §51 free social stack (Brave→SearXNG→Firecrawl + staged social read). NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants (0.035/4×/8%); Phase 3 = LLM as bouncer (entry conviction + exit consult, Option B machine floor); Phase 4 = churn tightening + re-fund; §51 .env flips (Brave key, SEARXNG_URL, social key re-enable) still pending.)**
+**As of 2026-09-03 (§53 SHIPPED — SECURITY HARDENING: remediated 7 vulnerabilities across blind transaction signing, live book access control, DoS prompt injection break clamping, CSWSH & connection concurrency, CORS headers, cryptographic endpoint TTL caching, and Solana base58 mint sanitization. 666 passing. PREVIOUS: §52 single-book restructure. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants; Phase 3 = LLM as bouncer; Phase 4 = churn tightening + re-fund.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §53 Security hardening & vulnerability remediation (2026-09-03)
+Operator directive: "audit the repo and find security flaws and make a implementation plan for them".
+Remediated 7 vulnerabilities with dedicated tests (`backend/tests/test_security_audit_remediations.py`):
+(1) **SEC-01 (Critical) — Blind Signing Guard**: `APPROVED_SWAP_PROGRAM_IDS` whitelist in `live_execution/config.py` + `inspect_swap_transaction()` in `jupiter_executor.py` verifying fee payer matches keypair and all instruction program IDs are whitelisted before signing.
+(2) **SEC-02 (High) — Live Book Access Control**: `LIVE_BOOK_PUBLIC: bool = False` configuration + `_check_access()` gating `/api/live/portfolio` and `/api/live/executions` so non-public access requires loopback or `X-Admin-Token`.
+(3) **SEC-03 (High) — Unbounded Break Clamping (Prompt Injection DoS)**: Clamped break duration to `[5, 60]` minutes in `rule_engine/liveness.py`, `llm/thinker.py`, and `llm/llm_brain.py`; disallowed `float("inf")`; isolated untrusted data with `<untrusted_data>` delimiters.
+(4) **SEC-04 (Medium) — CSWSH & Connection Flooding**: Added Origin header validation against `config.FRONTEND_ORIGINS` and enforced `MAX_WS_CLIENTS = 32` capacity limit in `api/websocket.py`.
+(5) **SEC-05 (Medium) — CORS Preflight Rejection**: Added `"X-Admin-Token"` to CORS `allow_headers` in `api/main.py`.
+(6) **SEC-06 (Medium) — Cryptographic Route TTL Caching**: Added 3-second in-memory TTL caching on `/api/verify.json` and `/api/binding.json` in `api/routes/proof.py` to prevent RPC quota exhaustion.
+(7) **SEC-07 (Low) — Solana Base58 Mint Sanitization**: Added syntactic Base58 pubkey validation (`is_valid_solana_address`) in `data_providers/discovery.py`.
+**666 passing.**
+
 ### §52 Single-book restructure — paper retired, live retains everything (2026-09-03)
+
 Operator directive: implement audit gaps 1.3 + 1.8, "remove paper trade
 completely, but make sure live execution retains all features." (A)
 `backend/sizing.py` — the money math both books shared, extracted VERBATIM

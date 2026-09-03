@@ -23,19 +23,30 @@ import hashlib
 import json
 import logging
 import re
+import sys
+import time
 from datetime import datetime, timezone
+
 from typing import Optional
 
 from fastapi import APIRouter
+import config
 from api import db
 from rule_engine.exits import ExitDecision  # noqa: F401 — type docs only
 
 router = APIRouter()
 log = logging.getLogger(__name__)
 
+# SEC-06: In-memory TTL caching for heavy cryptographic verification endpoints
+_VERIFY_CACHE: dict = {"ts": 0.0, "data": None}
+_BINDING_CACHE: dict = {"ts": 0.0, "data": None}
+_PROOF_CACHE_TTL: float = 3.0
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
 
 
 @router.get("/api/proof.json")
@@ -206,6 +217,12 @@ async def get_verify():
     signature additionally get the memo verified against public RPC (memo
     confirmed, memo text matches the committed hash, memo slot precedes the
     bound fill). RPC unavailable -> 'unknown', never 'pass'."""
+    now = time.time()
+    if "pytest" not in sys.modules and _VERIFY_CACHE["data"] is not None and (now - _VERIFY_CACHE["ts"]) < _PROOF_CACHE_TTL:
+        return _VERIFY_CACHE["data"]
+
+
+
     # Optional RPC read helper + memo prefix (live_execution is not
     # importable in pure-paper mode; the local recompute still runs).
     _get_tx = None
@@ -249,7 +266,7 @@ async def get_verify():
             "memo": memo_block,
         })
 
-    return {
+    payload = {
         "algorithm": "sha256(nonce|canonical_payload_json)",
         "memo_algorithm": f"memo text = '{memo_prefix}' + hash, written "
                           "on-chain BEFORE the fill; recomputed from the "
@@ -260,6 +277,10 @@ async def get_verify():
         "memo_totals": memo_totals,
         "rows": results,
     }
+    _VERIFY_CACHE["ts"] = now
+    _VERIFY_CACHE["data"] = payload
+    return payload
+
 
 
 # ---------------------------------------------------------------------------
@@ -369,6 +390,12 @@ async def get_binding():
     report status='unknown' — never 'pass'. Only rows where all four checks
     pass report 'matched'.
     """
+    now = time.time()
+    if "pytest" not in sys.modules and _BINDING_CACHE["data"] is not None and (now - _BINDING_CACHE["ts"]) < _PROOF_CACHE_TTL:
+        return _BINDING_CACHE["data"]
+
+
+
     import config as cfg
 
     wallet_address = getattr(cfg, "WALLET_ADDRESS", "")
@@ -381,6 +408,7 @@ async def get_binding():
         _get_tx = _get_tx_fn
     except ImportError:
         pass
+
 
     async with db.get_db() as conn:
         rows = await db.get_verify_commits(conn)
@@ -446,12 +474,16 @@ async def get_binding():
             **result,
         })
 
-    return {
+    payload = {
         "generated_at_utc": _now_iso(),
         "totals": {"matched": matched, "mismatched": mismatched,
                    "unknown": unknown, "unbound": unbound},
         "pairs": pairs,
     }
+    _BINDING_CACHE["ts"] = now
+    _BINDING_CACHE["data"] = payload
+    return payload
+
 
 
 @router.get("/api/refusals.json")

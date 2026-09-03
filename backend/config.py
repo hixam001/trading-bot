@@ -441,6 +441,10 @@ FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 # are dropped; the local dev origin remains the fail-closed default.
 FRONTEND_ORIGINS: list = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()]
 WS_POLL_INTERVAL_SECONDS: float = 2.0
+# Live book public access (SEC-02): when False (default), live portfolio and
+# executions endpoints require the X-Admin-Token operator header or loopback.
+LIVE_BOOK_PUBLIC: bool = os.getenv("LIVE_BOOK_PUBLIC", "false").strip().lower() == "true"
+
 
 
 def assert_paper_trading_only() -> None:

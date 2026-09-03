@@ -280,6 +280,34 @@ async def _build_swap_transaction(quote: dict, user_public_key: str) -> str:
     return b64
 
 
+def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
+    """Validate transaction safety before signing (SEC-01).
+
+    Ensures:
+      1. Fee payer matches our loaded keypair.
+      2. All invoked program IDs are in APPROVED_SWAP_PROGRAM_IDS.
+    """
+    account_keys = [str(k) for k in getattr(tx.message, "account_keys", [])]
+    if not account_keys:
+        raise ExecutionError("swap transaction has empty accountKeys")
+
+    fee_payer = account_keys[0]
+    if fee_payer != payer_pubkey:
+        raise ExecutionError(
+            f"swap transaction fee payer mismatch: expected {payer_pubkey}, got {fee_payer}"
+        )
+
+    for i, ix in enumerate(tx.message.instructions):
+        prog_idx = ix.program_id_index
+        if prog_idx < len(account_keys):
+            prog_id = account_keys[prog_idx]
+            if prog_id not in config.APPROVED_SWAP_PROGRAM_IDS:
+                raise ExecutionError(
+                    f"unapproved program ID in swap instruction #{i}: {prog_id} "
+                    "— refusing to sign unverified payload"
+                )
+
+
 def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
     from solders.transaction import VersionedTransaction  # type: ignore
 
@@ -288,9 +316,11 @@ def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
     # That call crashed the first real armed order (AttributeError) after the
     # quote+swap phases had already succeeded. Regression-tested offline.
     tx = VersionedTransaction.from_bytes(raw_unsigned)
+    inspect_swap_transaction(tx, str(payer.pubkey()))
     signed = VersionedTransaction(tx.message, [payer])
     signature = str(signed.signatures[0])
     return signature, bytes(signed)
+
 
 
 async def _rpc(method: str, params: list) -> dict:

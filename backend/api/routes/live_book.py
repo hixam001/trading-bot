@@ -24,10 +24,26 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Request
 
+import config
 from api import db
+from api.auth import require_admin_token
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _check_access(request: Request) -> None:
+    """Operator access control for live book surfaces (SEC-02).
+
+    When LIVE_BOOK_PUBLIC is False, access is restricted to loopback (local
+    operator / dashboard) or requests carrying a valid X-Admin-Token.
+    """
+    if getattr(config, "LIVE_BOOK_PUBLIC", False):
+        return
+    client_host = getattr(getattr(request, "client", None), "host", "")
+    if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
+        return
+    require_admin_token(request)
 
 
 def _disabled(reason: str) -> dict:
@@ -36,12 +52,14 @@ def _disabled(reason: str) -> dict:
 
 @router.get("/api/live/portfolio")
 async def get_live_portfolio(request: Request):
+    _check_access(request)
     try:
         return await _build(request)
     except Exception as exc:
         # The live book must never take the dashboard down.
         log.warning("live portfolio unreadable: %s", exc, exc_info=True)
         return _disabled(f"unreadable: {exc}")
+
 
 
 async def _build(request: Request) -> dict:
@@ -188,11 +206,13 @@ async def get_live_executions(request: Request):
     Same fail-soft contract as /api/live/portfolio: never 500s, never
     fabricates a number, degrades to {"enabled": false, "reason": ...}.
     """
+    _check_access(request)
     try:
         return _build_executions()
     except Exception as exc:
         log.warning("live executions unreadable: %s", exc, exc_info=True)
         return _disabled(f"unreadable: {exc}")
+
 
 
 def _build_executions() -> dict:

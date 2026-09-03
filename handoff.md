@@ -2,8 +2,9 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 658 passing (backend + live_execution) + 8 Playwright E2E
+**Tests:** 666 passing (backend + live_execution) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
+
 **§52 SINGLE BOOK:** the paper tick + paper engine are RETIRED; the live
 cycle retains every feature they had (brain, memories, reflections, learning,
 calibration via a ledger→trades mirror). Sizing math lives in `sizing.py`.
@@ -149,7 +150,68 @@ migration: re-run the spike script there (datacenter-IP reality check) —
 the browser hop + `SCRAPLING_PROXY` escape hatch cover the IP-reputation
 case the TLS hop does not.
 
+## 53. Security hardening & vulnerability remediation (2026-09-03)
+
+Operator directive: "audit the repo and find security flaws and make a implementation plan for them".
+Seven vulnerabilities identified across transaction execution, API access control, prompt injection,
+WebSocket security, and input sanitization were remediated and verified with dedicated test coverage:
+
+1. **SEC-01 (Critical) — Blind transaction signing guard in live_execution:**
+   - *Problem:* `jupiter_executor._sign_transaction()` decoded arbitrary unsigned base64 payloads
+     from Jupiter API directly into `VersionedTransaction` and signed them with the live keypair
+     without checking account keys or instructions. If Jupiter API or DNS was spoofed, a drainer
+     could steal all wallet funds.
+   - *Fix:* Added `APPROVED_SWAP_PROGRAM_IDS` in `backend/live_execution/config.py` (Jupiter V6/V4,
+     System, Token, Token-2022, ATA, Memo, Raydium AMM/CPMM/CLMM, Orca, Meteora DLMM/Dynamic, Pump.fun,
+     Moonshot, Phoenix, OpenBook, Lifinity) and `inspect_swap_transaction(tx, payer_pubkey)` in
+     `jupiter_executor.py`. Before signing, the transaction's fee payer must match our loaded keypair
+     and every instruction's program ID must be in the approved whitelist. Any unknown program ID
+     immediately raises `ExecutionError` and aborts execution.
+
+2. **SEC-02 (High) — Live book access control:**
+   - *Problem:* `/api/live/portfolio` and `/api/live/executions` were public and unauthenticated,
+     leaking real wallet public keys, token holdings, entry costs, and transaction signatures.
+   - *Fix:* Added `LIVE_BOOK_PUBLIC: bool = os.getenv("LIVE_BOOK_PUBLIC", "false") == "true"` in `config.py`
+     and `_check_access(request)` in `backend/api/routes/live_book.py`. When `LIVE_BOOK_PUBLIC` is False,
+     access is restricted to loopback (`127.0.0.1`, `::1`, `localhost`) or requests carrying the valid
+     `X-Admin-Token` operator header.
+
+3. **SEC-03 (High) — Unbounded self-regulating break / prompt injection DoS:**
+   - *Problem:* `rule_engine/liveness._write()` accepted arbitrary break durations. If `minutes <= 0`,
+     it set `break_until = float("inf")`, and positive minutes were unconstrained. A malicious token
+     or crowd tweet could inject instructions telling the LLM to output `"break": {"taking": true, "minutes": 999999}`,
+     permanently freezing the bot.
+   - *Fix:* Clamped `minutes` to `[MIN_BREAK_MINUTES, MAX_BREAK_MINUTES]` (`[5, 60]` minutes max) in
+     `liveness.py`, `llm/thinker.py`, and `llm/llm_brain.py`. Disallowed `float("inf")`. Wrapped untrusted
+     token/crowd text in `<untrusted_data>` delimiters with strict system prompt boundaries.
+
+4. **SEC-04 (Medium) — Cross-Site WebSocket Hijacking (CSWSH) & connection flooding:**
+   - *Problem:* `/ws/feed` accepted connections from any browser origin without checking `Origin`, and
+     `FeedBroadcaster` had no maximum client connection limit.
+   - *Fix:* Added origin validation against `config.FRONTEND_ORIGINS` in `backend/api/websocket.py`
+     (rejecting unallowed origins with WebSocket code 1008), and enforced `MAX_WS_CLIENTS = 32` capacity limit.
+
+5. **SEC-05 (Medium) — CORS preflight rejection for `X-Admin-Token`:**
+   - *Problem:* `CORSMiddleware` in `backend/api/main.py` had `allow_headers=["Content-Type"]`. Browser
+     preflights (`OPTIONS`) for operator routes sending `X-Admin-Token` were rejected.
+   - *Fix:* Updated `allow_headers` to `["Content-Type", "X-Admin-Token"]`.
+
+6. **SEC-06 (Medium) — Cryptographic route rate limiting / TTL caching:**
+   - *Problem:* `/api/verify.json` and `/api/binding.json` in `backend/api/routes/proof.py` recomputed
+     SHA-256 digests across all commit rows and dispatched live RPC calls without rate limiting or caching.
+   - *Fix:* Added in-memory TTL caching (3 seconds) to prevent RPC quota exhaustion from rapid HTTP queries.
+
+7. **SEC-07 (Low) — Solana Base58 mint address sanitization:**
+   - *Problem:* `data_providers/discovery.py` accepted any raw string as a token mint address from external search APIs.
+   - *Fix:* Added `is_valid_solana_address()` using Base58 regex (`^[1-9A-HJ-NP-Za-km-z]{32,44}$`) to filter out
+     malformed strings or injection payloads before board construction.
+
+**Test Suite:** 666 passing (7 new security tests in `backend/tests/test_security_audit_remediations.py`).
+
+---
+
 ## 52. SINGLE-BOOK restructure — paper retired, live retains everything (2026-09-03)
+
 
 Operator directive: implement audit gaps 1.3 + 1.8, and "remove paper trade
 completely, but make sure live execution retains all features." The paper

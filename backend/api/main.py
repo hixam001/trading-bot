@@ -76,8 +76,9 @@ app.add_middleware(
     allow_origins=config.FRONTEND_ORIGINS,
     # §38 F6: only the verbs/headers the dashboard actually uses.
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "X-Admin-Token"],
 )
+
 
 
 @app.middleware("http")

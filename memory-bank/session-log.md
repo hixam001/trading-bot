@@ -1,4 +1,18 @@
+## Memory-bank update - 2026-09-03 (§53 security audit hardening)
+
+- **Task**: operator directive — "audit the repo and find security flaws and make a implementation plan for them", then implement the approved remediations.
+- **Vulnerabilities Remediated**:
+  1. **SEC-01 (Critical)**: Blind transaction signing in `live_execution/jupiter_executor.py` replaced with whitelist enforcement (`APPROVED_SWAP_PROGRAM_IDS`) and fee-payer validation before private key signing.
+  2. **SEC-02 (High)**: Live book access control added for `/api/live/portfolio` and `/api/live/executions` (gated behind loopback or `X-Admin-Token` unless `LIVE_BOOK_PUBLIC=True`).
+  3. **SEC-03 (High)**: Unbounded break interval in `rule_engine/liveness.py` clamped to `[5, 60]` minutes, disallowing `float("inf")` and mitigating prompt-injection DoS. Untrusted text wrapped in `<untrusted_data>` delimiters.
+  4. **SEC-04 (Medium)**: CSWSH origin check against `config.FRONTEND_ORIGINS` and connection limit `MAX_WS_CLIENTS = 32` enforced on `/ws/feed`.
+  5. **SEC-05 (Medium)**: CORS `allow_headers` updated to include `X-Admin-Token`.
+  6. **SEC-06 (Medium)**: 3-second TTL caching added to `/api/verify.json` and `/api/binding.json` to prevent RPC quota exhaustion.
+  7. **SEC-07 (Low)**: Base58 Solana mint validation added in `data_providers/discovery.py`.
+- **Tests**: 7 new dedicated security tests (`backend/tests/test_security_audit_remediations.py`). Full suite green at **666 passing** (backend + live_execution).
+
 ## Memory-bank update - 2026-09-03 (§52 single-book restructure + fresh omo audit)
+
 
 - **Task**: operator directive — implement omo-audit gaps 1.3 (skin-in-the-game
   crowd intel) and 1.8 (chain-first book), then "remove paper trade completely,
