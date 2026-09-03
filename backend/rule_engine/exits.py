@@ -15,9 +15,9 @@ the position FULLY; only the take-profit ladder trims.
   exit_take_profit          ladder trims: +100%/+300%/+900% -> 33%/33%/50%
 
 Pure functions only: no I/O, no clock reads (time is injected), so every
-decision is replayable and unit-testable. The caller (paper_trading_engine.
-scan_and_execute_exits) supplies market data and applies the SELL RISK GATE
-before touching the database.
+decision is replayable and unit-testable. The caller (run_live_cycle._manage,
+the §52 single-book exit scanner) supplies market data and applies the
+SELL RISK GATE before routing any order.
 """
 from __future__ import annotations
 
@@ -64,11 +64,24 @@ _HOLD = ExitDecision("", "hold", 0.0, "no exit condition met")
 # Helpers
 # ---------------------------------------------------------------------------
 
+def check_exit_conditions(trade: Trade, current_price: float) -> Optional[str]:
+    """
+    §52: single-price exit probe (moved from the retired paper engine —
+    its only consumers were tests). Delegates to the shared engine with
+    price-only inputs — rules needing richer market data (liquidity break,
+    invalidation, stale volume) evaluate only in the scanners where that
+    data exists. Returns the fired rule_id or None. The SOLE decision-maker
+    for exits is the rule engine — no LLM involved.
+    """
+    decision = evaluate_exits(ExitInput(trade=trade, price_usd=current_price))
+    return decision.rule_id or None
+
+
 def _net_gain_frac(trade: Trade, price_usd: float) -> float:
     """Unrealized P&L as a fraction of cost basis, net of exit costs."""
-    # Lazy import: paper_trading_engine imports this module, so a top-level
-    # import would be circular.
-    from paper_trading_engine import compute_unrealized_pnl
+    # §52: sizing.py is the neutral home of the money math — no circularity
+    # with the rule engine anymore (the paper module is gone).
+    from sizing import compute_unrealized_pnl
     _, pnl_pct = compute_unrealized_pnl(trade, price_usd)
     return pnl_pct / 100.0
 

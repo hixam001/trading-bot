@@ -38,7 +38,6 @@ from blocklist import (
     unblock_mint,
 )
 from llm.thinker import Thinker, template_think
-from main import run_tick
 from models import Candidate, Trade
 
 
@@ -218,23 +217,20 @@ def test_reentry_cooldown_ignores_wins(bl_state):
     assert len(kept) == 1 and blocked == []
 
 
-def test_both_books_record_then_autoblock_on_full_close():
-    """§49 parity: the paper engine's close path AND the live cycle's
-    _manage do record_close_outcome -> maybe_autoblock, in that order,
-    with the right book tag, and journal the soft loss memory."""
-    import paper_trading_engine as pte
+def test_live_book_records_then_autoblocks_on_full_close():
+    """§49 → §52: the LIVE cycle's _manage does record_close_outcome →
+    maybe_autoblock, in that order, with the live book tag, and journals
+    the soft loss memory. (The paper book retired; its side of the old
+    both-books pin went with it.)"""
     import run_live_cycle as rlc
 
-    paper_src = inspect.getsource(pte.scan_and_execute_exits)
     live_src = inspect.getsource(rlc._manage)
-    for src, book in ((paper_src, "paper"), (live_src, "live")):
-        assert "record_close_outcome as _record" in src
-        assert f'book="{book}"' in src
-        assert "maybe_autoblock as _maybe" in src
-        assert src.index("_record(") < src.index("_maybe(")
-        # reference layer 5: the thinker sees the loss lesson
-        assert "we already paid for this lesson" in src
-        assert '"loss_close"' in src
+    assert "record_close_outcome as _record" in live_src
+    assert 'book="live"' in live_src
+    assert "maybe_autoblock as _maybe" in live_src
+    assert live_src.index("_record(") < live_src.index("_maybe(")
+    # reference layer 5: the thinker sees the loss lesson
+    assert "we already paid for this lesson" in live_src
 
 
 def test_anti_churn_thresholds_are_pinned():
@@ -296,7 +292,7 @@ def test_mint_block_takes_precedence_over_symbol_reason(bl_state):
 
 def test_fixed_mode_returns_intended_size(monkeypatch):
     monkeypatch.setattr(config, "SIZING_MODE", "fixed")
-    from paper_trading_engine import compute_ticket
+    from sizing import compute_ticket
     assert compute_ticket(1_000.0, heat=None) == \
         config.INTENDED_POSITION_SIZE_USD
     assert compute_ticket(1_000.0, heat=100) == \
@@ -308,7 +304,7 @@ def test_conviction_mode_scales_with_heat(monkeypatch):
     monkeypatch.setattr(config, "TICKET_CASH_FRACTION", 0.15)
     monkeypatch.setattr(config, "TICKET_MAX_USD", 150.0)
     monkeypatch.setattr(config, "MIN_TICKET_USD", 25.0)
-    from paper_trading_engine import compute_ticket
+    from sizing import compute_ticket
 
     # cash 1000 -> base = min(150, 150) = 150
     # heat None -> neutral 50 -> conviction min(1, 0.5+0.3)=0.8 -> 120
@@ -344,62 +340,6 @@ def tick_env(tmp_path, monkeypatch):
     async def _ready():
         await db.init_db()
     return _ready
-
-
-async def test_daily_cap_refuses_second_deployment(tick_env, monkeypatch):
-    await tick_env()
-    monkeypatch.setattr(config, "DAILY_DEPLOY_CAP_USD", 120.0)
-
-    # AAA green (+6%), BBB red (-2%): regime stays OK, both pass the gate,
-    # but together they'd deploy $200 > the $120 daily cap.
-    c1 = make_candidate("MintAAAA1111111111111111111111111111111111", "AAA")
-    c2 = make_candidate("MintBBBB2222222222222222222222222222222222", "BBB")
-    c2.price_change_1h_pct = -2.0
-    provider = OneCandidateProvider([c1, c2])
-
-    s1 = await run_tick(provider, Thinker(), state={})
-    assert s1["opened"] == 1          # AAA entered; BBB hit the cap
-
-    async with db.get_db() as conn:
-        events = await db.get_feed_events(conn, limit=10)
-        cash = await db.get_cash_balance(conn)
-        deployed = await db.deployed_today(conn)
-        open_trades = await db.get_open_trades(conn)
-
-    capped = [e for e in events if "daily deploy cap" in e["thesis"]]
-    assert capped, "cap refusal must be visible in the journal"
-    assert deployed == pytest.approx(100.0)
-    assert len(open_trades) == 1
-    premium = config.INTENDED_POSITION_SIZE_USD * 1.01 * 1.02
-    assert cash == pytest.approx(config.INITIAL_CASH_USD - premium)
-
-
-# --- decision seal: commits written before acting, hashes recompute ---------------
-
-async def test_decision_seal_written_and_hash_verifies(tick_env,
-                                                       monkeypatch):
-    await tick_env()
-    thinker = Thinker()
-    c = make_candidate()
-    summary = await run_tick(
-        OneCandidateProvider([c]), thinker, state={"tick": 0, "theses": {}})
-    assert summary["candidates"] == 1
-
-    async with db.get_db() as conn:
-        async with conn.execute(
-            "SELECT nonce, payload_json, payload_hash, verdict, "
-            "entry_allowed FROM decision_commits"
-        ) as cur:
-            rows = await cur.fetchall()
-
-    assert len(rows) == 1
-    nonce, payload_json, payload_hash, verdict, allowed = rows[0]
-    recomputed = hashlib.sha256((nonce + "|" + payload_json).encode())
-    assert recomputed.hexdigest() == payload_hash
-    payload = json.loads(payload_json)
-    assert payload["symbol"] == c.symbol
-    assert payload["think_verdict"] in ("buy", "pass")
-    assert isinstance(allowed, int)
 
 
 def test_commit_payload_is_canonical():

@@ -1,9 +1,66 @@
 # Active Context — trading-bot
 
-**As of 2026-08-31 (§50 PHASE 0 SHIPPED — funds withdrawn, performance is the focus. The omo live-disclosure re-audit proved: our avg win +57.88% ≈ their +59.71%, our hit rate 12.5% > their 9.4% — the ENTIRE gap is the loss shape (−26.05% vs −7.4%) and the missing refusal layer (they decline 74%, we decline ~0%). Phase 0 shipped: ledger `rule_id` forensics + `tranches_taken` (kills the latent re-trim bug), the reference sell gate live-side with the §45 equity-proportional clip floor, `scripts/perf_report.py` (the honest scorecard, omo-format, backend-agnostic; baseline recorded), docs/09 §F ground truth. 660 passing. Live cycle OFF while the wallet is empty — everything loads on next start. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants (0.035/4×/8%); Phase 3 = LLM as bouncer (entry conviction + exit consult, Option B machine floor); Phase 4 = churn tightening + re-fund.)**
+**As of 2026-09-03 (§52 SHIPPED — SINGLE-BOOK: the paper tick (main.py), the paper engine (paper_trading_engine.py) and 27 paper-only tests are DELETED; the live cycle retains every paper feature — trades-table mirror (ledger→DB one-way, idempotent) so calibration/learning/perf_report/reflections/stats keep their queryable home, the role-routed brain with LIVE portfolio context, §49 loss-memory recall in the thinker (was written-never-read), closed-trade reflections, daily learning; sizing math extracted to sizing.py; stats/holdings routes read the live book (mirrored trades + chain USDC); disclosure single_book:true; audit gap 1.3 closed (thinker tags closed-at-profit thesis authors as exit-liquidity marketing — the heat discount already existed); audit gap 1.8 verified pre-built (A2 reconcile). 658 passing. Live arming unchanged: LIVE_TRADING_ENABLED in live_execution/config.py, human-edit-only. PREVIOUS: §51 free social stack (Brave→SearXNG→Firecrawl + staged social read). NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants (0.035/4×/8%); Phase 3 = LLM as bouncer (entry conviction + exit consult, Option B machine floor); Phase 4 = churn tightening + re-fund; §51 .env flips (Brave key, SEARXNG_URL, social key re-enable) still pending.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §52 Single-book restructure — paper retired, live retains everything (2026-09-03)
+Operator directive: implement audit gaps 1.3 + 1.8, "remove paper trade
+completely, but make sure live execution retains all features." (A)
+`backend/sizing.py` — the money math both books shared, extracted VERBATIM
+from `paper_trading_engine`; every importer re-pointed (run_live_cycle,
+exits lazy-import, thesis_restate, stats/holdings/disclosure routes, 3
+test files). (B) Retention ports into the live cycle: trades-table mirror
+(`_mirror_live_trades`/`_mirror_live_close`, ledger→DB one-way, idempotent
+— fixes the discovered starvation bug: live never wrote trades rows, so
+calibration/learning/perf_report would have died with paper), the role-
+routed brain with LIVE portfolio context (fail-closed, usage journaled
+once/cycle), §49 loss-memory recall into the thinker (was written-never-
+read — real bug), closed-trade reflections on full close, daily learning
+in the live loop; `check_exit_conditions` moved to rule_engine/exits.
+(C) Deleted `main.py`, `paper_trading_engine.py` + 27 paper-only tests;
+stats/holdings routes read the live book (mirrored trades + chain USDC,
+fail-closed); disclosure `single_book:true`; `PAPER_TRADING_ONLY` stays
+hardcoded True as a historical flag; live arming unchanged
+(`LIVE_TRADING_ENABLED`, human-edit-only). (D) Audit 1.3: 80% pre-built
+(dumped-thesis weight 0.0 → effective_total → heat, test-pinned); closed
+the last delta — the thinker tags closed-at-profit thesis authors as
+"ALREADY EXITED — exit-liquidity marketing, not live conviction". (E)
+Audit 1.8: 90% pre-built (A2 reconcile: chain-enumerates, excludes
+vanished, clamps sizing, flags unjournaled — test-pinned); verified
+complete, no work needed. **658 passing** (−27 paper-only tests, +8
+retention pins in `test_live_features_retained.py`, +1 reworked).
+### §51 Free social stack — Brave→SearXNG search chain + staged social read (2026-09-02)
+Operator ask: make the social part of the repo free (good success rate
++ performance). Findings: crowd feed already free (§47 Scrapling — TLS
+impersonation is the right tool there, but it is NOT a search engine, no
+ranked rows); Firecrawl /v1/search was the last metered social burn (402
+credits-out at ship time); the social read was off but un-staged ≈ 11k
+calls/day — never fittable on a free tier. Shipped: (A) free-first chain in
+`llm/web_research.py` — Brave (`freshness=pd`, free $5 monthly credit ≈
+1k searches) → self-hosted SearXNG (`format=json&time_range=day`, keyless;
+public instances 403 json — hence `deploy/searxng/` + compose sidecar) →
+Firecrawl last-resort; identical `{title, description}` rows so prompts are
+byte-unchanged; §34 bench machinery ported (402/422 long, 429 short, 2
+transport errors → bench); empty-answer falls through to the next hop.
+(B) staged social read: `read_social_one` + usage queue in `llm/social.py`,
+stage 5 of `gate_candidate_staged` (same all-passed population as stages 2
+and 4), cross-tick reuse via existing social_interest, BOTH books drain the
+queue into llm_call_usage (paper: after the gate loop; live: post-cycle
+fail-soft). `enrich_candidates` returns [] (signature kept). Infra: searxng
+compose service + settings.yml (json on, limiter off, private network),
+`.env` knobs BRAVE_SEARCH_API_KEY/SEARXNG_URL/SEARCH_BENCH_SECONDS/
+SEARCH_THROTTLE_BACKOFF_SECONDS, `docs/12_FREE_SEARCH_STACK.md` runbook,
+README env-table + troubleshooting rows, handoff §51. Tests +16 net:
+`test_social_staging.py` (9: staging, evidence-only, stage ordering,
+reuse, mock hermeticity, disabled-key, fail-soft ×2, exactly-once usage
+queue ×3 incl. the drain-from-dp-queue pin), `test_search_chain.py`
+(6: 402 long bench, 429 short backoff, transport-error bench, streak
+reset, empty fall-through, all-empty cached miss) + web-staging extended
+(+1) + its fixture now clears Brave/SearXNG (the operator's real .env
+leaks via load_dotenv — same reason FIRECRAWL was force-cleared).
+**676 passing.** One real bug the new tests caught: read_social_one built
+the reader before the key check.
 ### §50 Phase 0 — exit forensics, live sell gate, the honest scorecard (2026-08-31)
 Baseline (perf_report): 24 samples, hit 12.5%, avg win +57.88%, avg loss
 −26.05%, expectancy −15.56%, think-refusals ≈ 0, feed fail-share 95.2%

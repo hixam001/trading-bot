@@ -11,8 +11,8 @@ import pytest
 
 import config
 from models import Trade
-from paper_trading_engine import (
-    check_exit_conditions,
+from rule_engine.exits import check_exit_conditions
+from sizing import (
     compute_entry_cost,
     compute_position_size,
     compute_realized_pnl,

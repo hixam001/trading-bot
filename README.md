@@ -1,20 +1,24 @@
 # trading-bot — AI-assisted Solana memecoin trading research system
 
-A local trading research system for Solana memecoins with two layers:
+A local trading research system for Solana memecoins. **§52: single-book** —
+the paper simulation is retired; one live cycle runs the whole engine:
 
-1. **Paper-trading engine (default, always safe)** — every ~60s tick it pulls
-   real market candidates (Birdeye trending memepool), enriches them
-   (Dexscreener pairs, Jupiter pricing), computes a market-wide regime
-   snapshot, and runs each candidate through a deterministic entry-rule set.
+1. **The decision cycle (`backend/run_live_cycle.py`)** — every
+   `TICK_INTERVAL_SECONDS` it pulls real market candidates (Birdeye trending
+   memepool), enriches them (Dexscreener pairs, Jupiter pricing), computes a
+   market-wide regime snapshot, and runs each candidate through a
+   deterministic staged entry-rule set (cheap rules → fomo scrape → crowd
+   rules → web search → social read, spend-disciplined per candidate).
    Entry requires **every rule to pass AND the LLM's buy verdict**; exits
    come from a reference-parity numeric exit engine (stop / trailing /
-   liquidity-break / invalidation / stale / take-profit ladder) scanned every
-   15s. All money is simulated — `PAPER_TRADING_ONLY = True` is hardcoded and
-   runtime-asserted inside every position-opening function.
-2. **Live-execution package (operator-ARMED in this repo)** — `backend/live_execution/`
-   routes the same brain into real Jupiter swaps from a funded wallet.
-   This repo is committed ARMED by its operator (2026-08-28, after the §27
-   devnet drill passed 5/5); the flags are editable **only by a human in
+   liquidity-break / invalidation / stale / take-profit ladder) behind a
+   separate sell-risk gate. The ExecutionLedger is the money authority; a
+   one-way mirror keeps the shared `trades` table fed so calibration,
+   learning, reflections and the dashboard keep a queryable home.
+2. **Live execution (operator-ARMED in this repo)** — `backend/live_execution/`
+   routes the cycle into real Jupiter swaps from a funded wallet. This repo
+   is committed ARMED by its operator (2026-08-28, after the §27 devnet
+   drill passed 5/5); the flags are editable **only by a human in
    `backend/live_execution/config.py`** (see [Live trading](#live-trading-operator-armed)).
 
 **The LLM never trades.** Decisions are made by pure, testable code; the
@@ -32,11 +36,12 @@ on a React dashboard served by the backend itself.
 
 ## Safety model (read this first)
 
-- `backend/` (the paper pipeline) contains **no wallet and no transaction
-  construction anywhere**. It cannot touch real funds by construction.
+- `backend/` (the shared brain: pipeline, rules, sizing, providers, LLM
+  stages) contains **no wallet and no transaction construction anywhere**.
+  It cannot touch real funds by construction.
 - `backend/live_execution/` is the only real-execution code (a subpackage
-  INSIDE backend/ so the engine deploys as one module — the paper pipeline
-  itself still never imports it, test-pinned). It ships with
+  INSIDE backend/ so the engine deploys as one module — the shared brain
+  still never imports it, test-pinned). It ships with
   `LIVE_TRADING_ENABLED = False` and `REQUIRE_MANUAL_CONFIRMATION = True`
   hardcoded — deliberately **not** settable via environment variables, so one
   stray `.env` line can never arm it. A kill switch, daily-loss breaker,
@@ -67,7 +72,7 @@ cd trading-bot
 
 # 1. Create your environment file and fill in your keys
 cp .env.example .env
-#    minimum for real-data paper trading:
+#    minimum for real-data cycles:
 #      DATA_BACKEND=live
 #      BIRDEYE_API_KEY=<your key>
 #      MAIN_LLM_PROVIDER=deepseek
@@ -101,11 +106,12 @@ arm flags) are deliberately hardcoded in `backend/config.py` /
 | `MAIN_LLM_PROVIDER` (`deepseek` \| `groq`) | yes | selects the main brain (think / narrate / reflections / thesis re-authoring) |
 | `DEEPSEEK_API_KEY` | for `deepseek` | **the main model** — DeepSeek V4 Flash direct API (non-thinking mode) |
 | `GROQ_API_KEY`, `GROQ_MODEL` | for `groq` | warm rollback provider (qwen3.8-27b on Groq) |
-| `SOCIAL_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | optional | realtime social read stage (OpenAI-compatible; Groq today). Empty key = stage off |
-| `FOMO_PRIVY_REFRESH_TOKEN` + `FIRECRAWL_API_KEY` | optional | REAL crowd-conviction feed (fomo.fun board via stealth proxy). Empty = crowd_heat degrades to a presence proxy. Since §44 the board is scraped only AFTER a candidate passes every other rule, and only if it then passes the crowd rule does the LLM see it (quota saver); rejects journal crowd_heat as "not evaluated" |
-| `SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS_API_KEY` | optional | stealth-scrape failover chain for the crowd feed (auto-benching on 402/429) |
+| `SOCIAL_LLM_BASE_URL` / `_API_KEY` / `_MODEL` | optional | realtime social read stage (OpenAI-compatible; Groq free tier today). Empty key = stage off. Since §51 the read is **staged**: it runs only for candidates that passed every rule, so the free tier's 1,000 calls/day covers it |
+| `FOMO_PRIVY_REFRESH_TOKEN` | optional | REAL crowd-conviction feed (fomo.fun board). Since §47 the board is read through the FREE local Scrapling transport (curl-cffi Chrome TLS first, stealth browser fallback) — no paid key needed; `FIRECRAWL_API_KEY`/`SCRAPING*_API_KEY` are shadow-week failover only. The scrape runs only AFTER a candidate passes every other rule (quota saver); rejects journal crowd_heat as "not evaluated" |
+| `BRAVE_SEARCH_API_KEY`, `SEARXNG_URL` | optional | §51 FREE web-search evidence chain: Brave first (~1,000 free searches/month, auto credit), then your self-hosted SearXNG sidecar (keyless, unlimited), then Firecrawl last-resort. At least one configured = stage on; empty everywhere = off |
+| `SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS_API_KEY` | optional | stealth-scrape failover chain for the crowd feed (auto-benching on 402/429) — shadow-week backup for the free §47 transport |
 | `USE_SUPABASE_DB`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run `migrations/supabase/001_init.sql` once first) |
-| `TICK_INTERVAL_SECONDS`, `MAX_CANDIDATES_PER_TICK`, `INITIAL_CASH_USD` | optional | tick cadence + paper book starting cash (defaults 60 / 20 / 1000) |
+| `TICK_INTERVAL_SECONDS`, `MAX_CANDIDATES_PER_TICK`, `INITIAL_CASH_USD` | optional | cycle cadence + the historical equity-curve anchor (defaults 60 / 20 / 1000) |
 | `WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL` | live only | see [Live trading](#live-trading-operator-armed) |
 
 If a main-LLM key is missing/invalid the system **fails closed**: the model
@@ -120,7 +126,9 @@ stage degrades to deterministic template passes that can never produce a buy.
   (01:00–04:00 + 06:00–10:00 UTC weekdays) at 2×; non-urgent LLM jobs skip
   peak windows automatically.
 - **Rollback: Groq** (`MAIN_LLM_PROVIDER=groq`) — one-line reversible flip.
-- **Social read:** a separate OpenAI-compatible endpoint (`SOCIAL_LLM_*`).
+- **Social read:** a separate OpenAI-compatible endpoint (`SOCIAL_LLM_*`,
+  Groq's free tier today) — staged since §51: it only runs for candidates
+  that passed every rule, so the free 1,000 requests/day budget covers it.
 - Every call is accounted for (tokens, latency, cost estimate, degradation
   reason) in the `llm_call_usage` table; degradation is always honest and
   logged.
@@ -167,7 +175,7 @@ databases — your `.env` and real book can never leak into them.
 ## Live trading (operator-ARMED)
 
 > ⚠️ **Real money. Read `handoff.md` §26/§27/§31 before touching this.**
-> Nothing in this section is needed for the paper bot.
+> §52: this IS the engine now — there is no paper bot anymore.
 
 `live_execution/` routes the same read/think/gate brain into real Jupiter
 swaps. **State committed to this repo (2026-08-28, explicit operator
@@ -213,15 +221,17 @@ real swaps — the chain is the source of truth.
 ## Repository layout
 
 ```
-backend/                 paper pipeline + LIVE execution — THE single deployable module
-  rule_engine/           deterministic entry rules, exit engine, gate, regime, liveness
-  paper_trading_engine.py  atomic money math (rowcount decides whether cash moves)
+backend/                 the single deployable module (shared brain + LIVE execution)
+  rule_engine/           deterministic entry rules, exit engine + sell gate, regime, liveness
+  sizing.py              the pure money math (risk budget / tickets / P&L) — §52
   data_providers/        birdeye / dexscreener / jupiter / crowd / mock / live stack
+  run_live_cycle.py      THE decision cycle (manage → read → think → gate → execute)
+  decision_pipeline.py   the shared read→think→gate core
   llm/                   thinker, narrator, social/web research, provider clients
   thesis_restate.py      A11 write-up re-authoring job (narrative-only)
   calibration.py         closed-loop conviction factor (bounds 0.6–1.2)
   api/                   FastAPI app + repository layer (db.py SQLite / db_pg.py Postgres)
-  live_execution/        REAL-money package (operator-ARMED; paper pipeline never imports it)
+  live_execution/        REAL-money package (operator-ARMED; the shared brain never imports it)
   run_live_cycle.py      live decision cycle runner + --drill
   tests/                 backend test suite
   live_execution/tests/  live-package test suite
@@ -254,7 +264,9 @@ python run_live_cycle.py --once
 
 - `logs/backend.log` — tick loop, LLM calls, exits, refusals (keys redacted)
 - `.run/backend.pid` — used by `./stop.sh`
-- `backend/trading_bot.db` (or `DB_PATH`) — the paper book
+- `backend/trading_bot.db` (or `DB_PATH`) — the decision journal + the
+  live book's mirrored trades (the ExecutionLedger in
+  `live_execution/state/` is the money authority)
 - `live_execution/state/` — live confirmations, idempotency ledger, kill
   switch (gitignored)
 
@@ -266,7 +278,7 @@ python run_live_cycle.py --once
   decisionLog, session-log).
 - **`docs/`** — `00_BLUEPRINT`, `01_ARCHITECTURE`, `02_FEATURE_LIST`,
   `05_VERIFICATION_APPENDIX`, `06_REFERENCE_COMPARISON`,
-  `07_PROJECT_REPORT`, `08_LLM_API_MIGRATION`, `09_OMO_AUDIT_COMPARISON`,
+  `07_PROJECT_REPORT`, `08_LLM_API_MIGRATION`,
   `11_DEPLOYMENT` (runbook), `12_ORACLE_DEPLOY_GUIDE` (step-by-step free-tier deploy).
 
 ## Troubleshooting
@@ -277,7 +289,8 @@ python run_live_cycle.py --once
 | "main LLM provider has no API key" warning on start | fill `DEEPSEEK_API_KEY` (or switch `MAIN_LLM_PROVIDER=groq` + `GROQ_API_KEY`); until then the model stage fails closed to templates |
 | Backend won't start | `tail -50 logs/backend.log`; most often port 8000 is taken (`./stop.sh` first) |
 | Dashboard blank after code changes | rebuild: `cd frontend && npm run build`, or just re-run `./start.sh` |
-| Crowd feed shows weak conviction | the fomo.fun board needs `FOMO_PRIVY_REFRESH_TOKEN` + `FIRECRAWL_API_KEY` (see `.env.example` §6) |
+| Crowd feed shows weak conviction | the fomo.fun board needs `FOMO_PRIVY_REFRESH_TOKEN` (free Scrapling transport does the rest — `.env.example` §6). Weak heat with the token set usually means the board itself has few theses |
+| No web-search evidence lines | §51 chain off or benched: set `BRAVE_SEARCH_API_KEY` (free) and/or run the SearXNG sidecar + `SEARXNG_URL`; logs show `search hop … benched` when a hop exhausted its quota |
 | DeepSeek calls skipped at night | peak-window pricing guard (01:00–04:00 / 06:00–10:00 UTC weekdays); non-urgent jobs resume off-peak |
 | Test suite shows a red flag-state test | someone flipped `live_execution/config.py` without updating the pinning test — check `git diff` on that file before doing anything |
 
@@ -286,9 +299,8 @@ python run_live_cycle.py --once
 Portions of this design (the rule-engine-as-decision-maker pattern, the
 market-regime gate, the exit engine contract, the commit–reveal proof) were
 informed by studying comparable public systems' decision audit logs, notably
-the published `omotrades/omo` repository (full comparison in
-`docs/09_OMO_AUDIT_COMPARISON.md`). The implementation here is this project's
-own, built for its own goals and constraints (local hardware, paper-first,
+the published `omotrades/omo` repository. The implementation here is this
+project's own, built for its own goals and constraints (local hardware,
 defense-first safety model).
 
 ## Open-source credits

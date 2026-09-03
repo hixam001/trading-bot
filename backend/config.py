@@ -445,10 +445,10 @@ WS_POLL_INTERVAL_SECONDS: float = 2.0
 
 def assert_paper_trading_only() -> None:
     """
-    Runtime assertion called INSIDE every position-opening/state-changing
-    trading function (E7). Belt-and-suspenders: even if a caller upstream
-    forgot to check, the engine itself refuses to act unless the hardcoded
-    safety flag is True.
+    §52: RETIRED with the paper book — no caller remains (the paper engine
+    that asserted it at runtime was deleted). Kept only because external
+    scripts may import it; live trading NEVER calls this: live arming is
+    LIVE_TRADING_ENABLED in live_execution/config.py, human-edit-only.
     """
     if PAPER_TRADING_ONLY is not True:
         raise RuntimeError(
@@ -481,9 +481,11 @@ SOCIAL_LLM_MODEL: str = os.getenv("SOCIAL_LLM_MODEL", "qwen/qwen3.8-27b")
 SOCIAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("SOCIAL_LLM_TIMEOUT_SECONDS", "20"))
 SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
 
-# Live web search evidence for the think stage (the reference web-research parity).
-# Uses the existing FIRECRAWL_API_KEY; empty key = stage disabled.
-# tbs=qdr:d limits results to the last 24h like the reference recent=true.
+# Live web search evidence for the think stage (the reference web-research
+# parity). §51: FREE-first chain — Brave (primary), self-hosted SearXNG
+# (keyless secondary), Firecrawl (last-resort failover). Empty everywhere =
+# stage disabled. tbs=qdr:d / freshness=pd / time_range=day all limit results
+# to the last 24h like the reference recent=true.
 WEB_SEARCH_PER_TICK: int = int(os.getenv("WEB_SEARCH_PER_TICK", "8"))
 WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "20"))
 # §48: cross-tick evidence cache (in-memory, per mint). A HIT (real
@@ -494,6 +496,39 @@ WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECO
 WEB_SEARCH_CACHE_TTL: float = float(os.getenv("WEB_SEARCH_CACHE_TTL", "7200"))
 WEB_SEARCH_CACHE_MISS_TTL: float = float(
     os.getenv("WEB_SEARCH_CACHE_MISS_TTL", "1800"))
+
+# ---------------------------------------------------------------------------
+# §51 — FREE web-search transport chain (Brave → SearXNG → Firecrawl).
+#
+# The crowd feed went free in §47 (Scrapling TLS impersonation); the web-search
+# evidence stage is the LAST metered social input. This chain replaces it with
+# free transports in preference order, behind the same §48 staging + cache:
+#   1. Brave Search API   — $5 of free credits EVERY month (auto-applied), at
+#      $5/1k queries ≈ 1,000 searches/month free, 1 req/s free tier. Freshness
+#      "pd" = past-day (parity with the old tbs=qdr:d 24h window).
+#   2. Self-hosted SearXNG — keyless, unlimited: our own docker sidecar,
+#      format=json&time_range=day. Public instances DISABLE the json format
+#      (403) — only a self-hosted instance works; see deploy/searxng/.
+#   3. Firecrawl /v1/search — the paid incumbent, kept ONLY as last-resort
+#      failover (402 exhaustion benches it until refill, as today).
+# Every hop maps results onto the SAME {title, description} row shape the old
+# Firecrawl path produced, so summarize_hits() output stays byte-identical —
+# the thinker prompt sees no change. Benching mirrors crowd.py §34: 402/422 →
+# long bench, 429 → short backoff, 2 consecutive transport errors → bench.
+# ---------------------------------------------------------------------------
+# Brave: free key from https://api-dashboard.search.brave.com (free plan —
+# the $5 monthly credit is applied automatically, no card on the free tier).
+BRAVE_SEARCH_API_KEY: str = os.getenv("BRAVE_SEARCH_API_KEY", "")
+BRAVE_SEARCH_URL: str = os.getenv(
+    "BRAVE_SEARCH_URL", "https://api.search.brave.com/res/v1/web/search")
+# Self-hosted SearXNG (deploy/searxng/ + docker-compose.yml service "searxng").
+# MUST be an instance WE run (json format enabled, limiter off) — a public
+# instance returns 403 on format=json. Empty = hop off.
+SEARXNG_URL: str = os.getenv("SEARXNG_URL", "")
+# §34-style benching for the search chain (seconds).
+SEARCH_BENCH_SECONDS: float = float(os.getenv("SEARCH_BENCH_SECONDS", "1800"))
+SEARCH_THROTTLE_BACKOFF_SECONDS: float = float(
+    os.getenv("SEARCH_THROTTLE_BACKOFF_SECONDS", "75"))
 
 # ---------------------------------------------------------------------------
 # DB maintenance — row retention limits for append-only tables.

@@ -34,8 +34,8 @@ committed ARMED (`LIVE_TRADING_ENABLED=True`,
 trading must flip the flag before running anything.
 The 2026-08-28 cash-corruption incident (bad quote → phantom cash in the
 PAPER book) was fixed with hardcoded bad-quote guards on both books and a
-final full-coverage omo audit closed every open question (handoff §32,
-docs/09 §F): no trading-critical parity gap remains. Live-cycle hardening
+final full-coverage omo audit closed every open question (handoff §32):
+no trading-critical parity gap remains. Live-cycle hardening
 (handoff §34) shipped the same day: 403-rejection benching for the stealth
 scraper chain (a proxy refused by the origin twice is benched like a 402) and
 a micro-bootstrap live cash rule (`LIVE_ACTIVE_RULES` checks the $0.50 live
@@ -605,7 +605,7 @@ All seven approved Reference parity items are now implemented:
 | REF-R5 | Events + memory system | ✅ | `db.py` `insert_event/recall_memories`, routes `/api/events.json` |
 | REF-R6 | Public disclosure + reasoning feeds | ✅ | `disclosure.py` `/api/disclosure.json` + `/api/reasoning.json` |
 | REF-R7 | Retro audit-log signature matching | ✅ | `retro_matcher.py`, `db.py` `bind_commit_signature` |
-| REF-R8 | Drawdown-adaptive risk budget | ✅ | `paper_trading_engine.py` `compute_risk_budget` (2026-08-27) |
+| REF-R8 | Drawdown-adaptive risk budget | ✅ | `sizing.py` `compute_risk_budget` (2026-08-27; §52 home) |
 | REF-R9 | Closed-loop conviction factor | ✅ | `calibration.py`, `patch_daily_stats` (2026-08-27) |
 | REF-R11 | On-chain precommit memo (commit–reveal) | ✅ | `backend/live_execution/memo.py`, `proof.py` `/api/verify.json` memo checks (2026-08-27) |
 | A11 | Thesis re-authoring (omo audit re-read) | ✅ | `thesis_restate.py`, `db.py`/`db_pg.py` `get_open_theses/update_thesis_text` (2026-08-27) |
@@ -708,7 +708,7 @@ Batch 2 of the reference-parity roadmap (handoff §22 → §23). Verbatim ports 
 the reference `computeBudget()` and `computeCalibration()`, re-fetched from the
 reference repository at implementation time.
 
-### REF-R8 — risk budget (`paper_trading_engine.py`)
+### REF-R8 — risk budget (`sizing.py` since §52; was `paper_trading_engine.py`)
 - `compute_risk_budget(equity, unrealized)` pure + deterministic:
   `drawdown_factor = clamp(1 + min(0, unrealized)/equity × 2.5, 0.5, 1.0)`;
   `max_order = round(clamp(equity × 0.035 × df, 25, 3000))`;
@@ -882,7 +882,9 @@ signer = the trading wallet; de-branded `commit:v1:` prefix.
 ## 14. omo-audit gap queue A7/A6/A3/A2/A4 (2026-08-27, handoff §29)
 
 A full audit of the reference repo (`omotrades/omo`) produced a comparison
-(`docs/09_OMO_AUDIT_COMPARISON.md`). The operator selected five gaps to close.
+(the former docs/09 gap analysis, superseded 2026-09-02 by a fresh from-scratch
+re-audit delivered to the operator in chat; docs/09 and docs/10 were removed
+at the operator's direction). The operator selected five gaps to close.
 All five are implemented, tested, and ship **DISARMED** where they touch the
 live path. Reference sources were fetched raw (`market.server.ts`,
 `blocklist.ts`, `wallet.server.ts`, `fomo.server.ts`, `execute.server.ts`).
@@ -977,7 +979,8 @@ standing "implement against omotrades/omo" instruction.
   non-urgent work); mock mode is a deterministic no-op.
 - DB layer (lockstep, no raw SQL outside `api/db*.py`): `get_open_theses()`
   + `update_thesis_text()` in BOTH `api/db.py` and `api/db_pg.py`.
-- Wiring: `main.py run_tick` — one pass after the risk-budget block,
+- Wiring: the A11 pass (§52: the live cycle's `run_cycle`, historically
+  `main.py run_tick`) — one pass after the risk-budget block,
   reusing that block's `price_map` + open positions (**zero extra network
   I/O** — documented deviation from the reference's per-row tape fetch).
   `run_live_cycle.py` — same pass after `_manage` re-prices the live book
@@ -1101,7 +1104,7 @@ chain reconciliation cross-checks token quantities every cycle. The
 dashboard cash display is the PAPER book; the live book's truth is the
 wallet's on-chain USDC balance.
 
-### Final omo audit (docs/09 §F)
+### Final omo audit (handoff §32)
 Full-coverage re-read of `omotrades/omo` (unchanged at commit 48a86f9).
 Closed all open questions: (1) `exit.server.ts` EXISTS but is unpublished —
 their own `exit-rules.test.ts` imports it, so a fresh clone cannot run their
@@ -1734,3 +1737,53 @@ carries ticket/floor/equity at 4 decimals so sub-cent margins are never
 misread as equality. 620 tests passing (+§45 formula suite, dust clamp,
 fail-closed inputs, the incident regression, and the over-deployed-book gate
 failure).
+
+## 30. Single-book restructure: paper retired, live retains everything (2026-09-03, handoff §52)
+
+Operator directive: "remove paper trade completely, but make sure live
+execution retains all features", plus omo-audit gaps 1.3 and 1.8.
+
+**What was removed.** `backend/main.py` (the paper tick loop) and
+`backend/paper_trading_engine.py` (the simulated-book lifecycle) — dead code
+since §34 turned the tick off in start.sh. 27 paper-only tests retired with
+them (paper-journal atomicity, the mock-tick e2e, the §32 proceeds backstop
+— a paper-only failure class; live sells are bounded by REAL Jupiter fills +
+the live jump guard — the scanner/trim integration tests, the tick-level
+cap/seal tests, and the paper-main source pins; live equivalents are
+§50-pinned).
+
+**What live gained (the retention list).** (1) A trades-table mirror
+(`_mirror_live_trades`/`_mirror_live_close`): live fills/closes now write
+the shared `trades` table — one-way, idempotent per mint, ExecutionLedger
+still the money authority — so REF-R9 calibration, the G1–G3 learning loop,
+`perf_report`, closed-trade reflections, and the stats/holdings routes keep
+their queryable home (this was a latent starvation bug: none of them had a
+live source before). (2) The role-routed brain (`LLMBrain.tick`) with the
+LIVE portfolio as context, fail-closed to the per-candidate thinker, usage
+journaled once per cycle. (3) §49 loss-memory recall wired into the live
+thinker's prompt (the memories were written but never read). (4)
+Closed-trade reflections fired on full close. (5) Daily learning once per
+UTC day in the live loop. (6) The sizing math extracted to the neutral
+`backend/sizing.py` (the spine both books always shared); `check_exit_conditions`
+moved to `rule_engine/exits.py`.
+
+**API surface.** `/api/stats` and `/api/holdings` read the live book
+(mirrored trades + the wallet's real on-chain USDC, fail-closed to 0);
+`/api/live/portfolio` remains the live-truth panel; disclosure adds
+`single_book: true`. `PAPER_TRADING_ONLY` stays hardcoded True as the
+historical safety flag; live arming is unchanged (human-edit-only
+`LIVE_TRADING_ENABLED` in `live_execution/config.py`).
+
+**Audit gaps.** 1.3 (skin-in-the-game crowd intel): found 80% pre-built —
+dumped-thesis discount (weight 0.0) already fed `effective_total` into
+crowd heat, test-pinned; closed the last delta by tagging closed-at-profit
+thesis authors in the thinker's crowd line as "ALREADY EXITED —
+exit-liquidity marketing, not live conviction". 1.8 (chain-first book):
+verified 90% pre-built (A2 reconcile already chain-enumerates holdings,
+excludes vanished positions, clamps sizing, flags unjournaled) — no work
+needed.
+
+**Suite: 658 passing** (was 676: −27 paper-only, +8 §52 retention pins in
+`test_live_features_retained.py`, +1 reworked). Both parity suites green;
+the isolation contract (the shared brain never imports live_execution)
+re-verified after the restructure.

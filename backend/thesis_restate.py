@@ -125,7 +125,7 @@ def validate_restatement(text: Any) -> Optional[str]:
 def position_numbers(trade: Any, price: Optional[float]) -> dict:
     """Position facts for the brief, derived from the journal row + the
     tick's own mark. Unrealized P&L reuses the house money-math
-    (paper_trading_engine.compute_unrealized_pnl) — never re-derived here.
+    (sizing.compute_unrealized_pnl) — never re-derived here.
     Every field is optional; missing facts are omitted from the brief."""
     pos: dict = {
         "size_usd": None, "entry_price_usd": None, "opened_at": None,
@@ -142,7 +142,7 @@ def position_numbers(trade: Any, price: Optional[float]) -> dict:
     if price is not None and price > 0:
         pos["current_price_usd"] = float(price)
         try:
-            from paper_trading_engine import compute_unrealized_pnl
+            from sizing import compute_unrealized_pnl
             pnl_usd, pnl_pct = compute_unrealized_pnl(trade, float(price))
             pos["unrealized_usd"] = round(pnl_usd, 4)
             pos["unrealized_pct"] = round(pnl_pct, 2)

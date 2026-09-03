@@ -25,7 +25,7 @@ DAY_MULTIPLE=4, HARD_ORDER_CEILING_USD=3000.
 from __future__ import annotations
 
 import config
-from paper_trading_engine import compute_risk_budget, compute_ticket
+from sizing import compute_risk_budget, compute_ticket
 
 
 # --- the §45 formula itself ----------------------------------------------------

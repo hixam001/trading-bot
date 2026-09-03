@@ -129,7 +129,8 @@ async def test_enrich_candidates_mock_stays_hermetic(monkeypatch):
 async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
     """§43/§44: the crowd feed left the unconditional enrichment chain — it is
     spent inside the staged gate, after the cheap rules pass. §48: the web
-    search left it too (staged-gate stage 4)."""
+    search left it too (staged-gate stage 4). §51: the SOCIAL READ left it
+    too (staged-gate stage 5) — nothing metered runs board-wide any more."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
 
     import data_providers.crowd as crowd_mod
@@ -143,15 +144,15 @@ async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
     async def _must_not_run_web(cands=None, *a, **kw):
         raise AssertionError("web search ran in the read stage again")
 
+    async def _must_not_run_social(cands, *a, **kw):
+        raise AssertionError("social read ran in the read stage again")
+
     async def _noop(cands=None, *a, **kw):
         return None
 
-    async def _noop_social(cands, *a, **kw):
-        return None, []
-
     monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _must_not_run)
     monkeypatch.setattr(research_mod, "enrich_with_research", _noop)
-    monkeypatch.setattr(social_mod, "enrich_social", _noop_social)
+    monkeypatch.setattr(social_mod, "enrich_social", _must_not_run_social)
     monkeypatch.setattr(web_mod, "enrich_web", _must_not_run_web)
     assert await dp.enrich_candidates([make_candidate()]) == []
 
@@ -454,42 +455,3 @@ async def test_gate_uses_injected_rule_list():
     sub_gate = await dp.gate_candidate(c, portfolio, regime, [liquidity_floor])
     assert len(sub_gate.rules) == 1
     assert sub_gate.rules[0].rule_id == "liquidity_floor"
-
-
-# --- both entry points delegate to the shared core ------------------------------
-
-def test_main_run_tick_uses_shared_read_stage():
-    """Parity contract: the paper tick runs the shared read/enrich stages."""
-    import inspect
-    import main as paper_main
-    src = inspect.getsource(paper_main.run_tick)
-    assert "read_candidates(provider)" in src
-    assert "enrich_candidates(candidates)" in src
-    # §44: the gate is the STAGED one (cheap rules → scrape → crowd rules).
-    assert "gate_candidate_staged(c, portfolio, regime," in src
-
-
-def test_main_run_tick_gates_before_thinking():
-    """§44 ordering contract in the paper tick: the STAGED gate runs BEFORE
-    the think stage, and the per-candidate thinker is only called when the
-    gate passed (rule-refused candidates get the template write-up)."""
-    import inspect
-    import main as paper_main
-    src = inspect.getsource(paper_main.run_tick)
-    gate_at = src.index("gate_candidate_staged(c, portfolio, regime,")
-    think_at = src.index("think_candidate(c, thinker, memory_line)")
-    assert gate_at < think_at, "gate must be evaluated before the thinker call"
-    assert "elif gate.all_passed:" in src
-    assert 'think.source = "template:rules-refused"' in src
-    # The old unconditional batch pre-pass is gone.
-    assert "enrich_crowd_for_shortlist" not in src
-
-
-def test_isolation_backend_never_imports_live_execution():
-    """The handoff §1 contract: backend/ never imports live_execution. The
-    check scans import statements (prose may legitimately mention it)."""
-    import decision_pipeline
-    with open(decision_pipeline.__file__) as f:
-        src = f.read()
-    assert "from live_execution" not in src
-    assert "import live_execution" not in src

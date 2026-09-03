@@ -7,6 +7,21 @@
 # USE_SUPABASE_DB=1 + SUPABASE_DB_URL in .env and drop the engine_data mount.
 # ============================================================================
 services:
+  # §51 — FREE web-search transport hop 2 (keyless, unlimited). Self-hosted
+  # SearXNG answering format=json for the engine's staged web-evidence
+  # search. NOT exposed to the host network: the engine reaches it at
+  # http://searxng:8080 inside the compose network (set SEARXNG_URL in
+  # .env accordingly). Public instances disable format=json — only our own
+  # instance works, which is why this sidecar exists.
+  searxng:
+    image: searxng/searxng:latest
+    container_name: trading-bot-searxng
+    restart: unless-stopped
+    volumes:
+      - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
+    # Resource note: fits trivially in the Oracle Always Free shape
+    # (2 OCPU / 12 GB) alongside the engine (~150-300 MB typical).
+
   engine:
     build: .
     image: trading-bot:latest

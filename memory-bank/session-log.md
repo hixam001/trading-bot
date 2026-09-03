@@ -1,3 +1,38 @@
+## Memory-bank update - 2026-09-03 (§52 single-book restructure + fresh omo audit)
+
+- **Task**: operator directive — implement omo-audit gaps 1.3 (skin-in-the-game
+  crowd intel) and 1.8 (chain-first book), then "remove paper trade completely,
+  but make sure live execution retains all features". Preceded by a fresh
+  from-scratch omo re-audit delivered in chat (docs/09 + docs/10 deleted at
+  operator direction; the new audit lives in the conversation + decisionLog 60-62).
+- **Phase A — sizing extraction**: new `backend/sizing.py` holding the pure
+  money math VERBATIM (risk budget, tickets, P&L, RiskBudget, fail-closed
+  helpers); all importers re-pointed. Zero behavior change; 53-test spot run
+  confirmed byte-compatibility before proceeding.
+- **Phase B — retention (the discoveries)**: (1) live fills/closes NEVER wrote
+  DB trades rows — calibration/learning/perf_report/reflections/stats would
+  have starved post-paper; fixed with a one-way idempotent ledger→trades
+  mirror (ledger stays money authority); (2) the §49 live loss memories were
+  written but never read by the live thinker — fixed with memory_line recall;
+  (3) the paper reuse cache was counter-only (think ran BEFORE the reuse
+  check — never saved a call) — documented, not ported as-is. Also wired:
+  LLMBrain with LIVE portfolio context, closed-trade reflections, daily
+  learning in the live loop; `check_exit_conditions` moved to rule_engine/exits.
+  `test_live_features_retained.py` (8 pins) covers the whole port.
+- **Phase C — deletion**: `backend/main.py` + `paper_trading_engine.py` +
+  27 paper-only tests removed (atomicity/e2e/price-guards/scanner+trim/cap+
+  seal/paper-main pins; the §32 proceeds backstop was paper-only — live has
+  its own jump guard + real-fill bounding). stats/holdings read the live book
+  (mirrored trades + chain USDC fail-closed); disclosure adds single_book:true;
+  PAPER_TRADING_ONLY stays as the hardcoded historical flag. `api.main`
+  (uvicorn entrypoint) untouched and verified.
+- **Phase D/E — audit gaps**: 1.3 was 80% pre-built (FOMO_DUMPED_THESIS_WEIGHT
+  → effective_total → heat already shipped §49-era) — closed the last delta
+  (thinker tags dumped authors as exit-liquidity marketing). 1.8 was 90%
+  pre-built (A2 reconcile) — verified complete, no work needed.
+- **Suite: 658 passing** (was 676). Docs: handoff §52, decisionLog 62,
+  progress/activeContext, README single-book rewrite, docs/01 updates.
+
 ## Memory-bank update - 2026-08-30 (§45 equity-proportional live floor)
 
 - **Task**: operator reported "on the site there shows a token that it says

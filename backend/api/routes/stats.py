@@ -1,5 +1,13 @@
 """
 api/routes/stats.py — GET /api/stats: portfolio summary numbers.
+
+§52: single-book world. The trades table is the LIVE book's mirror (the
+ledger is the money authority; the mirror exists so book-level aggregates
+keep a queryable home). Cash = the wallet's real on-chain USDC (chain
+truth, never accumulated) — the paper cash table retired with the paper
+book. The equity curve is anchored on the first mirrored trade's opening
+day ( INITIAL_CASH_USD remains the paper-era starting point of record for
+historical continuity).
 """
 from __future__ import annotations
 
@@ -7,10 +15,22 @@ from fastapi import APIRouter, Request
 
 import config
 from api import db
-from paper_trading_engine import compute_unrealized_pnl
+from sizing import compute_unrealized_pnl
 from promotion_gate import _max_drawdown_pct, _profit_factor
 
 router = APIRouter()
+
+
+async def _chain_cash() -> float:
+    """Wallet's real USDC balance; 0.0 when unreadable (fail closed —
+    same discipline as the live cycle's own cash read)."""
+    try:
+        from live_execution import solana, wallet
+        payer = wallet.load_keypair()
+        bal = await solana.get_usdc_balance(wallet.pubkey_string(payer))
+        return max(bal, 0.0) if bal is not None else 0.0
+    except Exception:
+        return 0.0
 
 
 @router.get("/api/stats")
@@ -19,7 +39,7 @@ async def get_stats(request: Request):
     async with db.get_db() as conn:
         closed = await db.get_all_closed_trades(conn)
         open_trades = await db.get_open_trades(conn)
-        cash = await db.get_cash_balance(conn)
+    cash = await _chain_cash()
 
     chronological = sorted(
         [t for t in closed if t.closed_at], key=lambda t: t.closed_at
@@ -75,6 +95,8 @@ async def get_stats(request: Request):
         ),
         "total_spend_usd": round(total_spend_usd, 2),
         "equity_curve": equity_curve,
-        "paper_trading_only": True,
+        # §52: the paper book is retired; this flag records the single-book
+        # state honestly for any consumer that still reads it.
+        "paper_trading_only": False,
     }
 

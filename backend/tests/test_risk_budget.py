@@ -21,9 +21,8 @@ import pytest
 import config
 from api import db
 from llm.thinker import Thinker
-from main import run_tick
 from models import Candidate, PortfolioState, Trade
-from paper_trading_engine import (
+from sizing import (
     _round_half_up,
     compute_risk_budget,
     compute_ticket,
@@ -254,43 +253,6 @@ def tick_env(tmp_path, monkeypatch):
     async def _ready():
         await db.init_db()
     return _ready
-
-
-async def test_risk_budget_daily_ceiling_refuses_second_entry(tick_env,
-                                                              monkeypatch):
-    """DAY_MULTIPLE=1 -> max_daily = max_order = $35 at equity $1000. The
-    first $35 entry fills; the second would take the day to $70 > $35 and
-    must be refused with a journal line."""
-    await tick_env()
-    monkeypatch.setattr(config, "SIZING_MODE", "risk_budget")
-    monkeypatch.setattr(config, "DAY_MULTIPLE", 1)
-
-    c1 = make_candidate("MintAAAA1111111111111111111111111111111111", "AAA")
-    c2 = make_candidate("MintBBBB2222222222222222222222222222222222", "BBB")
-    provider = OneCandidateProvider([c1, c2])
-
-    s1 = await run_tick(provider, Thinker(), state={})
-    assert s1["opened"] == 1
-
-    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    async with db.get_db() as conn:
-        events = await db.get_feed_events(conn, limit=10)
-        deployed = await db.deployed_today(conn)
-        row = await db.get_daily_stats(conn, today)
-
-    capped = [e for e in events if "daily deploy cap" in e["thesis"]]
-    assert capped, "derived-ceiling refusal must be visible in the journal"
-    assert deployed == pytest.approx(35.0)
-
-    # REF-R8/R9 truths persisted for the public surfaces
-    assert row is not None
-    rb = row["stats_json"]["risk_budget"]
-    assert rb["max_order_usd"] == 35.0
-    assert rb["max_daily_usd"] == 35.0       # DAY_MULTIPLE=1 for this test
-    assert rb["derived"] is True
-    cal = row["stats_json"]["calibration"]
-    assert cal["conviction_factor"] == 1.0   # no closed trades -> FLAT
-    assert cal["samples"] == 0
 
 
 async def test_patch_daily_stats_merges_without_clobber(tick_env):

@@ -77,7 +77,7 @@ async def _sizing_truths() -> tuple[dict, dict]:
     Never raises.
     """
     from calibration import FLAT_CALIBRATION, compute_calibration
-    from paper_trading_engine import compute_risk_budget
+    from sizing import compute_risk_budget
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     budget_block = None
@@ -124,7 +124,9 @@ async def get_disclosure():
       armed          — LIVE_TRADING_ENABLED read verbatim from live_execution
                        (fail-closed False if the package is absent); the feed
                        can never claim disarmed while the machine is armed
-      paper_only     — PAPER_TRADING_ONLY (always True; hardcoded)
+      paper_only     — PAPER_TRADING_ONLY (§52: hardcoded True remains as the
+                       historical safety flag; a SEPARATE single_book field
+                       reports the paper book's retirement honestly)
       kill_switch    — state from live_execution/state/kill_switch.json
       break          — state from live_execution/state/break_state.json
       config_truths  — numeric caps/floors (no keys, no wallet address)
@@ -140,7 +142,9 @@ async def get_disclosure():
     # Safety fields — surface them for auditability. `armed` reads the REAL
     # live_execution flag (fail-closed False when the package is not
     # importable) so the public feed can never claim disarmed while the
-    # machine is armed. paper_only stays hardcoded True in backend/config.py.
+    # machine is armed. paper_only stays hardcoded True in backend/config.py
+    # (the historical safety flag); the §52 single-book truth is surfaced
+    # separately so no field ever lies about the book that is running.
     try:
         from live_execution import config as _le_config
         armed = bool(getattr(_le_config, "LIVE_TRADING_ENABLED", False))
@@ -218,6 +222,7 @@ async def get_disclosure():
         "generated_at_utc": _now_iso(),
         "armed": armed,
         "paper_only": paper_only,
+        "single_book": True,   # §52: the paper book is retired; live-only
         "kill_switch": kill,
         "break": brk,
         "config_truths": config_truths,

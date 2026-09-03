@@ -1,0 +1,29 @@
+# §51 — SearXNG settings for the trading-bot sidecar (self-hosted ONLY).
+#
+# This instance exists for ONE consumer (the engine's web-search evidence
+# stage) on a private compose network. Two settings are load-bearing:
+#   1. search.formats includes json — the Search API requires it, and public
+#      instances deliberately disable it (403) because json output bypasses
+#      their bot-protection. Ours must ENABLE it.
+#   2. server.limiter: false — the engine calls at ≤1 qps from inside the
+#      same compose network; SearXNG's own limiter plugin would 429 it.
+# Everything else inherits the image defaults (use_default_settings: true).
+#
+# Mount at /etc/searxng/settings.yml — see docker-compose.yml service
+# "searxng". AGPL-3.0 (SearXNG); config only, nothing vendored.
+use_default_settings: true
+
+server:
+  # The engine reaches it inside the compose network; no public exposure.
+  secret_key: "trading-bot-searxng-sidecar"   # not security-sensitive: private net
+  limiter: false
+  image_proxy: false
+
+search:
+  # json is REQUIRED for the /search?q=...&format=json API the engine calls.
+  formats:
+    - html
+    - json
+
+ui:
+  static_use_hash: true

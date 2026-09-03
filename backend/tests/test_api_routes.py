@@ -23,14 +23,20 @@ async def seeded_db(tmp_path, monkeypatch):
     async with db.get_db() as conn:
         for i in range(7):
             await db.insert_feed_event(conn, FeedEventFactory(i))
-        # One opened then closed trade -> journal entry.
-        from paper_trading_engine import close_position, open_position
+        # One opened then closed trade -> journal entry (§52: seeded directly
+        # via the shared DB helpers — the paper engine retired).
+        from models import Trade
         from tests.test_rules import make_candidate
         c = make_candidate()
-        await open_position(conn, c, None)
-        trade = await db.get_open_trade_for_mint(conn, c.mint_address)
-        await close_position(conn, trade, exit_price=c.price_usd * 2,
-                             exit_reason="take_profit")
+        t = Trade(symbol=c.symbol, mint_address=c.mint_address,
+                  opened_at="2026-09-03T00:00:00+00:00",
+                  entry_price_usd=c.price_usd,
+                  position_size_usd=100.0, quantity=100_000.0,
+                  candidate_snapshot={}, thesis="seed", is_open=True)
+        assert await db.try_insert_open_trade(conn, t) == 1
+        await db.close_trade_row(
+            conn, t.trade_id, "2026-09-03T01:00:00+00:00",
+            c.price_usd * 2, "take_profit", 50.0, 50.0)
     yield
 
 
@@ -90,7 +96,7 @@ async def test_stats_summary(client):
                 "equity_curve", "paper_trading_only"):
         assert key in body
     assert body["closed_trades"] == 1
-    assert body["paper_trading_only"] is True
+    assert body["paper_trading_only"] is False  # §52: paper book retired
 
 
 async def test_market_regime_endpoint(client):
@@ -120,7 +126,7 @@ async def test_promotion_gate_endpoint(client):
 async def test_system_status_endpoint(client):
     r = await client.get("/api/system-status")
     body = r.json()
-    assert body["paper_trading_only"] is True
+    assert body["paper_trading_only"] is True  # config flag stays hardcoded True
     assert body["data_backend"] == "mock"
     assert "main_llm_reachable" in body and "provider_calls_today" in body
 

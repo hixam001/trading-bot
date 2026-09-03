@@ -1,9 +1,15 @@
-**Last updated:** 2026-08-31 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-09-03 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 660 passing (backend 495 + live_execution 165) + 8 Playwright E2E
+**Tests:** 658 passing (backend + live_execution) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
+**§52 SINGLE BOOK:** the paper tick + paper engine are RETIRED; the live
+cycle retains every feature they had (brain, memories, reflections, learning,
+calibration via a ledger→trades mirror). Sizing math lives in `sizing.py`.
+**Social stack is FREE (§47+§51):** crowd feed via Scrapling, web search via
+Brave (free tier) → self-hosted SearXNG → Firecrawl last-resort, social read
+staged onto the Groq free tier — `docs/12_FREE_SEARCH_STACK.md`.
 **Deployment (2026-08-30, §46):** moving to **Oracle Cloud Always Free** —
 VM sized **2 OCPU / 12 GB ARM Ampere A1** (the verified Always Free
 allowance of 1,500 OCPU-h + 9,000 GB-h/month; the 4/24 shape exceeds it
@@ -142,6 +148,138 @@ with the paid keys as failover, empty the paid scrape keys in `.env`
 migration: re-run the spike script there (datacenter-IP reality check) —
 the browser hop + `SCRAPLING_PROXY` escape hatch cover the IP-reputation
 case the TLS hop does not.
+
+## 52. SINGLE-BOOK restructure — paper retired, live retains everything (2026-09-03)
+
+Operator directive: implement audit gaps 1.3 + 1.8, and "remove paper trade
+completely, but make sure live execution retains all features." The paper
+tick had already been OFF in start.sh since §34 — this deleted the dead code
+and closed the feature gaps the deletion exposed.
+
+**Phase A — sizing extraction (zero behavior change).** New
+`backend/sizing.py`: the pure money math (`compute_risk_budget`,
+`compute_ticket`, `compute_entry_cost`, `portfolio_equity_and_unrealized`,
+`compute_unrealized/realized_pnl`, `RiskBudget`, fail-closed helpers)
+extracted VERBATIM from `paper_trading_engine.py` — the spine both books
+always shared, now in a neutral module. All importers re-pointed
+(`run_live_cycle`, `exits.py` lazy import, `thesis_restate`, the stats/
+holdings/disclosure routes, `test_money_math`, `test_risk_budget`,
+`test_live_ticket_floor`).
+
+**Phase B — the retention ports (live keeps every paper feature).**
+Discovered gaps and fixed: live fills/closes never wrote DB `trades` rows,
+so calibration/learning/perf_report would have STARVED after paper died.
+New `_mirror_live_trades`/`_mirror_live_close` (ledger → trades table, one-
+way, idempotent per mint; ledger stays money authority) + wired: brain
+(`LLMBrain.tick(candidates, portfolio)` with the LIVE portfolio context,
+fail-closed, usage journaled once per cycle), §49 loss-memory recall into
+the live thinker's `memory_line` (previously written but never read!),
+closed-trade reflections (`_store_live_reflection` fired on full close),
+daily learning once per UTC day in the live loop, and the reuse-cache
+finding (paper's `reused_now` was counter-only — the think call ran BEFORE
+the reuse check; documented, not ported as-is). `check_exit_conditions`
+moved to `rule_engine/exits.py` (its only consumers were tests).
+`test_live_features_retained.py` pins all of it (8 tests).
+
+**Phase C — the deletion.** Removed `backend/main.py` (paper tick),
+`backend/paper_trading_engine.py` (lifecycle husk post-extraction), and the
+paper-only tests (`test_atomicity` — paper-journal cash atomicity;
+`test_e2e_mock_tick`; `test_exit_price_guards` — the §32 proceeds backstop
+was paper-only, live has its own jump guard + real-fill bounding; the two
+scanner/trim integration tests; the two run_tick cap/seal integration
+tests — live equivalents §50-pinned; the two paper-main source pins).
+`stats.py`/`holdings.py` now read the live book: trades table (mirrored) +
+chain USDC (fail-closed 0) — `/api/live/portfolio` remains the live-truth
+panel. Disclosure adds `"single_book": True`. `PAPER_TRADING_ONLY` stays
+hardcoded True as the historical flag (its assert fn is caller-less; live
+arming remains `LIVE_TRADING_ENABLED` in `live_execution/config.py`).
+
+**Phase D — 1.3 skin-in-the-game (audit): found 80% pre-built** —
+`_is_dumped` + `FOMO_DUMPED_THESIS_WEIGHT=0.0` + `effective_total` feeding
+heat were already shipped (§49-era) and test-pinned. Closed the last delta:
+the thinker's `crowd_line` now tags an author who already closed at a
+realized profit as "ALREADY EXITED +$X — exit-liquidity marketing, not
+live conviction" instead of showing them as "holding".
+
+**Phase E — 1.8 chain-first book (audit): found 90% pre-built** — A2
+reconcile already enumerates chain token accounts, excludes vanished
+positions, clamps sizing to chain truth, and flags unjournaled holdings
+(flagged-never-added, test-pinned); surfaced in
+`outcome["chain_reconciliation"]`. No additional work needed; verified
+against the audit's 1.8 definition.
+
+**Suite: 658 passing** (was 676: −27 paper-only tests deleted with the paper
+book [atomicity 6, e2e 3, price-guards 5, scanner/trim 3, cap/seal 2,
+paper-main pins 2, both-books pin reworked, churn/tick odds], +8 new §52
+retention pins, +1 reworked). Both parity suites green; the isolation
+contract (shared brain never imports live_execution) re-verified
+post-restructure.
+
+---
+
+## 51. FREE social stack — Brave→SearXNG search chain + staged social read (2026-09-02)
+
+Operator ask: "make the social part of the repo free… it has to have good
+success rate and good performance." Analysis first (this is the §48
+"designed but deferred" item, now built):
+
+- The **crowd feed was already free** since §47 (Scrapling curl-cffi hop,
+  100% pass, zero paid calls in production). Scrapling is NOT a search
+  engine — it cannot produce the ranked result rows the evidence stage
+  consumes — so the **web-search stage** needed a different free transport.
+- The **social LLM read** was off (empty key) but its un-staged shape
+  (head-of-board × every tick ≈ 11k calls/day) could never fit a free tier.
+
+**A — free-first search chain** (`llm/web_research.py`, §51):
+`search_web` now walks preference-ordered hops — **Brave Search API**
+(`GET /res/v1/web/search`, `X-Subscription-Token`, `freshness=pd`; free
+plan = $5 credit auto-applied monthly ≈ 1,000 searches) → **self-hosted
+SearXNG** (`format=json&time_range=day`, keyless; PUBLIC instances disable
+json — hence the sidecar) → **Firecrawl `/v1/search`** (the §48 incumbent,
+now last-resort only). Every hop returns the SAME `{title, description}`
+rows so `summarize_hits()` output is byte-identical — prompts untouched.
+Bench machinery is a port of crowd.py §34: 402/422 → long bench, 429 →
+short backoff, 2 consecutive transport errors → bench (`reset_search_chain_state`
+for tests). An answered-but-empty hop falls through to the next (a
+metasearch may find what the primary missed); all-empty = cached miss.
+`search_for_candidate`/`enrich_web` gate on "any transport configured".
+
+**B — STAGED social read (stage 5)** (`llm/social.py` +
+`decision_pipeline.py`): the realtime attention read left the read stage
+and now runs inside `gate_candidate_staged` for the SAME all-passed
+population stages 2 (fomo) and 4 (web) already serve — Groq's free tier
+(1,000 req/day) covers it comfortably. New `read_social_one` (fail-soft,
+key check before reader construction) + a usage queue (`take_queued_usages`)
+drained by BOTH books: the paper tick journals after the gate loop
+(`drain_social_usages`, same `llm_call_usage` rows as before), the live
+cycle drains post-loop fail-soft. `enrich_candidates` no longer calls the
+social reader and returns `[]` (signature unchanged). Cross-tick reuse: a
+candidate that already carries `social_interest` costs nothing.
+
+**Infra:** `deploy/searxng/settings.yml` (json format ON, limiter OFF,
+private compose network only) + docker-compose service `searxng`; `.env`
+knobs `BRAVE_SEARCH_API_KEY` / `SEARXNG_URL` / `SEARCH_BENCH_SECONDS` /
+`SEARCH_THROTTLE_BACKOFF_SECONDS`; `docs/12_FREE_SEARCH_STACK.md` is the
+operator runbook; README env table + troubleshooting updated.
+
+**Tests:** +16 net — `test_social_staging.py` (9: staging, evidence-only,
+stage ordering, reuse, mock hermeticity, disabled-key, fail-soft ×2,
+exactly-once usage queue ×3… incl. the drain-from-dp-queue pin),
+`test_search_chain.py` (6: 402 long bench, 429 short backoff,
+transport-error bench, streak reset, empty fall-through, all-empty cached
+miss) and `test_web_staging.py` extended (no-transport=off,
+Brave-leads-the-chain); its autouse fixture now clears Brave/SearXNG too —
+config loads the operator's REAL .env, so a host key would otherwise leak
+into hermetic tests. **676 passing** (660 + 16). Full suite green.
+
+**Operator checklist:** (1) `BRAVE_SEARCH_API_KEY` from the free plan;
+(2) `SEARXNG_URL=http://searxng:8080` with compose (or bare metal on
+127.0.0.1); (3) re-enable the social read with the free Groq key in
+`SOCIAL_LLM_API_KEY`; (4) after the §47 shadow week, empty
+`SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS` and optionally
+`FIRECRAWL_API_KEY`. Zero code changes for any of these — all .env flips.
+
+---
 
 ## 50. Exit-engine overhaul Phase 0 — forensics, live sell gate, the honest scorecard (2026-08-31)
 

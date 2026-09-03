@@ -1,6 +1,10 @@
 """
 api/routes/holdings.py — GET /api/holdings: open positions with live price
 and unrealized P&L computed per request.
+
+§52: single-book world — the trades table mirrors the LIVE book (ledger is
+the money authority). Cash = the wallet's real on-chain USDC (chain truth),
+same source as /api/live/portfolio.
 """
 from __future__ import annotations
 
@@ -9,10 +13,20 @@ import logging
 from fastapi import APIRouter, Request
 
 from api import db
-from paper_trading_engine import compute_unrealized_pnl
+from sizing import compute_unrealized_pnl
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _chain_cash() -> float:
+    try:
+        from live_execution import solana, wallet
+        payer = wallet.load_keypair()
+        bal = await solana.get_usdc_balance(wallet.pubkey_string(payer))
+        return max(bal, 0.0) if bal is not None else 0.0
+    except Exception:
+        return 0.0
 
 
 @router.get("/api/holdings")
@@ -20,7 +34,7 @@ async def get_holdings(request: Request):
     provider = request.app.state.provider
     async with db.get_db() as conn:
         trades = await db.get_open_trades(conn)
-        cash = await db.get_cash_balance(conn)
+    cash = await _chain_cash()
 
     holdings = []
     for t in trades:
@@ -54,4 +68,4 @@ async def get_holdings(request: Request):
         })
     return {"cash_usd": cash, "open_positions": holdings,
             "count": len(holdings),
-            "paper_trading_only": True}
+            "paper_trading_only": False}

@@ -7,15 +7,15 @@ REQUIRE_MANUAL_CONFIRMATION=False), this runner drives the full pipeline:
 
     manage -> read -> think -> gate -> execute
 
-The runner lives INSIDE backend/ (single deployable module) and imports the
-paper side READ-ONLY (providers, thinker, pure rule functions are the shared
-brain), routing entries/exits through live_execution.executor.place_order
-into the REAL book. The isolation contract is preserved in its enforced
-form: the PAPER pipeline (main.py, paper_trading_engine.py,
-decision_pipeline.py, rule_engine/, data_providers/, llm/) never imports
-live_execution — pinned by backend/tests/test_decision_pipeline.py — and
-paper trading can never touch real funds. The paper tick loop keeps running
-its own simulated book independently - two books, one brain.
+§52 (2026-09-03): THE SINGLE BOOK. The paper tick (main.py) and the paper
+engine (paper_trading_engine.py) are retired; this runner is the one cycle
+the repo has, and it retains every feature the paper tick had (the role-
+routed brain, §49 loss memories in the thinker, closed-trade reflections,
+daily learning, thesis restate, and a trades-table mirror so calibration /
+learning / perf_report keep their queryable home — the ExecutionLedger
+stays the money authority). The shared brain (decision_pipeline.py,
+rule_engine/, data_providers/, llm/, sizing.py) still never imports
+live_execution — pinned by backend/tests/test_decision_pipeline.py.
 
 Usage (from backend/, or anywhere — the path below is self-bootstrapping):
     .venv/bin/python backend/run_live_cycle.py --once   # one cycle, then exit
@@ -45,14 +45,18 @@ if str(BACKEND) not in sys.path:
 import config as paper_config                     # noqa: E402
 from data_providers import build_provider         # noqa: E402
 from data_providers.jupiter import JupiterProvider  # noqa: E402
-from llm.thinker import Thinker, template_think     # noqa: E402
+from llm.thinker import (                        # noqa: E402
+    Thinker,
+    ThinkResult,
+    template_think,
+)
 from models import Candidate, FeedEvent, PortfolioState, RuleResult, Trade  # noqa: E402
 from rule_engine.exits import ExitInput, evaluate_exits, sell_risk_gate  # noqa: E402
 from rule_engine.regime import MarketRegime, compute_market_regime  # noqa: E402
 from rule_engine.rules import ACTIVE_RULES, cash_available  # noqa: E402
 from api import db                                # noqa: E402
 from calibration import compute_calibration       # noqa: E402
-from paper_trading_engine import (                # noqa: E402
+from sizing import (                       # noqa: E402
     compute_risk_budget,
     compute_ticket,
     portfolio_equity_and_unrealized,
@@ -103,6 +107,91 @@ LIVE_ACTIVE_RULES = [
 
 def _iso(ts: float) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+async def _mirror_live_trades(portfolio: PortfolioState) -> None:
+    """§52 Phase B: mirror the live book's OPEN positions into the shared
+    DB trades table (idempotent per mint via try_insert_open_trade).
+
+    The ExecutionLedger stays the money authority — this mirror exists so
+    every book-level consumer that always read the shared trades table
+    (calibration REF-R9, learning loop G1-G3, perf_report, reflections,
+    stats/holdings routes) keeps working on the LIVE book after the paper
+    book retired. Ledger -> DB is one-way; the DB never feeds sizing.
+    Fail-soft: a mirror failure never blocks the cycle."""
+    try:
+        async with db.get_db() as conn:
+            for t in portfolio.open_positions:
+                n = await db.try_insert_open_trade(conn, t)
+                if n:
+                    log.info("live mirror: opened trade row for %s",
+                             t.mint_address[:8])
+    except Exception:
+        log.warning("live trades mirror failed (non-fatal)", exc_info=True)
+
+
+async def _mirror_live_close(mint: str, exit_price_usd: float,
+                             pnl_usd: float, rule_id: str) -> None:
+    """§52 Phase B: close the mirrored trade row on a full live close.
+    pnl_pct is derived from the ledger's own cost basis (authoritative)."""
+    try:
+        async with db.get_db() as conn:
+            rows = await db.get_open_trades(conn)
+            row = next((t for t in rows
+                        if t.mint_address == mint), None)
+            if row is None:
+                return
+            pct = ((pnl_usd / row.position_size_usd) * 100.0
+                   if row.position_size_usd > 0 else 0.0)
+            await db.close_trade_row(
+                conn, trade_id=row.trade_id,
+                closed_at=datetime.now(timezone.utc).isoformat(),
+                exit_price_usd=exit_price_usd,
+                exit_reason=rule_id,
+                realized_pnl_usd=pnl_usd,
+                realized_pnl_pct=pct)
+            log.info("live mirror: closed trade row for %s", mint[:8])
+    except Exception:
+        log.warning("live close mirror failed (non-fatal)", exc_info=True)
+
+
+async def _store_live_reflection(trade_id: str, rule_summary: str) -> None:
+    """§52 Phase B: closed-trade reflection (narrator) — ported from the
+    paper tick's _store_reflection so the live book keeps post-close
+    learning narrative. Fire-and-forget, never raises."""
+    try:
+        from llm.narrator import generate_reflection
+        async with db.get_db() as conn:
+            trade = await db.get_trade_by_id(conn, trade_id)
+            if trade is None or trade.is_open:
+                return
+            text = await generate_reflection(trade, rule_summary)
+            await db.update_reflection(conn, trade_id, text)
+    except Exception:
+        log.warning("live reflection for %s failed (non-fatal)",
+                    trade_id, exc_info=True)
+
+
+def _think_from_brain(ov: "LLMVerdict",
+                      brain_result: "LLMBrainResult") -> "ThinkResult":
+    """§52 Phase B: map a validated brain verdict onto ThinkResult (the
+    paper tick's _think_from_llm, verbatim semantics). The verdict is
+    'buy' only for a valid 'buying' call; the deterministic gate still
+    authorizes every entry. llm_usage is None: the single brain call is
+    journaled once at the top of the cycle."""
+    verdict = "buy" if ov.wants_entry else "pass"
+    thesis = ov.reason or (ov.checks[0] if ov.checks
+                           else "the reference brain verdict")
+    return ThinkResult(
+        thesis=thesis,
+        invalidation=ov.invalidation or "",
+        verdict=verdict,
+        source=brain_result.source,
+        break_taking=brain_result.break_taking,
+        break_minutes=brain_result.break_minutes,
+        break_reason=brain_result.break_reason,
+        llm_usage=None,
+    )
 
 
 async def _journal_live_commit(conn, symbol: str, mint_address: str,
@@ -390,6 +479,18 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
                     closed_at=datetime.now(timezone.utc).isoformat(),
                     realized_pnl_usd=pnl,
                 )
+            # §52 Phase B: keep the shared trades table (calibration /
+            # learning / perf_report / reflections / stats routes) in sync
+            # with the live close, then fire the closed-trade reflection.
+            await _mirror_live_close(mint, exit_price_usd=result.usd_value
+                                      / max(m.get("tokens") or 1.0, 1e-12),
+                                      pnl_usd=pnl, rule_id=decision.rule_id)
+            try:
+                asyncio.create_task(_store_live_reflection(
+                    f"live-{mint[:8]}",
+                    f"live book exit via {decision.rule_id}"))
+            except Exception:
+                log.debug("reflection scheduling skipped", exc_info=True)
             # §49 (closes the live-side anti-churn GAP): the real-money book
             # now records every full-close outcome into the SAME blocklist
             # sidecar the paper book writes, and the DONT-pattern killer
@@ -553,6 +654,49 @@ async def run_cycle(once: bool = False) -> dict:
             await _journal_cycle_regime(conn, regime, len(candidates))
     except Exception:
         log.warning("regime journal failed (non-fatal)", exc_info=True)
+
+    # --- §52 Phase B: mirror the live book into the shared trades table ----
+    # (calibration, learning, perf_report, reflections and the stats/holdings
+    # routes all read that table; the ledger remains the money authority).
+    await _mirror_live_trades(portfolio)
+
+    # --- §52 Phase B: the role-routed brain (LLMBrain) ---------------------
+    # ONE reference-style reasoning call per cycle over the whole board +
+    # LIVE portfolio context, exactly as the paper tick ran it. Fail-closed:
+    # an empty/invalid result leaves every candidate on the per-candidate
+    # thinker. The single call's usage is journaled once.
+    brain_result = None
+    use_brain = (paper_config.LLM_BRAIN
+                 and paper_config.DATA_BACKEND == "live")
+    if use_brain:
+        try:
+            from llm.llm_brain import LLMBrain
+            brain = LLMBrain()
+            brain_result = await brain.tick(candidates, portfolio)
+            if brain_result.llm_usage is not None:
+                bu = brain_result.llm_usage
+                async with db.get_db() as conn:
+                    await db.insert_llm_call_usage(
+                        conn,
+                        ts=datetime.now(timezone.utc).isoformat(),
+                        task=bu.task, provider=bu.provider, model=bu.model,
+                        status=("success" if not bu.degradation_reason
+                                else "error"),
+                        tick_ts=None, mint_address=None,
+                        latency_ms=int(bu.latency_ms),
+                        input_tokens=bu.input_tokens,
+                        cache_hit_tokens=bu.cache_hit_tokens,
+                        output_tokens=bu.output_tokens,
+                        total_tokens=bu.total_tokens,
+                        estimated_cost_usd=bu.estimated_cost_usd,
+                        is_peak_window=bu.is_peak_window,
+                        degradation_reason=bu.degradation_reason,
+                    )
+        except Exception:
+            log.warning("brain call failed - falling back to per-candidate "
+                        "thinker (non-fatal)", exc_info=True)
+            brain_result = None
+
     thinker = Thinker()
     outcome = {"entries": [], "exits": [], "regime_ok": regime.regime_ok,
                "candidates": len(candidates),
@@ -580,9 +724,29 @@ async def run_cycle(once: bool = False) -> dict:
         # still populated without paying for a call that cannot change the
         # outcome. The thinker now also sees the REAL crowd theses, because
         # the scrape above already ran.
+        # §52 Phase B: the brain verdict (ONE call, already paid) is used
+        # whenever the brain produced one — pass or fail — exactly as the
+        # paper tick did. The deterministic gate below still authorizes.
         from decision_pipeline import apply_break, think_candidate
-        if gate.all_passed:
-            think = await think_candidate(c, thinker)
+        ov = (brain_result.verdict_for(c.symbol)
+              if (use_brain and brain_result is not None) else None)
+        if ov is not None:
+            think = _think_from_brain(ov, brain_result)
+        elif gate.all_passed:
+            # §52 Phase B: recall the §49 loss memories for this symbol so
+            # the live thinker sees the same lesson the paper tick did.
+            memory_line = ""
+            try:
+                async with db.get_db() as conn:
+                    memories = await db.recall_memories(conn, topic=c.symbol,
+                                                        limit=3)
+                if memories:
+                    memory_line = "Memory (context only): " + " | ".join(
+                        f"{m['topic']}: {m['note']}" for m in memories)
+            except Exception:
+                log.debug("memory recall failed for %s (non-fatal)",
+                          c.symbol, exc_info=True)
+            think = await think_candidate(c, thinker, memory_line)
         else:
             think = template_think(c)
             think.verdict = "pass"
@@ -689,6 +853,39 @@ async def run_cycle(once: bool = False) -> dict:
                                    "reason": result.reason})
         break   # one decision per cycle (the reference cadence parity)
 
+    # --- §51: drain the staged social reads' usage queue. The reads ran
+    # inside gate_candidate_staged above; without this drain the queue
+    # would grow across cycles. Journaling is fail-soft (observability
+    # never blocks the trade path).
+    try:
+        from decision_pipeline import drain_social_usages
+        social_usages = drain_social_usages()
+        if social_usages:
+            async with db.get_db() as conn:
+                for su in social_usages:
+                    await db.insert_llm_call_usage(
+                        conn,
+                        ts=datetime.now(timezone.utc).isoformat(),
+                        task=su.task,
+                        provider=su.provider,
+                        model=su.model,
+                        status="success" if not su.degradation_reason else "error",
+                        tick_ts=None,
+                        mint_address=su.mint_address,
+                        latency_ms=int(su.latency_ms),
+                        input_tokens=su.input_tokens,
+                        cache_hit_tokens=su.cache_hit_tokens,
+                        output_tokens=su.output_tokens,
+                        total_tokens=su.total_tokens,
+                        estimated_cost_usd=su.estimated_cost_usd,
+                        is_peak_window=su.is_peak_window,
+                        degradation_reason=su.degradation_reason,
+                    )
+            log.info("social read: %d staged usage(s) journaled",
+                     len(social_usages))
+    except Exception:
+        log.warning("social usage journal failed (non-fatal)", exc_info=True)
+
     # --- REF-R7: retro audit-log signature matching (post-cycle) ----------
     # Only runs from the paper-side DB; the live book has its own CommitLog.
     try:
@@ -728,11 +925,24 @@ def main() -> None:
         log.warning("UNARMED: LIVE_TRADING_ENABLED=False - reads/think/gate run; every order returns unarmed")
 
     async def loop() -> None:
+        # §52 Phase B: the daily learning loop (G1–G3 + REF-R9 calibration
+        # persistence) — ported from the paper tick so the LIVE book keeps
+        # aggregate stats, rejection breakdowns and the published calibration.
+        # Advisory only; never auto-applies a threshold change.
+        last_learning_date: str | None = None
         while True:
             try:
                 await run_cycle(once=args.once)
             except Exception:
                 log.exception("cycle crashed - continuing")
+            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            if args.once or last_learning_date != today:
+                try:
+                    from learning_loop import run_daily_learning
+                    await run_daily_learning()
+                    last_learning_date = today
+                except Exception:
+                    log.exception("daily learning failed (non-fatal)")
             if args.once:
                 return
             await asyncio.sleep(paper_config.TICK_INTERVAL_SECONDS)

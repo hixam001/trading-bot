@@ -1,12 +1,12 @@
 """
 decision_pipeline.py — the shared read→think→gate core (Item #6, 2026-08-29).
 
-Both pipelines (paper `main.run_tick` and the live `run_live_cycle.run_cycle`)
-used to duplicate the same conceptual stages with copy-paste code that drifted
-apart (the live copy missing the fake-chart filter, mis-calling
-liveness.set_break, having no template-thinker fallback, never journaling
-sizing refusals). This module is the SINGLE source of truth for the stages
-both books must run identically:
+§52: the live cycle (run_live_cycle.run_cycle) is the ONE pipeline now (the
+paper main.run_tick retired). Historically both pipelines duplicated the
+same conceptual stages with copy-paste code that drifted apart (the live
+copy missing the fake-chart filter, mis-calling liveness.set_break, having
+no template-thinker fallback, never journaling sizing refusals). This
+module remains the SINGLE source of truth for those stages:
 
     filter (blocklist + fake-chart) → enrich → regime → think (with
     fallback) → gate (STAGED: cheap rules → crowd scrape → crowd rules) →
@@ -86,39 +86,42 @@ async def read_candidates(provider) -> list:
 
 async def enrich_candidates(candidates: list) -> list:
     """
-    Live-only enrichment chain (research/social/web), paper-tick order.
+    Live-only enrichment chain (research only as of §51), paper-tick order.
     Mock runs stay hermetic: nothing runs when DATA_BACKEND != live. Fail-soft
-    per feed. Returns the social read's LLM usages (paper journals them;
-    [] when not live or the read failed).
+    per feed.
 
-    §43/§44: the CROWD feed is deliberately NOT part of this chain. Its
-    fomo.fun scrape is metered and used to run for every candidate on every
-    tick, before any rule could rule the candidate out — so quota burned on
-    names that were about to fail liquidity or volume anyway. It now runs
-    INSIDE the staged gate (`gate_candidate_staged` below), per candidate,
-    only after that candidate's cheap rules have ALL passed.
+    §51 (2026-09-02): the SOCIAL READ left this chain — it was the last
+    metered LLM input that still ran for the whole board before any rule
+    could weigh in (up to SOCIAL_READ_PER_TICK=8 head-of-board reads per
+    tick, ~11k calls/day at 60s ticks — wildly outside the free Groq tier's
+    1,000/day). It now runs as stage 5 of `gate_candidate_staged` below,
+    only for the all-passed candidates the per-candidate thinker is about
+    to evaluate — the exact population the web-search evidence (§48) and
+    the fomo scrape (§44) already serve. The fomo scrape left in §43/§44;
+    the web search left in §48. This function no longer returns social
+    usages — the staged gate queues them via `stage_social_read` and the
+    tick journals them via `drain_social_usages()`.
+
+    §43/§44: the CROWD feed is deliberately NOT part of this chain either.
+    Its fomo.fun scrape is metered and used to run for every candidate on
+    every tick, before any rule could rule the candidate out — so quota
+    burned on names that were about to fail liquidity or volume anyway. It
+    now runs INSIDE the staged gate (`gate_candidate_staged` below), per
+    candidate, only after that candidate's cheap rules have ALL passed.
     """
-    social_usages: list = []
     if not candidates or config.DATA_BACKEND != "live":
-        return social_usages
+        return []
     try:
         from data_providers.research import enrich_with_research
         await enrich_with_research(candidates)
     except Exception:
         log.warning("token research failed - continuing without it",
                     exc_info=True)
-    try:
-        # Social read is EVIDENCE ONLY — never a verdict.
-        from llm.social import enrich_social
-        _, social_usages = await enrich_social(candidates)
-    except Exception:
-        log.warning("social read failed - continuing without it",
-                    exc_info=True)
     # §48: web research LEFT the unconditional read chain — the search is
     # spent inside the staged gate (stage 4), only for candidates whose
     # rules all passed, behind the two-tier TTL cache. Same §43/§44 move
-    # the crowd feed already made.
-    return social_usages
+    # the crowd feed already made. §51: the social read moved too (stage 5).
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -184,6 +187,47 @@ async def _default_web_fetch(candidate) -> None:
         candidate.web_summary = evidence
 
 
+# ---------------------------------------------------------------------------
+# §51 — STAGED social read: the realtime attention classifier (Groq free
+# tier via SOCIAL_LLM_*) runs ONLY for all-passed candidates, as stage 5 of
+# the staged gate — the same population stages 2 (fomo scrape) and 4 (web
+# search) already serve. Its LLMResult usages queue here for the tick to
+# journal into llm_call_usage (the paper tick's DB connection lives in
+# main.py; the live cycle journals via drain_social_usages too).
+# ---------------------------------------------------------------------------
+_social_usages: list = []
+
+
+async def _default_social_fetch(candidate) -> None:
+    """§51: real staged social read (function-local import keeps mock runs
+    from touching the module at all). EVIDENCE ONLY — never a verdict."""
+    from llm.social import read_social_one
+    await read_social_one(candidate)
+
+
+async def stage_social_read(candidate) -> None:
+    """Run the social read for ONE candidate and queue its usage for
+    journaling. Fail-soft: any failure leaves social_interest None (the
+    thinker runs without the social line, exactly as when the stage is off).
+    Never raises into the gate."""
+    try:
+        await _default_social_fetch(candidate)
+    except Exception:
+        log.warning("social read failed for %s - thinker runs without the "
+                    "social line (fail-soft)", candidate.symbol,
+                    exc_info=True)
+    from llm.social import take_queued_usages
+    _social_usages.extend(take_queued_usages())
+
+
+def drain_social_usages() -> list:
+    """Hand the queued social usages to the tick for DB journaling, then
+    clear the queue (either book drains it; a queue nobody drains must
+    never grow unbounded across ticks)."""
+    drained, _social_usages[:] = list(_social_usages), []
+    return drained
+
+
 async def gate_candidate_staged(
     candidate: Candidate,
     portfolio: PortfolioState,
@@ -191,6 +235,7 @@ async def gate_candidate_staged(
     rules: list,
     crowd_fetch=None,
     web_fetch=None,
+    social_fetch=None,
 ) -> GateDecision:
     """
     The staged gate (§44). Returns ONE GateDecision whose `rules` list is in
@@ -208,6 +253,15 @@ async def gate_candidate_staged(
     evaluate). A candidate that failed any rule never costs a search;
     cache-fresh candidates cost nothing either (two-tier TTL inside
     web_research). The fetch is fail-soft and never blocks the decision.
+
+    §51 (2026-09-02): a FOURTH fetch stage — the social read — runs under
+    the same all_passed condition, for the same thinker-bound population.
+    The realtime read (Groq free tier) is the last metered LLM input that
+    used to run for the whole board in the read stage; staging it keeps the
+    free tier's 1,000 calls/day budget for the candidates that can actually
+    matter. The read is EVIDENCE ONLY (never a verdict), its usages queue
+    for journaling (drain_social_usages), and a candidate that already has
+    a social_interest (reused across ticks) costs nothing.
     """
     cheap = cheap_rules(rules)
     crowd = crowd_rules(rules)
@@ -265,6 +319,16 @@ async def gate_candidate_staged(
         except Exception:
             log.warning("web search failed for %s - thinker runs without "
                         "the web line (fail-soft)", candidate.symbol,
+                        exc_info=True)
+        # --- stage 5 (§51): the social read, for the same thinker-bound
+        # population. EVIDENCE ONLY; fail-soft; skipped when the candidate
+        # already carries a social_interest (cross-tick reuse costs nothing).
+        try:
+            if getattr(candidate, "social_interest", None) is None:
+                await (social_fetch or stage_social_read)(candidate)
+        except Exception:
+            log.warning("social read failed for %s - thinker runs without "
+                        "the social line (fail-soft)", candidate.symbol,
                         exc_info=True)
     elif config.DATA_BACKEND == "live":
         log.info("web search skipped for %s: failed %s (no quota spent)",

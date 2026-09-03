@@ -22,6 +22,16 @@ Fail-soft like every feed: the think stage just reasons without the line.
 Data inputs today: tape windows + crowd heat from the fomo board. When a
 posts feed is ever wired (X/Nitter replacement), its lines join the same
 prompt via append_evidence() - nothing else changes.
+
+§51 (2026-09-02): the read is STAGED — `read_social_one` runs for a single
+candidate from stage 5 of `gate_candidate_staged` (only all-passed,
+thinker-bound candidates; the head-of-board batch read `enrich_social` no
+longer runs in the pipeline). Usage journaling: each read's LLMResult is
+appended to a module-level queue that decision_pipeline drains after the
+gate loop (`take_queued_usages`) — the tick inserts them into
+llm_call_usage exactly as the old batch path did. Free-tier arithmetic:
+Groq's free plan allows 1,000 requests/day; the staged population is the
+handful of all-passed candidates per tick, comfortably inside that budget.
 """
 from __future__ import annotations
 
@@ -109,6 +119,47 @@ class SocialReader:
         if not parsed:
             return None
         return parsed[0], parsed[1], result
+
+
+# ---------------------------------------------------------------------------
+# §51 — STAGED single-candidate read + the usage queue
+# ---------------------------------------------------------------------------
+# The staged gate (decision_pipeline.gate_candidate_staged stage 5) calls
+# read_social_one per candidate; each successful read's LLMResult lands
+# here, and the tick drains it into llm_call_usage via take_queued_usages().
+_queued_usages: list[LLMResult] = []
+
+
+def take_queued_usages() -> list[LLMResult]:
+    """Hand the queued social usages to decision_pipeline for journaling,
+    then clear the queue."""
+    drained, _queued_usages[:] = list(_queued_usages), []
+    return drained
+
+
+async def read_social_one(c: Candidate,
+                          client: Optional[httpx.AsyncClient] = None) -> None:
+    """§51: social-read ONE candidate (stage 5 of the staged gate) and
+    queue its LLM usage for journaling. Fail-soft: any failure or a disabled
+    stage (empty SOCIAL_LLM_API_KEY) leaves c.social_interest None — the
+    thinker runs without the social line. Never raises."""
+    if not config.SOCIAL_LLM_API_KEY:
+        return          # stage off — don't even build a reader
+    reader = SocialReader(client=client)
+    if not reader.enabled:
+        return
+    try:
+        res = await reader.read(c)
+    except Exception as exc:
+        log.info("social read errored for %s: %s", c.symbol, exc)
+        return
+    if res is None:
+        return
+    c.social_interest, c.social_note, usage = res
+    # Store mint alongside the usage for the DB insert in the tick (same
+    # convention the old batch path used).
+    setattr(usage, "mint_address", c.mint_address)
+    _queued_usages.append(usage)
 
 
 async def enrich_social(

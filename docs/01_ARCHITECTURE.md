@@ -110,10 +110,10 @@ decision-makers, not advisory input to something else.
 
 ### 2.4 What happens with the result
 
-- **`all_passed == True`** → the candidate proceeds to
-  `paper_trading_engine`. If no open position exists for this mint, this is
-  a new entry (`open_position`); if one exists, this is a scale-in
-  (`scale_into_position`) — see §5.
+- **`all_passed == True`** → the candidate proceeds to the entry path
+  (§52: the live cycle's sizing + `place_order`; historically the paper
+  engine's `open_position`). No open position may exist for this mint —
+  the `already_held` rule makes one-position-per-name structural.
 - **`all_passed == False`** → the candidate is rejected. It is still logged
   as a full feed event with every `RuleResult` attached (not just the
   first failure), and still sent to the LLM narrator (§4.1), so the
@@ -177,8 +177,8 @@ def compute_market_regime(candidates: list[Candidate]) -> MarketRegime:
 
 `REGIME_MIN_PCT_GREEN`, `REGIME_MAX_PCT_GREEN`, and
 `REGIME_MIN_MEDIAN_VOLUME_USD` start as placeholder values (documented in
-`config.py` as explicitly needing calibration) and are tuned from real
-paper-trading data during the 10-day window — see `03_GANTT_CHART.md`. A
+`config.py` as explicitly needing calibration) and are tuned from realized
+trading data — see `03_GANTT_CHART.md`. A
 reasonable starting intuition: reject the regime if an unusually high
 fraction of the entire candidate universe is simultaneously green (more
 consistent with a broad, possibly manipulated pump than organic

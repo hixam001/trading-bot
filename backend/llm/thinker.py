@@ -96,7 +96,19 @@ def _candidate_view(c: Candidate, memory_line: str = "") -> dict:
             text = t.get("text", "")
             direction = "up" if pnl_usd >= 0 else "down"
             pnl_usd_abs = abs(pnl_usd)
-            lines.append(f"@{who} on {c.symbol} — holding ${size:,.2f}, {direction} ${pnl_usd_abs:,.2f} ({pnl_pct:+.1f}%): \"{text}\"")
+            # §52 (1.3 skin-in-the-game): an author who already CLOSED at a
+            # realized profit is exit-liquidity marketing, not live conviction
+            # — say so plainly so the model weighs the claim accordingly
+            # (crowd_heat already discounts it via FOMO_DUMPED_THESIS_WEIGHT).
+            if t.get("closed") and pnl_usd > 0:
+                lines.append(
+                    f"@{who} on {c.symbol} — ALREADY EXITED +${pnl_usd_abs:,.2f} "
+                    f"({pnl_pct:+.1f}%) — exit-liquidity marketing, not live "
+                    f"conviction: \"{text}\"")
+            else:
+                lines.append(f"@{who} on {c.symbol} — holding ${size:,.2f}, "
+                             f"{direction} ${pnl_usd_abs:,.2f} "
+                             f"({pnl_pct:+.1f}%): \"{text}\"")
         if lines:
             crowd_line = "Crowd theses (fomo.fun):\n" + "\n".join(lines)
             

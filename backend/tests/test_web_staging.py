@@ -1,15 +1,17 @@
 """
 tests/test_web_staging.py — §48 web-search spend discipline (staged-gate
-stage 4 + two-tier cross-tick TTL cache).
+stage 4 + two-tier cross-tick TTL cache) + §51 free-first transport chain.
 
-ALL offline: the Firecrawl search is faked; no network anywhere. Pins:
+ALL offline: the search transports (Brave / SearXNG / Firecrawl) are faked;
+no network anywhere. Pins:
   1. STAGING — a candidate that fails a rule is never searched; only an
      all-passed candidate gets the web evidence fetch;
   2. CACHE — a hit serves evidence with zero network calls; a miss is
      re-searched after the SHORT window (not the long one);
   3. MINT KEYING — two candidates sharing a ticker but not a mint NEVER
      inherit each other's evidence;
-  4. HERMETICITY — mock runs never search; empty Firecrawl key = disabled;
+  4. HERMETICITY — mock runs never search; no transport configured =
+     stage disabled;
   5. FAIL-SOFT — a search error returns "" and never raises into the gate.
 """
 from __future__ import annotations
@@ -51,12 +53,20 @@ def make_candidate(**overrides) -> Candidate:
 
 @pytest.fixture(autouse=True)
 def fresh_cache(monkeypatch):
-    """Fresh cache + mock backend + no Firecrawl key per test."""
+    """Fresh cache + mock backend + NO search transport keys per test.
+    §51: Brave/SearXNG must be cleared TOO — config loads the operator's
+    real .env, so a host with BRAVE_SEARCH_API_KEY set would otherwise
+    leak real-hop configuration into these hermetic tests (the same reason
+    FIRECRAWL_API_KEY is force-cleared). Chain bench state resets per test."""
     monkeypatch.setattr(wr, "_evidence_cache",
                         wr._EvidenceCache(7200.0, 1800.0))
     monkeypatch.setattr(config, "DATA_BACKEND", "mock")
     monkeypatch.setattr(config, "FIRECRAWL_API_KEY", "")
+    monkeypatch.setattr(config, "BRAVE_SEARCH_API_KEY", "")
+    monkeypatch.setattr(config, "SEARXNG_URL", "")
+    wr.reset_search_chain_state()
     yield
+    wr.reset_search_chain_state()
 
 
 def _live(monkeypatch, key="fc-x"):
@@ -128,9 +138,11 @@ async def test_mock_mode_never_searches(monkeypatch):
     assert c.web_summary is None
 
 
-# --- contract 4b: empty key = stage off ---------------------------------------
+# --- contract 4b: no transport configured = stage off --------------------------
 
-async def test_empty_firecrawl_key_disables_search(monkeypatch):
+async def test_no_transport_configured_disables_search(monkeypatch):
+    """§51: empty Brave key + empty SearXNG + empty Firecrawl = the stage
+    is off — no network call can even be attempted."""
     _live(monkeypatch, key="")
     calls = []
 
@@ -144,6 +156,51 @@ async def test_empty_firecrawl_key_disables_search(monkeypatch):
     assert out == "" and calls == []
 
 
+async def test_brave_only_enables_the_stage_free_first(monkeypatch):
+    """§51: a configured Brave key alone turns the stage on, and the chain
+    prefers it (the free hop) — Firecrawl is configured as failover here
+    but must never be reached when Brave answers."""
+    _live(monkeypatch)                      # firecrawl key = "fc-x"
+    monkeypatch.setattr(config, "BRAVE_SEARCH_API_KEY", "brave-free")
+    hits: list = []
+
+    class BraveResp:
+        status_code = 200
+        text = ""
+
+        def json(self):
+            return {"web": {"results": [
+                {"title": "Brave free evidence", "description": "d"}]}}
+
+    class FakeClient:
+        def __init__(self, **kw):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+        async def get(self, url, params=None, headers=None):
+            hits.append(("brave", params["q"]))
+            return BraveResp()
+
+        def build_request(self, *a, **kw):
+            hits.append(("firecrawl", a))
+            return None
+
+        async def send(self, req):
+            hits.append(("firecrawl", "sent"))
+            raise AssertionError("paid Firecrawl reached although Brave answered")
+
+    monkeypatch.setattr(wr.httpx, "AsyncClient", FakeClient)
+    c = make_candidate()
+    out = await wr.search_for_candidate(c)
+    assert "Brave free evidence" in out
+    assert hits and hits[0][0] == "brave"     # the free hop led
+
+
 # --- contract 2: two-tier cache -------------------------------------------------
 
 async def test_cache_hit_costs_no_network(monkeypatch):
@@ -152,6 +209,7 @@ async def test_cache_hit_costs_no_network(monkeypatch):
 
     class FakeResp:
         status_code = 200
+        text = ""
 
         def json(self):
             return {"data": [{"title": "Fresh news", "description": "d"}]}
@@ -196,12 +254,14 @@ async def test_miss_entry_expires_on_the_short_window(monkeypatch):
 
     class EmptyResp:
         status_code = 200
+        text = ""
 
         def json(self):
             return {"data": []}
 
     class HitResp:
         status_code = 200
+        text = ""
 
         def json(self):
             return {"data": [{"title": "Now it has news",
@@ -251,6 +311,7 @@ async def test_same_ticker_different_mints_never_share_evidence(monkeypatch):
 
     class FakeResp:
         status_code = 200
+        text = ""
 
         def __init__(self, title):
             self._title = title

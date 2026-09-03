@@ -1,6 +1,46 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §52 Single-book restructure — paper retired, live retains everything
+      (2026-09-03): operator directive "remove paper trade completely, but
+      make sure live execution retains all features" + audit gaps 1.3/1.8.
+      (A) `backend/sizing.py` — the money math both books shared, extracted
+      verbatim; every importer re-pointed. (B) Retention ports into the live
+      cycle: trades-table mirror (ledger→DB, one-way, idempotent — fixes the
+      discovered starvation bug: live never wrote trades rows, so calibration/
+      learning/perf_report would have died with paper), the role-routed brain
+      with LIVE portfolio context, §49 loss-memory recall into the thinker
+      (was written-never-read), closed-trade reflections, daily learning.
+      (C) Deleted main.py, paper_trading_engine.py + 27 paper-only tests;
+      stats/holdings routes read the live book (mirrored trades + chain USDC);
+      disclosure single_book:true. (D) 1.3 skin-in-the-game: 80% already
+      existed (dumped-thesis weight 0.0 → effective_total → heat); closed the
+      last delta — thinker tags closed-at-profit authors as exit-liquidity
+      marketing. (E) 1.8 chain-first book: 90% already existed (A2 reconcile);
+      verified complete. **658 passing.**
+- [x] §51 Free social stack — Brave→SearXNG search chain + staged social
+      read (2026-09-02): operator directive "make the social part free,
+      good success rate + performance". Crowd feed already free (§47).
+      Shipped (A) the free-first web-search chain in `web_research.py`:
+      Brave (`freshness=pd`, free $5 monthly credit ≈ 1k searches/mo) →
+      self-hosted SearXNG (`format=json&time_range=day`; public instances
+      403 json — the sidecar in `deploy/searxng/` + compose is REQUIRED) →
+      Firecrawl last-resort; identical {title, description} rows (prompts
+      byte-unchanged); §34 bench ported (402/422 long, 429 short, 2
+      transport errors → bench); empty answer falls through to next hop.
+      (B) staged social read: `read_social_one` + usage queue, stage 5 of
+      `gate_candidate_staged` (all-passed population only — Groq free 1k
+      req/day covers it; un-staged was ≈11k/day), reuse via existing
+      social_interest, both books drain the queue into llm_call_usage.
+      `enrich_candidates` social-free (returns []). Config knobs
+      BRAVE_SEARCH_API_KEY/SEARXNG_URL/SEARCH_BENCH_SECONDS/
+      SEARCH_THROTTLE_BACKOFF_SECONDS; docker-compose searxng sidecar;
+      docs/12 runbook; README + handoff §51. +16 tests net:
+      `test_social_staging.py` (9) + `test_search_chain.py` (6: bench
+      semantics) + web-staging extended (+1; fixture now clears
+      Brave/SearXNG — the operator's real .env leaks via load_dotenv).
+      **676 passing.** Follow-ups: Brave key + SEARXNG_URL + social-key
+      .env flips; empty paid scrape keys after the §47 shadow week.
 - [x] §50 Exit-engine overhaul Phase 0 — forensics + live sell gate +
       the honest scorecard (2026-08-31): the omo re-audit (live public
       disclosure — source unchanged since 48a86f9) proved our avg win

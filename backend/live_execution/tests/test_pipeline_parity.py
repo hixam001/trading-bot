@@ -67,10 +67,12 @@ def test_run_cycle_uses_the_staged_gate():
 
 def test_run_cycle_gates_before_thinking():
     """§44 ordering contract in the live cycle: the STAGED gate runs BEFORE
-    the think stage, and the thinker is only called when the gate passed."""
+    the think stage, and the thinker is only called when the gate passed.
+    §52: the call now carries the §49 memory_line; the ordering contract
+    is unchanged."""
     src = inspect.getsource(rlc.run_cycle)
     gate_at = src.index("gate_candidate_staged(c, portfolio, regime,")
-    think_at = src.index("think_candidate(c, thinker)")
+    think_at = src.index("think_candidate(c, thinker, memory_line)")
     assert gate_at < think_at, "gate must be evaluated before the thinker call"
     assert "if gate.all_passed:" in src
     assert 'think.source = "template:rules-refused"' in src
@@ -78,7 +80,7 @@ def test_run_cycle_gates_before_thinking():
 
 def test_run_cycle_delegates_to_shared_think_and_break():
     src = inspect.getsource(rlc.run_cycle)
-    assert "think_candidate(c, thinker)" in src
+    assert "think_candidate(c, thinker, memory_line)" in src
     assert "apply_break(think)" in src
     # The drifted duplicates are gone:
     assert "filter_candidates(candidates)" not in src

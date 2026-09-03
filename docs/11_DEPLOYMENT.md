@@ -30,7 +30,13 @@ docker run -d --name trading-bot \
   trading-bot
 ```
 
-or `docker compose up -d --build` (compose file wires the volumes + env_file).
+or `docker compose up -d --build` (compose file wires the volumes + env_file
++ the §51 `searxng` sidecar — the keyless self-hosted search hop; set
+`SEARXNG_URL=http://searxng:8080` in `.env` so the engine reaches it over
+the compose network. The sidecar is NOT published to the host; the
+standalone `docker run` above simply leaves the SearXNG hop unconfigured
+and the chain degrades to Brave → Firecrawl — fail-soft either way. See
+`docs/12_FREE_SEARCH_STACK.md`).
 
 The entrypoint starts the API always, and the live cycle **only if** the
 hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True
