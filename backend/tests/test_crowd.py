@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
+import stat
 import pytest
 
 import config
@@ -174,7 +176,8 @@ async def test_fomo_http_500_fails_soft(monkeypatch):
 
 async def test_mint_persists_rotated_refresh_token(monkeypatch, tmp_path):
     """Privy rotates the token on mint — the new one must be persisted so
-    the chain survives restarts."""
+    the chain survives restarts. §54: the sidecar is ENCRYPTED at rest —
+    the raw file must NOT contain the token, and must decrypt to it."""
     state_file = tmp_path / "fomo_state.json"
     monkeypatch.setattr(config, "FOMO_PRIVY_STATE_FILE", str(state_file))
     monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "bootstrap-tok")
@@ -195,15 +198,27 @@ async def test_mint_persists_rotated_refresh_token(monkeypatch, tmp_path):
     assert await crowd._mint_privy_session(app) is not None
     # First mint used the .env bootstrap...
     assert captured == ["bootstrap-tok"]
-    persisted = json.loads(state_file.read_text())["refresh_token"]
-    assert persisted == "rotated-tok"
+    # §54: the persisted sidecar is the encrypted envelope, never plaintext.
+    raw = state_file.read_text()
+    assert "rotated-tok" not in raw
+    assert "bootstrap-tok" not in raw
+    envelope = json.loads(raw)
+    assert envelope["v"] == 1 and "enc" in envelope
+    decrypted = crowd.secret_store.decrypt_from_file(str(state_file))
+    assert decrypted is not None
+    assert decrypted["refresh_token"] == "rotated-tok"
+    # §54: the sidecar file itself is 0600 (owner-only).
+    assert (stat.S_IMODE(os.stat(state_file).st_mode) & 0o777) == 0o600
 
 
 async def test_second_mint_uses_rotated_token(monkeypatch, tmp_path):
     state_file = tmp_path / "fomo_state.json"
     monkeypatch.setattr(config, "FOMO_PRIVY_STATE_FILE", str(state_file))
     monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "bootstrap-tok")
-    json.dump({"refresh_token": "persisted-tok"}, open(state_file, "w"))
+    # §54: seed the sidecar in the ENCRYPTED format (the only format the
+    # bot writes now).
+    assert crowd.secret_store.encrypt_to_file(
+        str(state_file), {"refresh_token": "persisted-tok"})
 
     captured = []
 
@@ -219,6 +234,22 @@ async def test_second_mint_uses_rotated_token(monkeypatch, tmp_path):
     await crowd._mint_privy_session(
         crowd._PrivyApp(config.PRIVY_APP_ID, "whatever"))
     assert captured == ["persisted-tok"]   # state file beats stale .env
+
+
+async def test_legacy_plaintext_sidecar_migrated_on_load(monkeypatch,
+                                                         tmp_path):
+    """§54 migration: a pre-§54 PLAINTEXT sidecar is read once, re-seeded
+    encrypted, and the plaintext bytes are gone from disk afterwards."""
+    state_file = tmp_path / "fomo_state.json"
+    state_file.write_text(json.dumps({"refresh_token": "old-plain-tok"}))
+    monkeypatch.setattr(config, "FOMO_PRIVY_STATE_FILE", str(state_file))
+    monkeypatch.setattr(config, "FOMO_PRIVY_REFRESH_TOKEN", "bootstrap-tok")
+
+    assert crowd._load_persisted_refresh() == "old-plain-tok"
+    raw = state_file.read_text()
+    assert "old-plain-tok" not in raw            # plaintext is GONE
+    assert crowd.secret_store.decrypt_from_file(str(state_file)) == {
+        "refresh_token": "old-plain-tok"}        # and survives encrypted
 
 
 def test_corrupt_state_file_falls_back_to_env(monkeypatch, tmp_path):

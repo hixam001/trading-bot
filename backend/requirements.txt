@@ -17,6 +17,10 @@ python-dotenv>=1.0
 # Solana primitives — live_execution signing/wallet/RPC (keypair, tx build)
 solders>=0.29
 
+# §54 — encrypted-at-rest persistence for runtime-rotated secrets (the fomo
+# Privy refresh-token sidecar; backend/secret_store.py, Fernet/AES+HMAC).
+cryptography>=42
+
 # Testing
 pytest>=8.3
 pytest-asyncio>=0.24

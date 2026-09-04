@@ -334,9 +334,21 @@ FOMO_PRIVY_REFRESH_TOKEN: str = os.getenv("FOMO_PRIVY_REFRESH_TOKEN", "")
 # Gitignored sidecar where the bot persists Privy's ROTATED refresh token
 # after each session mint — makes the auth chain self-sustaining across
 # restarts. The .env value acts only as the one-time bootstrap.
+# §54: the sidecar is Fernet-ENCRYPTED (backend/secret_store.py) — never
+# plaintext on disk.
 FOMO_PRIVY_STATE_FILE: str = os.getenv(
     "FOMO_PRIVY_STATE_FILE",
     str(Path(__file__).parent.parent / ".fomo_privy.json"),
+)
+# §54 encryption key for runtime-rotated secret sidecars (the fomo Privy
+# state file today). Channel 1: a Fernet key in env (file-less/PaaS hosts);
+# channel 2: an auto-generated 0600 key file, created on first use. Key
+# problems degrade fail-soft — the sidecar is skipped (never written
+# plaintext) and the .env bootstrap re-seeds the chain.
+SECRET_STORE_KEY: str = os.getenv("SECRET_STORE_KEY", "")
+SECRET_STORE_KEY_FILE: str = os.getenv(
+    "SECRET_STORE_KEY_FILE",
+    str(Path(__file__).parent.parent / ".secret_store.key"),
 )
 FOMO_API_BASE: str = "https://prod-api.fomo.family"
 PRIVY_SESSIONS_URL: str = "https://auth.privy.io/api/v1/sessions"

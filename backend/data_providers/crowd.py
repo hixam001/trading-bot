@@ -26,7 +26,6 @@ import asyncio
 import base64
 import json
 import logging
-import os
 import re
 import time
 from dataclasses import dataclass
@@ -35,6 +34,7 @@ from typing import Any, Optional
 import httpx
 
 import config
+import secret_store
 
 log = logging.getLogger(__name__)
 
@@ -185,33 +185,47 @@ def _state_file() -> str:
 
 def _load_persisted_refresh() -> str:
     """
-    Newest-known refresh token: the state file if present (it tracks
-    rotations), else the bootstrap value from .env. Corrupt file degrades
-    to the .env bootstrap rather than hard-failing.
+    Newest-known refresh token: the ENCRYPTED state file if present (it
+    tracks rotations), else the bootstrap value from .env. §54: the sidecar
+    is Fernet-encrypted at rest (secret_store.py); an unreadable/legacy file
+    degrades to the .env bootstrap rather than hard-failing.
+
+    One-time MIGRATION: a pre-§54 PLAINTEXT sidecar is read once, re-seeded
+    into the encrypted store, and the plaintext copy removed — after this
+    run the token is never readable on disk again.
     """
-    try:
-        with open(_state_file()) as fh:
-            value = str(json.load(fh).get("refresh_token") or "")
-            if value:
-                return value
-    except FileNotFoundError:
-        pass
-    except (ValueError, OSError):
-        log.warning("fomo: state file unreadable — falling back to .env token")
+    # §54 migration: convert a legacy plaintext sidecar in place. The
+    # encrypted write REPLACES the plaintext file at the same path (atomic
+    # os.replace) — on success nothing readable remains, so there is nothing
+    # to delete. (A separate remove would delete the fresh envelope itself.)
+    legacy = secret_store.load_legacy_plaintext(_state_file())
+    if legacy is not None:
+        token = str(legacy.get("refresh_token") or "")
+        if token and secret_store.encrypt_to_file(_state_file(),
+                                                  {"refresh_token": token}):
+            log.info("fomo: migrated plaintext state file to encrypted "
+                     "envelope")
+            return token
+    data = secret_store.decrypt_from_file(_state_file())
+    if data is not None:
+        value = str(data.get("refresh_token") or "")
+        if value:
+            return value
     return config.FOMO_PRIVY_REFRESH_TOKEN
 
 
 def _persist_refresh(value: str) -> None:
-    try:
-        tmp = _state_file() + ".tmp"
-        with open(tmp, "w") as fh:
-            json.dump({"refresh_token": value}, fh)
-        os.replace(tmp, _state_file())
-        log.info("fomo: rotated refresh token persisted")
-    except OSError as exc:
-        # Non-fatal: the in-memory chain keeps working this process lifetime;
-        # a restart will need a manual re-extract.
-        log.error("fomo: could not persist rotated refresh token: %s", exc)
+    """
+    §54: persist the rotated refresh token Fernet-ENCRYPTED (0600, atomic).
+    Fail-soft and NEVER plaintext: if the store is unavailable (no key, no
+    cryptography install) the in-memory chain keeps working this process
+    lifetime and a restart falls back to the .env bootstrap.
+    """
+    if not secret_store.encrypt_to_file(_state_file(),
+                                        {"refresh_token": value}):
+        log.warning("fomo: could not persist rotated refresh token "
+                    "ENCRYPTED — keeping in-memory chain only (a restart "
+                    "will need the .env bootstrap)")
 
 
 def _lock_for(app_id: str) -> asyncio.Lock:
