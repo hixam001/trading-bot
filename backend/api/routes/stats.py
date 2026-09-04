@@ -15,6 +15,7 @@ from fastapi import APIRouter, Request
 
 import config
 from api import db
+from api.auth import require_local_or_admin
 from sizing import compute_unrealized_pnl
 from promotion_gate import _max_drawdown_pct, _profit_factor
 
@@ -35,6 +36,9 @@ async def _chain_cash() -> float:
 
 @router.get("/api/stats")
 async def get_stats(request: Request):
+    # §55: real-wallet data (on-chain cash, P&L, positions) — gated like the
+    # live book: DIRECT loopback or X-Admin-Token.
+    require_local_or_admin(request)
     provider = request.app.state.provider
     async with db.get_db() as conn:
         closed = await db.get_all_closed_trades(conn)

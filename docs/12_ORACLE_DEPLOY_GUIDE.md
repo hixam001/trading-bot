@@ -154,6 +154,17 @@ Point a DNS A record at the VM first. Set
 `docker compose up -d` again. (Once Caddy fronts it, remove the public 8000
 ingress rule and keep only 443.)
 
+**§55 — what Caddy changes about authorization.** Once traffic arrives
+through the reverse proxy, every visitor's socket address is loopback
+(`127.0.0.1`), so "loopback-only" no longer means "just me". The engine
+handles this automatically: any request carrying a forwarding header
+(`X-Forwarded-*` / `Forwarded`) is treated as PROXIED, and the real-wallet
+surfaces — `/api/live/*`, `/api/holdings`, `/api/stats` — then require the
+`X-Admin-Token` header (fail-closed if `ADMIN_TOKEN` is unset; the panels
+render empty until the token is sent). The public research surface
+(feed/proof/disclosure) is unaffected. To deliberately serve the live book
+publicly instead, set `LIVE_BOOK_PUBLIC=true` in `.env`.
+
 ## Step 8 — Where the FRONTEND lives
 
 **You have two options; the default needs zero extra work:**

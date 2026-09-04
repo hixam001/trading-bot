@@ -65,3 +65,41 @@ def require_admin_token(request: Request) -> None:
     # Clear recorded failures on successful authentication
     _FAILED_ATTEMPTS.pop(client_ip, None)
 
+
+# ---------------------------------------------------------------------------
+# §55 authz audit — proxy-aware loopback trust.
+#
+# "Local" must mean DIRECTLY local. The deploy guide (docs/12 Step 7) fronts
+# the engine with `caddy reverse_proxy 127.0.0.1:8000`, and uvicorn runs
+# without --proxy-headers — so EVERY internet visitor arrives at FastAPI
+# with request.client.host == 127.0.0.1. Trusting that address would
+# authenticate the whole internet as the operator on every loopback-gated
+# surface. Any forwarding header proves the socket peer is a PROXY, not the
+# operator's browser: the loopback shortcut is disabled and the operator
+# token is required instead.
+# ---------------------------------------------------------------------------
+_FORWARDING_HEADERS = (
+    "x-forwarded-for",
+    "x-forwarded-proto",
+    "x-forwarded-host",
+    "forwarded",
+)
+
+
+def require_local_or_admin(request: Request) -> None:
+    """Allow DIRECT loopback connections, or a valid operator token.
+
+    - Direct loopback (SSH tunnel, local dashboard on :8000, test clients)
+      with no forwarding headers -> allowed.
+    - Any request carrying a forwarding header is treated as proxied: the
+      loopback shortcut does NOT apply and require_admin_token governs
+      (fail-closed when unset, constant-time compare, brute-force lockout).
+    """
+    client_ip = getattr(getattr(request, "client", None), "host", "unknown")
+    proxied = any(
+        request.headers.get(h) is not None for h in _FORWARDING_HEADERS)
+    if not proxied and client_ip in (
+            "127.0.0.1", "::1", "localhost", "testclient"):
+        return
+    require_admin_token(request)
+

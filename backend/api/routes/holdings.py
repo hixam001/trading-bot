@@ -12,7 +12,9 @@ import logging
 
 from fastapi import APIRouter, Request
 
+import config
 from api import db
+from api.auth import require_local_or_admin
 from sizing import compute_unrealized_pnl
 
 log = logging.getLogger(__name__)
@@ -31,6 +33,9 @@ async def _chain_cash() -> float:
 
 @router.get("/api/holdings")
 async def get_holdings(request: Request):
+    # §55: real-wallet data (on-chain cash, positions, entry costs) — gated
+    # like the live book: DIRECT loopback or X-Admin-Token.
+    require_local_or_admin(request)
     provider = request.app.state.provider
     async with db.get_db() as conn:
         trades = await db.get_open_trades(conn)

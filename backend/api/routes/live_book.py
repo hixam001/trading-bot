@@ -26,7 +26,7 @@ from fastapi import APIRouter, Request
 
 import config
 from api import db
-from api.auth import require_admin_token
+from api.auth import require_local_or_admin
 
 log = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,15 +35,16 @@ router = APIRouter()
 def _check_access(request: Request) -> None:
     """Operator access control for live book surfaces (SEC-02).
 
-    When LIVE_BOOK_PUBLIC is False, access is restricted to loopback (local
-    operator / dashboard) or requests carrying a valid X-Admin-Token.
+    When LIVE_BOOK_PUBLIC is False, access is restricted to DIRECT loopback
+    connections (local operator / dashboard) or a valid X-Admin-Token.
+    §55: loopback is only trusted when the connection is NOT proxied —
+    behind the deploy guide's Caddy reverse_proxy every internet visitor
+    arrives with client.host == 127.0.0.1, so any forwarding header disables
+    the loopback shortcut (auth.require_local_or_admin).
     """
     if getattr(config, "LIVE_BOOK_PUBLIC", False):
         return
-    client_host = getattr(getattr(request, "client", None), "host", "")
-    if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
-        return
-    require_admin_token(request)
+    require_local_or_admin(request)
 
 
 def _disabled(reason: str) -> dict:

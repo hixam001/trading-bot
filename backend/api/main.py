@@ -16,6 +16,7 @@ import asyncio
 import contextlib
 import logging
 import os
+from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -166,6 +167,29 @@ async def ws_feed(ws: WebSocket):
 FRONTEND_DIST = config.BASE_DIR.parent / "frontend" / "dist"
 
 
+def _safe_dist_file(full_path: str) -> Path | None:
+    """Resolve `full_path` to a file INSIDE FRONTEND_DIST, or None.
+
+    Path-containment guard (§55 authz audit): a raw `//etc/passwd` request
+    reaches this route with a LEADING-SLASH path param, and pathlib
+    absolute-joins discard the dist base (`Path('/dist') / '/etc/passwd'`
+    -> '/etc/passwd') — an arbitrary file read, confirmed by raw-ASGI probe.
+    resolve() collapses `..`, symlinks AND absolute re-joins onto one
+    comparable path; is_relative_to() then enforces containment. Everything
+    else (empty, traversal, escape) gets the SPA shell.
+    """
+    if not full_path or ".." in full_path:
+        return None
+    try:
+        root = FRONTEND_DIST.resolve()
+        candidate = (FRONTEND_DIST / full_path).resolve()
+    except OSError:
+        return None
+    if candidate.is_file() and candidate.is_relative_to(root):
+        return candidate
+    return None
+
+
 @app.get("/")
 async def root():
     # When the built frontend exists it is served by the SPA catch-all below;
@@ -187,8 +211,9 @@ if FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        candidate = FRONTEND_DIST / full_path
         # Serve real files (favicon etc.); everything else gets the SPA shell.
-        if full_path and ".." not in full_path and candidate.is_file():
+        # §55: containment via _safe_dist_file — never a raw path join.
+        candidate = _safe_dist_file(full_path)
+        if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html")
