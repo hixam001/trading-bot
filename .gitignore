@@ -10,6 +10,24 @@ __pycache__/
 *.db-wal
 *.db-shm
 .env
+# Env-file variants: `.env` (above) matches the exact name only. `.env.*`
+# covers Vite's .env.local (which frontend/.env.example tells the operator
+# to create — highest-priority env file), .env.*.local convention files,
+# and editor droppings (.env.bak/.env.backup/.env.save). Slash-free patterns
+# apply at every depth, so one rule covers root AND frontend/. Examples
+# stay tracked via the negation below.
+.env.*
+!.env.example
+# Secret material wherever it lands: docker-compose documents ./secrets/ as
+# the keypair mount dir; key/cert extensions are belt-and-braces.
+secrets/
+*.pem
+*.key
+*.keypair
+*.p12
+*.pfx
+id_rsa
+id_rsa.*
 .fomo_privy.json
 .supabase_fp.txt
 blocklist_state.json

@@ -1,0 +1,22 @@
+# Secret scanning — gitleaks over the FULL git history (fetch-depth: 0),
+# on every push, every PR, manual dispatch, and once daily. Finds secrets
+# past or present; a red run means ROTATE the key, not just delete the file.
+# (Personal-account repo: no GITLEAKS_LICENSE needed — that's org-only.)
+name: gitleaks
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 4 * * *" # once a day at 4 AM UTC
+jobs:
+  scan:
+    name: gitleaks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: gitleaks/gitleaks-action@v3
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
