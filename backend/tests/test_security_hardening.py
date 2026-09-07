@@ -139,7 +139,25 @@ def test_cors_narrowed():
     cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
     assert cors.kwargs["allow_methods"] == ["GET", "POST"]
     assert cors.kwargs["allow_headers"] == ["Content-Type", "X-Admin-Token"]
-    assert cors.kwargs["allow_origins"] == [config.FRONTEND_ORIGIN]
+    # FRONTEND_ORIGIN is a comma-separated LIST (same-origin :8000 + dev :5173
+    # by default); the middleware must receive the parsed list, never the raw
+    # string.
+    assert cors.kwargs["allow_origins"] == config.FRONTEND_ORIGINS
+
+
+def test_cors_includes_backend_same_origin():
+    # Regression (SEC-04 + CORS): the backend SERVES the dashboard itself on
+    # API_PORT, so the page's own origin must be in the allowlist — otherwise
+    # the WS origin check 403s the dashboard's own live stream (observed in
+    # production logs) and CORS blocks same-origin fetches from misconfigured
+    # clients. Fail-closed: an arbitrary origin must never slip in.
+    allowed = set(config.FRONTEND_ORIGINS)
+    assert f"http://localhost:{config.API_PORT}" in allowed
+    assert f"http://127.0.0.1:{config.API_PORT}" in allowed
+    assert "http://malicious-site.com" not in allowed
+    # Every entry must be an http(s) URL (no wildcards, no garbage).
+    for o in allowed:
+        assert o.startswith(("http://", "https://")) and "*" not in o
 
 
 async def test_auth_rate_limiting_lockout(client, monkeypatch):
@@ -167,7 +185,9 @@ async def test_auth_rate_limiting_lockout(client, monkeypatch):
 async def test_additional_security_headers(client):
     r = await client.get("/api/system-status", headers={"x-forwarded-proto": "https"})
     assert r.status_code == 200
-    assert r.headers["x-xss-protection"] == "1; mode=block"
+    # X-XSS-Protection deliberately absent: deprecated, disabled in modern
+    # browsers, and flagged by every current scanner.
+    assert "x-xss-protection" not in r.headers
     assert "geolocation=()" in r.headers["permissions-policy"]
     assert "max-age=" in r.headers["strict-transport-security"]
 

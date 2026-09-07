@@ -1,13 +1,10 @@
 # Active Context — trading-bot
 
-**As of 2026-09-03 (§53 SHIPPED — SECURITY HARDENING: remediated 7 vulnerabilities across blind transaction signing, live book access control, DoS prompt injection break clamping, CSWSH & connection concurrency, CORS headers, cryptographic endpoint TTL caching, and Solana base58 mint sanitization. 666 passing. PREVIOUS: §52 single-book restructure. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants; Phase 3 = LLM as bouncer; Phase 4 = churn tightening + re-fund.)**
-**As of 2026-09-03 (§53 SHIPPED — SECURITY HARDENING: remediated 7 vulnerabilities across blind transaction signing, live book access control, DoS prompt injection break clamping, CSWSH & connection concurrency, CORS headers, cryptographic endpoint TTL caching, and Solana base58 mint sanitization; full verification of 20-point security checklist including failed-auth rate limiting 429 lockout, FORCE_HTTPS redirection, enhanced security headers HSTS/Permissions-Policy/X-XSS-Protection, and clean pip-audit/npm-audit. 669 passing. PREVIOUS: §52 single-book restructure. NEXT: §50 Phase 1 = feed the live engine liquidity/6h tape + the 15s fast scanner + feed-dead failsafe; Phase 2 = omo sizing constants; Phase 3 = LLM as bouncer; Phase 4 = churn tightening + re-fund.)**
+**As of 2026-09-06 (§56 SHIPPED — FULL-REPO CONSISTENCY AUDIT + BATCH A: 18-finding audit delivered; safe fixes executed — dead `import main` crash path removed (README documented a startup crash), `paper_trading_only` unified to false, unknown `/api/*` paths JSON-404 (+regression test), frontend WS exponential-backoff reconnect, LiveFeed SKIP label, SystemStatusResponse contract fix + 6 dead types deleted, `.env.example` rebuilt, MAIN_LLM_PROVIDER default deepseek, docs renumbered, X-XSS-Protection dropped. 695 passing + 8 E2E green. OPERATOR-GATED NEXT: ledger→trades mirror history backfill (26 closes vs empty trades table — journal/stats/calibration starve), resolve the two chain-excluded positions (STONK/Jimothy via close_out_of_band or investigation), LLM health-probe TTL, `/api/*.json` naming unification. PREVIOUS: §53 security hardening, §52 single-book restructure.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
 ### §53 Security hardening & vulnerability remediation (2026-09-03)
-Operator directive: "audit the repo and find security flaws and make a implementation plan for them".
-Remediated 7 vulnerabilities with dedicated tests (`backend/tests/test_security_audit_remediations.py`):
 Operator directive: "audit the repo and find security flaws and make a implementation plan for them" followed by 20-point checklist verification.
 Remediated 7 vulnerabilities + verified 20-point checklist with dedicated tests (`backend/tests/test_security_audit_remediations.py` + `backend/tests/test_security_hardening.py`):
 (1) **SEC-01 (Critical) — Blind Signing Guard**: `APPROVED_SWAP_PROGRAM_IDS` whitelist in `live_execution/config.py` + `inspect_swap_transaction()` in `jupiter_executor.py` verifying fee payer matches keypair and all instruction program IDs are whitelisted before signing.
@@ -17,7 +14,6 @@ Remediated 7 vulnerabilities + verified 20-point checklist with dedicated tests 
 (5) **SEC-05 (Medium) — CORS Preflight Rejection**: Added `"X-Admin-Token"` to CORS `allow_headers` in `api/main.py`.
 (6) **SEC-06 (Medium) — Cryptographic Route TTL Caching**: Added 3-second in-memory TTL caching on `/api/verify.json` and `/api/binding.json` in `api/routes/proof.py` to prevent RPC quota exhaustion.
 (7) **SEC-07 (Low) — Solana Base58 Mint Sanitization**: Added syntactic Base58 pubkey validation (`is_valid_solana_address`) in `data_providers/discovery.py`.
-**666 passing.**
 (8) **20-Point Checklist**: Failed auth brute-force rate-limiting lockout (429) in `api/auth.py`; `FORCE_HTTPS` redirect middleware + HSTS / Permissions-Policy / X-XSS-Protection headers in `api/main.py`; parameterized SQL verified; zero cookies/passwords; pip-audit (0 vulns) & npm-audit (0 vulns).
 **669 passing.**
 

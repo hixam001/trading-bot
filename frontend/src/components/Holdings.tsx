@@ -11,7 +11,7 @@ import { clock, num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/f
 export default function Holdings({ book }: { book: LivePortfolioResponse }) {
   if (!book.enabled) {
     return (
-      <Panel testId="holdings" title="Holdings — live positions">
+      <Panel testId="holdings" title="Holdings · live positions">
         <Empty>Live book not available: {book.reason ?? 'unknown reason'}.</Empty>
       </Panel>
     )
@@ -21,7 +21,7 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
   return (
     <Panel
       testId="holdings"
-      title={`Holdings — ${positions.length} open live position${positions.length === 1 ? '' : 's'}`}
+      title={`Holdings · ${positions.length} open live position${positions.length === 1 ? '' : 's'}`}
       right={<Badge tone="neg">● LIVE · real money</Badge>}
     >
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 mb-3">

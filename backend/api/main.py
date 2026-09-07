@@ -6,21 +6,20 @@ every endpoint reports state; none can open, close, or modify a trade, or
 change PAPER_TRADING_ONLY. The only POST is knowledge-base ingestion, which
 touches no trade state.
 
-The tick loop normally runs as a separate process (`python main.py`) sharing
-the SQLite store; set TICK_LOOP_IN_PROCESS=1 to also run it inside this app
-(convenient for local demo/e2e).
+§52: the paper tick loop (backend/main.py) is retired with the paper book;
+the LIVE decision cycle runs as its own process (run_live_cycle.py, started
+by start.sh). This API serves the dashboard, the WebSocket feed, and the
+read-only research surface only.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import logging
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 
@@ -56,16 +55,7 @@ async def lifespan(app: FastAPI):
     app.state.provider = build_provider()
     app.state.narrator = Narrator()
     broadcaster.start()
-    tick_task: asyncio.Task | None = None
-    if os.getenv("TICK_LOOP_IN_PROCESS", "0") == "1":
-        import main as tick_loop
-        log.info("starting in-process tick loop (TICK_LOOP_IN_PROCESS=1)")
-        tick_task = asyncio.create_task(tick_loop.main())
     yield
-    if tick_task is not None:
-        tick_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await tick_task
     await app.state.narrator.aclose()
     await broadcaster.stop()
 
@@ -110,7 +100,8 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("X-XSS-Protection", "1; mode=block")
+    # X-XSS-Protection intentionally NOT set: deprecated and disabled in all
+    # modern browsers (it was an IE-era header that auditing flags as stale).
     response.headers.setdefault(
         "Permissions-Policy",
         "geolocation=(), microphone=(), camera=(), payment=()",
@@ -197,7 +188,10 @@ async def root():
     if not FRONTEND_DIST.exists():
         return {
             "service": "trading-bot",
-            "paper_trading_only": True,
+            # §52: the paper book is retired; the live cycle is a separate
+            # process. This banner only shows on a checkout with no built
+            # frontend.
+            "paper_trading_only": False,
             "note": "Read-only research API. No endpoint can open, close, or "
                     "modify a trade.",
         }
@@ -211,6 +205,14 @@ if FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # An unmatched /api/* path is a wrong URL (or a removed endpoint) —
+        # it must fail loudly as JSON 404, never fall through to the SPA
+        # shell (a 200 HTML body silently breaks API clients and monitors).
+        if full_path == "api" or full_path.startswith("api/"):
+            return JSONResponse(
+                status_code=404,
+                content={"detail": f"Unknown API path: /{full_path}"},
+            )
         # Serve real files (favicon etc.); everything else gets the SPA shell.
         # §55: containment via _safe_dist_file — never a raw path join.
         candidate = _safe_dist_file(full_path)

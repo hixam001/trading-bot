@@ -27,55 +27,6 @@ export interface FeedEventRow {
   led_to_trade_id: string | null
 }
 
-export interface HoldingRow {
-  trade_id: string
-  symbol: string
-  mint_address: string
-  opened_at: string
-  entry_price_usd: number
-  position_size_usd: number
-  quantity: number
-  thesis: string
-  current_price_usd: number | null
-  unrealized_pnl_usd: number | null
-  unrealized_pnl_pct: number | null
-}
-
-export interface TradeRow {
-  trade_id: string
-  symbol: string
-  mint_address: string
-  opened_at: string
-  entry_price_usd: number
-  position_size_usd: number
-  quantity: number
-  thesis: string
-  closed_at: string | null
-  exit_price_usd: number | null
-  exit_reason: string | null
-  realized_pnl_usd: number | null
-  realized_pnl_pct: number | null
-  is_open: boolean
-  reflection_text: string | null
-}
-
-export interface StatsResponse {
-  initial_cash_usd: number
-  cash_usd: number
-  equity_usd: number
-  open_positions: number
-  closed_trades: number
-  win_rate: number | null
-  profit_factor: number | null
-  max_drawdown_pct: number
-  total_pnl_usd: number
-  realized_pnl_usd: number
-  unrealized_pnl_usd: number | null
-  total_spend_usd: number
-  equity_curve: { closed_at: string; equity_usd: number }[]
-  paper_trading_only: boolean
-}
-
 export interface RegimeRow {
   computed_at: string
   candidate_count: number
@@ -84,21 +35,6 @@ export interface RegimeRow {
   avg_buy_sell_ratio: number
   regime_ok: boolean
   regime_detail: string
-}
-
-export interface Criterion {
-  name: string
-  passed: boolean
-  actual: number | null
-  required: number
-  detail: string
-}
-
-export interface PromotionGateResponse {
-  all_criteria_met: boolean
-  criteria: Criterion[]
-  summary: string
-  note: string
 }
 
 export interface LlmUsageRow {
@@ -121,8 +57,8 @@ export interface LlmUsageRow {
 export interface SystemStatusResponse {
   paper_trading_only: boolean
   data_backend: string
-  ollama_reachable: boolean
-  model: string
+  main_llm_reachable: boolean
+  main_llm_provider: string
   narration_mode: string
   provider_calls_today: {
     provider: string
@@ -134,15 +70,6 @@ export interface SystemStatusResponse {
   }[]
   llm_usage_recent: LlmUsageRow[]
   tick_interval_seconds: number
-}
-
-export interface KnowledgeBaseResponse {
-  static_knowledge: string
-  ingested: { filename: string; digest: string; ingested_at: string }[]
-  dynamic_stats: {
-    by_liquidity_bucket: Record<string, { wins: number; trades: number; win_rate: number | null }>
-    by_age_bucket: Record<string, { wins: number; trades: number; win_rate: number | null }>
-  }
 }
 
 export interface LivePositionRow {

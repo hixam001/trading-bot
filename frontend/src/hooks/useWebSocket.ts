@@ -37,22 +37,49 @@ export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } 
     }
   }, [])
 
-  // 2) Live push over WebSocket.
+  // 2) Live push over WebSocket — with automatic reconnect (DESIGN.md §3.4:
+  //    a backend restart or network blip must never leave the stream dead
+  //    until a manual reload; REST polling keeps filling the feed either way).
   useEffect(() => {
-    const ws = new WebSocket(wsUrl('/ws/feed'))
-    wsRef.current = ws
-    ws.onopen = () => setConnected(true)
-    ws.onclose = () => setConnected(false)
-    ws.onerror = () => setConnected(false)
-    ws.onmessage = (m) => {
-      try {
-        const ev = JSON.parse(m.data) as FeedEventRow
-        setEvents((prev) => merge(prev, [ev]))
-      } catch {
-        /* ignore malformed frame */
+    let closed = false
+    let retries = 0
+    let timer: ReturnType<typeof setTimeout> | undefined
+    let ws: WebSocket | null = null
+
+    const connect = () => {
+      if (closed) return
+      ws = new WebSocket(wsUrl('/ws/feed'))
+      wsRef.current = ws
+      ws.onopen = () => {
+        retries = 0
+        setConnected(true)
+      }
+      ws.onclose = () => {
+        setConnected(false)
+        if (closed) return
+        // Exponential backoff: 1s, 2s, 4s, 8s … capped at 15s; reset on a
+        // clean open so a long-lived healthy connection never pays it.
+        const delay = Math.min(1000 * 2 ** retries, 15_000)
+        retries += 1
+        timer = setTimeout(connect, delay)
+      }
+      ws.onerror = () => setConnected(false)
+      ws.onmessage = (m) => {
+        try {
+          const ev = JSON.parse(m.data) as FeedEventRow
+          setEvents((prev) => merge(prev, [ev]))
+        } catch {
+          /* ignore malformed frame */
+        }
       }
     }
-    return () => ws.close()
+
+    connect()
+    return () => {
+      closed = true
+      if (timer !== undefined) clearTimeout(timer)
+      ws?.close()
+    }
   }, [])
 
   return { events, connected }

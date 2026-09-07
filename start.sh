@@ -35,7 +35,7 @@ fi
 
 # --- 2) Verify the MAIN LLM provider key is set ------------------------------
 MAIN_PROVIDER="$(grep -E '^MAIN_LLM_PROVIDER=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
-MAIN_PROVIDER="${MAIN_PROVIDER:-groq}"
+MAIN_PROVIDER="${MAIN_PROVIDER:-deepseek}"
 if [ "$MAIN_PROVIDER" = "deepseek" ]; then
   MAIN_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
 else

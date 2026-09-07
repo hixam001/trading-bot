@@ -1,8 +1,8 @@
-**Last updated:** 2026-09-03 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-09-06 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 669 passing (backend + live_execution) + 8 Playwright E2E
+**Tests:** 695 passing (backend + live_execution) + 8 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
 
 
@@ -150,6 +150,78 @@ with the paid keys as failover, empty the paid scrape keys in `.env`
 migration: re-run the spike script there (datacenter-IP reality check) —
 the browser hop + `SCRAPLING_PROXY` escape hatch cover the IP-reputation
 case the TLS hop does not.
+
+## 56. Full-repo consistency audit + Batch A remediation (2026-09-06)
+
+Operator directive: "Audit the repo and find any bugs or inconsistencies" →
+18-finding audit delivered in chat → Batch A (the mechanical, safe fixes)
+approved and executed. Findings + fixes:
+
+1. **Dead `import main` crash path** — `api/main.py` still did
+   `import main as tick_loop` behind `TICK_LOOP_IN_PROCESS=1`, but
+   `backend/main.py` was deleted in §52; the README documented exactly that
+   command (a fresh checkout following it crashed at startup). Removed the
+   branch + the env key from `.env.example`; README dev-run command fixed;
+   `stop.sh` header de-staled ("tick loop" → live cycle).
+2. **`paper_trading_only` contradicted itself** — `/api/system-status` and
+   the no-frontend root banner said `true` (from the retired paper gate)
+   while `/api/stats` + `/api/holdings` said `false` (§52 honesty). All
+   surfaces now report `false`; `config.PAPER_TRADING_ONLY` itself stays
+   hardcoded True (untouched safety machinery). Pinned tests updated.
+3. **Unknown `/api/*` GETs returned the SPA shell with 200** — the catch-all
+   swallowed typo'd/removed API paths (e.g. `/api/disclosure` vs the real
+   `/api/disclosure.json`), silently breaking API clients and uptime
+   monitors. The fallback now returns JSON 404 for any unmatched `api/*`
+   path; SPA routing untouched. Regression test:
+   `test_authz_surface.py::test_unknown_api_path_404s_as_json_not_spa_shell`.
+4. **Frontend WS never reconnected** — `onclose` only flipped the badge;
+   any backend restart stranded the live stream until a manual reload.
+   `useWebSocket.ts` now reconnects with exponential backoff (1s→15s cap,
+   reset on clean open, full cleanup on unmount). DESIGN.md §3.4/§3.5
+   updated to match reality (the "stale" age-badge state is DEFERRED by
+   operator decision — documented in §3.5).
+5. **LiveFeed mislabeled refused rows "PASS" in red** — stored feed verdict
+   is pass|fail; the fail branch rendered the word PASS (a §35-era think-
+   verdict/gate-verdict conflation). Now renders SKIP. Red stays on fail
+   rows; the meaning is the model/rules declined this cycle.
+6. **Stale frontend contract** — `SystemStatusResponse` still declared
+   `ollama_reachable`/`model` (backend now sends `main_llm_reachable`/
+   `main_llm_provider`); fixed. Dead paper-era types (`HoldingRow`,
+   `TradeRow`, `StatsResponse`, `Criterion`, `PromotionGateResponse`,
+   `KnowledgeBaseResponse`) deleted (grep-verified zero uses).
+7. **`.env.example` badly drifted** — added the missing keys (SUPABASE_* /
+   USE_SUPABASE_DB / DB_PATH docs, EXPECTED_WALLET_ADDRESS, provider
+   sections) and removed dead ones (OLLAMA_URL/MODEL_NAME/OLLAMA_NUM_CTX/
+   OLLAMA_NUM_PREDICT, TICK_LOOP_IN_PROCESS, the duplicated wallet/RPC
+   block). `MAIN_LLM_PROVIDER` default aligned to **deepseek** everywhere
+   (config.py, .env.example, start.sh fallback) — matching the README's
+   documented default and the live .env.
+8. **Hygiene** — duplicate doc numbering fixed
+   (`12_ORACLE_DEPLOY_GUIDE.md` → `13_`); stray 0-byte root
+   `trading_bot.db` deleted; deprecated `X-XSS-Protection` header dropped
+   (scanner-flagged, no-op in modern browsers; test flipped to assert
+   absence).
+
+**Verification:** **695 backend tests passing** (+1 new), frontend
+`tsc -b && vite build` clean, **Playwright 8/8 E2E green** against the
+live backend, and live curl checks confirm: `/api/disclosure` → JSON 404,
+real endpoints 200, SPA routes still serve the shell, system-status
+reports `paper_trading_only: false` + `main_llm_provider: deepseek`.
+
+**Deferred (operator decisions, see the audit report in chat):**
+- **Trades-mirror history backfill** — the ledger holds 26 closes + 2 opens
+  but the Supabase trades table is empty (all fills predate the §52
+  mirror; the 2 opens are also `chain_excluded` — see below), so journal/
+  stats/calibration see an empty book. A one-time backfill writes to the
+  LIVE remote book — needs explicit operator approval.
+- **The two chain-excluded positions** (`6GmAFSYs…`/`Ge87Etsj…` STONK +
+  Jimothy) — flagged every cycle ("journal holds N tokens, chain balance
+  0 — operator review needed"). Resolve via
+  `ledger.close_out_of_band(mint, proceeds_usd=…)` or investigate; the
+  system is correctly fail-closed until then.
+- LLM health-probe TTL (currently cached forever after first probe) and
+  the `/api/*.json` vs `/api/*` naming unification.
+
 
 ## 53. Security hardening & vulnerability remediation (2026-09-03)
 

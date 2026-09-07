@@ -250,8 +250,8 @@ logs/                    backend.log, frontend-build.log
 ## Development (manual run)
 
 ```bash
-# Backend + tick loop (also serves the last built frontend):
-cd backend && TICK_LOOP_IN_PROCESS=1 ../.venv/bin/python -m uvicorn api.main:app --port 8000
+# Backend API + dashboard (the live decision cycle is a SEPARATE process):
+cd backend && ../.venv/bin/python -m uvicorn api.main:app --port 8000
 
 # Frontend hot-reload dev server (proxies /api and /ws to :8000):
 cd frontend && npm install && npm run dev      # http://localhost:5173
@@ -279,7 +279,7 @@ python run_live_cycle.py --once
 - **`docs/`** — `00_BLUEPRINT`, `01_ARCHITECTURE`, `02_FEATURE_LIST`,
   `05_VERIFICATION_APPENDIX`, `06_REFERENCE_COMPARISON`,
   `07_PROJECT_REPORT`, `08_LLM_API_MIGRATION`,
-  `11_DEPLOYMENT` (runbook), `12_ORACLE_DEPLOY_GUIDE` (step-by-step free-tier deploy).
+  `11_DEPLOYMENT` (runbook), `13_ORACLE_DEPLOY_GUIDE` (step-by-step free-tier deploy).
 
 ## Troubleshooting
 

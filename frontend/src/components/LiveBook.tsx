@@ -15,7 +15,7 @@ export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
   return (
     <Panel
       testId="live-book"
-      title="Live book — real money"
+      title="Live book · real money"
       right={
         <div className="flex items-center gap-2">
           <Badge tone="neg">● LIVE</Badge>

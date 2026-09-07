@@ -157,7 +157,10 @@ GROQ_MAX_TOKENS: int = int(os.getenv("GROQ_MAX_TOKENS", "192"))
 # read is NOT affected — it stays on SOCIAL_LLM_* (Groq) regardless.
 # Unrecognized values fail closed to groq (see build_main_client()).
 # ---------------------------------------------------------------------------
-MAIN_LLM_PROVIDER: str = os.getenv("MAIN_LLM_PROVIDER", "groq").strip().lower()
+# "deepseek" | "groq" — DeepSeek V4 Flash is the documented default main
+# model (README §LLM providers); Groq is the warm rollback. The social read
+# is NOT affected by this flag (it has its own SOCIAL_LLM_* settings).
+MAIN_LLM_PROVIDER: str = os.getenv("MAIN_LLM_PROVIDER", "deepseek").strip().lower()
 
 # ---------------------------------------------------------------------------
 # Reference-style brain (2026-08-27). When True AND DATA_BACKEND=live, the tick runs
@@ -446,11 +449,21 @@ PROMOTION_MAX_DRAWDOWN_PCT: float = 20.0
 # ---------------------------------------------------------------------------
 API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
 API_PORT: int = int(os.getenv("API_PORT", "8000"))
-FRONTEND_ORIGIN: str = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
+# The backend SERVES the built dashboard itself, so the API's own origins
+# (loopback host variants on API_PORT) are same-origin deployments and must
+# be allowed by the WS origin check + CORS in addition to the Vite dev
+# server. FRONTEND_ORIGIN stays env-overridable for split deployments.
+_LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
+FRONTEND_ORIGIN: str = os.getenv(
+    "FRONTEND_ORIGIN",
+    ",".join(f"http://{h}:{API_PORT}" for h in _LOOPBACK_HOSTS)
+    + f",http://localhost:5173",
+)
 # Split deployments (dashboard on Vercel/CF Pages, API elsewhere) may need
 # more than one allowed origin: FRONTEND_ORIGIN accepts a comma-separated
 # list (e.g. "https://bot.vercel.app,http://localhost:5173"). Empty entries
-# are dropped; the local dev origin remains the fail-closed default.
+# are dropped; the local same-origin + dev origins remain the fail-closed
+# default.
 FRONTEND_ORIGINS: list = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()]
 WS_POLL_INTERVAL_SECONDS: float = 2.0
 # Live book public access (SEC-02): when False (default), live portfolio and

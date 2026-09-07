@@ -86,7 +86,7 @@ export function Empty({ children }: { children: ReactNode }) {
 export function ErrorState({ message }: { message: string }) {
   return (
     <div className="border border-neg/50 rounded p-2 text-xs text-neg">
-      {message} — retrying automatically.
+      {message}. Retrying automatically.
     </div>
   )
 }

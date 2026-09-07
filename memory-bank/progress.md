@@ -1,6 +1,23 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §56 Full-repo consistency audit + Batch A remediation (2026-09-06):
+      operator directive "Audit the repo and find any bugs or
+      inconsistencies". 18 findings; Batch A (safe fixes) executed:
+      dead `import main`/`TICK_LOOP_IN_PROCESS` crash path removed (README
+      documented a startup-crashing command); `paper_trading_only` unified
+      to `false` across system-status/root/stats/holdings; unknown `/api/*`
+      GETs now JSON-404 instead of the 200 SPA shell (+ regression test);
+      frontend WS reconnects with exponential backoff (1s→15s); LiveFeed
+      fail rows render SKIP (was a red "PASS"); `SystemStatusResponse`
+      aligned to the live contract (`main_llm_reachable`/`main_llm_provider`)
+      + 6 dead paper-era types deleted; `.env.example` rebuilt (Supabase +
+      wallet-pin + provider keys in, Ollama-era keys out);
+      `MAIN_LLM_PROVIDER` default deepseek everywhere; docs renumbered
+      (`13_ORACLE_DEPLOY_GUIDE`); stray root `trading_bot.db` deleted;
+      deprecated X-XSS-Protection header dropped. **695 passing + 8 E2E.**
+      Deferred (operator-gated): trades-mirror history backfill, the two
+      chain-excluded positions, LLM health TTL, `/api/*.json` naming.
 - [x] §53 Security hardening & vulnerability remediation (2026-09-03):
       operator directive "audit the repo and find security flaws and make a
       implementation plan for them". Remediated 7 vulnerabilities:
@@ -14,8 +31,6 @@
       (4) SEC-04: CSWSH origin validation + `MAX_WS_CLIENTS = 32` capacity ceiling;
       (5) SEC-05: CORS `allow_headers` updated to include `X-Admin-Token`;
       (6) SEC-06: in-memory 3s TTL caching on `/api/verify.json` and `/api/binding.json`;
-      (7) SEC-07: Solana Base58 mint address sanitization in discovery.
-      **666 passing.**
       (7) SEC-07: Solana Base58 mint address sanitization in discovery;
       (8) 20-point security checklist: sliding-window auth brute-force lockout
       (429) in auth.py; FORCE_HTTPS 301 redirection + HSTS/Permissions-Policy/

@@ -75,7 +75,7 @@
   /* Badge — 1px semantic border, transparent bg (DESIGN.md §2). */
   .badge {
     @apply inline-flex items-center gap-1 font-sans text-[11px] font-medium
-           leading-none px-1.5 py-[3px] rounded-[4px] border whitespace-nowrap;
+           leading-none px-1.5 py-1 rounded-[4px] border whitespace-nowrap;
   }
   .badge-pos  { @apply border-pos/60 text-pos; }
   .badge-neg  { @apply border-neg/60 text-neg; }

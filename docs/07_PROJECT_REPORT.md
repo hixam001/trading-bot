@@ -2,50 +2,6 @@
 
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
-execution package. Report updated 2026-08-30 from the current main branch
-(§45: the live minimum ticket is now EQUITY-PROPORTIONAL — max($0.10, 10% of
-at-cost equity) — fixing the "ENTER but nothing executes" incident where a
-fixed $0.50 floor froze every entry on a sub-$3.33-cash book; §44: the gate is
-now STAGED — cheap rules → fomo scrape → crowd rules → LLM,
-so a candidate that fails a cheap rule is never scraped and never costs an LLM
-call; §43: crowd-feed quota — the metered fomo.fun lookup behind `crowd_heat` is
-now spent only on candidates that already cleared every other rule, with the
-resulting audit trade-off recorded explicitly in §3.11/§10/§27; §42/§42b:
-deployable restructure — the engine is now ONE deployable module
-(`backend/`, Docker-packaged) with a separately deployable static dashboard;
-env-resolvable wallet secrets; live-state paths unified in config; container
-entrypoint hardened). Status: **live** (real market data, REAL funds ARMED;
-optional Supabase Postgres persistence).
-**Reference parity: ALL R1–R7 features implemented; R8+R9 (drawdown-adaptive
-risk budget × closed-loop conviction) implemented 2026-08-27; R11 (on-chain
-precommit memo, commit–reveal) + micro-bootstrap implemented 2026-08-27
-(handoff §26); dead-provider fail-fast (handoff §24) + fresh scraper keys &
-ScrapingDog bearer-forwarding (handoff §25) shipped 2026-08-27; the five
-omo-audit gaps A7/A6/A3/A2/A4 (wash-trade filter, symbol blocklist, venue
-attribution, chain reconciliation, own-basis read-back — handoff §29)
-implemented 2026-08-27; A11 thesis re-authoring (the module the original
-audit missed, found in the same-day re-read — handoff §30) implemented
-2026-08-27. R10 (live execution): the §27 devnet drill PASSED 5/5 on
-2026-08-28 (handoff §31); the operator performed the human-only arming
-steps, supervised live cycles, and on 2026-08-28 explicitly directed that
-the ARMED state be committed and pushed (handoff §33) — this repo is now
-committed ARMED (`LIVE_TRADING_ENABLED=True`,
-`REQUIRE_MANUAL_CONFIRMATION=False`); a fresh clone that does not want real
-trading must flip the flag before running anything.
-The 2026-08-28 cash-corruption incident (bad quote → phantom cash in the
-PAPER book) was fixed with hardcoded bad-quote guards on both books and a
-final full-coverage omo audit closed every open question (handoff §32):
-no trading-critical parity gap remains. Live-cycle hardening
-(handoff §34) shipped the same day: 403-rejection benching for the stealth
-scraper chain (a proxy refused by the origin twice is benched like a 402) and
-a micro-bootstrap live cash rule (`LIVE_ACTIVE_RULES` checks the $0.50 live
-floor instead of the paper book's $100), both live-verified ARMED. The
-frontend was rebuilt on a real design system the same day (handoff §35 —
-token-based terminal, shared primitives, Playwright E2E) and a latent
-STATE_DIR bug was caught and fixed (empty env var put the live commit ledger
-at the repo root).** Tests: **620 passing (468 backend + 152 live_execution)
-+ 8 Playwright E2E — fully green (the flag-state canary pins the committed
-ARMED state — handoff §33).**
 execution package. Report updated 2026-09-03 from the current main branch
 (§53: security audit hardening — blind signing program whitelist guard, live book access control,
 DoS break clamping, CSWSH origin/concurrency caps, auth brute-force rate-limiting lockout, FORCE_HTTPS
@@ -1821,4 +1777,71 @@ Comprehensive security audit hardening remediating 7 core vulnerabilities and ve
 - **Dependency Hygiene:** Clean audit runs with 0 vulnerabilities (`pip-audit` for Python backend, `npm audit --omit=dev` for frontend).
 
 **Test Suite:** **669 passing (backend + live_execution) + 8 Playwright E2E**.
+
+---
+
+## 32. Full-Repo Consistency Audit + Batch A Remediation (2026-09-06, handoff §56)
+
+Operator directive: "Audit the repo and find any bugs or inconsistencies." An 18-finding
+audit was delivered in chat spanning crash paths, data-mirror gaps, API-contract drift,
+frontend contract staleness, config/docs drift, and hygiene. The approved "Batch A"
+(mechanical, low-risk fixes) was executed same day:
+
+### 32.1 Remediated (Batch A)
+1. **Dead `import main` crash path:** `backend/api/main.py` still imported the deleted
+   `backend/main.py` behind `TICK_LOOP_IN_PROCESS=1`, and the README's development
+   section documented exactly that startup-crashing command. The branch, the env key
+   (`.env.example`), and the README command were removed/fixed; `stop.sh` header
+   de-staled.
+2. **`paper_trading_only` self-contradiction:** `/api/system-status` and the
+   no-frontend root banner reported `true` (the retired paper gate) while `/api/stats`
+   and `/api/holdings` reported `false`. All surfaces now report `false`; the
+   `config.PAPER_TRADING_ONLY` constant itself is untouched (safety machinery).
+3. **Unknown `/api/*` paths swallowed by the SPA catch-all:** a typo'd or removed API
+   route (e.g. `/api/disclosure` vs the real `/api/disclosure.json`) returned the SPA
+   HTML shell with HTTP 200. The fallback now returns JSON 404 for unmatched `api/*`
+   paths while preserving SPA routing. Regression:
+   `test_authz_surface.py::test_unknown_api_path_404s_as_json_not_spa_shell`.
+4. **Frontend WebSocket never reconnected:** `onclose` only flipped the badge, so any
+   backend restart stranded the live stream until a manual page reload. The hook now
+   reconnects with exponential backoff (1s→15s cap, reset on clean open, cleanup on
+   unmount). DESIGN.md §3 updated to match reality (§3.5 "stale" age badge deferred
+   by operator decision).
+5. **LiveFeed mislabeled failed rows "PASS" (in red):** the stored feed verdict is
+   pass|fail; the fail branch now renders SKIP — the model/rules declined this cycle.
+6. **Stale frontend contract:** `SystemStatusResponse` declared `ollama_reachable` /
+   `model` (removed from the backend in the Ollama retirement); now declares the real
+   `main_llm_reachable` / `main_llm_provider`. Six dead paper-era types deleted
+   (`HoldingRow`, `TradeRow`, `StatsResponse`, `Criterion`, `PromotionGateResponse`,
+   `KnowledgeBaseResponse`).
+7. **`.env.example` drift:** added the actually-used keys (Supabase `USE_SUPABASE_DB` +
+   `SUPABASE_*`, `EXPECTED_WALLET_ADDRESS`, provider sections) and removed dead ones
+   (`OLLAMA_URL`/`MODEL_NAME`/`OLLAMA_NUM_CTX`/`OLLAMA_NUM_PREDICT`,
+   `TICK_LOOP_IN_PROCESS`, a duplicated wallet/RPC block). `MAIN_LLM_PROVIDER` default
+   aligned to **deepseek** across `config.py`, `.env.example`, and `start.sh` (matching
+   the README's documented default).
+8. **Hygiene:** duplicate doc numbering fixed (`12_ORACLE_DEPLOY_GUIDE.md` →
+   `13_ORACLE_DEPLOY_GUIDE.md`); stray 0-byte root `trading_bot.db` deleted;
+   deprecated `X-XSS-Protection` header dropped (pinned test updated to assert
+   absence).
+
+### 32.2 Verification
+**695 backend tests passing** (+1 new regression test), frontend `tsc -b && vite build`
+clean, **Playwright 8/8 E2E green** against the live backend, live curl checks:
+`/api/disclosure` → JSON 404, real endpoints 200, SPA routes still serve the shell,
+system-status reports `paper_trading_only: false` + `main_llm_provider: deepseek`.
+
+### 32.3 Deferred (operator decisions pending)
+- **Trades-mirror history backfill:** the live ExecutionLedger holds 26 closed + 2 open
+  positions, but the (Supabase) trades table — the mirror feeding `/api/journal`,
+  `/api/stats`, and the calibration/learning loops — is empty because every fill
+  predates the §52 mirror code and the two opens are chain-excluded each cycle. A
+  backfill writes to the live remote book and needs explicit operator approval.
+- **Two chain-excluded positions** (`STONK` `6GmAFSYs…`, `Jimothy` `Ge87Etsj…`): flagged
+  every cycle ("journal holds N tokens but chain balance is 0 — operator review
+  needed"). Resolve via `close_out_of_band` (with known proceeds) or investigate the
+  on-chain movement.
+- LLM health-probe TTL (currently cached forever after the first probe) and the
+  `/api/*.json` vs `/api/*` route-naming unification.
+
 

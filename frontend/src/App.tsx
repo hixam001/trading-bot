@@ -42,7 +42,7 @@ export default function App() {
   return (
     <div className="min-h-screen flex flex-col">
       {/* Header — identity + live money warning + socket state. */}
-      <header className="flex items-center gap-3 px-4 py-2.5 border-b border-line bg-panel">
+      <header className="flex items-center gap-3 px-4 py-2 border-b border-line bg-panel">
         <span className="font-sans font-bold text-bright tracking-tight">trading-bot</span>
         <span className="badge badge-neg">● LIVE · real money</span>
         <span className="text-dim text-xs hidden sm:inline">
@@ -81,7 +81,7 @@ export default function App() {
           role="alert"
           data-testid="offline-banner"
         >
-          API unreachable ({status.error}) — panels keep their last data and will
+          API unreachable ({status.error}). Panels keep their last data and will
           recover automatically when the backend returns. Not a crash; retrying in
           the background.
         </div>
@@ -94,7 +94,7 @@ export default function App() {
             <div className="xl:col-span-2 space-y-3 min-w-0">
               {liveBook.loading ? (
                 <div className="panel">
-                  <div className="panel-title mb-2">Live book — real money</div>
+                  <div className="panel-title mb-2">Live book · real money</div>
                   <Skeleton rows={3} />
                 </div>
               ) : liveBook.data?.enabled ? (
@@ -130,7 +130,7 @@ export default function App() {
         {tab === 'holdings' &&
           (liveBook.loading ? (
             <div className="panel">
-              <div className="panel-title mb-2">Holdings — live positions</div>
+              <div className="panel-title mb-2">Holdings · live positions</div>
               <Skeleton rows={4} />
             </div>
           ) : liveBook.data ? (
@@ -140,16 +140,16 @@ export default function App() {
         {tab === 'journal' &&
           (journal.loading ? (
             <div className="panel">
-              <div className="panel-title mb-2">Journal — live order history</div>
+              <div className="panel-title mb-2">Journal · live order history</div>
               <Skeleton rows={5} />
             </div>
           ) : journal.data ? (
             <Journal data={journal.data} />
           ) : journal.error ? (
             <div className="panel">
-              <div className="panel-title mb-2">Journal — live order history</div>
+              <div className="panel-title mb-2">Journal · live order history</div>
               <div className="border border-neg/50 rounded p-2 text-xs text-neg">
-                {journal.error} — retrying automatically.
+                {journal.error}. Retrying automatically.
               </div>
             </div>
           ) : null)}

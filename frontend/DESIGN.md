@@ -27,7 +27,7 @@ client-side invention — every number exactly as the backend sent it.
 | `bright` | `#eef2f8` | headline numbers, emphasis |
 | `body` | `#c7d0dd` | default text |
 | `dim` | `#8b96a5` | labels, secondary (≥4.5:1 on panel) |
-| `faint` | `#5c6773` | timestamps, chrome — never meaning |
+| `faint` | `#7e8996` | timestamps, chrome — never meaning; ≥4.5:1 on ink/panel/raised |
 
 ### Color — semantics (meaning, never decoration)
 | token | value | meaning |
@@ -51,7 +51,8 @@ warning-level fact).
 
 ### Space & shape
 - 8pt grid: 4 / 8 / 12 / 16 / 24 / 32 (compact density mode for tables:
-  row padding 6px vertical).
+  row padding 6px vertical). The scale is exhaustive — no 2px, 3px, or 10px
+  one-offs anywhere (badges: 6px horizontal, 4px vertical padding).
 - Radius: 6px panels, 4px controls. No shadows — hierarchy via surface ladder
   + borders (flat terminal, not cards-floating-on-nothing).
 - Focus: `outline: 2px solid info; outline-offset: 2px` on `:focus-visible`.
@@ -70,7 +71,8 @@ never `$0.00`, never blank.
 pos / neg / warn / info / neutral.
 
 **Row (feed/refusals)** — full-width `<button>` (keyboard operable), hover
-`bg-raised`, expanded state `bg-raised/60 border-l-2 border-info`.
+`bg-raised`, expanded state `bg-raised/60 border border-info/40` (a full
+outline — never a colored left edge).
 
 **Table** — header row 11 uppercase dim over `line-strong` border; rows
 separated by `line` hairlines; numeric columns right-aligned tabular-nums.
@@ -81,8 +83,14 @@ separated by `line` hairlines; numeric columns right-aligned tabular-nums.
 2. **empty** — explicit sentence: what is empty and why it might be
    ("No decisions yet this cycle.").
 3. **error** — what failed + that retry is automatic; `neg` border.
-4. **offline** (app-level) — single global banner; panels keep last data.
-5. **stale** — if a poll hasn't refreshed in >3× its interval, show age.
+4. **offline** (app-level) — single global banner; panels keep last data;
+   the WebSocket reconnects automatically (exponential backoff, 1s–15s),
+   so a backend restart never strands the live stream.
+5. **stale** — deferred by operator decision (2026-09-06): every panel's
+   REST poll self-heals on its next interval and the error state already
+   covers a failing poll; an explicit age badge was judged redundant
+   noise for this terminal. Revisit only if panels are ever seen frozen
+   while claiming freshness.
 
 ## 4. Accessibility acceptance criteria (testable)
 - All interactive elements are `<button>`/`<a>` with visible focus rings.
@@ -100,6 +108,20 @@ separated by `line` hairlines; numeric columns right-aligned tabular-nums.
 - Invented data to fill gaps — `—` or the documented empty state.
 - New runtime JS dependencies without a documented reason.
 
+### 5.1 Slop guardrails (awesome-design-skills registry)
+
+Banned outright — none of these appear, and none may be introduced: any
+gradient (purple-to-blue or otherwise), gradient hero text, emoji in
+headings, Inter-everywhere typography (mono is the data voice), colored
+left-border cards, glassmorphism (no blur or translucent layering), icon
+boxes in rows of three, a badge above a headline, Lucide or any icon set,
+untouched shadcn components, scroll fade-ins, cursor-following beams,
+hover fades (state changes swap surface tokens instead), off-scale
+spacing (§1 scale is exhaustive), em dashes in rendered copy (`·`
+separates titles; `—` is reserved for the null-value placeholder in data
+grids), buzzword copy ("seamless", "powerful", "blazing"), serif italics,
+Space Grotesk, Instrument Serif, grain textures.
+
 ## 6. QA checklist (executed in review + Playwright)
 - [ ] `npm run build` clean (tsc strict + vite)
 - [ ] Playwright: loads with zero console errors
@@ -107,4 +129,10 @@ separated by `line` hairlines; numeric columns right-aligned tabular-nums.
 - [ ] Playwright: feed expand/collapse + copy interaction works
 - [ ] Playwright: offline banner appears when API unreachable
 - [ ] Grep: no `#` hex literals outside tailwind.config.js
+- [ ] Grep: no `border-l-2` colored accents (expanded rows use full borders)
+- [ ] Grep: rendered copy has no em dashes (the `—` null placeholder in
+      `lib/format.ts` is data, not copy)
+- [ ] Grep: no glyph beyond `●` in statuses (counts are words: "flags 2",
+      "copied")
+- [ ] Grep: no recharts/lucide/shadcn imports (dead or decorative deps)
 - [ ] Tab order walks header → tabs → panels without traps

@@ -79,7 +79,7 @@ export default function LiveFeed({
                       ev.verdict === 'pass' ? 'text-pos' : 'text-neg'
                     }`}
                   >
-                    {ev.verdict === 'pass' ? 'ENTER' : 'PASS'}
+                    {ev.verdict === 'pass' ? 'ENTER' : 'SKIP'}
                   </span>
                   <span className="font-bold w-20 shrink-0 text-bright">{ev.symbol}</span>
                   <span className="text-dim text-xs whitespace-pre-wrap flex-1 line-clamp-2">
@@ -90,14 +90,14 @@ export default function LiveFeed({
                       className="text-warn text-xs shrink-0"
                       title={ev.grounding_flags.join('; ')}
                     >
-                      ⚑ {ev.grounding_flags.length}
+                      flags {ev.grounding_flags.length}
                     </span>
                   )}
                   <span className="text-faint text-xs shrink-0 tnum">{clock(ev.ts)}</span>
                 </button>
 
                 {isOpen && (
-                  <div className="bg-raised/60 border-l-2 border-info rounded p-2 mt-1 space-y-2">
+                  <div className="bg-raised/60 border border-info/40 rounded p-2 mt-1 space-y-2">
                     {/* Token contract address — click to copy */}
                     <div className="flex items-center gap-2 text-xs flex-wrap">
                       <span className="text-dim shrink-0">contract:</span>
@@ -109,13 +109,13 @@ export default function LiveFeed({
                         {ev.mint_address || 'unknown'}
                       </button>
                       {copiedMint === ev.mint_address && (
-                        <span className="text-pos" role="status">copied ✓</span>
+                        <span className="text-pos" role="status">copied</span>
                       )}
                     </div>
 
                     {/* Complete model answer, verbatim */}
                     <div>
-                      <div className="text-xs text-dim mb-0.5">
+                      <div className="text-xs text-dim mb-1">
                         {modelDeclined ? 'model chose not to enter:' : 'model answer:'}
                       </div>
                       <div
@@ -128,7 +128,7 @@ export default function LiveFeed({
                     </div>
 
                     {/* Rule-by-rule pass/fail breakdown */}
-                    <div className="space-y-0.5">
+                    <div className="space-y-1">
                       {ev.rule_breakdown.map((r) => (
                         <RuleLine key={r.rule_id} r={r} />
                       ))}

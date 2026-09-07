@@ -15,7 +15,7 @@ export default {
         bright: '#eef2f8',
         body: '#c7d0dd',
         dim: '#8b96a5',
-        faint: '#5c6773',
+        faint: '#7e8996',
         // semantics
         pos: '#3fb950',
         neg: '#f85149',

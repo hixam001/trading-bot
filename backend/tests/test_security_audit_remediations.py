@@ -141,6 +141,22 @@ async def test_sec04_websocket_origin_and_capacity(monkeypatch):
     await websocket_endpoint(ws_bad_origin, broadcaster)
     ws_bad_origin.close.assert_awaited_once_with(code=1008, reason="origin not allowed")
 
+    # 1b. Regression: the backend's OWN origin (it serves the dashboard) must
+    # be accepted — a 403 here broke the dashboard's live stream in production.
+    from fastapi import WebSocketDisconnect
+
+    ws_same_origin = MagicMock()
+    ws_same_origin.headers = {"origin": f"http://localhost:{config.API_PORT}"}
+    ws_same_origin.accept = AsyncMock()
+    ws_same_origin.close = AsyncMock()
+    ws_same_origin.receive_text = AsyncMock(side_effect=WebSocketDisconnect())
+
+    own_broadcaster = FeedBroadcaster()
+    await websocket_endpoint(ws_same_origin, own_broadcaster)
+    ws_same_origin.close.assert_not_awaited()
+    ws_same_origin.accept.assert_awaited_once()
+    assert ws_same_origin not in own_broadcaster._clients  # cleaned up on disconnect
+
     # 2. Capacity cap
     for _ in range(MAX_WS_CLIENTS):
         dummy_ws = MagicMock()

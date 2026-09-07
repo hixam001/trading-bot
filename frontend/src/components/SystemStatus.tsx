@@ -10,7 +10,7 @@ export default function SystemStatus({ status }: { status: SystemStatusResponse 
   const reasoning = status.narration_mode
   return (
     <Panel testId="system-status" title="System status">
-      <div className="text-xs space-y-1.5">
+      <div className="text-xs space-y-1">
         <div className="flex justify-between items-center">
           <span className="text-dim">reasoning model</span>
           <Badge tone={reasoning === 'template' ? 'dim' : 'info'}>{reasoning}</Badge>
@@ -50,7 +50,7 @@ export default function SystemStatus({ status }: { status: SystemStatusResponse 
         <div className="text-xs space-y-1 overflow-y-auto pr-1" style={{ maxHeight: '24vh' }}>
           {(status.llm_usage_recent ?? []).slice(0, 12).map((u) => (
             <div key={u.id} className="flex justify-between items-center gap-2">
-              <span className="flex items-center gap-1.5 min-w-0">
+              <span className="flex items-center gap-2 min-w-0">
                 <span
                   className={`shrink-0 w-1.5 h-1.5 rounded-full ${
                     u.status === 'success' ? 'bg-pos' : 'bg-neg'

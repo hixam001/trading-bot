@@ -23,7 +23,11 @@ async def get_system_status(request: Request):
         providers = await db.get_provider_call_summary(conn)
         llm_usage = await db.get_llm_call_usage(conn, limit=100)
     return {
-        "paper_trading_only": config.PAPER_TRADING_ONLY,
+        # §52: the paper book is retired — this deployment runs the LIVE book
+        # (stats/holdings report the same). The old config.PAPER_TRADING_ONLY
+        # stays hardcoded True in config.py as the retired paper-safety gate;
+        # surfacing it here as "paper" contradicted the live truth.
+        "paper_trading_only": False,
         "data_backend": config.DATA_BACKEND,
         "main_llm_reachable": main_llm_ok,
         "main_llm_provider": config.MAIN_LLM_PROVIDER,

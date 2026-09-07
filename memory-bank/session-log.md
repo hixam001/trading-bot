@@ -1,3 +1,36 @@
+## Memory-bank update - 2026-09-06 (§56 full-repo consistency audit + Batch A)
+
+- **Task**: operator directive — "Audit the repo and find any bugs or
+  inconsistencies", then (act mode) "continue the tasks first and then
+  update handoff, memory and project_report, commit and push without
+  adding any contributors".
+- **Audit**: 18-finding report delivered in chat (P0: dead `import main`
+  crash path documented by the README; trades-mirror history gap — 26
+  ledger closes + 2 opens vs an empty Supabase trades table so journal/
+  stats/calibration starve; `paper_trading_only` contradicting itself
+  between endpoints; frontend WS never reconnecting. P1/P2: stale
+  frontend contract, LiveFeed rendering "PASS" on failed rows, SPA
+  catch-all swallowing unknown `/api/*` paths with 200, `.env.example`
+  drift, provider-default mismatch, duplicate doc numbering, stray root
+  db, deprecated XSS header, dead frontend types).
+- **Batch A executed** (the safe mechanical fixes): dead tick-loop import
+  branch + README command + `TICK_LOOP_IN_PROCESS` env removed; all
+  `paper_trading_only` surfaces now honestly `false` (config flag itself
+  untouched); unknown `/api/*` paths → JSON 404 (+ regression test);
+  WS exponential-backoff reconnect; LiveFeed fail label PASS→SKIP;
+  `SystemStatusResponse` fixed to the real contract + 6 dead types
+  deleted; `.env.example` rebuilt (Supabase/DB/wallet-pin/provider keys
+  added, Ollama-era keys removed, duplicate wallet block consolidated);
+  `MAIN_LLM_PROVIDER` default = deepseek everywhere; `13_ORACLE_DEPLOY_GUIDE`
+  rename; stray root `trading_bot.db` removed; `X-XSS-Protection` dropped.
+- **Verification**: 695 backend tests (+1 new regression), frontend build
+  clean, Playwright 8/8 green, live curl checks confirm 404/200 behavior
+  and the corrected system-status payload.
+- **Deferred for operator decision**: ledger→trades mirror history
+  backfill (writes to the live remote book), the two chain-excluded
+  positions (STONK/Jimothy — `close_out_of_band` or investigate), LLM
+  health-probe TTL, `/api/*.json` naming unification, stale-age UI badge.
+
 ## Memory-bank update - 2026-09-03 (§53 security audit hardening)
 
 - **Task**: operator directive — "audit the repo and find security flaws and make a implementation plan for them", then implement the approved remediations.
@@ -9,7 +42,6 @@
   5. **SEC-05 (Medium)**: CORS `allow_headers` updated to include `X-Admin-Token`.
   6. **SEC-06 (Medium)**: 3-second TTL caching added to `/api/verify.json` and `/api/binding.json` to prevent RPC quota exhaustion.
   7. **SEC-07 (Low)**: Base58 Solana mint validation added in `data_providers/discovery.py`.
-- **Tests**: 7 new dedicated security tests (`backend/tests/test_security_audit_remediations.py`). Full suite green at **666 passing** (backend + live_execution).
   8. **20-Point Security Checklist**: Failed auth brute-force lockout (HTTP 429) added to `api/auth.py`; `FORCE_HTTPS` 301 redirection + enhanced security headers (HSTS on HTTPS, Permissions-Policy, X-XSS-Protection) in `api/main.py`; verified parameterized SQL throughout; verified clean `pip-audit` (0 vulns) and `npm audit` (0 vulns).
 - **Tests**: 10 new security tests across `test_security_audit_remediations.py` and `test_security_hardening.py`. Full suite green at **669 passing** (backend + live_execution).
 

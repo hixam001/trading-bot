@@ -126,7 +126,7 @@ async def test_promotion_gate_endpoint(client):
 async def test_system_status_endpoint(client):
     r = await client.get("/api/system-status")
     body = r.json()
-    assert body["paper_trading_only"] is True  # config flag stays hardcoded True
+    assert body["paper_trading_only"] is False  # §52: live book (paper retired)
     assert body["data_backend"] == "mock"
     assert "main_llm_reachable" in body and "provider_calls_today" in body
 

@@ -192,6 +192,18 @@ async def test_spa_serves_real_asset_when_contained(client):
     assert r.status_code == 200
 
 
+async def test_unknown_api_path_404s_as_json_not_spa_shell(client):
+    """An unmatched /api/* path must fail loudly as JSON 404 — never fall
+    through to the SPA catch-all, which used to return 200 with an HTML
+    body (silently breaking API clients and uptime monitors that probe
+    /api/... URLs)."""
+    for bad in ("/api/disclosure", "/api/nope", "/api/deeply/typoed/path"):
+        r = await client.get(bad)
+        assert r.status_code == 404, bad
+        assert r.headers["content-type"].startswith("application/json"), bad
+        assert "Unknown API path" in r.json()["detail"], bad
+
+
 # ---------------------------------------------------------------------------
 # Sanity — the deliberate public research surface stays public
 # ---------------------------------------------------------------------------

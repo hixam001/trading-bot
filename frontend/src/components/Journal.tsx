@@ -56,7 +56,7 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
 
   if (!data.enabled) {
     return (
-      <Panel testId="journal" title="Journal — live order history">
+      <Panel testId="journal" title="Journal · live order history">
         <Empty>Live journal not available: {data.reason ?? 'unknown reason'}.</Empty>
       </Panel>
     )
@@ -68,7 +68,7 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
 
   return (
     <div className="space-y-3 min-w-0">
-      <Panel testId="journal" title="Journal — live order history" right={<Badge tone="neg">● LIVE</Badge>}>
+      <Panel testId="journal" title="Journal · live order history" right={<Badge tone="neg">● LIVE</Badge>}>
         {t && (
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 mb-3">
             <Stat label="Order decisions" value={String(t.commits)} />
@@ -117,7 +117,7 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
           </div>
         )}
       </Panel>
-      <Panel title={`Money ledger — ${records.length} record${records.length === 1 ? '' : 's'}`}>
+      <Panel title={`Money ledger · ${records.length} record${records.length === 1 ? '' : 's'}`}>
         {records.length === 0 ? (
           <Empty>
             No confirmed money movements yet. A row appears here only when a swap
