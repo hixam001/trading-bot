@@ -138,12 +138,43 @@ async def refusal_stats() -> dict:
         if v is not None:
             feed_verdicts[str(v)] = feed_verdicts.get(str(v), 0) + 1
     total_feed = sum(feed_verdicts.values()) or 1
+    # §57: split the funnel — GATE refusals vs MODEL refusals. A feed row
+    # with verdict=fail and no failed rules means the GATE passed and the
+    # MODEL declined (the reference's 74% decline layer; ours measured ~0%
+    # in the §50 baseline). This is the number the omo comparison actually
+    # needs: think-pass rate among gate-passers.
+    gate_refused = 0
+    model_refused = 0
+    model_refused_sources: dict[str, int] = {}
+    for row in feed:
+        if str(row.get("verdict")) != "fail":
+            continue
+        failed = row.get("failed_rule_ids") or []
+        if isinstance(failed, str):
+            try:
+                failed = json.loads(failed)
+            except ValueError:
+                failed = []
+        if failed:
+            gate_refused += 1
+        else:
+            model_refused += 1
+            src = str(row.get("narration_source") or "unknown")
+            model_refused_sources[src] = model_refused_sources.get(src, 0) + 1
+    gate_passers = model_refused + sum(
+        1 for row in feed if str(row.get("verdict")) == "pass")
     return {
         "decision_commits_by_verdict": commit_verdicts,
         "feed_events_by_verdict": feed_verdicts,
         "feed_fail_share": round(feed_verdicts.get("fail", 0) / total_feed, 3),
-        "note": ("feed verdict fail = think-or-gate refused; compare our "
-                 "think-pass rate with omo's 74% decline rate (504 declines "
+        "gate_refusals": gate_refused,
+        "model_refusals": model_refused,
+        "model_refusal_rate_of_gate_passers": (
+            round(model_refused / gate_passers, 3) if gate_passers else None),
+        "model_refusal_sources": model_refused_sources,
+        "note": ("feed verdict fail = think-or-gate refused; model_refusals "
+                 "= gate-passed rows the MODEL declined (failed_rule_ids "
+                 "empty) — compare with omo's 74% decline rate (504 declines "
                  "vs 175 order intents)"),
     }
 

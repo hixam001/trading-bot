@@ -2,13 +2,17 @@
 
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
-execution package. Report updated 2026-09-03 from the current main branch
-(§53: security audit hardening — blind signing program whitelist guard, live book access control,
+execution package. Report updated 2026-09-09 from the current main branch
+(§58: terminal dashboard redesign — the SPA re-skinned with the repo's impeccable design
+skill as a terminal: Inter + JetBrains Mono design system, tabbed shell, expandable feed,
+anchored-book "track equity" panel; §57: loss-shape & refusal-layer remediation — fast 15s
+exit scanner restored, refusal discipline pinned in both prompts, gate/model refusal split
+in perf_report, trades-mirror backfill tool, unconditional /api 404; §53: security audit hardening — blind signing program whitelist guard, live book access control,
 DoS break clamping, CSWSH origin/concurrency caps, auth brute-force rate-limiting lockout, FORCE_HTTPS
 redirection, and security headers; §52: single-book restructure — paper retired, live retains all features;
 §51: free social stack — Brave→SearXNG chain + staged social read; §45: equity-proportional live ticket;
 §44: staged gate; §42/§42b: deployable restructure). Status: **live** (real market data, REAL funds ARMED;
-Supabase Postgres persistence). Tests: **669 passing (backend + live_execution) + 8 Playwright E2E** —
+Supabase Postgres persistence). Tests: **703 passing (backend + live_execution) + 8 Playwright E2E** —
 fully green (the flag-state canary pins the committed ARMED state — handoff §33).
 
 
@@ -54,7 +58,10 @@ are hardcoded, human-edit-only, never env; test-pinned canary).
   asyncpg (Supabase), httpx, solders — THE single deployable module: the
   paper pipeline plus the real-money `live_execution/` subpackage and its
   decision-cycle runner, packaged for Docker.
-- **Frontend** (`frontend/`): React + Vite + Tailwind. Served by the backend
+- **Frontend** (`frontend/`): React + Vite + Tailwind, styled as a
+  terminal (§58: Inter body / JetBrains Mono numerics with `tnum`
+  alignment; semantic green/red reserved for P&L direction; gold accent
+  restricted to structure). Served by the backend
   itself (single origin), or deployed standalone to Vercel/CF Pages via
   `VITE_API_BASE_URL` (split mode; CORS on the backend via
   `FRONTEND_ORIGIN`).
@@ -478,6 +485,13 @@ added in §42/§42b:
   deterministic rule AND the model's buy verdict. Persistence: Supabase
   Postgres active (USE_SUPABASE_DB=1); legacy SQLite book retained locally
   as fallback.
+- **Terminal dashboard (§58, 2026-09-09):** the SPA was redesigned with
+  the repo's impeccable design skill (Inter/JetBrains Mono design system,
+  tabbed shell, expandable feed, anchored-book "track equity" panel);
+  build 168 kB JS / 53 kB gzip, 8/8 Playwright E2E. The `/api/stats`
+  trades mirror is still empty — the 26 closed trades live in the
+  execution ledger; run `scripts/backfill_trades_mirror.py --apply`
+  (dry-run default) to unblind stats/calibration/learning/promotion-gate.
 - Known limitations: Birdeye free tier lacks token_security (fields remain
   unknown); ScrapingBee stealth fallback is keyless-only; ZenRows premium
   tier costs ~10–25 credits/request; regime thresholds are placeholders

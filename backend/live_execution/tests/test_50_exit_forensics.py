@@ -165,13 +165,16 @@ def test_sell_gate_cooldown_uses_last_exit_regardless_of_clip():
 
 def test_manage_feeds_tranches_and_gates_and_passes_rule_id():
     """§50 Phase 0 wiring contract on the live exit path, source-pinned like
-    test_pipeline_parity: _manage derives tranches_taken from the ledger,
-    applies sell_risk_gate with the §45 live clip floor, and threads the
-    exit rule through place_order into the ledger's close records."""
+    test_pipeline_parity: _scan_exits_for_position (§57: the per-position
+    body shared verbatim by the cycle's _manage AND the fast exit scanner —
+    the pins follow the code, as they did when §52 moved it into _manage)
+    derives tranches_taken from the ledger, applies sell_risk_gate with the
+    §45 live clip floor, and threads the exit rule through place_order into
+    the ledger's close records."""
     import inspect
     import run_live_cycle as rlc
 
-    src = inspect.getsource(rlc._manage)
+    src = inspect.getsource(rlc._scan_exits_for_position)
     # tranche counter from the ledger, not a hardcoded 0
     assert "tranches = ledger.tranches_taken(mint)" in src
     assert "tranches_taken=tranches," in src
@@ -183,6 +186,9 @@ def test_manage_feeds_tranches_and_gates_and_passes_rule_id():
     assert 'if gated.action == "hold":' in src
     # the exit rule reaches the executor -> the ledger close record
     assert "rule_id=decision.rule_id," in src
+    # §57: the cycle delegates to the SAME shared body (no drifted copy)
+    manage_src = inspect.getsource(rlc._manage)
+    assert "_scan_exits_for_position(jupiter, ledger, hwm, mint, m)" in manage_src
 
 
 def test_place_sell_signature_carries_rule_id():

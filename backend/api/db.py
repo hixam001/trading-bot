@@ -488,6 +488,40 @@ async def try_insert_open_trade(conn: aiosqlite.Connection, trade: Trade) -> int
     return max(cursor.rowcount, 0)
 
 
+async def insert_closed_trade_row(conn: aiosqlite.Connection, trade: Trade) -> int:
+    """
+    §57: idempotent INSERT of an ALREADY-CLOSED trade row (the ledger
+    history backfill — the trades table was born at §52, after the live
+    book's 26 closes, so stats/calibration/promotion-gate were blind to
+    the real track record). Keyed by the natural PRIMARY KEY (trade_id):
+    an INSERT OR IGNORE retry affects zero rows, so the backfill can run
+    any number of times. Never touches an existing row — the live mirror
+    (_mirror_live_close) owns rows it opened. OPEN-position rows are
+    still owned exclusively by try_insert_open_trade; this helper is for
+    closed history only (is_open=0 is written, never read as input).
+    """
+    cursor = await conn.execute(
+        """
+        INSERT OR IGNORE INTO trades (
+            trade_id, symbol, mint_address, opened_at, entry_price_usd,
+            position_size_usd, quantity, candidate_snapshot, thesis,
+            is_open, closed_at, exit_price_usd, exit_reason,
+            realized_pnl_usd, realized_pnl_pct, high_water_usd
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            trade.trade_id, trade.symbol, trade.mint_address, trade.opened_at,
+            trade.entry_price_usd, trade.position_size_usd, trade.quantity,
+            json.dumps(trade.candidate_snapshot), trade.thesis,
+            trade.closed_at, trade.exit_price_usd, trade.exit_reason,
+            trade.realized_pnl_usd, trade.realized_pnl_pct,
+            trade.high_water_usd,
+        ),
+    )
+    await conn.commit()
+    return max(cursor.rowcount, 0)
+
+
 async def close_trade_row(
     conn: aiosqlite.Connection,
     trade_id: str,

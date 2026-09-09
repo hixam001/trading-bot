@@ -70,6 +70,29 @@ from live_execution.models import ExecutionLedger  # noqa: E402
 
 log = logging.getLogger("run_live_cycle")
 
+# §57: one manage pass at a time, cycle OR fast scanner. The dedicated exit
+# scanner (below) runs the SAME _manage on its own 15s cadence; two
+# concurrent passes could both read the same price/tokens before either's
+# ledger reduce lands and double-sell the same position. _manage acquires
+# this lock itself so the serialization cannot be forgotten at a call site.
+_EXIT_LOCK = asyncio.Lock()
+
+# §57: mint decimals are immutable — memoize them so the fast exit scanner
+# (every EXIT_SCAN_INTERVAL_SECONDS) does not re-issue the same
+# getTokenSupply RPC 4x/minute per open position for a value that cannot
+# change. Only non-None results are cached: unknown stays unknown (fail-
+# closed, retried next pass — never a guessed default, the decimals lesson).
+_DECIMALS_CACHE: dict[str, int] = {}
+
+
+async def _cached_decimals(mint: str) -> int | None:
+    if mint in _DECIMALS_CACHE:
+        return _DECIMALS_CACHE[mint]
+    dec = await solana.get_mint_decimals(mint)
+    if dec is not None:
+        _DECIMALS_CACHE[mint] = dec
+    return dec
+
 
 # --- LIVE gate rules (micro-bootstrap parity) --------------------------------
 # The paper `cash_available` rule checks cash against INTENDED_POSITION_SIZE_USD
@@ -372,165 +395,243 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
 
 
 async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, meta: dict) -> None:
-    """Re-price every open position, run the the reference exit rule set, route sells."""
-    for mint, m in meta.items():
-        if m.get("chain_excluded"):
-            continue   # A2: chain says the tokens are gone — nothing to exit
+    """Re-price every open position, run the the reference exit rule set, route sells.
+
+    §57: serialized by _EXIT_LOCK — the dedicated fast exit scanner runs this
+    SAME function between 60s cycles (the §5.2/§20 lesson: stops gap badly
+    when checked once a minute; the ledger forensics show five closes
+    realizing −28%…−65% that gapped through the once-per-cycle scan), and two
+    concurrent passes could double-sell one position.
+    """
+    async with _EXIT_LOCK:
+        for mint in list(meta.keys()):
+            m = meta.get(mint) or {}
+            await _scan_exits_for_position(jupiter, ledger, hwm, mint, m)
+
+
+async def _scan_exits_for_position(
+    jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict,
+    mint: str, m: dict,
+) -> None:
+    """One position through the §5.2 exit engine (price-only inputs).
+
+    Shared verbatim by the cycle's _manage AND the §57 fast exit scanner so
+    the two cadences can never drift (the §39 single-core lesson). Caller
+    holds _EXIT_LOCK. All failure paths skip this position this pass — a
+    missed check only delays a reaction (fail-closed), never invents one.
+    """
+    if m.get("chain_excluded"):
+        return   # A2: chain says the tokens are gone — nothing to exit
+    try:
+        dec = await _cached_decimals(mint)
+        if dec is None:
+            log.warning("manage %s: decimals unknown - skipped this pass", mint[:8])
+            return
+        price = await jupiter.get_current_price(mint, decimals=dec)
+    except Exception as exc:
+        log.warning("manage %s: pricing failed (%s)", mint[:8], exc)
+        return
+    if price <= 0:
+        return
+    # §32 parity with the paper scanner (handoff §32): a single-cycle
+    # price this far ABOVE the established peak is a bad quote, not a
+    # market move. Skip this position this cycle and do NOT ratchet
+    # high-water or mark the risk budget on suspect data — a poisoned
+    # peak can force a premature trail exit. Upward-only on purpose: a
+    # genuine collapse must still exit. A live sell can never fabricate
+    # money (it is a real swap), but an early exit on a phantom spike is
+    # still real harm, so the guard matches the paper side exactly.
+    peak = hwm.get(mint, m["price_usd"])
+    if peak and peak > 0 and price > peak * paper_config.EXIT_PRICE_JUMP_MAX:
+        log.warning("manage %s: price $%.8f is %.0fx the established peak "
+                    "$%.8f — treating as a bad quote, skipping this cycle "
+                    "(high-water NOT updated)", mint[:8], price,
+                    price / peak, peak)
+        return
+    prev = hwm.get(mint, m["price_usd"])
+    hwm[mint] = max(prev, price)
+    m["last_price_usd"] = price   # REF-R8: freshest mark for the risk budget
+    trade = Trade(
+        trade_id=f"live-{mint[:8]}", symbol=mint[:6], mint_address=mint,
+        opened_at=_iso(m["opened_ts"]), entry_price_usd=m["price_usd"],
+        position_size_usd=m["cost"], quantity=m["tokens"] or 1.0,
+        candidate_snapshot={}, thesis="live book", is_open=True,
+        high_water_usd=hwm[mint],
+    )
+    # §50: feed the engine the tranche counter from the ledger itself —
+    # before, tranches_taken was silently 0 on every cycle, so a TP rung
+    # would have re-trimmed 33% every 60s until the position was gone.
+    tranches = ledger.tranches_taken(mint)
+    decision = evaluate_exits(ExitInput(
+        trade=trade, price_usd=price, high_water_usd=hwm[mint],
+        tranches_taken=tranches,
+    ))
+    if decision.action == "hold":
+        return
+    fraction = decision.fraction
+    chain_tokens = m.get("chain_tokens")
+    if chain_tokens is not None and m["tokens"] > 0:
+        # A2: never sell more than the chain says we hold — clamp the
+        # fraction so the sell amount stays within the on-chain balance.
+        fraction = min(fraction, chain_tokens / m["tokens"])
+        log.info("manage %s: sell fraction clamped to chain balance "
+                 "(%.6f/%.6f)", mint[:8], chain_tokens, m["tokens"])
+    # §50: the reference sell gate, live-side. Paper's $25 min clip would
+    # refuse EVERY trim on this book (33% of a $0.50 ticket is $0.17), so
+    # the floor is the §45 equity-proportional live ticket — same formula
+    # that gates entries, hardcoded, never env. RISK-OFF rules (stop,
+    # liquidity break) bypass the gate inside sell_risk_gate itself, so an
+    # emergency exit is never delayed by a cooldown or clip check.
+    est_value = (m["tokens"] or 0.0) * price * fraction
+    cash_eq = m["cost"]
+    min_clip = live_config.min_live_ticket_usd(
+        cash_eq + (m["tokens"] or 0.0) * price)
+    last_close = ledger.last_close_ts(mint)
+    last_close_dt = (
+        datetime.fromtimestamp(last_close, tz=timezone.utc)
+        if last_close is not None else None
+    )
+    closes_24h = ledger.closes_since(time.time() - 24 * 3600.0)
+    gated, gate_note = sell_risk_gate(
+        decision, est_value, last_close_dt, closes_24h,
+        datetime.now(timezone.utc), min_clip_usd=min_clip,
+    )
+    if gated.action == "hold":
+        log.info("EXIT GATE held %s [%s]: %s (%s)",
+                 mint[:8], decision.rule_id, gate_note, decision.detail)
+        return
+    decision = gated
+    log.info("EXIT %s %s (%s)", decision.action, mint[:8], decision.detail)
+    result = await place_order(
+        side="sell", mint=mint, symbol=mint[:6],
+        fraction=fraction,
+        full_close=(decision.action == "close_full"),
+        rule_id=decision.rule_id,
+    )
+    log.info("sell -> %s %s", result.status, result.reason)
+    if result.status == "filled":
+        # REF-R11: journal the sell's seal + memo into the public record.
+        async with db.get_db() as conn:
+            await _journal_live_commit(
+                conn, symbol=mint[:6], mint_address=mint,
+                verdict="sell", entry_allowed=False, result=result)
+    if result.status == "filled" and decision.action == "close_full":
+        hwm.pop(mint, None)
+        async with db.get_db() as conn:
+            pnl = result.usd_value - m["cost"]
+            await db.retire_thesis(
+                conn,
+                trade_id=f"live-{mint[:8]}",
+                closed_at=datetime.now(timezone.utc).isoformat(),
+                realized_pnl_usd=pnl,
+            )
+        # §52 Phase B: keep the shared trades table (calibration /
+        # learning / perf_report / reflections / stats routes) in sync
+        # with the live close, then fire the closed-trade reflection.
+        await _mirror_live_close(mint, exit_price_usd=result.usd_value
+                                  / max(m.get("tokens") or 1.0, 1e-12),
+                                  pnl_usd=pnl, rule_id=decision.rule_id)
         try:
-            dec = await solana.get_mint_decimals(mint)
-            if dec is None:
-                log.warning("manage %s: decimals unknown - skipped this pass", mint[:8])
-                continue
-            price = await jupiter.get_current_price(mint, decimals=dec)
-        except Exception as exc:
-            log.warning("manage %s: pricing failed (%s)", mint[:8], exc)
-            continue
-        if price <= 0:
-            continue
-        # §32 parity with the paper scanner (handoff §32): a single-cycle
-        # price this far ABOVE the established peak is a bad quote, not a
-        # market move. Skip this position this cycle and do NOT ratchet
-        # high-water or mark the risk budget on suspect data — a poisoned
-        # peak can force a premature trail exit. Upward-only on purpose: a
-        # genuine collapse must still exit. A live sell can never fabricate
-        # money (it is a real swap), but an early exit on a phantom spike is
-        # still real harm, so the guard matches the paper side exactly.
-        peak = hwm.get(mint, m["price_usd"])
-        if peak and peak > 0 and price > peak * paper_config.EXIT_PRICE_JUMP_MAX:
-            log.warning("manage %s: price $%.8f is %.0fx the established peak "
-                        "$%.8f — treating as a bad quote, skipping this cycle "
-                        "(high-water NOT updated)", mint[:8], price,
-                        price / peak, peak)
-            continue
-        prev = hwm.get(mint, m["price_usd"])
-        hwm[mint] = max(prev, price)
-        m["last_price_usd"] = price   # REF-R8: freshest mark for the risk budget
-        trade = Trade(
-            trade_id=f"live-{mint[:8]}", symbol=mint[:6], mint_address=mint,
-            opened_at=_iso(m["opened_ts"]), entry_price_usd=m["price_usd"],
-            position_size_usd=m["cost"], quantity=m["tokens"] or 1.0,
-            candidate_snapshot={}, thesis="live book", is_open=True,
-            high_water_usd=hwm[mint],
-        )
-        # §50: feed the engine the tranche counter from the ledger itself —
-        # before, tranches_taken was silently 0 on every cycle, so a TP rung
-        # would have re-trimmed 33% every 60s until the position was gone.
-        tranches = ledger.tranches_taken(mint)
-        decision = evaluate_exits(ExitInput(
-            trade=trade, price_usd=price, high_water_usd=hwm[mint],
-            tranches_taken=tranches,
-        ))
-        if decision.action == "hold":
-            continue
-        fraction = decision.fraction
-        chain_tokens = m.get("chain_tokens")
-        if chain_tokens is not None and m["tokens"] > 0:
-            # A2: never sell more than the chain says we hold — clamp the
-            # fraction so the sell amount stays within the on-chain balance.
-            fraction = min(fraction, chain_tokens / m["tokens"])
-            log.info("manage %s: sell fraction clamped to chain balance "
-                     "(%.6f/%.6f)", mint[:8], chain_tokens, m["tokens"])
-        # §50: the reference sell gate, live-side. Paper's $25 min clip would
-        # refuse EVERY trim on this book (33% of a $0.50 ticket is $0.17), so
-        # the floor is the §45 equity-proportional live ticket — same formula
-        # that gates entries, hardcoded, never env. RISK-OFF rules (stop,
-        # liquidity break) bypass the gate inside sell_risk_gate itself, so an
-        # emergency exit is never delayed by a cooldown or clip check.
-        est_value = (m["tokens"] or 0.0) * price * fraction
-        cash_eq = m["cost"]
-        min_clip = live_config.min_live_ticket_usd(
-            cash_eq + (m["tokens"] or 0.0) * price)
-        last_close = ledger.last_close_ts(mint)
-        last_close_dt = (
-            datetime.fromtimestamp(last_close, tz=timezone.utc)
-            if last_close is not None else None
-        )
-        closes_24h = ledger.closes_since(time.time() - 24 * 3600.0)
-        gated, gate_note = sell_risk_gate(
-            decision, est_value, last_close_dt, closes_24h,
-            datetime.now(timezone.utc), min_clip_usd=min_clip,
-        )
-        if gated.action == "hold":
-            log.info("EXIT GATE held %s [%s]: %s (%s)",
-                     mint[:8], decision.rule_id, gate_note, decision.detail)
-            continue
-        decision = gated
-        log.info("EXIT %s %s (%s)", decision.action, mint[:8], decision.detail)
-        result = await place_order(
-            side="sell", mint=mint, symbol=mint[:6],
-            fraction=fraction,
-            full_close=(decision.action == "close_full"),
-            rule_id=decision.rule_id,
-        )
-        log.info("sell -> %s %s", result.status, result.reason)
-        if result.status == "filled":
-            # REF-R11: journal the sell's seal + memo into the public record.
-            async with db.get_db() as conn:
-                await _journal_live_commit(
-                    conn, symbol=mint[:6], mint_address=mint,
-                    verdict="sell", entry_allowed=False, result=result)
-        if result.status == "filled" and decision.action == "close_full":
-            hwm.pop(mint, None)
-            async with db.get_db() as conn:
-                pnl = result.usd_value - m["cost"]
-                await db.retire_thesis(
-                    conn,
-                    trade_id=f"live-{mint[:8]}",
-                    closed_at=datetime.now(timezone.utc).isoformat(),
-                    realized_pnl_usd=pnl,
-                )
-            # §52 Phase B: keep the shared trades table (calibration /
-            # learning / perf_report / reflections / stats routes) in sync
-            # with the live close, then fire the closed-trade reflection.
-            await _mirror_live_close(mint, exit_price_usd=result.usd_value
-                                      / max(m.get("tokens") or 1.0, 1e-12),
-                                      pnl_usd=pnl, rule_id=decision.rule_id)
+            asyncio.create_task(_store_live_reflection(
+                f"live-{mint[:8]}",
+                f"live book exit via {decision.rule_id}"))
+        except Exception:
+            log.debug("reflection scheduling skipped", exc_info=True)
+        # §49 (closes the live-side anti-churn GAP): the real-money book
+        # now records every full-close outcome into the SAME blocklist
+        # sidecar the paper book writes, and the DONT-pattern killer
+        # fires identically on both books. Before §49 a coin that
+        # stopped out LIVE could be re-bought the very next tick —
+        # the live book had NO loss memory at all.
+        try:
+            from blocklist import (maybe_autoblock as _maybe,
+                                   record_close_outcome as _record)
+            _record(mint, m.get("symbol") or mint[:6],
+                    decision.rule_id, pnl, book="live")
+            _maybe(mint, m.get("symbol") or mint[:6])
+        except Exception:
+            log.warning("§49 close-outcome recording failed for %s "
+                        "(non-fatal)", mint[:8], exc_info=True)
+        # §49 soft memory on the live book too (reference layer 5): the
+        # thinker's next prompt carries the loss lesson for this symbol.
+        if pnl < 0.0:
             try:
-                asyncio.create_task(_store_live_reflection(
-                    f"live-{mint[:8]}",
-                    f"live book exit via {decision.rule_id}"))
+                async with db.get_db() as conn:
+                    await db.upsert_memory(
+                        conn, topic=m.get("symbol") or mint[:6],
+                        note=(f"live book closed at a ${abs(pnl):.2f} "
+                              f"loss ({decision.rule_id}) on "
+                              f"{datetime.now(timezone.utc).date().isoformat()}"
+                              f" — we already paid for this lesson"),
+                        weight=2.0,
+                    )
+                    await db.insert_event(
+                        conn, "trade",
+                        datetime.now(timezone.utc).isoformat(),
+                        symbol=m.get("symbol") or mint[:6],
+                        mint_address=mint,
+                        payload={"outcome": "loss_close",
+                                 "rule": decision.rule_id,
+                                 "pnl_usd": pnl, "book": "live"},
+                    )
             except Exception:
-                log.debug("reflection scheduling skipped", exc_info=True)
-            # §49 (closes the live-side anti-churn GAP): the real-money book
-            # now records every full-close outcome into the SAME blocklist
-            # sidecar the paper book writes, and the DONT-pattern killer
-            # fires identically on both books. Before §49 a coin that
-            # stopped out LIVE could be re-bought the very next tick —
-            # the live book had NO loss memory at all.
-            try:
-                from blocklist import (maybe_autoblock as _maybe,
-                                       record_close_outcome as _record)
-                _record(mint, m.get("symbol") or mint[:6],
-                        decision.rule_id, pnl, book="live")
-                _maybe(mint, m.get("symbol") or mint[:6])
-            except Exception:
-                log.warning("§49 close-outcome recording failed for %s "
+                log.warning("§49 loss-memory journaling failed for %s "
                             "(non-fatal)", mint[:8], exc_info=True)
-            # §49 soft memory on the live book too (reference layer 5): the
-            # thinker's next prompt carries the loss lesson for this symbol.
-            if pnl < 0.0:
-                try:
-                    async with db.get_db() as conn:
-                        await db.upsert_memory(
-                            conn, topic=m.get("symbol") or mint[:6],
-                            note=(f"live book closed at a ${abs(pnl):.2f} "
-                                  f"loss ({decision.rule_id}) on "
-                                  f"{datetime.now(timezone.utc).date().isoformat()}"
-                                  f" — we already paid for this lesson"),
-                            weight=2.0,
-                        )
-                        await db.insert_event(
-                            conn, "trade",
-                            datetime.now(timezone.utc).isoformat(),
-                            symbol=m.get("symbol") or mint[:6],
-                            mint_address=mint,
-                            payload={"outcome": "loss_close",
-                                     "rule": decision.rule_id,
-                                     "pnl_usd": pnl, "book": "live"},
-                        )
-                except Exception:
-                    log.warning("§49 loss-memory journaling failed for %s "
-                                "(non-fatal)", mint[:8], exc_info=True)
+
+
+def _journal_meta(ledger: ExecutionLedger, flags: dict) -> dict:
+    """Pure: rebuild {mint: {price_usd, tokens, cost, opened_ts}} from a
+    FRESH ledger read, overlaying the cycle's chain-reconciliation flags
+    (chain_excluded / chain_tokens) for any mint still present. The fast
+    exit scanner must never price a stale position: after a close lands in
+    the ledger, the next 15s scan re-derives the book from disk instead of
+    reusing the cycle's pre-close snapshot."""
+    meta: dict = {}
+    for r in ledger._load():   # same package — internal read is accepted
+        if r.get("kind") != "buy" or r.get("status") not in ledger._OPEN:
+            continue
+        mint = r.get("mint")
+        if mint in meta:
+            m = meta[mint]
+            m["tokens"] += float(r.get("tokens_out") or 0.0)
+            m["cost"] += float(r.get("usd_size") or 0.0)
+            continue
+        meta[mint] = {
+            "price_usd": float(r.get("price_usd") or 0.0),
+            "tokens": float(r.get("tokens_out") or 0.0),
+            "cost": float(r.get("usd_size") or 0.0),
+            "opened_ts": float(r.get("ts") or 0.0),
+        }
+    for mint, fl in (flags or {}).items():
+        if mint in meta:
+            meta[mint].update({k: v for k, v in fl.items()
+                               if k in ("chain_excluded", "chain_tokens")})
+    return meta
+
+
+async def _exit_scan_loop(ledger: ExecutionLedger, hwm: dict,
+                          flags: dict) -> None:
+    """§57: the dedicated fast exit scanner, restored from the retired paper
+    tick (§5.2/§20: stops gap badly when checked once a minute — the §50
+    ledger forensics show five closes realizing −28%…−65% that gapped
+    through the once-per-cycle scan).
+
+    Price-only HTTP + zero LLM in the path, every
+    EXIT_SCAN_INTERVAL_SECONDS. Runs the SAME _manage (via the shared
+    per-position body) under the SAME lock, so cycle and scanner can never
+    double-sell one position and can never drift apart. The book is
+    re-derived from a fresh ledger read each pass — a close that landed
+    after the cycle's snapshot is never re-priced. Never raises into the
+    process: a failed scan only delays a reaction (fail-closed).
+    """
+    while True:
+        try:
+            jupiter = JupiterProvider()
+            meta = _journal_meta(ledger, flags)
+            await _manage(jupiter, ledger, hwm, meta)
+        except Exception:
+            log.exception("fast exit scan failed — continuing (fail-closed)")
+        await asyncio.sleep(paper_config.EXIT_SCAN_INTERVAL_SECONDS)
 
 
 async def _journal_cycle_regime(conn, regime, candidate_count: int) -> None:
@@ -615,6 +716,20 @@ async def run_cycle(once: bool = False) -> dict:
 
     await _manage(jupiter, ledger, hwm, meta)
     run_cycle._hwm = hwm
+    # §57: keep the newest chain-reconciliation flags for the fast exit
+    # scanner (chain_excluded / chain_tokens per mint) — it re-reads the
+    # ledger every pass but has no wallet context of its own, so the cycle's
+    # reconciliation overlays its fresh book view.
+    flags: dict = {
+        mint: {k: v for k, v in m.items()
+               if k in ("chain_excluded", "chain_tokens")}
+        for mint, m in meta.items()
+        if m.get("chain_excluded") or m.get("chain_tokens") is not None
+    }
+    prev_flags: dict = getattr(run_cycle, "_chain_flags", {})
+    prev_flags.clear()
+    prev_flags.update(flags)
+    run_cycle._chain_flags = prev_flags
 
     # A4: FOMO's own accounting for the open positions, cross-checked against
     # the journal's cost basis (observability only; needs FOMO_OWN_HANDLE).
@@ -930,22 +1045,45 @@ def main() -> None:
         # aggregate stats, rejection breakdowns and the published calibration.
         # Advisory only; never auto-applies a threshold change.
         last_learning_date: str | None = None
-        while True:
-            try:
-                await run_cycle(once=args.once)
-            except Exception:
-                log.exception("cycle crashed - continuing")
-            today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            if args.once or last_learning_date != today:
+        # §57: the dedicated fast exit scanner (restored from the retired
+        # paper tick — see _exit_scan_loop). Started once, cancelled on exit;
+        # --once never starts it (a single cycle manages its own exits).
+        # The shared dicts are initialized BEFORE the task so the scanner
+        # and the cycles hold the SAME objects (a plain getattr(..., {})
+        # here would hand the scanner a throwaway dict on a cold start and
+        # it would never see the cycle's high-water marks).
+        exit_task: asyncio.Task | None = None
+        if not args.once:
+            if not hasattr(run_cycle, "_hwm"):
+                run_cycle._hwm = {}
+            if not hasattr(run_cycle, "_chain_flags"):
+                run_cycle._chain_flags = {}
+            ledger = ExecutionLedger(
+                live_config.STATE_DIR / "executions.json")
+            exit_task = asyncio.create_task(_exit_scan_loop(
+                ledger, run_cycle._hwm, run_cycle._chain_flags))
+            log.info("fast exit scanner: every %.0fs (§57)",
+                     paper_config.EXIT_SCAN_INTERVAL_SECONDS)
+        try:
+            while True:
                 try:
-                    from learning_loop import run_daily_learning
-                    await run_daily_learning()
-                    last_learning_date = today
+                    await run_cycle(once=args.once)
                 except Exception:
-                    log.exception("daily learning failed (non-fatal)")
-            if args.once:
-                return
-            await asyncio.sleep(paper_config.TICK_INTERVAL_SECONDS)
+                    log.exception("cycle crashed - continuing")
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if args.once or last_learning_date != today:
+                    try:
+                        from learning_loop import run_daily_learning
+                        await run_daily_learning()
+                        last_learning_date = today
+                    except Exception:
+                        log.exception("daily learning failed (non-fatal)")
+                if args.once:
+                    return
+                await asyncio.sleep(paper_config.TICK_INTERVAL_SECONDS)
+        finally:
+            if exit_task is not None:
+                exit_task.cancel()
 
     asyncio.run(loop())
 

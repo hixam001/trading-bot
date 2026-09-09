@@ -157,6 +157,12 @@ async def test_direct_loopback_holdings_allowed(client):
 async def test_spa_leading_slash_absolute_path_serves_shell(client):
     """The confirmed arbitrary-file-read variant: a raw `//etc/passwd`
     request. Must serve the SPA shell, never /etc/passwd."""
+    dist = config.BASE_DIR.parent / "frontend" / "dist"
+    if not dist.exists():
+        pytest.skip("SPA shell test needs frontend/dist built — no build in "
+                    "this checkout (security posture is still pinned by "
+                    "test_safe_dist_file_blocks_traversal_and_absolute, "
+                    "which runs buildless)")
     import httpx
 
     transport = httpx.ASGITransport(app=app)

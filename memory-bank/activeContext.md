@@ -1,9 +1,49 @@
 # Active Context — trading-bot
 
-**As of 2026-09-06 (§56 SHIPPED — FULL-REPO CONSISTENCY AUDIT + BATCH A: 18-finding audit delivered; safe fixes executed — dead `import main` crash path removed (README documented a startup crash), `paper_trading_only` unified to false, unknown `/api/*` paths JSON-404 (+regression test), frontend WS exponential-backoff reconnect, LiveFeed SKIP label, SystemStatusResponse contract fix + 6 dead types deleted, `.env.example` rebuilt, MAIN_LLM_PROVIDER default deepseek, docs renumbered, X-XSS-Protection dropped. 695 passing + 8 E2E green. OPERATOR-GATED NEXT: ledger→trades mirror history backfill (26 closes vs empty trades table — journal/stats/calibration starve), resolve the two chain-excluded positions (STONK/Jimothy via close_out_of_band or investigation), LLM health-probe TTL, `/api/*.json` naming unification. PREVIOUS: §53 security hardening, §52 single-book restructure.)**
+**As of 2026-09-09 (§58 SHIPPED — TERMINAL DASHBOARD REDESIGN: the SPA re-skinned per the operator directive using the repo's impeccable design skill (pbakaus/impeccable) — Inter body + JetBrains Mono numerics (tnum), near-black terminal surface, green/red reserved for P&L direction, gold restricted to structure (wordmark/tabs/equity headline); tabbed shell Dashboard/Holdings/Journal; LiveFeed rows expandable + keyboard-operable; new Performance panel whose "track equity" is the ANCHORED book (initial cash + closed realized P&L) with a tooltip distinguishing it from the wallet equity that leads in the Live Book — resolves the $1,000-vs-$6.42 confusion; WS backoff + offline banner; documented empty states; build clean 168.41 kB JS / 53.29 kB gzip, 8/8 Playwright E2E, backend 703 passing untouched — frontend-only. OPEN OPERATOR STEP: run scripts/backfill_trades_mirror.py --apply to unblind stats/calibration/learning/promotion-gate (the /api/stats mirror is empty; the 26 closes live in the execution ledger). PREVIOUS: §57 — loss-shape & refusal-layer remediation: the external audit's #1 rec executed. Causes quantified from the ledger: 14/21 losses at −18…−24% = the −20% NET stop as configured; 5/21 at −28…−65% = §52 retired the 15s exit scanner with the paper book (the §20 failure mode regressed); refusal funnel ~0 model refusals in the Aug 28–31 window (brain wiring postdates every trade — the per-candidate Thinker passed 23/23 gate-passers vs omo's 74% declines). Shipped: (1) fast exit scanner restored — `_exit_scan_loop` runs the shared `_scan_exits_for_position` every 15s, `_EXIT_LOCK`-serialized with the cycle, fresh-ledger book each pass, decimals memoized; (2) refusal discipline pinned in THINK_PROMPT + LLM_SYSTEM; (3) perf_report now splits GATE vs MODEL refusals (`model_refusal_rate_of_gate_passers` — first run: 60% declined, all deepseek); (4) promotion gate answered vs the real ledger: 3/5 FAIL (25/40 trades, 12% win, PF 0.26) — NOT ready; (5) `scripts/backfill_trades_mirror.py` shipped (dry-run default, `--apply` operator-gated; idempotent; new `db.insert_closed_trade_row` both backends); (6) the 2 sandbox test failures fixed for real — the /api/* JSON-404 catch-all was build-conditional (a buildless deploy silently lost the loud-404), now unconditional + buildless-forced test; SPA shell test skips with explicit reason when no build. **703 passing.** RESTART REQUIRED for the running cycle. PREVIOUS: §56 audit Batch A, §53 security, §52 single book.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §58 Terminal dashboard redesign (2026-09-09)
+Operator directive: use the repo's design skills (pbakaus/impeccable,
+vendored at `.clinerules/awesome-design-skills/skills/impeccable/`) to
+redesign the frontend as a terminal — minimal, no charts, complete info,
+restrained animation, nothing vibecoded. Shipped: design system (Inter
+body + JetBrains Mono numerics, tnum alignment; near-black surface;
+green/red only for P&L direction; gold only for structure) in
+tailwind.config.js + index.css; tabbed shell (Dashboard/Holdings/Journal);
+LiveFeed rows expandable with aria-expanded + keyboard-operable; new
+Performance panel whose headline **"track equity"** is the ANCHORED book
+(initial cash + closed realized P&L) with a tooltip pointing to the Live
+Book for wallet equity — resolving the $1,000-vs-$6.42 confusion (two
+books, both correctly labeled); WS exponential-backoff + offline banner;
+documented empty states. Verified: tsc+vite build clean (168.41 kB JS /
+53.29 kB gzip), 8/8 Playwright E2E, desktop+mobile screenshots;
+frontend-only — engine/ledger/prompts untouched, 703 backend passing
+unaffected. Open operator step: trades mirror empty →
+`scripts/backfill_trades_mirror.py --apply`. Full detail: handoff §58.
+
+### §57 Loss-shape & refusal-layer remediation (2026-09-09)
+Operator directive: the external audit's #1 recommendation — investigate
+and fix the loss-shape and refusal-layer causes of negative expectancy.
+Decomposed the §50 baseline (24 samples, 12.5% hit, +57.88% avg win,
+−26.05% avg loss, −15.56% expectancy) from the 26 ledger closes:
+14/21 losses at −18…−24% are the −20% NET stop firing as configured
+(simulated 2%+1% cost model is conservative vs real Jupiter routing);
+5/21 at −28…−65% gapped through the 60s exit cadence (§52 retired the
+paper engine's 15s scanner — the §20-documented failure mode); the
+refusal funnel passed 23/23 gate-passers in the trading window (§52 brain
+wiring postdates all trades). Fixes: fast exit scanner restored in
+run_live_cycle.py (shared per-position body, lock-serialized with the
+cycle, fresh-ledger book, memoized decimals, fail-closed); refusal
+discipline in both LLM prompts (test-pinned); perf_report splits gate vs
+model refusals (first measurable number: 60% of gate-passers declined,
+recent window); promotion gate evaluated vs the real ledger — 3/5
+criteria FAIL; the §56-deferred trades backfill shipped as a dry-run
+default tool; the 2 sandbox test failures root-caused (one was a real
+latent bug: /api/* 404 catch-all was build-conditional) and fixed. 703
+passing. Full detail: handoff §57.
+
 ### §53 Security hardening & vulnerability remediation (2026-09-03)
 Operator directive: "audit the repo and find security flaws and make a implementation plan for them" followed by 20-point checklist verification.
 Remediated 7 vulnerabilities + verified 20-point checklist with dedicated tests (`backend/tests/test_security_audit_remediations.py` + `backend/tests/test_security_hardening.py`):

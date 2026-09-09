@@ -59,6 +59,17 @@ Respond with STRICT JSON only (no prose outside it):
   "verdict": "buy" or "pass",
   "break": {{"taking": false, "minutes": 15, "reason": "why"}} }}
 
+REFUSAL DISCIPLINE (§57 — this is where the book bleeds): most gate-passing \
+rows are still NOT worth buying. Before you write "buy", state the strongest \
+counter-case to yourself — the one fact above that would make this entry a \
+loss (a late entry into an already-extended move, a crowd about to leave, a \
+thin book, an aged runner). If the counter-case is at least as strong as the \
+thesis, the verdict is "pass". "buy" is the exception, not the default: \
+decline hype that is already priced in, decline entries into 1h moves that \
+have already extended, and decline any row where you cannot say what would \
+make you wrong. A skipped opportunity costs nothing; a bad entry costs the \
+book its loss budget.
+
 Be conservative: refuse hype without substance, refuse tokens whose crowd \
 is already leaving. Weigh any crowd claims by whether the author is actually up on their position. /no_think"""
 

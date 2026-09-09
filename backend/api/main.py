@@ -203,17 +203,28 @@ if FRONTEND_DIST.exists():
     if assets_dir.exists():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
 
+# §57: the /api/* loud-404 guarantee is INDEPENDENT of the frontend build.
+# Before, this catch-all was registered only when a built SPA existed — so a
+# buildless checkout (fresh clone, split deploy with the dashboard on Vercel)
+# silently lost the JSON-404 contract and unmatched /api/* paths returned
+# Starlette's bare "Not Found" 404 with no JSON detail. A wrong API URL must
+# fail identically whether or not a frontend is present. (Both decorators:
+# "/api" alone and "/api/..." — the bare-prefix request was 404'd before too.)
+@app.get("/api", include_in_schema=False)
+@app.get("/api/{full_path:path}", include_in_schema=False)
+async def unknown_api_path(full_path: str = ""):
+    """An unmatched /api/* path is a wrong URL (or a removed endpoint) —
+    it must fail loudly as JSON 404, never fall through to the SPA shell (a
+    200 HTML body silently breaks API clients and monitors)."""
+    return JSONResponse(
+        status_code=404,
+        content={"detail": f"Unknown API path: /api/{full_path}"},
+    )
+
+if FRONTEND_DIST.exists():
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
-        # An unmatched /api/* path is a wrong URL (or a removed endpoint) —
-        # it must fail loudly as JSON 404, never fall through to the SPA
-        # shell (a 200 HTML body silently breaks API clients and monitors).
-        if full_path == "api" or full_path.startswith("api/"):
-            return JSONResponse(
-                status_code=404,
-                content={"detail": f"Unknown API path: /{full_path}"},
-            )
-        # Serve real files (favicon etc.); everything else gets the SPA shell.
         # §55: containment via _safe_dist_file — never a raw path join.
         candidate = _safe_dist_file(full_path)
         if candidate is not None:

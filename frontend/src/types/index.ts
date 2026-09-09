@@ -72,6 +72,25 @@ export interface SystemStatusResponse {
   tick_interval_seconds: number
 }
 
+/** GET /api/stats — the book-level performance summary (§58: rendered by
+ *  the Performance panel; every value verbatim, null stays `—`). */
+export interface StatsResponse {
+  initial_cash_usd: number
+  cash_usd: number
+  equity_usd: number
+  open_positions: number
+  closed_trades: number
+  win_rate: number | null
+  profit_factor: number | null
+  max_drawdown_pct: number | null
+  total_pnl_usd: number
+  realized_pnl_usd: number
+  unrealized_pnl_usd: number | null
+  total_spend_usd: number
+  equity_curve: { closed_at: string; equity_usd: number }[]
+  paper_trading_only: boolean
+}
+
 export interface LivePositionRow {
   mint_address: string
   symbol: string

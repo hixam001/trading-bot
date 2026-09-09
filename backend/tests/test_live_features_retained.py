@@ -117,11 +117,18 @@ def test_live_thinker_sees_the_loss_memories():
 # --- 4. reflection on close ---------------------------------------------------
 
 def test_full_close_schedules_a_reflection():
-    src = inspect.getsource(rlc._manage)
+    # §57: the per-position body moved from _manage into the shared
+    # _scan_exits_for_position (cycle AND fast exit scanner run it) — the
+    # reflection contract moves with it, and _manage delegates to it.
+    src = inspect.getsource(rlc._scan_exits_for_position)
     assert "_mirror_live_close(" in src
     assert "_store_live_reflection(" in src
     # the mirror runs before the §49 anti-churn memory (both on full close)
     assert src.index("_mirror_live_close(") < src.index("maybe_autoblock")
+    # and the scanner + cycle share that same body
+    scan_src = inspect.getsource(rlc._exit_scan_loop)
+    assert "_manage(jupiter, ledger, hwm, meta)" in scan_src
+    assert "EXIT_SCAN_INTERVAL_SECONDS" in scan_src
 
 
 # --- 5. daily learning -------------------------------------------------------

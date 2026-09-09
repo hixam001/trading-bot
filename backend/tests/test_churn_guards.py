@@ -218,13 +218,15 @@ def test_reentry_cooldown_ignores_wins(bl_state):
 
 
 def test_live_book_records_then_autoblocks_on_full_close():
-    """§49 → §52: the LIVE cycle's _manage does record_close_outcome →
+    """§49 → §52: the LIVE cycle's exit path does record_close_outcome →
     maybe_autoblock, in that order, with the live book tag, and journals
     the soft loss memory. (The paper book retired; its side of the old
-    both-books pin went with it.)"""
+    both-books pin went with it. §57: the body moved into the shared
+    _scan_exits_for_position — cycle AND fast scanner run it — so the pin
+    follows it there.)"""
     import run_live_cycle as rlc
 
-    live_src = inspect.getsource(rlc._manage)
+    live_src = inspect.getsource(rlc._scan_exits_for_position)
     assert "record_close_outcome as _record" in live_src
     assert 'book="live"' in live_src
     assert "maybe_autoblock as _maybe" in live_src

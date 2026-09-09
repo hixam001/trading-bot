@@ -199,7 +199,12 @@ these buckets per verdict:
 Each check is a short clause with the finding and the word "fails" or "holds"
 where a threshold applies. No two checks in one verdict may test the same thing.
 Then a call — buying / stalking / pass — with an entry condition and an
-invalidation. Pass most of them, and say which part failed. If a name is already
+invalidation. PASS MOST OF THEM, and say which part failed — a "buying" call
+is the exception, never the default (§57: the reference's model declines 74%
+of its order intents; ours passed everything the gate let through, and the
+loss shape paid for it). Decline hype that is already priced in, decline
+entries into 1h moves that have already extended, decline a row whose
+counter-case is at least as strong as its thesis. If a name is already
 in your open positions the call is "holding" or "pass", never "stalking".
 
 GROUND TRUTH (breaking any of these is a failed tick):

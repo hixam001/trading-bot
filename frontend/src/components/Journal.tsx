@@ -40,7 +40,7 @@ function TxLink({ sig, label }: { sig: string | null; label: string }) {
   if (!sig) return <span className="text-dim">—</span>
   return (
     <a
-      className="text-info underline decoration-dotted hover:text-bright"
+      className="text-gold underline decoration-gold-deep decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
       href={`https://solscan.io/tx/${sig}`}
       target="_blank"
       rel="noopener noreferrer"
@@ -188,7 +188,7 @@ function CommitRow({
         <td className="td"><Badge tone={st.tone}>{st.label}</Badge></td>
         <td className="td">
           <button
-            className="text-info underline decoration-dotted hover:text-bright"
+            className="text-gold underline decoration-gold-deep decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
             aria-expanded={isOpen}
             onClick={onToggle}
           >

@@ -32,9 +32,15 @@ export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
         wallet <span className="text-body">{shortAddr(book.wallet)}</span>
       </div>
 
-      {/* Headline stats. Equity is the largest; the rest support it. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-3">
-        <Stat label="Equity" value={usd(book.equity_usd)} valueClass="text-2xl font-semibold" />
+      {/* Headline stats. §58: equity is THE number — it leads at 24px while
+       * the rest of the row supports at 13px; one hierarchy, not five equals. */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-3 items-baseline">
+        <Stat
+          label="Equity"
+          value={usd(book.equity_usd)}
+          valueClass="text-2xl font-semibold text-gold"
+          title="At-cost equity: wallet USDC + open position cost"
+        />
         <Stat label="Cash · USDC" value={usd(book.cash_usd)} />
         <Stat label="Open value" value={usd(book.open_value_usd)} />
         <Stat

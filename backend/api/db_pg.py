@@ -538,6 +538,35 @@ async def try_insert_open_trade(conn: asyncpg.Connection, trade: Trade) -> int:
     return _rowcount(status)
 
 
+async def insert_closed_trade_row(conn: asyncpg.Connection, trade: Trade) -> int:
+    """
+    §57: idempotent INSERT of an ALREADY-CLOSED trade row (ledger history
+    backfill; sqlite twin has the full rationale). ON CONFLICT (trade_id)
+    DO NOTHING makes reruns no-ops. Closed history only — open-position
+    rows stay owned by try_insert_open_trade.
+    """
+    status = await conn.execute(
+        """
+        INSERT INTO trades (
+            trade_id, symbol, mint_address, opened_at, entry_price_usd,
+            position_size_usd, quantity, candidate_snapshot, thesis,
+            is_open, closed_at, exit_price_usd, exit_reason,
+            realized_pnl_usd, realized_pnl_pct, high_water_usd
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10, $11, $12,
+                $13, $14, $15)
+        ON CONFLICT (trade_id) DO NOTHING
+        """,
+        trade.trade_id, trade.symbol, trade.mint_address,
+        _ts(trade.opened_at), trade.entry_price_usd, trade.position_size_usd,
+        trade.quantity, json.dumps(trade.candidate_snapshot), trade.thesis,
+        _ts(trade.closed_at) if trade.closed_at else None,
+        trade.exit_price_usd, trade.exit_reason,
+        trade.realized_pnl_usd, trade.realized_pnl_pct, trade.high_water_usd,
+    )
+    return _rowcount(status)
+
+
 async def close_trade_row(
     conn: asyncpg.Connection,
     trade_id: str,

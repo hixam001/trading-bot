@@ -7,10 +7,19 @@ import type { FeedEventRow } from '../types'
  * (so the feed survives reloads and is never blank while waiting for the next
  * tick), then live-append new decisions over WebSocket /ws/feed. Rows are
  * deduped by id and kept newest-first, capped at 200.
+ *
+ * §58: `freshId` carries the id of the most recent LIVE arrival (WS push
+ * only — hydration must not re-flash old rows). The feed's authored motion
+ * moment keys off it: the new row lifts gold once and settles.
  */
-export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } {
+export function useFeedSocket(): {
+  events: FeedEventRow[]
+  connected: boolean
+  freshId: number | null
+} {
   const [events, setEvents] = useState<FeedEventRow[]>([])
   const [connected, setConnected] = useState(false)
+  const [freshId, setFreshId] = useState<number | null>(null)
   const wsRef = useRef<WebSocket | null>(null)
 
   // Merge helper: newest-first, deduped by id, capped.
@@ -68,6 +77,8 @@ export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } 
         try {
           const ev = JSON.parse(m.data) as FeedEventRow
           setEvents((prev) => merge(prev, [ev]))
+          // §58: mark this row as the live arrival for the gold flash.
+          if (typeof ev.id === 'number') setFreshId(ev.id)
         } catch {
           /* ignore malformed frame */
         }
@@ -82,6 +93,6 @@ export function useFeedSocket(): { events: FeedEventRow[]; connected: boolean } 
     }
   }, [])
 
-  return { events, connected }
+  return { events, connected, freshId }
 }
 

@@ -24,13 +24,19 @@ function RuleLine({ r }: { r: RuleResultRow }) {
  * Live decision feed — the main content. Rows are full-width <button>s
  * (keyboard operable, aria-expanded) that reveal the contract address, the
  * model's verbatim answer, and the rule-by-rule breakdown (DESIGN.md §2/§4).
+ *
+ * §58 authored motion moment: the row that just arrived over the WS lifts
+ * gold once and settles (0.9s, expo ease-out) — the machine decided, and
+ * the tape tells you where. Hydration never flashes; only live arrivals do.
  */
 export default function LiveFeed({
   events,
   connected,
+  freshId,
 }: {
   events: FeedEventRow[]
   connected: boolean
+  freshId: number | null
 }) {
   const [expanded, setExpanded] = useState<number | null>(null)
   const [copiedMint, setCopiedMint] = useState<string | null>(null)
@@ -67,8 +73,12 @@ export default function LiveFeed({
             // All rules passed but no entry -> the model itself declined.
             const modelDeclined = ev.verdict !== 'pass' && ev.failed_rule_ids.length === 0
             const isOpen = expanded === ev.id
+            const isFresh = ev.id === freshId
             return (
-              <div key={ev.id} className="border-b border-line/60 pb-1">
+              <div
+                key={ev.id}
+                className={`border-b border-line/60 pb-1 ${isFresh ? 'row-flash' : ''}`}
+              >
                 <button
                   className="w-full text-left flex items-start gap-2 hover:bg-raised px-1.5 py-1 rounded min-h-[24px]"
                   onClick={() => setExpanded(isOpen ? null : ev.id)}
@@ -97,12 +107,15 @@ export default function LiveFeed({
                 </button>
 
                 {isOpen && (
-                  <div className="bg-raised/60 border border-info/40 rounded p-2 mt-1 space-y-2">
-                    {/* Token contract address — click to copy */}
+                  <div className="bg-raised/60 border border-gold-deep/60 rounded p-2 mt-1 space-y-2">
+                    {/* §58: the expanded row is a selection — the gold-deep
+                     * full border marks it; never a colored left edge. */}
+                    {/* Token contract address — click to copy. §58: the copy
+                     * affordance is the brand's gold — an action, not data. */}
                     <div className="flex items-center gap-2 text-xs flex-wrap">
                       <span className="text-dim shrink-0">contract:</span>
                       <button
-                        className="font-mono text-info hover:text-bright break-all text-left"
+                        className="font-mono text-gold hover:text-bright transition-colors duration-150 ease-out-expo break-all text-left underline decoration-gold-deep decoration-dotted underline-offset-2"
                         onClick={() => copyMint(ev.mint_address)}
                         title="click to copy contract address"
                       >

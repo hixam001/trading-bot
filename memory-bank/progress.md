@@ -1,6 +1,79 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §58 Terminal dashboard redesign (2026-09-09): operator directive —
+      use the repo's impeccable design skill (pbakaus/impeccable, vendored
+      at `.clinerules/awesome-design-skills/`) to re-skin the frontend as
+      a terminal: minimal, no charts, complete info, good type/colors,
+      restrained animation, nothing vibecoded. Shipped: design system
+      (Inter body + JetBrains Mono numerics with tnum alignment; near-black
+      surface; green/red only for P&L direction; gold only for structure)
+      in tailwind.config.js + index.css; tabbed shell
+      (Dashboard/Holdings/Journal); panels LiveBook, LiveFeed
+      (aria-expanded expand/collapse, Enter-operable, SKIP fail rows),
+      Journal, Holdings, **Performance (new)**, MarketRegime, SystemStatus;
+      WS exponential-backoff + offline banner; documented empty states.
+      Data honesty: Performance's headline is **"track equity"** — the
+      ANCHORED book (initial cash + closed realized P&L) with a tooltip
+      pointing to the Live Book for the real wallet — resolving the
+      earlier $1,000-vs-$6.42 confusion (two books, both correctly
+      labeled). Verified: build clean (168.41 kB JS / 53.29 kB gzip),
+      8/8 Playwright E2E, screenshots at both viewports; frontend-only
+      (engine/ledger/prompts untouched; 703 backend tests unaffected).
+      Open operator step: the trades mirror is still empty —
+      `scripts/backfill_trades_mirror.py --apply` (§57) unblinds
+      stats/calibration/promotion-gate.
+- [x] §57 Loss-shape & refusal-layer remediation (2026-09-09): the audit
+      follow-up. Root causes QUANTIFIED from the ledger (the §50 baseline
+      decomposed): (a) 14/21 losses cluster at −18%…−24% = the −20% NET
+      hard stop firing as configured (2%+1% simulated cost model is
+      conservative vs real Jupiter routing, so the stop triggers at ~−17.5%
+      price); (b) 5/21 losses realized −28%…−65% because §52 RETIRED the
+      paper engine's dedicated 15s exit scanner with the paper book — the
+      live book was left with once-per-cycle (60s) exit checks, the exact
+      §5.2/§20 failure mode documented once before ("stops realize −40%
+      avg when checked once/tick"); (c) the refusal funnel measured ~0
+      model refusals among gate-passers during the Aug 28–31 trading
+      window (23/23 buys; the §52 brain wiring postdates every trade, so
+      the per-candidate Thinker passed everything the gate let through —
+      vs omo's 74% decline rate). Shipped: (1) **fast exit scanner
+      restored** — `_exit_scan_loop` in run_live_cycle.py runs the SAME
+      `_manage` (per-position body extracted to
+      `_scan_exits_for_position`, shared verbatim) every
+      EXIT_SCAN_INTERVAL_SECONDS (15s), price-only, zero LLM, serialized
+      with the cycle by `_EXIT_LOCK` (double-sell impossible), book
+      re-derived from a FRESH ledger read each pass + chain-reconciliation
+      flags overlaid; decimals memoized (`_DECIMALS_CACHE`) so the scanner
+      doesn't re-issue getTokenSupply 4×/min (immutable value, non-None
+      only cached — unknown stays unknown, the decimals lesson). (2)
+      **refusal discipline** in both prompts: THINK_PROMPT gains the
+      counter-case bar ("buy is the exception, not the default" — JSON
+      contract unchanged); LLM_SYSTEM strengthened ("PASS MOST OF THEM …
+      never the default"). (3) **measurable funnel**: perf_report now
+      splits GATE refusals vs MODEL refusals (`model_refusal_rate_of_gate_passers`)
+      — first run reveals 72 gate-passed rows the model DID decline (60% of
+      gate-passers, all deepseek:deepseek-v4-flash, recent journal window)
+      — the §2 metric was structurally unmeasurable before. (4)
+      **promotion gate answered**: evaluated against the REAL ledger
+      history — 3/5 criteria FAIL (25/40 trades, 12% win rate, PF 0.26) —
+      the strategy is NOT ready by its own gate; and the /api/promotion-gate
+      route was blind (0 rows — §52's mirror postdates all closes), fixed
+      by (5) **the §56-deferred trades backfill shipped as a tool**:
+      `scripts/backfill_trades_mirror.py` (dry-run by default, `--apply`
+      to write; honest basis-pairing identical to perf_report; idempotent
+      INSERT OR IGNORE / ON CONFLICT keyed by trade_id; new
+      `db.insert_closed_trade_row` in both sqlite+pg backends) — operator
+      runs `--apply` to unblind stats/calibration/promotion-gate.
+      (6) **the 2 sandbox test failures fixed**: the /api/* JSON-404
+      catch-all was registered only `if FRONTEND_DIST.exists():` — a
+      buildless checkout got a bare 404 for unknown /api/* paths (the
+      reproduced failure); now registered unconditionally at module level
+      (+ `/api` bare prefix) and the SPA-shell test skips with an
+      explicit reason when no build is present (containment itself stays
+      pinned buildless). **703 passing** (backend 529 + live 174; +8 new
+      §57 tests: lock serialization, fresh-book/chain-flags overlay,
+      backfill pairing/skips/idempotency, prompt pins, 404
+      build-independence). Restart required for the running cycle.
 - [x] §56 Full-repo consistency audit + Batch A remediation (2026-09-06):
       operator directive "Audit the repo and find any bugs or
       inconsistencies". 18 findings; Batch A (safe fixes) executed:

@@ -4,6 +4,7 @@
 
 /* ---------------------------------------------------------------------------
  * Design system — trading-bot terminal (frontend/DESIGN.md).
+ * §58 PHOSPHOR AMBER: warm-black lacquer, champagne text, kinpaku-gold brand.
  * Raw color/spacing values live ONLY in tailwind.config.js; this file maps
  * them onto reusable component classes. No hex literals below this line.
  * ------------------------------------------------------------------------- */
@@ -24,18 +25,20 @@
   .tnum {
     font-variant-numeric: tabular-nums;
   }
-  /* Visible focus for keyboard users (DESIGN.md §1 / §4). */
+  /* The brand's focus voice is gold — structure, never meaning. */
   :focus-visible {
-    outline: 2px solid theme('colors.info');
+    outline: 2px solid theme('colors.gold');
     outline-offset: 2px;
     border-radius: 2px;
   }
+  /* Browser surfaces carry the world (impeccable craft-floor): selection,
+   * caret, and scrollbars all ship gold-tinted lacquer. */
   ::selection {
-    background: theme('colors.line-strong');
-    color: theme('colors.bright');
+    background: theme('colors.gold');
+    color: theme('colors.ink');
   }
-  /* Thin, on-theme scrollbars for the dense scroll regions. */
   * {
+    caret-color: theme('colors.gold');
     scrollbar-width: thin;
     scrollbar-color: theme('colors.line-strong') transparent;
   }
@@ -47,21 +50,26 @@
     background: theme('colors.line-strong');
     border-radius: 4px;
   }
+  *::-webkit-scrollbar-thumb:hover {
+    background: theme('colors.gold-deep');
+  }
   *::-webkit-scrollbar-track {
     background: transparent;
   }
 }
 
 @layer components {
-  /* Panel — the primary surface. Flat, bordered, no shadow (DESIGN.md §2). */
+  /* Panel — the primary surface. Flat, bordered, no shadow (DESIGN.md §2).
+   * §58: a gold hairline tops the panel — the lacquer-to-brand seam, 1px,
+   * the only "ornament" the world allows. */
   .panel {
-    @apply bg-panel border border-line rounded p-3;
+    @apply bg-panel border border-line border-t-gold-deep rounded p-3;
   }
   .panel-header {
     @apply flex items-center justify-between gap-2 mb-2;
   }
   .panel-title {
-    @apply font-sans text-[11px] font-semibold uppercase tracking-[0.08em] text-dim;
+    @apply font-sans text-[11px] font-semibold uppercase tracking-[0.08em] text-gold-soft;
   }
 
   /* Stat — label over value (DESIGN.md §2). */
@@ -96,13 +104,53 @@
     @apply td text-right tnum whitespace-nowrap;
   }
 
-  /* Skeleton loading bar (DESIGN.md §3 — never a spinner alone). */
+  /* Skeleton loading bar (DESIGN.md §3 — never a spinner alone). §58: a
+   * solid light block sweeps across; no gradient (banned §5), no plain
+   * pulse — the bar visibly "prints" like a terminal line. */
   .skeleton {
-    @apply animate-pulse bg-raised rounded;
+    @apply relative overflow-hidden bg-raised rounded;
+  }
+  .skeleton::after {
+    content: '';
+    @apply absolute inset-y-0 left-0 w-1/4 bg-line-strong;
+    animation: theme('animation.sweep');
   }
 
   /* Hairline divider used inside expanded feed rows. */
   .divider {
     @apply border-t border-line my-2;
+  }
+
+  /* §58 wordmark — the shell prompt. A block cursor blinking after the
+   * name (a styled span, never a glyph) reads as a live terminal prompt. */
+  .prompt-cursor {
+    @apply inline-block w-[7px] h-[14px] bg-gold align-[-2px] ml-1;
+    animation: blink 1.1s steps(1) infinite;
+  }
+}
+
+/* §58 motion — the reduced-motion path (impeccable animate.md): spatial
+ * movement and loops go away; the state changes they carried stay legible
+ * (row flashes become a steady 1-frame tint, skeletons still shimmer but
+ * without travel, the cursor stays solid and visible). */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .prompt-cursor {
+    animation: none;
+    opacity: 1;
+  }
+  .row-flash {
+    animation: none !important;
+    background-color: theme('colors.gold');
+    background-color: rgba(224, 176, 74, 0.12);
+  }
+  .skeleton::after {
+    animation: none;
   }
 }
