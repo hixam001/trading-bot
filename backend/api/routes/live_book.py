@@ -20,7 +20,9 @@ fabricates a number.
 from __future__ import annotations
 
 import logging
+import time
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import APIRouter, Request
 
@@ -30,6 +32,36 @@ from api.auth import require_local_or_admin
 
 log = logging.getLogger(__name__)
 router = APIRouter()
+
+# §60 wallet scan: TTL cache for the chain token-balances read. The
+# dashboard polls /api/live/portfolio every 5s; the chain read must not be
+# (public RPC rate-limits hard). Balances age at most
+# config.WALLET_SCAN_TTL_SECONDS (default 300s), so a position the operator
+# closed manually from their wallet leaves the dashboard within that window.
+# Fail-soft: during an RPC outage the last good read is reused up to 3x TTL
+# (flagged stale), then the scan reports unchecked. An EMPTY wallet ({} is
+# an answered read) is a good cached value; None is never cached.
+_scan_cache: dict = {"balances": None, "at": 0.0, "good_at": 0.0}
+
+
+async def _wallet_balances(pubkey: str) -> tuple[Optional[dict], bool]:
+    """(balances, stale) — None means unknown this request (no cached truth)."""
+    from live_execution import solana
+    now = time.monotonic()
+    ttl = float(getattr(config, "WALLET_SCAN_TTL_SECONDS", 300.0))
+    if _scan_cache["balances"] is not None and now - _scan_cache["at"] < ttl:
+        return _scan_cache["balances"], False
+    try:
+        balances = await solana.get_token_balances(pubkey)
+    except Exception:
+        log.warning("wallet scan: chain read failed", exc_info=True)
+        balances = None
+    if balances is None:
+        if _scan_cache["balances"] is not None and now - _scan_cache["good_at"] < 3 * ttl:
+            return _scan_cache["balances"], True
+        return None, False
+    _scan_cache.update(balances=balances, at=now, good_at=now)
+    return balances, False
 
 
 def _check_access(request: Request) -> None:
@@ -119,6 +151,22 @@ async def _build(request: Request) -> dict:
             "entry_price_usd": float(r.get("price_usd") or 0.0),
         }
 
+    # --- §60 wallet scan: chain truth on quantities, TTL-cached -------------
+    # The journal stays the authority on cost; the chain is the authority on
+    # HOW MANY tokens the wallet holds right now. A position the operator
+    # sold out-of-band (chain balance 0) is EXCLUDED from this response so
+    # the dashboard never keeps showing tokens that are gone. The ledger is
+    # NEVER mutated by a read (A2 invariant): vanished mints are reported in
+    # chain_excluded for the operator, resolved via repair_vanished.py.
+    balances, stale = await _wallet_balances(pubkey)
+    scan = {"checked": False, "stale": False, "at_utc": None}
+    if balances is not None:
+        from live_execution.reconcile import reconcile
+        scan["checked"] = True
+        scan["stale"] = stale
+        scan["at_utc"] = datetime.now(timezone.utc).isoformat()
+        reconcile(meta, balances)
+
     # symbols: the live cycle journals a thesis row per live entry
     theses: dict[str, str] = {}
     try:
@@ -134,6 +182,11 @@ async def _build(request: Request) -> dict:
     unrealized_usd = 0.0
     have_unrealized = False
     for mint, m in meta.items():
+        # §60 wallet scan: a vanished position (sold on-chain) never renders;
+        # a short one clamps to chain truth (never show tokens the wallet
+        # does not hold — the operator cannot sell what is not there).
+        if m.get("chain_excluded"):
+            continue
         mark = None
         try:
             decimals = await solana.get_mint_decimals(mint)
@@ -141,13 +194,14 @@ async def _build(request: Request) -> dict:
                 mark = await provider.get_current_price(mint, decimals)
         except Exception:
             mark = None
-        value = (m["tokens"] * mark) if (mark is not None and mark > 0) else m["cost"]
+        tokens = float(m.get("chain_tokens") or m["tokens"])
+        value = (tokens * mark) if (mark is not None and mark > 0) else m["cost"]
         open_value_usd += value
         pos = {
             "mint_address": mint,
             "symbol": theses.get(mint) or mint[:6],
             "cost_usd": round(m["cost"], 4),
-            "tokens": m["tokens"],
+            "tokens": tokens,
             "entry_price_usd": m["entry_price_usd"] or None,
             "current_price_usd": mark,
             "value_usd": round(value, 4),
@@ -190,6 +244,19 @@ async def _build(request: Request) -> dict:
         "deployed_today_usd": round(ledger.deployed_today_usd(), 4),
         "closed_trades": closed_count,
         "positions": positions,
+        # §60 wallet scan surfacing: which journal positions the chain says
+        # are gone (operator review / repair_vanished.py), and how fresh the
+        # scan itself is (stale = reused during an RPC outage).
+        "chain_scan": scan,
+        "chain_excluded": [
+            {
+                "mint": mint,
+                "tokens": float(m["tokens"]),
+                "cost_usd": round(m["cost"], 4),
+            }
+            for mint, m in meta.items()
+            if m.get("chain_excluded")
+        ],
         "count": len(positions),
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
     }

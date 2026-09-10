@@ -569,3 +569,14 @@ SEARCH_THROTTLE_BACKOFF_SECONDS: float = float(
 # ---------------------------------------------------------------------------
 FEED_PRUNE_KEEP: int = int(os.getenv("FEED_PRUNE_KEEP", "2000"))
 REGIME_PRUNE_KEEP: int = int(os.getenv("REGIME_PRUNE_KEEP", "500"))
+
+# §60 — Freshness knobs for dashboard truth (read-path caching, never money
+# math). The dashboard polls /api/live/portfolio every 5s; the chain scan
+# that excludes manually-sold positions is TTL-cached at this interval (one
+# getTokenAccountsByOwner per window, not per poll — public RPC rate-limits
+# hard). A position the operator closes manually from their wallet therefore
+# leaves the dashboard within this window. The LLM health probe is cached
+# the same way (a provider that goes down or recovers must surface in
+# system-status within this window, not freeze at the first read).
+WALLET_SCAN_TTL_SECONDS: float = float(os.getenv("WALLET_SCAN_TTL_SECONDS", "300"))
+LLM_HEALTH_TTL_SECONDS: float = float(os.getenv("LLM_HEALTH_TTL_SECONDS", "300"))

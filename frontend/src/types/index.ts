@@ -117,6 +117,10 @@ export interface LivePortfolioResponse {
   realized_pnl_usd?: number
   deployed_today_usd?: number
   closed_trades?: number
+  /** §60 wallet scan: chain truth on quantities, TTL-cached (see live_book). */
+  chain_scan?: { checked: boolean; stale: boolean; at_utc: string | null }
+  /** Journal positions the chain says are gone (sold out-of-band). */
+  chain_excluded?: { mint: string; tokens: number; cost_usd: number }[]
   positions?: LivePositionRow[]
   count?: number
   generated_at_utc?: string

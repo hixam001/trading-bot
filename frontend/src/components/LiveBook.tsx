@@ -1,6 +1,6 @@
 import type { LivePortfolioResponse } from '../types'
 import { CopyText, Empty } from './ui'
-import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
+import { clock, num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 
 /**
  * Live positions — the dashboard's middle column. The wallet equity headline
@@ -13,6 +13,7 @@ import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
   if (!book.enabled) return null
   const positions = book.positions ?? []
+  const hidden = book.chain_excluded ?? []
 
   return (
     <section data-testid="live-book" className="panel flex flex-col flex-1 min-h-0 m-3">
@@ -66,6 +67,14 @@ export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {hidden.length > 0 && (
+        <div className="mt-2 text-[10.5px] text-warn">
+          {hidden.length} journal position{hidden.length === 1 ? '' : 's'} not
+          shown · sold on-chain · scan{' '}
+          {book.chain_scan?.stale ? 'stale' : clock(book.chain_scan?.at_utc)}
         </div>
       )}
 

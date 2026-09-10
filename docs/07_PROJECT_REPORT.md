@@ -8,7 +8,10 @@ production SPA design: ultra-black surface ladder with a cyan signal accent, her
 equity band + equity-curve sparkline, five-view shell (live/holdings/journal/
 market/system) with a 3-column mission-control live grid, scroll-bounded decision
 feed and journal tables, closed-trades-only money ledger, and complete
-click-to-copy contract addresses throughout; demo files deleted after the port;
+click-to-copy contract addresses throughout (demo files deleted after the port);
+§60: dashboard freshness — a TTL-cached wallet chain-scan (existing A2 reconcile)
+excludes manually-sold positions from the live book (chain_excluded surfacing)
+and the LLM health verdict refreshes on a TTL; tabs/headings uppercased;
 §58: terminal dashboard redesign — the SPA re-skinned with the repo's impeccable design
 skill as a terminal: Inter + JetBrains Mono design system, tabbed shell, expandable feed,
 anchored-book "track equity" panel; §57: loss-shape & refusal-layer remediation — fast 15s
@@ -18,7 +21,7 @@ DoS break clamping, CSWSH origin/concurrency caps, auth brute-force rate-limitin
 redirection, and security headers; §52: single-book restructure — paper retired, live retains all features;
 §51: free social stack — Brave→SearXNG chain + staged social read; §45: equity-proportional live ticket;
 §44: staged gate; §42/§42b: deployable restructure). Status: **live** (real market data, REAL funds ARMED;
-Supabase Postgres persistence). Tests: **703 passing (backend + live_execution) + 8 Playwright E2E** —
+Supabase Postgres persistence). Tests: **709 passing (backend + live_execution) + 9 Playwright E2E** —
 fully green (the flag-state canary pins the committed ARMED state — handoff §33).
 
 

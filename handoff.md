@@ -2,8 +2,12 @@
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 703 passing (backend + live_execution) + 9 Playwright E2E
+**Tests:** 709 passing (backend + live_execution) + 9 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
+**UI (§60):** dashboard freshness — the wallet is chain-scanned every
+`WALLET_SCAN_TTL_SECONDS` (300s default) so manually-closed positions
+leave the book automatically (`chain_excluded` surfacing, ledger never
+mutated); the LLM health verdict TTL-refreshes; tabs/headings uppercased.
 **UI (§59):** the frontend is the SIGNAL world — the operator-supplied
 `demo_2_signal.html` ported into the production SPA (hero equity band +
 sparkline, five views, cyan-on-ultra-black tokens, scroll-bounded lists,
@@ -31,6 +35,65 @@ credits added 2026-08-30 — the paid chain stays primary until then.
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
+
+---
+
+## 60. Dashboard freshness — wallet chain-scan, LLM health TTL, UI caps (2026-09-10)
+
+Operator directive: "Audit the repo find and bugs or errors fix them. I've
+given the wallet, so for any balance and token balances, I want you to
+scan the wallet (get the onchain data) to update it real time — if I ever
+close any trade manually, the balances must not stay shown on the
+dashboard. On the frontend, capitalize the letters for all the tabs and
+headings."
+
+**Audit verdicts (fresh pass, current tree):** one real read-path bug —
+`/api/live/portfolio` built positions from the journal ONLY, so a manual
+out-of-band sell left ghost tokens on the dashboard forever (the A2 chain
+reconcile ran solely inside the trading cycle; its flags never reached the
+route); the §56-deferred LLM health-probe forever-cache; and the §59 port
+sitting uncommitted (landed first as commit `03256c2`). The two known
+chain-excluded positions (STONK/Jimothy) remain an OPERATOR decision —
+`live_execution/scripts/repair_vanished.py` is the tool; after this change
+the scan reports them in `chain_excluded` instead of rendering them as
+positions.
+
+**Shipped (read paths + frontend only — no money path touched):**
+
+1. **Wallet chain-scan** (`api/routes/live_book.py`): the route now reads
+   the wallet's SPL token balances via the existing, test-pinned A2
+   machinery (`solana.get_token_balances` + `reconcile()`): vanished
+   (chain 0) positions are EXCLUDED from positions/equity/open-value and
+   reported in the new `chain_excluded` payload field; chain<journal
+   clamps the displayed tokens to chain truth; unjournaled holdings are
+   reported, never added; the ledger is NEVER mutated by a read (A2
+   invariant). TTL-cached at `WALLET_SCAN_TTL_SECONDS` (default 300s —
+   one RPC per window despite the dashboard's 5s poll; env-tunable: the
+   operator's original "every 5-10h" idea is `36000`, 300 chosen so a
+   manual close clears the dashboard within minutes). Fail-soft: an RPC
+   outage reuses the last good read up to 3x TTL flagged `stale`, then
+   reports unchecked. The dashboard renders one honest warn line ("N
+   journal positions not shown · sold on-chain · scan HH:MM:SS") in
+   LiveBook and Holdings.
+2. **LLM health TTL** (`api/routes/system_status.py`): system-status
+   re-probes the main LLM every `LLM_HEALTH_TTL_SECONDS` (default 300s)
+   through its own `_llm_health` cache — a provider that goes down or
+   recovers reaches the panel within the window (the client's internal
+   `health()` cache is forever, §56 item; the surface now owns the
+   cadence, and probe exceptions cache False). Social reads unaffected.
+3. **UI caps** (`index.css`): `.tab` and `.panel-title` render uppercase
+   with 0.06-0.08em tracking (tabs had been lowercase since §59); body
+   prose and model theses untouched.
+4. **Tests** (+6, `tests/test_dashboard_freshness.py`): TTL reuse = one
+   RPC per window; stale reuse during an outage; unknown past 3x TTL; an
+   empty wallet is a good read ({} cached, None never); health cached
+   then re-probed; a probe exception caches False. Suite: **709 passing**.
+
+**Verification:** `pytest tests/test_dashboard_freshness.py
+live_execution/tests/test_reconcile.py tests/test_api_routes.py -q` → 23
+passed; `tsc -b && vite build` clean (174.58 kB JS / 54.50 kB gzip). The
+API needs a restart to load the route changes; the trading cycle itself
+is untouched.
 
 ---
 

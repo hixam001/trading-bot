@@ -71,7 +71,7 @@
   }
   /* Titles speak with the shell prompt: '> ' in signal cyan. */
   .panel-title {
-    @apply font-mono text-[11.5px] font-semibold text-bright;
+    @apply font-mono text-[11.5px] font-semibold uppercase tracking-[0.06em] text-bright;
   }
   .panel-title::before {
     content: '> ';
@@ -139,7 +139,7 @@
            overflow-x-auto;
   }
   .tab {
-    @apply font-mono text-[11.5px] font-medium tracking-[0.04em] text-dim
+    @apply font-mono text-[11.5px] font-semibold uppercase tracking-[0.08em] text-dim
            px-3.5 pt-2.5 pb-2 border-b-2 border-transparent -mb-px
            whitespace-nowrap;
   }

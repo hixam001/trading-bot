@@ -1,6 +1,22 @@
 # Active Context — trading-bot
 
-**As of 2026-09-10 (§59 SHIPPED — SIGNAL FRONTEND: the operator's
+**As of 2026-09-10 (§60 SHIPPED — DASHBOARD FRESHNESS: the wallet is
+chain-scanned on every /api/live/portfolio build via the existing A2
+machinery (get_token_balances + reconcile), TTL-cached at
+WALLET_SCAN_TTL_SECONDS (300s default) — positions the operator closes
+manually vanish from the book within minutes, reported in chain_excluded
++ a UI warn line, ledger never mutated by a read, RPC outage = stale
+reuse ≤3x TTL then unchecked; system-status LLM health re-probes every
+LLM_HEALTH_TTL_SECONDS (the client's internal probe cache was forever —
+§56 item); tabs/panel titles uppercased (SIGNAL shell voice); +6 tests
+(test_dashboard_freshness.py) → 709 passing; build clean 174.58 kB JS;
+read-path only, API restart loads the routes, the trading cycle is
+untouched. OPERATOR STEP: the two known chain-excluded positions
+(STONK/Jimothy) now surface in chain_excluded — resolve via
+live_execution/scripts/repair_vanished.py (close_out_of_band with known
+proceeds). PREVIOUS: §59 —**
+
+**PREVIOUS — §59 (2026-09-10): SIGNAL FRONTEND: the operator's
 `demo_2_signal.html` world is now the production design — ultra-black
 blue-tinted surface ladder, cyan signal accent for structure only,
 [ENTER]/[SKIP] bracket verdicts, $SYMBOL tickers, `> `-prompted titles,

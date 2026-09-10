@@ -18,6 +18,7 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
     )
   }
   const positions = book.positions ?? []
+  const hidden = book.chain_excluded ?? []
 
   return (
     <Panel
@@ -45,6 +46,14 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
           <div className="stat-value">{usd(book.deployed_today_usd)}</div>
         </div>
       </div>
+
+      {(book.chain_excluded?.length ?? 0) > 0 && (
+        <div className="mb-2 text-[10.5px] text-warn">
+          {hidden.length} journal position{hidden.length === 1 ? '' : 's'} not
+          shown · sold on-chain · scan{' '}
+          {book.chain_scan?.stale ? 'stale' : clock(book.chain_scan?.at_utc)}
+        </div>
+      )}
 
       <div className="divider" />
 

@@ -1,6 +1,20 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §60 Dashboard freshness (2026-09-10): operator directive — scan the
+      wallet on-chain so manually-closed trades leave the dashboard, fix
+      audit bugs, uppercase tabs/headings. Shipped: /api/live/portfolio
+      chain-scan via existing A2 machinery (get_token_balances +
+      reconcile) TTL-cached at WALLET_SCAN_TTL_SECONDS (300s default) —
+      vanished positions excluded from positions/equity + reported in
+      chain_excluded + a UI warn line; chain<journal clamps displayed
+      tokens; ledger never mutated by a read; outage = stale reuse ≤3x
+      TTL then unchecked. system-status LLM health re-probes every
+      LLM_HEALTH_TTL_SECONDS (the client's probe cache was forever — §56
+      item). Tabs + panel titles uppercased. +6 tests
+      (test_dashboard_freshness.py) → 709 passing; build clean (174.58
+      kB JS). Read-path only; API restart loads routes, cycle untouched.
+      Full detail: handoff §60.
 - [x] §59 SIGNAL frontend shipped (2026-09-10): operator directive —
       implement the chosen demo_2_signal world into the main frontend,
       plus (1) money ledger = closed trades only, (2) scroll-bounded order
