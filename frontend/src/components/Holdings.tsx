@@ -1,11 +1,12 @@
 import type { LivePortfolioResponse } from '../types'
-import { Badge, Empty, Panel, Stat } from './ui'
-import { clock, num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
+import { Badge, CopyText, Empty, Panel } from './ui'
+import { clock, num, pnlClass, price, signedUsd, usd } from '../lib/format'
 
 /**
  * Holdings — the dedicated live positions page. Same data as the dashboard's
- * LiveBook panel (single source: /api/live/portfolio), rendered wide: every
- * open position with entry, mark, value, unrealized P&L, age, and mint.
+ * positions panel (single source: /api/live/portfolio), rendered wide: every
+ * open position with entry, mark, value, unrealized P&L, age, and the
+ * COMPLETE contract address, click-to-copy (operator directive, §59).
  * Every figure is rendered verbatim from the backend (DESIGN.md §5).
  */
 export default function Holdings({ book }: { book: LivePortfolioResponse }) {
@@ -22,17 +23,27 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
     <Panel
       testId="holdings"
       title={`Holdings · ${positions.length} open live position${positions.length === 1 ? '' : 's'}`}
-      right={<Badge tone="neg">● LIVE · real money</Badge>}
+      right={<Badge tone="fail">● LIVE · real money</Badge>}
     >
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 mb-3">
-        <Stat label="Open value" value={usd(book.open_value_usd)} />
-        <Stat
-          label="Unrealized P&L"
-          value={signedUsd(book.unrealized_pnl_usd)}
-          valueClass={pnlClass(book.unrealized_pnl_usd)}
-        />
-        <Stat label="Cash · USDC" value={usd(book.cash_usd)} />
-        <Stat label="Deployed today" value={usd(book.deployed_today_usd)} />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
+        <div className="stat-card">
+          <div className="stat-label">Open value</div>
+          <div className="stat-value">{usd(book.open_value_usd)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Unrealized P&L</div>
+          <div className={`stat-value ${pnlClass(book.unrealized_pnl_usd)}`}>
+            {signedUsd(book.unrealized_pnl_usd)}
+          </div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Cash · USDC</div>
+          <div className="stat-value">{usd(book.cash_usd)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Deployed today</div>
+          <div className="stat-value">{usd(book.deployed_today_usd)}</div>
+        </div>
       </div>
 
       <div className="divider" />
@@ -48,6 +59,7 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
             <thead>
               <tr>
                 <th className="th">Token</th>
+                <th className="th">Contract</th>
                 <th className="th text-right">Size</th>
                 <th className="th text-right">Entry</th>
                 <th className="th text-right">Mark</th>
@@ -59,13 +71,17 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
             <tbody>
               {positions.map((p) => (
                 <tr key={p.mint_address} className="hover:bg-raised">
-                  <td className="td">
-                    <div className="font-semibold text-bright">{p.symbol}</div>
-                    <div className="text-dim" title={p.mint_address}>
-                      {shortAddr(p.mint_address)} · {num(p.tokens)} tokens
-                    </div>
+                  <td className="td font-semibold text-bright">${p.symbol}</td>
+                  <td className="td max-w-[260px]">
+                    <CopyText
+                      value={p.mint_address}
+                      className="font-mono text-[10px] text-dim break-all hover:text-live"
+                    />
                   </td>
-                  <td className="td-num">{usd(p.cost_usd)}</td>
+                  <td className="td-num">
+                    {usd(p.cost_usd)}
+                    <div className="font-mono text-[10px] text-faint">{num(p.tokens)} tok</div>
+                  </td>
                   <td className="td-num">{price(p.entry_price_usd)}</td>
                   <td className="td-num">{price(p.current_price_usd)}</td>
                   <td className="td-num">{usd(p.value_usd)}</td>

@@ -13,7 +13,7 @@ export default function SystemStatus({ status }: { status: SystemStatusResponse 
       <div className="text-xs space-y-1">
         <div className="flex justify-between items-center">
           <span className="text-dim">reasoning model</span>
-          <Badge tone={reasoning === 'template' ? 'dim' : 'info'}>{reasoning}</Badge>
+          <Badge tone={reasoning === 'template' ? 'dim' : 'live'}>{reasoning}</Badge>
         </div>
         <div className="flex justify-between">
           <span className="text-dim">data backend</span>
@@ -53,7 +53,7 @@ export default function SystemStatus({ status }: { status: SystemStatusResponse 
               <span className="flex items-center gap-2 min-w-0">
                 <span
                   className={`shrink-0 w-1.5 h-1.5 rounded-full ${
-                    u.status === 'success' ? 'bg-pos' : 'bg-neg'
+                    u.status === 'success' ? 'bg-pass' : 'bg-fail'
                   }`}
                   aria-label={u.status}
                 />
@@ -70,4 +70,3 @@ export default function SystemStatus({ status }: { status: SystemStatusResponse 
     </Panel>
   )
 }
-

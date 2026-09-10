@@ -1,97 +1,77 @@
 import type { LivePortfolioResponse } from '../types'
-import { Badge, Empty, Panel, Stat } from './ui'
+import { CopyText, Empty } from './ui'
 import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 
 /**
- * The LIVE book — the real wallet, real positions, real money. This is the
- * headline panel: it leads the dashboard whenever live execution is armed.
- * Cash is the wallet's on-chain USDC balance (never simulated). Every figure
- * is rendered verbatim from the backend (DESIGN.md §5: no client-side math).
+ * Live positions — the dashboard's middle column. The wallet equity headline
+ * lives in the hero band (§59); this panel carries the open positions
+ * themselves, each with its COMPLETE contract address visible and
+ * click-to-copy (operator directive, §59). The list is scroll-bounded so it
+ * never stretches the column. Every figure is rendered verbatim from
+ * /api/live/portfolio (DESIGN.md §5: no client-side math).
  */
 export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
   if (!book.enabled) return null
   const positions = book.positions ?? []
 
   return (
-    <Panel
-      testId="live-book"
-      title="Live book · real money"
-      right={
-        <div className="flex items-center gap-2">
-          <Badge tone="neg">● LIVE</Badge>
-          {book.manual_confirmation ? (
-            <Badge tone="warn">manual confirm</Badge>
-          ) : (
-            <Badge tone="dim">autonomous</Badge>
-          )}
-        </div>
-      }
-    >
-      {/* Wallet identity — full address in the title attr, short form shown. */}
-      <div className="text-xs text-dim mb-3" title={book.wallet ?? undefined}>
-        wallet <span className="text-body">{shortAddr(book.wallet)}</span>
+    <section data-testid="live-book" className="panel flex flex-col flex-1 min-h-0 m-3">
+      <div className="panel-header">
+        <h2 className="panel-title">positions</h2>
+        <span className="font-mono text-[10px] text-faint tnum">{positions.length} open</span>
       </div>
 
-      {/* Headline stats. §58: equity is THE number — it leads at 24px while
-       * the rest of the row supports at 13px; one hierarchy, not five equals. */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-x-4 gap-y-3 items-baseline">
-        <Stat
-          label="Equity"
-          value={usd(book.equity_usd)}
-          valueClass="text-2xl font-semibold text-gold"
-          title="At-cost equity: wallet USDC + open position cost"
-        />
-        <Stat label="Cash · USDC" value={usd(book.cash_usd)} />
-        <Stat label="Open value" value={usd(book.open_value_usd)} />
-        <Stat
-          label="Unrealized P&L"
-          value={signedUsd(book.unrealized_pnl_usd)}
-          valueClass={pnlClass(book.unrealized_pnl_usd)}
-        />
-        <Stat
-          label="Realized P&L"
-          value={signedUsd(book.realized_pnl_usd)}
-          valueClass={pnlClass(book.realized_pnl_usd)}
-        />
-        <Stat label="SOL · fees" value={num(book.sol_balance)} />
+      <div className="grid grid-cols-2 gap-2 mb-2">
+        <div className="stat-card">
+          <div className="stat-label">Open value</div>
+          <div className="stat-value">{usd(book.open_value_usd)}</div>
+        </div>
+        <div className="stat-card">
+          <div className="stat-label">Unrealized P&L</div>
+          <div className={`stat-value ${pnlClass(book.unrealized_pnl_usd)}`}>
+            {signedUsd(book.unrealized_pnl_usd)}
+          </div>
+        </div>
       </div>
 
-      <div className="divider" />
-
-      {positions.length > 0 ? (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
-            <thead>
-              <tr>
-                <th className="th">Token</th>
-                <th className="th text-right">Cost</th>
-                <th className="th text-right">Mark</th>
-                <th className="th text-right">Value</th>
-                <th className="th text-right">uP&L</th>
-              </tr>
-            </thead>
-            <tbody>
-              {positions.map((p) => (
-                <tr key={p.mint_address} className="hover:bg-raised">
-                  <td className="td font-semibold text-bright">{p.symbol}</td>
-                  <td className="td-num">{usd(p.cost_usd)}</td>
-                  <td className="td-num">{price(p.current_price_usd)}</td>
-                  <td className="td-num">{usd(p.value_usd)}</td>
-                  <td className={`td-num ${pnlClass(p.unrealized_pnl_usd)}`}>
-                    {signedUsd(p.unrealized_pnl_usd)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
+      {positions.length === 0 ? (
         <Empty>
           No open live positions. Deployed today: {usd(book.deployed_today_usd)} ·
           closed trades: {book.closed_trades ?? 0}.
         </Empty>
+      ) : (
+        <div className="flex-1 min-h-0 overflow-y-auto max-h-[65vh] xl:max-h-none">
+          {positions.map((p) => (
+            <div key={p.mint_address} className="hrow">
+              <div className="flex items-baseline justify-between gap-2">
+                <span className="font-bold text-bright">${p.symbol}</span>
+                <span
+                  className={`font-mono text-[11px] font-semibold tnum ${pnlClass(p.unrealized_pnl_usd)}`}
+                >
+                  {signedUsd(p.unrealized_pnl_usd)}
+                </span>
+              </div>
+              {/* Complete contract address, click-to-copy (§59). */}
+              <div className="mt-1">
+                <CopyText
+                  value={p.mint_address}
+                  className="font-mono text-[10px] text-dim break-all hover:text-live"
+                />
+              </div>
+              <div className="flex justify-between gap-2 mt-1 font-mono text-[10.5px] text-faint tnum">
+                <span>
+                  {num(p.tokens)} tok · mark {price(p.current_price_usd)}
+                </span>
+                <span>{usd(p.value_usd)}</span>
+              </div>
+            </div>
+          ))}
+        </div>
       )}
-    </Panel>
+
+      <div className="mt-2 text-[10.5px] text-faint" title={book.wallet ?? undefined}>
+        wallet {shortAddr(book.wallet)}
+      </div>
+    </section>
   )
 }
-

@@ -22,10 +22,10 @@ export function signedUsd(v: number | null | undefined, digits = 2): string {
   return usd(0, digits)
 }
 
-/** Semantic class for a signed value (pos/neg). Empty string when missing. */
+/** Semantic class for a signed value (pass/fail). Empty string when missing. */
 export function pnlClass(v: number | null | undefined): string {
   if (v === null || v === undefined || Number.isNaN(v)) return ''
-  return v >= 0 ? 'text-pos' : 'text-neg'
+  return v >= 0 ? 'text-pass' : 'text-fail'
 }
 
 /** Small prices keep precision: `$0.00001234` (4 significant figures). */

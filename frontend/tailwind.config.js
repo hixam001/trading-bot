@@ -1,35 +1,38 @@
 /** @type {import('tailwindcss').Config} */
 // Design tokens — the ONLY place raw values live (frontend/DESIGN.md §1).
 //
-// §58 PHOSPHOR AMBER world: a warm-black lacquer ground ladder (kinpaku-style),
-// champagne text, and a gold brand accent reserved for structure and brand —
-// semantic colors (pos/neg/warn/info) carry meaning and never double as brand.
-// Every text token passes ≥4.5:1 on the surface it is used on (§1 contrast).
+// §59 SIGNAL world (the operator's demo_2_signal.html, evolved + ported):
+// an ultra-black blue-tinted ground with a stepped surface ladder, a cyan
+// signal accent reserved for STRUCTURE (brand, focus, tabs, live chrome),
+// and pass/fail semantics that carry meaning and never double as brand.
+// Every text token passes ≥4.5:1 on the surfaces it is used on (§1 contrast).
 export default {
   content: ['./index.html', './src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        // warm-black lacquer surface ladder
-        ink: '#0e0c09',
-        panel: '#161310',
-        raised: '#1e1a15',
-        line: '#29231a',
-        'line-strong': '#3d3524',
-        // champagne text ladder
-        bright: '#f4efe4',
-        body: '#d8d1c2',
-        dim: '#a89d87',
-        faint: '#8f8471',
-        // brand — kinpaku gold (structure/identity ONLY, never meaning)
-        gold: '#e0b04a',
-        'gold-soft': '#a98f45',
-        'gold-deep': '#6e5824',
+        // stepped blue-black surface ladder
+        base: '#080b0e',
+        surface: '#0f1419',
+        raised: '#141b22',
+        'surface-3': '#182129',
+        line: '#223040',
+        'line-soft': '#182029',
+        'line-strong': '#2d3f52',
+        // text ladder
+        bright: '#e4ecf2',
+        body: '#aebbc7',
+        dim: '#8595a8',
+        faint: '#73869c',
+        // signal accent — structure/identity ONLY, never meaning
+        live: '#4ab8ff',
+        'live-soft': 'rgba(74, 184, 255, 0.10)',
+        // verdict neutral — a [SKIP] decision chip, not a failure
+        reject: '#b8c4d1',
         // semantics (meaning, never decoration)
-        pos: '#59b259',
-        neg: '#e05b44',
-        warn: '#cf8c1e',
-        info: '#5ab0a4',
+        pass: '#3ee089',
+        fail: '#f2695c',
+        warn: '#d8a03a',
       },
       fontFamily: {
         mono: ['"JetBrains Mono Variable"', 'ui-monospace', 'SFMono-Regular',
@@ -38,21 +41,21 @@ export default {
                'sans-serif'],
       },
       borderRadius: {
-        DEFAULT: '6px',
+        DEFAULT: '4px',
       },
-      // §58 motion system (DESIGN.md §4): one authored moment + quiet support.
+      // §59 motion system (DESIGN.md §4): one authored moment + quiet support.
       keyframes: {
-        // The prompt cursor — the only loop on the page. Steps, not ease:
-        // a terminal cursor is on or off, never in between.
+        // The clock cursor — the only loop on the page. Steps, not ease.
         blink: {
           '0%, 49%': { opacity: '1' },
           '50%, 100%': { opacity: '0' },
         },
         // THE authored moment: a fresh decision lands on the tape — the row
-        // lifts gold once and settles. Gold = brand attention, not meaning.
+        // lifts signal-cyan once and settles. Cyan = brand attention, not
+        // meaning (the verdict word carries meaning).
         'row-flash': {
-          '0%': { backgroundColor: 'rgba(224, 176, 74, 0.16)' },
-          '100%': { backgroundColor: 'rgba(224, 176, 74, 0)' },
+          '0%': { backgroundColor: 'rgba(74, 184, 255, 0.12)' },
+          '100%': { backgroundColor: 'rgba(74, 184, 255, 0)' },
         },
         // Skeleton sweep: a solid light block slides across (no gradient —
         // §5 bans them outright; this is a moving surface, not a blend).
@@ -60,8 +63,7 @@ export default {
           '0%': { transform: 'translateX(-120%)' },
           '100%': { transform: 'translateX(420%)' },
         },
-        // Routine arrival for a state change (tab switch, panel mount):
-        // 240ms, exponential ease-out, content visible from the first frame.
+        // Routine arrival for a state change (tab switch, panel mount).
         'fade-rise': {
           '0%': { opacity: '0', transform: 'translateY(4px)' },
           '100%': { opacity: '1', transform: 'translateY(0)' },

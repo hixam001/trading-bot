@@ -1,13 +1,14 @@
-**Last updated:** 2026-09-09 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-09-10 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 703 passing (backend + live_execution) + 8 Playwright E2E
+**Tests:** 703 passing (backend + live_execution) + 9 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
-**UI (§58):** the dashboard is redesigned as a terminal — Inter + JetBrains
-Mono design system, tabbed shell, expandable feed, Performance panel with
-the anchored-book "track equity" contract; frontend-only change, engine
-untouched.
+**UI (§59):** the frontend is the SIGNAL world — the operator-supplied
+`demo_2_signal.html` ported into the production SPA (hero equity band +
+sparkline, five views, cyan-on-ultra-black tokens, scroll-bounded lists,
+closed-trades-only ledger, full contract addresses); demo files deleted
+after the port.
 
 
 **§52 SINGLE BOOK:** the paper tick + paper engine are RETIRED; the live
@@ -30,6 +31,68 @@ credits added 2026-08-30 — the paid chain stays primary until then.
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
+
+---
+
+## 59. SIGNAL frontend shipped — the operator's demo becomes the production design (2026-09-10)
+
+Operator directive: "implement this demo to main frontend" — the SIGNAL
+world chosen on 2026-09-10 (`demo_2_signal.html`, evolved as
+`demo-5-signal-v2.html`) became the production SPA, plus four specific
+requirements: (1) the money ledger in Journal shows only closed trades,
+(2) order decisions must scroll inside a bounded viewport instead of
+stretching the page as more arrive, (3) the COMPLETE contract address of a
+coin must be shown, (4) update handoff/memory/project_report, then delete
+every demo (including the operator's original) and commit+push clean.
+
+**The port (frontend-only; engine/ledger/prompts untouched):**
+- **Tokens** (`tailwind.config.js` + `index.css`): ultra-black blue-tinted
+  ladder (`base #080b0e` → `surface` → `raised` → `surface-3`), cyan signal
+  accent `#4ab8ff` restricted to structure (brand, focus, tabs, `> ` prompts,
+  WS chrome, fresh-row flash), `pass/fail/warn` semantics, a `reject`
+  neutral for the `[SKIP]` chip. Inter + JetBrains Mono kept (no new font
+  dependency; IBM Plex Mono of the demo is visually equivalent). Radius 4px;
+  hero carries the bracket-corner marks; component vocabulary rebuilt
+  (`.panel`, `.stat-card`, `.live-tag`, `.tabs`, `.statusline`, `.hrow`).
+- **Shell** (`App.tsx`): full-height console — hero band (EQUITY headline
+  verbatim from the live book + SVG equity-curve sparkline over
+  `stats.equity_curve` via the new `Spark` primitive, WIN RATE / PROFIT
+  FACTOR / DRAWDOWN, WS badge, UTC clock with cursor, `[● LIVE · real
+  money]` tag), five tabs (live/holdings/journal/market/system; testids
+  `tab-*` unchanged for the first three), engine statusline footer. The live
+  view is mission control: three independently scrolled columns (decisions
+  tape / positions / book-health stack) on xl, stacked below.
+- **§59.1 operator requirements:** (1) Journal's money ledger filters
+  `records` to `kind === 'close'` — closed trades only, with proceeds +
+  realized P&L; buys stay in the order-decisions lifecycle; totals gained a
+  "Closed trades" stat. (2) The decisions tape (`LiveFeed`) scrolls inside
+  its own bounded viewport (65vh below xl, flex-fill on xl with a sticky
+  column header); the journal's order-decisions and ledger tables cap at
+  60vh with sticky headers. (3) The complete mint address is shown and
+  click-to-copy everywhere via the new `CopyText` primitive (holdings
+  Contract column, dashboard position rows, journal ledger + proof rows,
+  feed expanded rows) — addresses are never truncated; signatures/hashes
+  stay Solscan short-links.
+- **New primitives** (`ui.tsx`): `CopyText`, `Spark`; `Stat`/`Empty`/
+  `ErrorState` restyled; tone set renamed `pass/fail/warn/live/dim`.
+- **Data honesty kept:** verbatim figures, `—` for nulls, no client-side
+  money math (the sparkline visualizes verbatim curve points; the hero
+  deliberately shows NO "daily delta" — the backend publishes no such
+  number); the anchored-book "track equity" contract survives in the
+  Performance panel vs the hero's wallet equity.
+- **E2E updated in-commit** (`e2e/dashboard.spec.ts`): the live-book pin
+  moved to the hero (`EQUITY` + `Open value`), the tab test now walks all
+  five views — 9 tests total. Copy pins (`LIVE · real money`,
+  `Order decisions`, `commit hash:`, `memo:`, offline banner) preserved.
+- **Demos deleted** per directive: `frontend/demos/` (all six files) and the
+  operator's root `demo_2_signal.html`; `frontend/DESIGN.md` rewritten as
+  the as-built SIGNAL spec (tokens, component anatomy, operator-directive
+  rules, QA checklist, condensed history).
+
+**Verification:** `tsc -b && vite build` clean (45 modules; JS 173.97 kB /
+54.35 kB gzip; CSS 26.49 kB). E2E requires the live backend on :8000 (not
+running at port time) — the suite was updated with the port and must be run
+against the backend before the next deploy. Backend 703 passing untouched.
 
 ---
 

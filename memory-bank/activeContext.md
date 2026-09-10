@@ -1,9 +1,44 @@
 # Active Context — trading-bot
 
-**As of 2026-09-09 (§58 SHIPPED — TERMINAL DASHBOARD REDESIGN: the SPA re-skinned per the operator directive using the repo's impeccable design skill (pbakaus/impeccable) — Inter body + JetBrains Mono numerics (tnum), near-black terminal surface, green/red reserved for P&L direction, gold restricted to structure (wordmark/tabs/equity headline); tabbed shell Dashboard/Holdings/Journal; LiveFeed rows expandable + keyboard-operable; new Performance panel whose "track equity" is the ANCHORED book (initial cash + closed realized P&L) with a tooltip distinguishing it from the wallet equity that leads in the Live Book — resolves the $1,000-vs-$6.42 confusion; WS backoff + offline banner; documented empty states; build clean 168.41 kB JS / 53.29 kB gzip, 8/8 Playwright E2E, backend 703 passing untouched — frontend-only. OPEN OPERATOR STEP: run scripts/backfill_trades_mirror.py --apply to unblind stats/calibration/learning/promotion-gate (the /api/stats mirror is empty; the 26 closes live in the execution ledger). PREVIOUS: §57 — loss-shape & refusal-layer remediation: the external audit's #1 rec executed. Causes quantified from the ledger: 14/21 losses at −18…−24% = the −20% NET stop as configured; 5/21 at −28…−65% = §52 retired the 15s exit scanner with the paper book (the §20 failure mode regressed); refusal funnel ~0 model refusals in the Aug 28–31 window (brain wiring postdates every trade — the per-candidate Thinker passed 23/23 gate-passers vs omo's 74% declines). Shipped: (1) fast exit scanner restored — `_exit_scan_loop` runs the shared `_scan_exits_for_position` every 15s, `_EXIT_LOCK`-serialized with the cycle, fresh-ledger book each pass, decimals memoized; (2) refusal discipline pinned in THINK_PROMPT + LLM_SYSTEM; (3) perf_report now splits GATE vs MODEL refusals (`model_refusal_rate_of_gate_passers` — first run: 60% declined, all deepseek); (4) promotion gate answered vs the real ledger: 3/5 FAIL (25/40 trades, 12% win, PF 0.26) — NOT ready; (5) `scripts/backfill_trades_mirror.py` shipped (dry-run default, `--apply` operator-gated; idempotent; new `db.insert_closed_trade_row` both backends); (6) the 2 sandbox test failures fixed for real — the /api/* JSON-404 catch-all was build-conditional (a buildless deploy silently lost the loud-404), now unconditional + buildless-forced test; SPA shell test skips with explicit reason when no build. **703 passing.** RESTART REQUIRED for the running cycle. PREVIOUS: §56 audit Batch A, §53 security, §52 single book.)**
+**As of 2026-09-10 (§59 SHIPPED — SIGNAL FRONTEND: the operator's
+`demo_2_signal.html` world is now the production design — ultra-black
+blue-tinted surface ladder, cyan signal accent for structure only,
+[ENTER]/[SKIP] bracket verdicts, $SYMBOL tickers, `> `-prompted titles,
+Inter + JetBrains Mono; full-height shell with hero band (30px verbatim
+EQUITY + SVG equity-curve sparkline + win-rate/PF/drawdown), five views
+(live/holdings/journal/market/system) with a 3-column mission-control live
+view; OPERATOR DIRECTIVES IMPLEMENTED: money ledger shows CLOSED TRADES
+ONLY, the decisions tape and journal tables scroll inside bounded viewports
+(65vh/60vh, sticky headers) instead of stretching the page, and the
+COMPLETE contract (mint) address is shown click-to-copy everywhere
+(CopyText primitive); demos deleted after the port per directive (incl. the
+operator's original); E2E updated in-commit to 9 tests (hero EQUITY pin,
+five-tab walk); build clean 173.97 kB JS / 54.35 kB gzip, backend 703
+passing untouched; E2E must be re-run against the live backend on :8000
+before the next deploy. PREVIOUS —** As of 2026-09-09 (§58 SHIPPED — TERMINAL DASHBOARD REDESIGN: the SPA re-skinned per the operator directive using the repo's impeccable design skill (pbakaus/impeccable) — Inter body + JetBrains Mono numerics (tnum), near-black terminal surface, green/red reserved for P&L direction, gold restricted to structure (wordmark/tabs/equity headline); tabbed shell Dashboard/Holdings/Journal; LiveFeed rows expandable + keyboard-operable; new Performance panel whose "track equity" is the ANCHORED book (initial cash + closed realized P&L) with a tooltip distinguishing it from the wallet equity that leads in the Live Book — resolves the $1,000-vs-$6.42 confusion; WS backoff + offline banner; documented empty states; build clean 168.41 kB JS / 53.29 kB gzip, 8/8 Playwright E2E, backend 703 passing untouched — frontend-only. OPEN OPERATOR STEP: run scripts/backfill_trades_mirror.py --apply to unblind stats/calibration/learning/promotion-gate (the /api/stats mirror is empty; the 26 closes live in the execution ledger). PREVIOUS: §57 — loss-shape & refusal-layer remediation: the external audit's #1 rec executed. Causes quantified from the ledger: 14/21 losses at −18…−24% = the −20% NET stop as configured; 5/21 at −28…−65% = §52 retired the 15s exit scanner with the paper book (the §20 failure mode regressed); refusal funnel ~0 model refusals in the Aug 28–31 window (brain wiring postdates every trade — the per-candidate Thinker passed 23/23 gate-passers vs omo's 74% declines). Shipped: (1) fast exit scanner restored — `_exit_scan_loop` runs the shared `_scan_exits_for_position` every 15s, `_EXIT_LOCK`-serialized with the cycle, fresh-ledger book each pass, decimals memoized; (2) refusal discipline pinned in THINK_PROMPT + LLM_SYSTEM; (3) perf_report now splits GATE vs MODEL refusals (`model_refusal_rate_of_gate_passers` — first run: 60% declined, all deepseek); (4) promotion gate answered vs the real ledger: 3/5 FAIL (25/40 trades, 12% win, PF 0.26) — NOT ready; (5) `scripts/backfill_trades_mirror.py` shipped (dry-run default, `--apply` operator-gated; idempotent; new `db.insert_closed_trade_row` both backends); (6) the 2 sandbox test failures fixed for real — the /api/* JSON-404 catch-all was build-conditional (a buildless deploy silently lost the loud-404), now unconditional + buildless-forced test; SPA shell test skips with explicit reason when no build. **703 passing.** RESTART REQUIRED for the running cycle. PREVIOUS: §56 audit Batch A, §53 security, §52 single book.)**
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §59 SIGNAL frontend shipped (2026-09-10)
+Operator directive: implement the chosen `demo_2_signal` world into the
+main frontend, with (1) money ledger = closed trades only, (2) scroll-
+bounded order decisions, (3) complete contract addresses shown, (4) docs
+updated, demos deleted, clean commit+push. Shipped: SIGNAL tokens in
+tailwind.config.js + index.css (base/surface/raised/surface-3 ladder, cyan
+`live` structure accent, pass/fail/warn semantics, reject verdict neutral);
+full-height App shell — hero band (EQUITY + Spark equity curve + record
+stats + [● LIVE · real money] tag), five views (live/holdings/journal/
+market/system), statusline footer, 3-column live grid with independently
+scrolled columns; LiveFeed scroll-bounded with sticky column header;
+Journal ledger filtered to closes + 60vh scroll-bounded tables; CopyText
+(full mint, click-to-copy) in Holdings/dashboard positions/Journal/feed;
+new ui primitives CopyText + Spark; tones renamed pass/fail/warn/live/dim;
+DESIGN.md rewritten as-built; E2E pins updated (hero EQUITY + Open value,
+five-tab walk). Demos deleted (frontend/demos/ + root demo_2_signal.html).
+Verified: build clean (173.97 kB JS / 54.35 kB gzip, CSS 26.49 kB),
+frontend-only (engine untouched, 703 backend passing). Full detail:
+handoff §59.
+
 ### §58 Terminal dashboard redesign (2026-09-09)
 Operator directive: use the repo's design skills (pbakaus/impeccable,
 vendored at `.clinerules/awesome-design-skills/skills/impeccable/`) to

@@ -4,7 +4,9 @@
 
 /* ---------------------------------------------------------------------------
  * Design system — trading-bot terminal (frontend/DESIGN.md).
- * §58 PHOSPHOR AMBER: warm-black lacquer, champagne text, kinpaku-gold brand.
+ * §59 SIGNAL world: ultra-black blue-tinted ground, stepped surface ladder,
+ * cyan signal accent for structure, pass/fail semantics for meaning, the
+ * shell-prompt voice ('> ' titles, '[ENTER]' verdicts) throughout.
  * Raw color/spacing values live ONLY in tailwind.config.js; this file maps
  * them onto reusable component classes. No hex literals below this line.
  * ------------------------------------------------------------------------- */
@@ -19,39 +21,39 @@
     text-rendering: optimizeLegibility;
   }
   body {
-    @apply bg-ink text-body font-mono text-[13px] leading-snug antialiased;
+    @apply bg-base text-body font-sans text-[13px] leading-snug antialiased;
   }
   /* Every numeric column uses tabular figures so values never jiggle. */
   .tnum {
     font-variant-numeric: tabular-nums;
   }
-  /* The brand's focus voice is gold — structure, never meaning. */
+  /* The brand's focus voice is the signal cyan — structure, never meaning. */
   :focus-visible {
-    outline: 2px solid theme('colors.gold');
+    outline: 2px solid theme('colors.live');
     outline-offset: 2px;
     border-radius: 2px;
   }
   /* Browser surfaces carry the world (impeccable craft-floor): selection,
-   * caret, and scrollbars all ship gold-tinted lacquer. */
+   * caret, and scrollbars all ship the signal-tinted console. */
   ::selection {
-    background: theme('colors.gold');
-    color: theme('colors.ink');
+    background: theme('colors.live');
+    color: theme('colors.base');
   }
   * {
-    caret-color: theme('colors.gold');
+    caret-color: theme('colors.live');
     scrollbar-width: thin;
-    scrollbar-color: theme('colors.line-strong') transparent;
+    scrollbar-color: theme('colors.line') transparent;
   }
   *::-webkit-scrollbar {
     width: 8px;
     height: 8px;
   }
   *::-webkit-scrollbar-thumb {
-    background: theme('colors.line-strong');
+    background: theme('colors.line');
     border-radius: 4px;
   }
   *::-webkit-scrollbar-thumb:hover {
-    background: theme('colors.gold-deep');
+    background: theme('colors.line-strong');
   }
   *::-webkit-scrollbar-track {
     background: transparent;
@@ -59,80 +61,153 @@
 }
 
 @layer components {
-  /* Panel — the primary surface. Flat, bordered, no shadow (DESIGN.md §2).
-   * §58: a gold hairline tops the panel — the lacquer-to-brand seam, 1px,
-   * the only "ornament" the world allows. */
+  /* Panel — the primary surface. Flat, hairline border, 4px radius,
+   * no shadow (DESIGN.md §2). */
   .panel {
-    @apply bg-panel border border-line border-t-gold-deep rounded p-3;
+    @apply bg-surface border border-line rounded p-3.5;
   }
   .panel-header {
-    @apply flex items-center justify-between gap-2 mb-2;
+    @apply flex items-center justify-between gap-2 mb-2.5;
   }
+  /* Titles speak with the shell prompt: '> ' in signal cyan. */
   .panel-title {
-    @apply font-sans text-[11px] font-semibold uppercase tracking-[0.08em] text-gold-soft;
+    @apply font-mono text-[11.5px] font-semibold text-bright;
+  }
+  .panel-title::before {
+    content: '> ';
+    color: theme('colors.live');
   }
 
-  /* Stat — label over value (DESIGN.md §2). */
+  /* Stat card — nested surface with an uppercase mono label. */
+  .stat-card {
+    @apply bg-raised border border-line-soft rounded px-3 py-2.5;
+  }
   .stat-label {
-    @apply font-sans text-[11px] uppercase tracking-[0.06em] text-dim;
+    @apply font-mono text-[10px] uppercase tracking-[0.08em] text-faint;
   }
   .stat-value {
-    @apply font-mono tnum text-bright;
+    @apply font-mono tnum text-[16px] font-semibold text-bright leading-tight;
   }
 
-  /* Badge — 1px semantic border, transparent bg (DESIGN.md §2). */
+  /* Badge — hairline semantic chip. */
   .badge {
-    @apply inline-flex items-center gap-1 font-sans text-[11px] font-medium
-           leading-none px-1.5 py-1 rounded-[4px] border whitespace-nowrap;
+    @apply inline-flex items-center gap-1 font-mono text-[10.5px] font-medium
+           leading-none px-1.5 py-1 rounded-[3px] border whitespace-nowrap;
   }
-  .badge-pos  { @apply border-pos/60 text-pos; }
-  .badge-neg  { @apply border-neg/60 text-neg; }
-  .badge-warn { @apply border-warn/60 text-warn; }
-  .badge-info { @apply border-info/60 text-info; }
+  .badge-pass { @apply border-pass/50 text-pass; }
+  .badge-fail { @apply border-fail/50 text-fail; }
+  .badge-warn { @apply border-warn/50 text-warn; }
+  .badge-live { @apply border-live/60 text-live; }
   .badge-dim  { @apply border-line-strong text-dim; }
+
+  /* The LIVE tag — bracketed signal chrome (the operator's DNA). */
+  .live-tag {
+    @apply inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold
+           tracking-[0.04em] text-live border border-live bg-live-soft
+           rounded px-2 py-1 whitespace-nowrap;
+  }
+  .live-tag::before { content: '['; opacity: 0.7; }
+  .live-tag::after { content: ']'; opacity: 0.7; }
+  .live-dot {
+    @apply w-[5px] h-[5px] rounded-full bg-live;
+  }
 
   /* Table primitives (DESIGN.md §2). */
   .th {
-    @apply font-sans text-[11px] font-medium uppercase tracking-[0.06em]
-           text-dim text-left py-1.5 px-2 border-b border-line-strong
+    @apply font-mono text-[10px] font-medium uppercase tracking-[0.06em]
+           text-faint text-left py-1.5 px-2.5 border-b border-line
            whitespace-nowrap;
   }
   .td {
-    @apply py-1.5 px-2 border-b border-line align-middle;
+    @apply py-2 px-2.5 border-b border-line-soft align-middle;
   }
   .td-num {
     @apply td text-right tnum whitespace-nowrap;
   }
 
-  /* Skeleton loading bar (DESIGN.md §3 — never a spinner alone). §58: a
-   * solid light block sweeps across; no gradient (banned §5), no plain
-   * pulse — the bar visibly "prints" like a terminal line. */
+  /* Feed/position rows. */
+  .hrow {
+    @apply py-2.5 border-b border-line-soft;
+  }
+  .hrow:last-child {
+    border-bottom: none;
+  }
+
+  /* Tabs — an underline of signal cyan marks the active view. */
+  .tabs {
+    @apply flex items-stretch gap-0.5 px-2 sm:px-7 bg-base border-b border-line
+           overflow-x-auto;
+  }
+  .tab {
+    @apply font-mono text-[11.5px] font-medium tracking-[0.04em] text-dim
+           px-3.5 pt-2.5 pb-2 border-b-2 border-transparent -mb-px
+           whitespace-nowrap;
+  }
+  .tab:hover {
+    @apply text-bright bg-surface;
+  }
+  .tab.active {
+    @apply text-live border-live;
+  }
+
+  /* Statusline — the engine strip that signs the page off. */
+  .statusline {
+    @apply flex items-center gap-4 flex-wrap px-4 sm:px-7 py-1.5 border-t
+           border-line bg-surface font-mono text-[10.5px] text-faint;
+  }
+
+  /* Hero band — the bracket-corner header (SIGNAL DNA). */
+  .hero {
+    position: relative;
+  }
+  .hero::before,
+  .hero::after {
+    content: '';
+    position: absolute;
+    top: 5px;
+    width: 10px;
+    height: 10px;
+    border-top: 1px solid theme('colors.line');
+    opacity: 0.8;
+  }
+  .hero::before {
+    left: 5px;
+    border-left: 1px solid theme('colors.line');
+  }
+  .hero::after {
+    right: 5px;
+    border-right: 1px solid theme('colors.line');
+  }
+
+  /* Skeleton loading bar (DESIGN.md §3 — never a spinner alone): a solid
+   * light block sweeps across; no gradient (banned §5), no plain pulse. */
   .skeleton {
     @apply relative overflow-hidden bg-raised rounded;
   }
   .skeleton::after {
     content: '';
-    @apply absolute inset-y-0 left-0 w-1/4 bg-line-strong;
+    @apply absolute inset-y-0 left-0 w-1/4 bg-surface-3;
     animation: theme('animation.sweep');
   }
 
-  /* Hairline divider used inside expanded feed rows. */
+  /* Hairline divider used inside panels. */
   .divider {
-    @apply border-t border-line my-2;
+    @apply border-t border-line my-2.5;
   }
 
-  /* §58 wordmark — the shell prompt. A block cursor blinking after the
-   * name (a styled span, never a glyph) reads as a live terminal prompt. */
-  .prompt-cursor {
-    @apply inline-block w-[7px] h-[14px] bg-gold align-[-2px] ml-1;
-    animation: blink 1.1s steps(1) infinite;
+  /* Empty state keeps the shell-prompt voice. */
+  .empty {
+    @apply text-faint text-xs py-2;
+  }
+  .empty::before {
+    content: '> ';
   }
 }
 
-/* §58 motion — the reduced-motion path (impeccable animate.md): spatial
+/* §59 motion — the reduced-motion path (impeccable animate.md): spatial
  * movement and loops go away; the state changes they carried stay legible
  * (row flashes become a steady 1-frame tint, skeletons still shimmer but
- * without travel, the cursor stays solid and visible). */
+ * without travel, the clock cursor stays solid and visible). */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -141,14 +216,9 @@
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
   }
-  .prompt-cursor {
-    animation: none;
-    opacity: 1;
-  }
   .row-flash {
     animation: none !important;
-    background-color: theme('colors.gold');
-    background-color: rgba(224, 176, 74, 0.12);
+    background-color: theme('colors.live-soft');
   }
   .skeleton::after {
     animation: none;

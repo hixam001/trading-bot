@@ -2,8 +2,14 @@
 
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
-execution package. Report updated 2026-09-09 from the current main branch
-(§58: terminal dashboard redesign — the SPA re-skinned with the repo's impeccable design
+execution package. Report updated 2026-09-10 from the current main branch
+(§59: SIGNAL frontend — the operator-supplied demo_2_signal world shipped as the
+production SPA design: ultra-black surface ladder with a cyan signal accent, hero
+equity band + equity-curve sparkline, five-view shell (live/holdings/journal/
+market/system) with a 3-column mission-control live grid, scroll-bounded decision
+feed and journal tables, closed-trades-only money ledger, and complete
+click-to-copy contract addresses throughout; demo files deleted after the port;
+§58: terminal dashboard redesign — the SPA re-skinned with the repo's impeccable design
 skill as a terminal: Inter + JetBrains Mono design system, tabbed shell, expandable feed,
 anchored-book "track equity" panel; §57: loss-shape & refusal-layer remediation — fast 15s
 exit scanner restored, refusal discipline pinned in both prompts, gate/model refusal split

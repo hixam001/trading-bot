@@ -1,6 +1,29 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §59 SIGNAL frontend shipped (2026-09-10): operator directive —
+      implement the chosen demo_2_signal world into the main frontend,
+      plus (1) money ledger = closed trades only, (2) scroll-bounded order
+      decisions, (3) complete contract addresses shown, (4) docs updated,
+      demos deleted, clean commit+push. Shipped: SIGNAL tokens (ultra-black
+      ladder, cyan `live` structure accent, pass/fail/warn semantics,
+      `reject` verdict neutral) in tailwind.config.js + index.css; full-
+      height shell — hero band (verbatim EQUITY + Spark equity curve +
+      WIN RATE/PF/DRAWDOWN + [● LIVE · real money] tag), five views
+      (live/holdings/journal/market/system), 3-column mission-control live
+      grid with independently scrolled columns, statusline footer; the
+      decisions tape and the journal's decisions/ledger tables scroll
+      inside bounded viewports (65vh/60vh, sticky headers); Journal ledger
+      filters records to `kind === 'close'` with a Closed-trades stat;
+      CopyText primitive shows the COMPLETE mint address click-to-copy in
+      Holdings/dashboard positions/Journal ledger+proofs/feed; new ui
+      primitives CopyText + Spark; tones renamed pass/fail/warn/live/dim;
+      DESIGN.md rewritten as-built; E2E updated in-commit (hero EQUITY +
+      Open value pin, five-tab walk → 9 tests). Demos deleted
+      (frontend/demos/ + root demo_2_signal.html). Verified: build clean
+      (173.97 kB JS / 54.35 kB gzip), frontend-only (engine untouched,
+      703 backend passing); E2E to be re-run against the live backend
+      before the next deploy. Full detail: handoff §59.
 - [x] §58 Terminal dashboard redesign (2026-09-09): operator directive —
       use the repo's impeccable design skill (pbakaus/impeccable, vendored
       at `.clinerules/awesome-design-skills/`) to re-skin the frontend as

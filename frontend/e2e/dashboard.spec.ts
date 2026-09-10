@@ -51,14 +51,16 @@ test.describe('dashboard', () => {
     expect(realErrors).toEqual([])
   })
 
-  test('live book shows real-wallet figures or a documented empty state', async ({ page }) => {
+  test('hero shows live equity and the book shows real-wallet figures', async ({ page }) => {
     await page.goto(APP)
+    // The hero band carries the equity headline + track-record stats.
+    const hero = page.getByTestId('hero')
+    await expect(hero).toBeVisible({ timeout: 15_000 })
+    await expect(hero.getByText('EQUITY')).toBeVisible()
+    // The live book (dashboard middle column) carries the wallet detail.
     const book = page.getByTestId('live-book')
-    // The book is enabled in this deployment; wait for it to hydrate.
     await expect(book).toBeVisible({ timeout: 15_000 })
-    // Equity label + a dollar figure (or em dash) must be present.
-    await expect(book.getByText('Equity')).toBeVisible()
-    await expect(book.getByText('Cash · USDC')).toBeVisible()
+    await expect(book.getByText('Open value')).toBeVisible()
   })
 
   test('feed rows expand and collapse with aria-expanded', async ({ page }) => {
@@ -129,13 +131,15 @@ test.describe('dashboard', () => {
 })
 
 test.describe('pages (tabs)', () => {
-  test('tab bar navigates dashboard / holdings / journal', async ({ page }) => {
+  test('tab bar navigates live / holdings / journal / market / system', async ({ page }) => {
     await page.goto(APP)
     await expect(page.getByTestId('tab-dashboard')).toBeVisible()
     await expect(page.getByTestId('tab-holdings')).toBeVisible()
     await expect(page.getByTestId('tab-journal')).toBeVisible()
+    await expect(page.getByTestId('tab-market')).toBeVisible()
+    await expect(page.getByTestId('tab-system')).toBeVisible()
 
-    // Dashboard is the default page.
+    // Live (dashboard) is the default page.
     await expect(page.getByTestId('live-feed')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('tab-dashboard')).toHaveAttribute('aria-current', 'page')
 
@@ -149,7 +153,17 @@ test.describe('pages (tabs)', () => {
     await expect(page.getByTestId('journal')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('tab-journal')).toHaveAttribute('aria-current', 'page')
 
-    // Back to dashboard.
+    // Market page.
+    await page.getByTestId('tab-market').click()
+    await expect(page.getByTestId('market-regime')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('tab-market')).toHaveAttribute('aria-current', 'page')
+
+    // System page.
+    await page.getByTestId('tab-system').click()
+    await expect(page.getByTestId('system-status')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByTestId('tab-system')).toHaveAttribute('aria-current', 'page')
+
+    // Back to live.
     await page.getByTestId('tab-dashboard').click()
     await expect(page.getByTestId('live-feed')).toBeVisible({ timeout: 15_000 })
   })

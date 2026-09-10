@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import type { LiveCommitEntry, LiveExecutionsResponse } from '../types'
-import { Badge, Empty, Panel, Stat, type Tone } from './ui'
+import { Badge, CopyText, Empty, Panel, type Tone } from './ui'
 import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 
 /**
@@ -10,16 +10,21 @@ import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
  *   1. order decisions — every sealed commit with its lifecycle:
  *      sealed -> published (memo on-chain) -> bound (fill), or failed + reason.
  *      This is the page that answers "the bot said enter — why didn't it buy?"
- *   2. money ledger — the execution ledger's actual buys and closes.
+ *      The table is scroll-bounded: it never stretches the page as decisions
+ *      accumulate (operator directive, §59).
+ *   2. money ledger — CLOSED TRADES ONLY (operator directive, §59): the
+ *      execution ledger's confirmed closes, each with proceeds and realized
+ *      P&L. Buys stay visible in the order-decisions lifecycle above.
  *
+ * The COMPLETE contract (mint) address of every coin is shown, click-to-copy.
  * No client-side money math (DESIGN.md §5); states per DESIGN.md §3.
  */
 
 const commitTone: Record<LiveCommitEntry['status'], { tone: Tone; label: string }> = {
-  bound: { tone: 'pos', label: 'filled' },
+  bound: { tone: 'pass', label: 'filled' },
   published: { tone: 'warn', label: 'memo only · no fill' },
-  sealed: { tone: 'info', label: 'sealed' },
-  failed: { tone: 'neg', label: 'failed' },
+  sealed: { tone: 'live', label: 'sealed' },
+  failed: { tone: 'fail', label: 'failed' },
 }
 
 function ts(epochSeconds: number | null | undefined): string {
@@ -40,7 +45,7 @@ function TxLink({ sig, label }: { sig: string | null; label: string }) {
   if (!sig) return <span className="text-dim">—</span>
   return (
     <a
-      className="text-gold underline decoration-gold-deep decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
+      className="text-live underline decoration-line-strong decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
       href={`https://solscan.io/tx/${sig}`}
       target="_blank"
       rel="noopener noreferrer"
@@ -63,18 +68,42 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
   }
 
   const commits = data.commits ?? []
-  const records = data.records ?? []
+  // §59: the money ledger shows CLOSED TRADES ONLY — confirmed closes with
+  // realized P&L. Buys remain in the order-decisions lifecycle above.
+  const closes = (data.records ?? []).filter((r) => r.kind === 'close')
   const t = data.totals
 
   return (
     <div className="space-y-3 min-w-0">
-      <Panel testId="journal" title="Journal · live order history" right={<Badge tone="neg">● LIVE</Badge>}>
+      <Panel
+        testId="journal"
+        title="Journal · live order history"
+        right={<Badge tone="fail">● LIVE</Badge>}
+      >
         {t && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-3 mb-3">
-            <Stat label="Order decisions" value={String(t.commits)} />
-            <Stat label="Filled (bound)" value={String(t.bound)} valueClass="text-pos" />
-            <Stat label="Memo only · no fill" value={String(t.published_unfilled)} valueClass="text-warn" />
-            <Stat label="Failed" value={String(t.failed)} valueClass={t.failed > 0 ? 'text-neg' : ''} />
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 mb-3">
+            <div className="stat-card">
+              <div className="stat-label">Order decisions</div>
+              <div className="stat-value">{String(t.commits)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Filled (bound)</div>
+              <div className="stat-value text-pass">{String(t.bound)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Memo only · no fill</div>
+              <div className="stat-value text-warn">{String(t.published_unfilled)}</div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Failed</div>
+              <div className={`stat-value ${t.failed > 0 ? 'text-fail' : ''}`}>
+                {String(t.failed)}
+              </div>
+            </div>
+            <div className="stat-card">
+              <div className="stat-label">Closed trades</div>
+              <div className="stat-value">{String(t.closes ?? closes.length)}</div>
+            </div>
           </div>
         )}
 
@@ -86,16 +115,16 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
             is sealed here before any network call — including the ones that fail.
           </Empty>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[60vh] border border-line-soft rounded">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr>
-                  <th className="th">Time</th>
-                  <th className="th">Side</th>
-                  <th className="th">Token</th>
-                  <th className="th text-right">Size</th>
-                  <th className="th">Status</th>
-                  <th className="th">Detail</th>
+                  <th className="th sticky top-0 bg-surface">Time</th>
+                  <th className="th sticky top-0 bg-surface">Side</th>
+                  <th className="th sticky top-0 bg-surface">Token</th>
+                  <th className="th sticky top-0 bg-surface text-right">Size</th>
+                  <th className="th sticky top-0 bg-surface">Status</th>
+                  <th className="th sticky top-0 bg-surface">Detail</th>
                 </tr>
               </thead>
               <tbody>
@@ -117,38 +146,50 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
           </div>
         )}
       </Panel>
-      <Panel title={`Money ledger · ${records.length} record${records.length === 1 ? '' : 's'}`}>
-        {records.length === 0 ? (
+
+      <Panel
+        title="Money ledger · closed trades"
+        right={<span className="font-mono text-[10px] text-faint tnum">{closes.length} closed</span>}
+      >
+        {closes.length === 0 ? (
           <Empty>
-            No confirmed money movements yet. A row appears here only when a swap
-            is confirmed on-chain (buys) or a position is closed (proceeds + P&L).
+            No closed trades yet. A row appears here only when a position is
+            fully closed on-chain (proceeds + realized P&L); open buys live in
+            the order decisions above.
           </Empty>
         ) : (
-          <div className="overflow-x-auto">
+          <div className="overflow-auto max-h-[60vh] border border-line-soft rounded">
             <table className="w-full text-xs border-collapse">
               <thead>
                 <tr>
-                  <th className="th">Time</th>
-                  <th className="th">Kind</th>
-                  <th className="th">Mint</th>
-                  <th className="th text-right">USD</th>
-                  <th className="th text-right">Tokens</th>
-                  <th className="th text-right">Price</th>
-                  <th className="th text-right">P&L</th>
-                  <th className="th">Signature</th>
+                  <th className="th sticky top-0 bg-surface">Time</th>
+                  <th className="th sticky top-0 bg-surface">Kind</th>
+                  <th className="th sticky top-0 bg-surface">Contract</th>
+                  <th className="th sticky top-0 bg-surface text-right">USD</th>
+                  <th className="th sticky top-0 bg-surface text-right">Tokens</th>
+                  <th className="th sticky top-0 bg-surface text-right">Price</th>
+                  <th className="th sticky top-0 bg-surface text-right">P&L</th>
+                  <th className="th sticky top-0 bg-surface">Signature</th>
                 </tr>
               </thead>
               <tbody>
-                {records.map((r) => (
+                {closes.map((r) => (
                   <tr key={`${r.idempotency_key}-${r.ts}`} className="hover:bg-raised">
                     <td className="td whitespace-nowrap text-dim">{ts(r.ts)}</td>
                     <td className="td font-semibold text-bright">{r.kind}</td>
-                    <td className="td" title={r.mint}>{shortAddr(r.mint)}</td>
+                    <td className="td max-w-[240px]">
+                      <CopyText
+                        value={r.mint}
+                        className="font-mono text-[10px] text-dim break-all hover:text-live"
+                      />
+                    </td>
                     <td className="td-num">{usd(r.usd_size, 4)}</td>
                     <td className="td-num">{num(r.tokens_out)}</td>
                     <td className="td-num">{price(r.price_usd)}</td>
                     <td className={`td-num ${pnlClass(r.pnl_usd)}`}>{signedUsd(r.pnl_usd)}</td>
-                    <td className="td"><TxLink sig={r.signature || null} label="tx" /></td>
+                    <td className="td">
+                      <TxLink sig={r.signature || null} label="tx" />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -185,10 +226,12 @@ function CommitRow({
               ? `${Math.round(c.payload.fraction * 100)}% of position`
               : '—'}
         </td>
-        <td className="td"><Badge tone={st.tone}>{st.label}</Badge></td>
+        <td className="td">
+          <Badge tone={st.tone}>{st.label}</Badge>
+        </td>
         <td className="td">
           <button
-            className="text-gold underline decoration-gold-deep decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
+            className="text-live underline decoration-line-strong decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
             aria-expanded={isOpen}
             onClick={onToggle}
           >
@@ -219,7 +262,14 @@ function CommitRow({
               </div>
               <div>
                 <span className="text-dim">mint: </span>
-                <span title={c.payload?.mint}>{shortAddr(c.payload?.mint, 8, 8)}</span>
+                {c.payload?.mint ? (
+                  <CopyText
+                    value={c.payload.mint}
+                    className="font-mono text-[10.5px] text-dim break-all hover:text-live"
+                  />
+                ) : (
+                  <span className="text-dim">—</span>
+                )}
               </div>
             </div>
           </td>
