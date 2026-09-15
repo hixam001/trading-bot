@@ -46,6 +46,7 @@ from live_execution.jupiter_executor import (
 )
 from live_execution.models import ExecutionLedger
 from live_execution.commit_log import CommitLog
+from live_execution.venue import token_deltas_from_tx
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +61,48 @@ def raw_units(decimals: int) -> int:
         sys.path.insert(0, str(backend))
     from data_providers.jupiter import raw_units_for_one_token
     return raw_units_for_one_token(decimals)
+
+
+async def _fill_actuals(side: str, mint: str, signature: str) -> dict:
+    """A4 (repo audit): the ACTUAL amounts a confirmed fill moved.
+
+    Fetches the confirmed tx (jsonParsed) and derives the signed net token
+    change of the traded mint and of the USDC mint. Returns
+    {"tokens_delta": float|None, "usdc_delta": float|None} where None means
+    "unreadable" — the caller then falls back to the quote snapshot (the
+    pre-A4 behavior) instead of fabricating a number. Fail-soft: this is
+    observability-grade data and must never break a journalled fill.
+    """
+    out: dict = {"tokens_delta": None, "usdc_delta": None}
+    if not signature:
+        return out
+    try:
+        tx = await solana.get_transaction(signature)
+        deltas = token_deltas_from_tx(tx)
+    except Exception as exc:
+        log.info("fill actuals: tx fetch/parse failed for %s: %s",
+                 signature[:16], exc)
+        return out
+    if not deltas:
+        return out
+    tok = deltas.get(mint)
+    usdc = deltas.get(_BACKEND_USDC_MINT)
+    if side == "buy":
+        # Buy: the wallet RECEIVES the token (positive delta) and PAYS USDC
+        # (negative delta). The tx fee is in SOL, never USDC, so the USDC
+        # delta is the pure swap input.
+        if tok is not None and tok > 0:
+            out["tokens_delta"] = tok
+        if usdc is not None and usdc < 0:
+            out["usdc_delta"] = -usdc
+    else:
+        # Sell: the wallet gives up the token (negative delta) and receives
+        # USDC (positive delta).
+        if tok is not None and tok < 0:
+            out["tokens_delta"] = -tok
+        if usdc is not None and usdc > 0:
+            out["usdc_delta"] = usdc
+    return out
 
 
 @dataclass
@@ -246,14 +289,28 @@ async def place_buy(
                               "price_impact_pct": impact, **commit_fields})
 
     if outcome.status == "filled":
+        # A4 (repo audit): prefer the ACTUAL amounts read off the confirmed
+        # tx — real slippage means the fill rarely equals the quote, and the
+        # ledger is the money authority. An unreadable tx journals the quote
+        # snapshot (and logs loudly), never a guess.
+        actuals = await _fill_actuals("buy", mint, outcome.signature)
+        usd_actual = actuals["usdc_delta"] or usd
+        tokens_actual = actuals["tokens_delta"] or q["tokens_out"]
+        if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
+            log.warning(
+                "fill actuals unreadable for %s — journaling the quote "
+                "snapshot (usd=%.2f)", outcome.signature[:16], usd)
         rec = ledger.record_buy(
             idempotency_key=idempotency_key or f"buy-{mint}-{int(time.time())}",
-            mint=mint, usd_size=usd, tokens_out=q["tokens_out"],
-            price_usd=q["price_usd"], signature=outcome.signature, status="confirmed")
-        outcome.usd_value = usd
-        outcome.tokens = q["tokens_out"]
+            mint=mint, usd_size=usd_actual, tokens_out=tokens_actual,
+            price_usd=(usd_actual / tokens_actual) if tokens_actual > 0
+            else q["price_usd"],
+            signature=outcome.signature, status="confirmed")
+        outcome.usd_value = usd_actual
+        outcome.tokens = tokens_actual
         outcome.price_impact_pct = impact
-        log.info("FILLED buy %s $%.2f -> %.6f tokens sig %s", mint[:8], usd, q["tokens_out"], outcome.signature)
+        log.info("FILLED buy %s $%.2f -> %.6f tokens sig %s",
+                 mint[:8], usd_actual, tokens_actual, outcome.signature)
     else:
         # Honest journal: a commit whose fill did not confirm is marked failed
         # so the dashboard shows WHY the enter didn't execute (commit_log
@@ -398,15 +455,29 @@ async def place_sell(
                               "price_impact_pct": impact, **commit_fields})
 
     if outcome.status == "filled":
+        # A4 (repo audit): ACTUAL proceeds/tokens read off the confirmed tx
+        # (fail-soft to the quote snapshot when unreadable) — the mirror's
+        # exit price and the ledger's realized PnL must reflect the fill,
+        # not the pre-trade quote.
+        actuals = await _fill_actuals("sell", mint, outcome.signature)
+        proceeds_actual = actuals["usdc_delta"] or proceeds_usd
+        tokens_sold_actual = actuals["tokens_delta"] or sell_amount
+        if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
+            log.warning(
+                "fill actuals unreadable for %s — journaling the quote "
+                "snapshot (proceeds=%.2f)",
+                outcome.signature[:16], proceeds_usd)
         try:
-            ledger.reduce_position(mint, frac, proceeds_usd,
+            ledger.reduce_position(mint, frac, proceeds_actual,
                                    full_close=full_close, rule_id=rule_id)
         except ValueError as exc:
             log.error("post-fill ledger reduce failed: %s", exc)
-        outcome.usd_value = proceeds_usd
-        outcome.tokens = sell_amount
+        outcome.usd_value = proceeds_actual
+        outcome.tokens = tokens_sold_actual
         outcome.price_impact_pct = impact
-        log.info("FILLED sell %s %.4f tokens -> $%.2f sig %s", mint[:8], sell_amount, proceeds_usd, outcome.signature)
+        log.info("FILLED sell %s %.4f tokens -> $%.2f sig %s",
+                 mint[:8], tokens_sold_actual, proceeds_actual,
+                 outcome.signature)
     else:
         # Honest journal (same contract as the buy path).
         logc.fail(sealed["hash"], outcome.reason or "fill not confirmed")

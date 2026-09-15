@@ -1,21 +1,25 @@
 """
 llm/thinker.py — the reference-style THINK stage (operator decision 2026-08-23).
 
-Before any rule evaluation, the main LLM (Groq or DeepSeek per
-MAIN_LLM_PROVIDER) reads a candidate's tape and writes a structured
-pre-trade assessment:
+Since §44 the gate is STAGED (cheap rules → fomo scrape → crowd rules) and the
+main LLM (Groq or DeepSeek per MAIN_LLM_PROVIDER) is called ONLY for
+candidates the rules cleared: it reads the candidate's tape — the crowd
+theses, web-search evidence and social read already gathered by the staged
+gate — and writes a structured pre-trade assessment:
 
     {"thesis": "...", "invalidation": "...", "verdict": "buy" | "pass"}
 
-A trade requires **verdict == "buy" AND every rule passes** — the exact
-think→gate intersection the reference bot runs. Either side alone refuses, and the
-refusal is journalled as loudly as an entry.
+A rule-refused candidate gets the deterministic template write-up with the
+verdict forced to "pass" — no LLM call is spent on an outcome it cannot
+change. A trade requires **verdict == "buy" AND every rule passes** — the
+exact think→gate intersection the reference bot runs. Either side alone
+refuses, and the refusal is journalled as loudly as an entry.
 
 Fail-closed by design:
     * Main provider unreachable / unparsable output -> deterministic template
         explanation with verdict forced to 'pass'.
   * DATA_BACKEND=mock always uses the template thinker — tests never touch
-    Ollama.
+    a live LLM.
 
 The invalidation sentence is stored with the trade for the
 exit_thesis_invalidated review; the LLM NEVER opens, closes, or sizes

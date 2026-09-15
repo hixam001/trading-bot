@@ -5,9 +5,9 @@ Digest-at-ingest-time: raw files are stored whole; prompts receive only
 compact digests, bounded by config.KB_MAX_CONTEXT_CHARS. Truncation drops
 WHOLE documents (newest-ingested first), never cuts a document mid-body (F7).
 
-Digest generation uses Ollama in live mode when healthy; otherwise an
-extractive fallback (leading sentences, capped) — clearly labeled, still a
-faithful subset of the source, never invented text.
+Digest generation uses the main LLM provider in live mode when healthy;
+otherwise an extractive fallback (leading sentences, capped) — clearly
+labeled, still a faithful subset of the source, never invented text.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _extractive_digest(content: str) -> str:
 
 
 async def _llm_digest(content: str) -> str | None:
-    """Ollama summarization; returns None when unavailable."""
+    """Main-LLM summarization; returns None when unavailable."""
     if config.DATA_BACKEND != "live":
         return None
     from llm.narrator import Narrator

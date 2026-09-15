@@ -104,7 +104,19 @@ class ExecutionLedger:
                 f"execution ledger at {self.path} is corrupt — refusing to "
                 f"trade until a human inspects it"
             )
-        return list(data.get("records", []))
+        # A VALID-JSON-but-wrong-shape file (a bare list from an older
+        # format, a scalar, a dict without "records") must hit the SAME
+        # loud failure as unparseable JSON — data.get() on a non-dict
+        # would raise a bare AttributeError, so any caller catching
+        # RuntimeError would be met with an unexpected exception type
+        # instead of the documented "refusing to trade" contract.
+        if not (isinstance(data, dict)
+                and isinstance(data.get("records"), list)):
+            raise RuntimeError(
+                f"execution ledger at {self.path} is corrupt — refusing to "
+                f"trade until a human inspects it"
+            )
+        return list(data["records"])
 
     def _save(self, records: list[dict]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -298,16 +310,28 @@ class ExecutionLedger:
             ts=self.now_fn(),
             rule_id=rule_id,
         )
-        for r in records:
-            if (r["kind"] == "buy" and r["mint"] == mint
-                    and r["status"] in self._OPEN
-                    and r["idempotency_key"] == target_key):
-                if full_close:
+        # A2 (repo audit): a full_close must close EVERY open buy of this
+        # mint, not just the oldest. One-position-per-name is enforced by
+        # the gate, but a mint CAN accumulate several open buys through
+        # operator repairs / backfills / close_out_of_band ordering; a
+        # full exit that closed only the oldest left the rest as phantom
+        # OPEN positions (polluting holdings + MAX_OPEN_POSITIONS forever)
+        # — inconsistent with close_out_of_band, which closes all of them.
+        if full_close:
+            for r in records:
+                if (r["kind"] == "buy" and r["mint"] == mint
+                        and r["status"] in self._OPEN):
                     # Realize against the FULL cost and close outright. The
                     # journal-vs-chain dust is written off, never left open.
-                    rec.pnl_usd = proceeds_usd - float(r["usd_size"])
+                    rec.pnl_usd = (rec.pnl_usd or 0.0) + (
+                        -float(r["usd_size"]))
                     r["status"] = "closed"
-                else:
+            rec.pnl_usd = proceeds_usd + (rec.pnl_usd or 0.0)
+        else:
+            for r in records:
+                if (r["kind"] == "buy" and r["mint"] == mint
+                        and r["status"] in self._OPEN
+                        and r["idempotency_key"] == target_key):
                     cost_part = float(r["usd_size"]) * frac
                     rec.pnl_usd = proceeds_usd - cost_part
                     if frac >= 0.999:
@@ -315,7 +339,7 @@ class ExecutionLedger:
                     else:
                         r["usd_size"] = float(r["usd_size"]) - cost_part
                         r["tokens_out"] = float(r.get("tokens_out") or 0.0) * (1.0 - frac)
-                break
+                    break
         records.append(rec.to_json())
         self._save(records)
         return rec

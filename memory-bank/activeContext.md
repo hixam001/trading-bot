@@ -1,20 +1,37 @@
 # Active Context — trading-bot
 
-**As of 2026-09-10 (§60 SHIPPED — DASHBOARD FRESHNESS: the wallet is
-chain-scanned on every /api/live/portfolio build via the existing A2
-machinery (get_token_balances + reconcile), TTL-cached at
-WALLET_SCAN_TTL_SECONDS (300s default) — positions the operator closes
-manually vanish from the book within minutes, reported in chain_excluded
-+ a UI warn line, ledger never mutated by a read, RPC outage = stale
-reuse ≤3x TTL then unchecked; system-status LLM health re-probes every
-LLM_HEALTH_TTL_SECONDS (the client's internal probe cache was forever —
-§56 item); tabs/panel titles uppercased (SIGNAL shell voice); +6 tests
-(test_dashboard_freshness.py) → 709 passing; build clean 174.58 kB JS;
-read-path only, API restart loads the routes, the trading cycle is
-untouched. OPERATOR STEP: the two known chain-excluded positions
-(STONK/Jimothy) now surface in chain_excluded — resolve via
-live_execution/scripts/repair_vanished.py (close_out_of_band with known
-proceeds). PREVIOUS: §59 —**
+**As of 2026-09-14 (§62 SHIPPED — FULL-REPO CODE-QUALITY CLEANUP: dead code
+swept (8 zero-caller DB functions from BOTH db.py/db_pg.py, dead config
+constants incl. the retired paper-era SUPABASE trio, legacy
+check_exit_conditions engine + its tests, frontend Stat/signedPct, orphaned
+pyc + 3.6 MB logs + .bak-dust artifacts), two paper-era truth bugs fixed
+(/api/admin/reset said paper_trading_only: true; start.sh disarmed banner
+said "PAPER TRADING" → now "DISARMED — NO LIVE TRADING"), and three
+prevention gates landed: (1) NEW tests/test_db_surface_parity.py — the
+db.py→db_pg.py globals().update() merge could silently run a SQLite impl
+against Postgres if a twin function ever went missing; the parity test now
+fails loudly on drift (surface 55 vs 56, only close_pool allowed extra);
+(2) competing backend/pytest.ini deleted — pytest from backend/ silently
+skipped all 300+ live_execution tests; (3) tsconfig noUnusedLocals/
+noUnusedParameters on. main.py router loads fail fast (try/except
+ImportError removed), Ollama residue purged. Verified: 736 passing
+(737 − 3 legacy tests + 2 parity tests), tsc -b clean, py_compile +
+bash -n green; engine/money paths untouched. BATCH E DEFERRED with a
+written plan in handoff §62 — db twins unification (~1,450 dup lines),
+run_cycle() decomposition, crowd.py split, proof-endpoint consumer
+confirmation, legacy /api/holdings + /api/journal routes, ruff/ESLint
+introduction (none installed!), docs consolidation. OPERATOR STEP: add
+ruff + frontend ESLint and wire into CI — machine-finds every dead-code
+class this section removed by hand. PREVIOUS: §61 —**
+
+**PREVIOUS — §61 (2026-09-13): ERROR-STATE CLOSURE: a shared ErrorPanel
+beside LoadingPanel replaces the Journal-only wrapper; the five previously-
+blank sites (dashboard Performance, regime ×2, holdings, system) now state
+what failed + "Retrying automatically" instead of silently rendering
+nothing (DESIGN.md §3.3); +3 Playwright (panel error states) → 11/11;
+repaired one stale test-1 assertion that had failed on HEAD. Frontend-only.
+PREVIOUS: §60 (dashboard freshness, 2026-09-10 — wallet chain-scan TTL) and
+§59 —**
 
 **PREVIOUS — §59 (2026-09-10): SIGNAL FRONTEND: the operator's
 `demo_2_signal.html` world is now the production design — ultra-black
@@ -35,6 +52,28 @@ before the next deploy. PREVIOUS —** As of 2026-09-09 (§58 SHIPPED — TERMIN
 Repo: `/home/hixam/Downloads/Projects/trading-bot/`.
 
 ## DONE
+### §62 Full-repo code-quality cleanup (2026-09-14)
+Operator directive: senior-engineer quality review, "aggressive but safe".
+Shipped (Batches A–D; E deferred with a written plan in handoff §62):
+dead code — 8 zero-caller DB functions deleted from BOTH db.py and db_pg.py
+(adjust_cash, trim_position_row, count_trades, count_closes_since,
+delete_trade_row, get_last_closed_at_for_mint, get_recent_closed_reasons,
+set_trade_thesis — paper-book mechanics superseded by the ExecutionLedger),
+dead config constants (assert_paper_trading_only, WS_POLL_INTERVAL_SECONDS,
+MAX_EXIT_PROCEEDS_MULT, API_HOST, SUPABASE_URL/SERVICE_ROLE_KEY/ANON_KEY,
+AUTO_BLOCK_CONSECUTIVE_STOPS), legacy check_exit_conditions + its 3 tests,
+frontend Stat/signedPct, orphaned pyc + 3.6 MB logs + .bak-dust; truth bugs
+— /api/admin/reset paper_trading_only and the start.sh "PAPER TRADING"
+banner corrected to live-only reality; prevention — NEW
+tests/test_db_surface_parity.py (db_pg.py must mirror db.py's public
+surface; closes the silent SQLite-impl-on-Postgres failure mode of the
+globals().update() merge), competing backend/pytest.ini deleted (it made
+pytest from backend/ skip all 300+ live_execution tests), tsconfig
+noUnusedLocals on; legacy — main.py fail-fast router imports, Ollama
+residue purged. Verified: 736 passing, tsc -b clean, py_compile/bash -n
+green; engine/money paths untouched. Full detail: handoff §62, decision
+log #70.
+
 ### §59 SIGNAL frontend shipped (2026-09-10)
 Operator directive: implement the chosen `demo_2_signal` world into the
 main frontend, with (1) money ledger = closed trades only, (2) scroll-

@@ -1,6 +1,27 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §62 Full-repo code-quality cleanup (2026-09-14): operator directive —
+      senior-engineer quality review of the whole codebase, "aggressive but
+      safe", then implement the safe parts. Shipped (Batches A–D): dead code
+      deleted — 8 zero-caller DB functions from BOTH db.py/db_pg.py
+      (adjust_cash, trim_position_row, count_trades, count_closes_since,
+      delete_trade_row, get_last_closed_at_for_mint,
+      get_recent_closed_reasons, set_trade_thesis — paper-book mechanics
+      superseded by the ExecutionLedger), dead config (assert_paper_trading_only,
+      WS_POLL_INTERVAL_SECONDS, MAX_EXIT_PROCEEDS_MULT, API_HOST,
+      SUPABASE_URL/SERVICE_ROLE_KEY/ANON_KEY, AUTO_BLOCK_CONSECUTIVE_STOPS),
+      legacy check_exit_conditions + its 3 tests, frontend Stat/signedPct,
+      orphaned pyc + 3.6 MB logs + .bak-dust; two paper-era truth bugs fixed
+      (/api/admin/reset paper_trading_only: true; start.sh disarmed banner
+      "PAPER TRADING" → "DISARMED — NO LIVE TRADING"); prevention — NEW
+      tests/test_db_surface_parity.py (db_pg must mirror db.py's surface;
+      closes the silent SQLite-impl-on-Postgres failure mode),
+      backend/pytest.ini deleted (silently skipped 300+ live_execution
+      tests), tsconfig noUnusedLocals on; legacy — main.py fail-fast router
+      imports, Ollama residue purged. Verified: 736 passing, tsc -b clean,
+      py_compile/bash -n green; engine/money paths untouched. Batch E
+      (structural) deferred with a written plan: handoff §62.
 - [x] §60 Dashboard freshness (2026-09-10): operator directive — scan the
       wallet on-chain so manually-closed trades leave the dashboard, fix
       audit bugs, uppercase tabs/headings. Shipped: /api/live/portfolio

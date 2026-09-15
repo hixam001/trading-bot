@@ -2,7 +2,7 @@
 
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
-execution package. Report updated 2026-09-10 from the current main branch
+execution package. Report updated 2026-09-14 from the current main branch
 (§59: SIGNAL frontend — the operator-supplied demo_2_signal world shipped as the
 production SPA design: ultra-black surface ladder with a cyan signal accent, hero
 equity band + equity-curve sparkline, five-view shell (live/holdings/journal/
@@ -12,6 +12,18 @@ click-to-copy contract addresses throughout (demo files deleted after the port);
 §60: dashboard freshness — a TTL-cached wallet chain-scan (existing A2 reconcile)
 excludes manually-sold positions from the live book (chain_excluded surfacing)
 and the LLM health verdict refreshes on a TTL; tabs/headings uppercased;
+§61: error-state closure — a shared ErrorPanel beside LoadingPanel replaces the
+Journal-only wrapper, and the five previously-blank sites (Performance, regime
+×2, holdings, system) now state what failed + automatic retry (DESIGN.md §3.3);
+§62: full-repo code-quality cleanup — eight zero-caller DB functions removed from
+BOTH db.py/db_pg.py, dead config constants retired (incl. the paper-era SUPABASE
+trio), the legacy check_exit_conditions engine deleted, two paper-era truth bugs
+fixed (/api/admin/reset paper_trading_only; start.sh disarmed banner), a NEW
+db-surface parity test pins db_pg.py to db.py's public surface (closing the
+silent SQLite-impl-on-Postgres failure mode of the globals().update() merge),
+the competing backend/pytest.ini removed (it silently skipped all live_execution
+tests when run from backend/), TS noUnusedLocals enabled, main.py router loads
+fail fast, Ollama residue purged;
 §58: terminal dashboard redesign — the SPA re-skinned with the repo's impeccable design
 skill as a terminal: Inter + JetBrains Mono design system, tabbed shell, expandable feed,
 anchored-book "track equity" panel; §57: loss-shape & refusal-layer remediation — fast 15s
@@ -21,7 +33,7 @@ DoS break clamping, CSWSH origin/concurrency caps, auth brute-force rate-limitin
 redirection, and security headers; §52: single-book restructure — paper retired, live retains all features;
 §51: free social stack — Brave→SearXNG chain + staged social read; §45: equity-proportional live ticket;
 §44: staged gate; §42/§42b: deployable restructure). Status: **live** (real market data, REAL funds ARMED;
-Supabase Postgres persistence). Tests: **709 passing (backend + live_execution) + 9 Playwright E2E** —
+Supabase Postgres persistence). Tests: **736 passing (backend + live_execution) + 11 Playwright E2E** —
 fully green (the flag-state canary pins the committed ARMED state — handoff §33).
 
 
@@ -1866,5 +1878,88 @@ system-status reports `paper_trading_only: false` + `main_llm_provider: deepseek
   on-chain movement.
 - LLM health-probe TTL (currently cached forever after the first probe) and the
   `/api/*.json` vs `/api/*` route-naming unification.
+
+---
+
+## 33. Full-Repo Code-Quality Cleanup: Dead Code, Truth Bugs, Drift Guards (2026-09-14, handoff §62)
+
+Operator directive: a senior-engineer code-quality and maintainability review of the
+entire codebase — dead code, duplication, unused UI, complexity, legacy, redundant
+queries, abandoned files, tech debt — "aggressive but safe", then implement the safe
+parts. Method: AST inventory of all 149 Python files (31,560 LOC backend, 2,232 LOC
+frontend `src/`), cross-reference of every module-level def and every `config.py`
+constant against all code (backend + scripts + shell + compose + frontend), route-
+consumer tracing (route file → tests/frontend/docs), DB import-surface diffing,
+pytest collection, and orphaned-bytecode detection. Findings were ranked P1–P14;
+Batches A–D executed same day; Batch E (structural refactors) deferred with a written
+plan.
+
+### 33.1 Dead code removed (zero references verified before AND after deletion)
+1. **Eight repository functions deleted from BOTH `api/db.py` and `api/db_pg.py`**
+   (~175 lines): `adjust_cash`, `trim_position_row`, `count_trades`,
+   `count_closes_since`, `delete_trade_row`, `get_last_closed_at_for_mint`,
+   `get_recent_closed_reasons`, `set_trade_thesis` — paper-book / trades-mirror
+   mechanics superseded by the ExecutionLedger (§52); `adjust_cash` mutated
+   `portfolio_state.cash_usd`, which is no longer the cash authority (chain USDC is).
+2. **Dead config**: `assert_paper_trading_only()` (docstring already said RETIRED),
+   `WS_POLL_INTERVAL_SECONDS`, `MAX_EXIT_PROCEEDS_MULT`, `API_HOST`, the paper-era
+   `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_ANON_KEY` trio (only
+   `SUPABASE_DB_URL` is read), and legacy alias `AUTO_BLOCK_CONSECUTIVE_STOPS` —
+   with their `.env.example` and `docs/02` mentions.
+3. **Legacy exit engine** `rule_engine/exits.py::check_exit_conditions` (superseded
+   by `evaluate_exits`/`sell_risk_gate`) + its 3 money-math tests; unused
+   `ExitDecision` import in `routes/proof.py`; frontend dead exports `Stat`
+   (`ui.tsx`) and `signedPct` (`format.ts`).
+4. **Runtime artifacts**: orphaned bytecode of deleted modules
+   (`paper_trading_engine`, the renamed `test_omo_*` tests), 3.6 MB of logs
+   (`live_cycle_restart*.log`, retired `ollama.log`), `.pytest_cache` ×2, and
+   `executions.json.bak-dust` (§37 one-time repair backup; the repair shipped).
+   Live state (`break_state.json`, `executions.json`, `.run/`) untouched.
+
+### 33.2 Two truth bugs fixed (paper-era language contradicting live-only reality)
+- `/api/admin/reset` reported `paper_trading_only: true` while the system is live;
+  now reports `false` (test expectations updated).
+- `start.sh`'s disarmed banner printed "PAPER TRADING — NO REAL FUNDS"; now prints
+  "DISARMED — NO LIVE TRADING" (nothing trades while disarmed).
+
+### 33.3 Prevention (closing the repo's worst silent-failure mode)
+- **NEW `tests/test_db_surface_parity.py`**: the twins merge via
+  `globals().update()` at import, so a function missing from `db_pg.py` silently
+  ran the SQLite implementation against Postgres. The parity test now fails loudly
+  on any surface drift (Postgres-only additions pinned to an explicit allow-list:
+  `close_pool`). Surface at time of writing: 55 vs 56 public functions, clean.
+- **Competing `backend/pytest.ini` deleted**: running pytest from `backend/`
+  silently skipped all 300+ `live_execution` tests; the root `pytest.ini` covers
+  both suites.
+- **`tsconfig.json`: `noUnusedLocals`/`noUnusedParameters` → true** (passes clean).
+  ruff/ESLint remain absent from the repo — flagged as the immediate follow-up.
+
+### 33.4 Legacy retirement
+- `api/main.py`: the four `try/except ImportError` router loads (split-repo era)
+  became plain imports — they only ever swallowed REAL ImportErrors, i.e. a syntax
+  error in a route module silently deleted its endpoints instead of failing startup.
+- **Ollama residue purged**: `knowledge_base/loader.py` docstrings,
+  `models.py` `narration_source` stale `"ollama:<model>"` comment, the one-time
+  migration `rm` blocks in `start.sh`/`stop.sh`, stale `.run/ollama*` markers.
+
+### 33.5 Verification
+**736 backend tests passing** (737 − 3 removed legacy tests + 2 new parity tests),
+`tsc -b` clean under the new strict flags, `py_compile` on every edited file,
+`bash -n` on both scripts. Engine/money paths untouched except the zero-caller
+function deletions.
+
+### 33.6 Deferred (Batch E — each its own isolated, test-gated change)
+- `db.py`/`db_pg.py` unification behind a small SQL-dialect builder (~1,450
+  duplicated lines; gated on the new parity test).
+- `run_cycle()` (316 lines) stage decomposition; `crowd.py` (887 lines)
+  auth/transport/feed split.
+- The four zero-consumer proof endpoints (`/api/events.json`, `/exits.json`,
+  `/refusals.json`, `/theses.json`) — a documented external audit surface; confirm
+  no external monitor consumes them, or add smoke tests first.
+- Legacy `/api/holdings` + `/api/journal` routes (rewrite their tests against
+  `/api/live/*`); paid-scraper trim to Scrapling + failover; `scripts/`
+  consolidation; docs consolidation (222 MD files; handoff/memory-bank/07
+  triplicate the session narrative); redundant-query fixes (double
+  `_profit_factor`, 3× chain-cash reads, WS re-fetch).
 
 

@@ -30,6 +30,32 @@ ADMIN_TOKEN_HEADER = "X-Admin-Token"
 _FAILED_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
 _MAX_FAILED_ATTEMPTS = 5
 _LOCKOUT_WINDOW_SECONDS = 60.0
+# A6 (repo audit): cap the tracked hosts — a proxied flood of DISTINCT IPs
+# (every request after the §55 proxy rule routes here) would otherwise grow
+# the map without bound. Old single-host pruning only ran when THAT host
+# called again, so abandoned attacker hosts were never cleaned. Beyond the
+# cap the whole map is pruned once (expired entries of every host go).
+_MAX_TRACKED_HOSTS = 10_000
+
+
+def _prune_failures(client_ip: str, now: float) -> list[float]:
+    """Drop expired attempts for ONE host; bound the whole map (A6).
+
+    Returns the host's still-valid attempts so the caller keeps its
+    lockout check without re-reading the map.
+    """
+    attempts = [t for t in _FAILED_ATTEMPTS[client_ip]
+                if now - t < _LOCKOUT_WINDOW_SECONDS]
+    _FAILED_ATTEMPTS[client_ip] = attempts
+    if len(_FAILED_ATTEMPTS) > _MAX_TRACKED_HOSTS:
+        for ip in list(_FAILED_ATTEMPTS):
+            fresh = [t for t in _FAILED_ATTEMPTS[ip]
+                     if now - t < _LOCKOUT_WINDOW_SECONDS]
+            if fresh:
+                _FAILED_ATTEMPTS[ip] = fresh
+            else:
+                del _FAILED_ATTEMPTS[ip]
+    return attempts
 
 
 def require_admin_token(request: Request) -> None:
@@ -40,9 +66,8 @@ def require_admin_token(request: Request) -> None:
     client_ip = getattr(getattr(request, "client", None), "host", "unknown")
     now = time.time()
 
-    # Prune expired attempts outside the sliding window
-    attempts = [t for t in _FAILED_ATTEMPTS[client_ip] if now - t < _LOCKOUT_WINDOW_SECONDS]
-    _FAILED_ATTEMPTS[client_ip] = attempts
+    # Prune expired attempts outside the sliding window (A6: map stays bounded)
+    attempts = _prune_failures(client_ip, now)
 
     if len(attempts) >= _MAX_FAILED_ATTEMPTS:
         raise HTTPException(

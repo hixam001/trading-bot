@@ -41,26 +41,6 @@ export function Panel({
   )
 }
 
-/** Stat card — label-over-value on a nested surface. */
-export function Stat({
-  label,
-  value,
-  valueClass = '',
-  title,
-}: {
-  label: string
-  value: ReactNode
-  valueClass?: string
-  title?: string
-}) {
-  return (
-    <div className="stat-card" title={title}>
-      <div className="stat-label">{label}</div>
-      <div className={`stat-value ${valueClass}`}>{value}</div>
-    </div>
-  )
-}
-
 /** Semantic badge. Meaning is never carried by color alone — pass a word. */
 export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
   return <span className={`badge ${badgeTone[tone]}`}>{children}</span>

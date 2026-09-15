@@ -276,7 +276,7 @@ class FeedEvent:
     failed_rule_ids: list[str] = field(default_factory=list)
     regime_ok: bool = False
     grounding_flags: list[str] = field(default_factory=list)   # ungrounded-term flags (D2) — flagged, never dropped
-    narration_source: str = ""                 # "ollama:<model>" | "template" | ""
+    narration_source: str = ""                 # provider ("deepseek"/"groq") | "template" | ""
     led_to_trade_id: Optional[str] = None
     model_version: Optional[str] = None
     prompt_version: Optional[str] = None

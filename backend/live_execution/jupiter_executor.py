@@ -2,13 +2,13 @@
 live_execution/jupiter_executor.py — REAL-MONEY swap execution via Jupiter.
 
 ⚠ HONEST COVERAGE STATEMENT ⚠
-This module has ZERO live-network test coverage. Nothing in this package has
-ever been executed against Solana mainnet RPC or Jupiter's swap API; the
-offline tests cover refusal logic, request shapes, and math via mocks only.
-BEFORE THIS EVER RUNS AGAINST MAINNET, the full flow (propose → approve →
-execute → on-chain confirm) MUST first be exercised on Solana DEVNET with a
-throwaway keypair. That is a hard requirement, not a suggestion — real funds
-are at stake.
+This module has NO automated live-network test coverage. The offline tests
+cover refusal logic, request shapes, and math via mocks only; the devnet
+drill (run_live_cycle.py --drill) and the operator's supervised devnet
+flow exercise sign/send/confirm before mainnet. Per handoff §31 the repo
+has been operator-armed for mainnet since 2026-08-28 — any change here MUST
+be re-drilled on devnet with a throwaway keypair BEFORE it touches mainnet
+funds. That remains a hard requirement, not a suggestion.
 
 Endpoint provenance:
   * quote — imported from backend/config.py (JUPITER_QUOTE_URL), the same
@@ -59,6 +59,7 @@ from config import USDC_MINT as _BACKEND_USDC_MINT  # noqa: E402
 
 from live_execution import config  # noqa: E402
 from live_execution import kill_switch  # noqa: E402
+from live_execution import solana  # noqa: E402
 from live_execution import wallet  # noqa: E402
 from live_execution.confirmation_queue import (  # noqa: E402
     ConfirmationError,
@@ -323,30 +324,14 @@ def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
 
 
 
-async def _rpc(method: str, params: list) -> dict:
-    return await _post_json(
-        config.RPC_URL,
-        {"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-    )
-
-
-async def _confirm_signature(signature: str) -> str:
-    deadline = asyncio.get_event_loop().time() + config.CONFIRM_TIMEOUT_SECONDS
-    while asyncio.get_event_loop().time() < deadline:
-        res = await _rpc(
-            "getSignatureStatuses",
-            [[signature], {"searchTransactionHistory": False}],
-        )
-        val = (res.get("result") or {}).get("value") or []
-        if val and val[0]:
-            status = val[0].get("confirmationStatus")
-            if status in ("confirmed", "finalized"):
-                err = val[0].get("err")
-                if err:
-                    raise ExecutionError(f"transaction FAILED on-chain: {err}")
-                return status
-        await asyncio.sleep(2.0)
-    raise ExecutionError("confirmation timed out")
+# ---------------------------------------------------------------------------
+# A5 (repo audit): the old hand-rolled single-endpoint `_rpc` send +
+# `_confirm_signature` poll (maxRetries=0, one RPC_URL, no failover) are
+# GONE. Broadcast + confirm now go through the SAME helpers the automated
+# executor uses — solana.send_raw_transaction (rotating RPC_URLS,
+# skipPreflight stays ON, maxRetries=3, preflight commitment=confirmed) and
+# solana.confirm_signature — so both money paths carry ONE broadcast policy.
+# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -469,14 +454,18 @@ async def execute_confirmed_trade(
         quote_result["price_usd"], signature,
     )
 
-    await _rpc(
-        "sendTransaction",
-        [
-            base64.b64encode(raw_signed).decode(),
-            {"encoding": "base64", "skipPreflight": False, "maxRetries": 0},
-        ],
-    )
-    status = await _confirm_signature(signature)
+    # A5: broadcast + confirm via the SAME multi-RPC failover helpers the
+    # automated executor uses. The old single-endpoint send here carried
+    # maxRetries=0 and no failover — two different broadcast policies for
+    # the same money operation.
+    sent = await solana.send_raw_transaction(raw_signed)
+    if not sent:
+        raise ExecutionError("every rpc refused the transaction")
+    conf = await solana.confirm_signature(sent)
+    if not conf["confirmed"]:
+        raise ExecutionError(
+            f"not confirmed before timeout: {conf['err'] or 'unknown'}")
+    signature = sent
 
     record = ledger.record_buy(
         idempotency_key=idempotency_key,
@@ -485,7 +474,7 @@ async def execute_confirmed_trade(
         tokens_out=quote_result["tokens_out"],
         price_usd=quote_result["price_usd"],
         signature=signature,
-        status="confirmed" if status == "finalized" else status,
+        status="confirmed",
     )
 
     return {

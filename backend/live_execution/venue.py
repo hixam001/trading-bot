@@ -141,3 +141,56 @@ async def fetch_fill_venue(signature: str) -> dict:
     if venue["label"]:
         log.info("venue: %s -> %s", signature[:16], venue["label"])
     return venue
+
+
+# ---------------------------------------------------------------------------
+# A4 (repo audit): fill-amount attribution — the ACTUAL amounts a fill moved,
+# read straight off the confirmed transaction's pre/post token balances, so
+# the ledger can record real slippage instead of the pre-trade quote
+# snapshot. Pure parser, same contract as fill_venue_from_tx: never raises;
+# an unparseable tx yields None (the caller falls back to the quote snapshot,
+# never to a fabricated number).
+# ---------------------------------------------------------------------------
+
+def _sum_token_balances(entries) -> Optional[dict[str, float]]:
+    """Per-mint sum over a pre/postTokenBalances list (None = malformed)."""
+    if not isinstance(entries, list):
+        return None
+    sums: dict[str, float] = {}
+    for e in entries:
+        if not isinstance(e, dict):
+            continue
+        mint = e.get("mint")
+        amt = (e.get("uiTokenAmount") or {}).get("uiAmount")
+        if not mint or amt is None:
+            continue
+        try:
+            sums[mint] = sums.get(mint, 0.0) + float(amt)
+        except (TypeError, ValueError):
+            continue
+    return sums
+
+
+def token_deltas_from_tx(tx: Optional[dict]) -> Optional[dict[str, float]]:
+    """Net per-mint token-balance change across the transaction.
+
+    Sums meta.preTokenBalances / meta.postTokenBalances per mint (a
+    jsonParsed getTransaction) and returns {mint: post - pre} (zero deltas
+    dropped), or None when the tx or its meta is unparseable — unknown is
+    honestly unknown, never a guessed delta.
+    """
+    if not isinstance(tx, dict):
+        return None
+    meta = tx.get("meta")
+    if not isinstance(meta, dict):
+        return None
+    pre = _sum_token_balances(meta.get("preTokenBalances"))
+    post = _sum_token_balances(meta.get("postTokenBalances"))
+    if pre is None or post is None:
+        return None
+    out: dict[str, float] = {}
+    for mint in set(pre) | set(post):
+        delta = post.get(mint, 0.0) - pre.get(mint, 0.0)
+        if delta != 0.0:
+            out[mint] = delta
+    return out

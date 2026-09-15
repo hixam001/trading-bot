@@ -55,8 +55,6 @@ BLOCKLIST_STATE_FILE: str = os.getenv(
 # losses (realized PnL < 0, ANY exit rule — "sells for loss") is blocked
 # until a human clears it. Hardcoded per the risk-number philosophy.
 AUTO_BLOCK_CONSECUTIVE_LOSSES: int = 2
-# Legacy alias for the pre-§49 name (rule-ID-based "stop-outs only").
-AUTO_BLOCK_CONSECUTIVE_STOPS: int = AUTO_BLOCK_CONSECUTIVE_LOSSES
 # §49 re-entry cooldown: a mint whose LAST recorded close is a loss younger
 # than this many hours is filtered at read time on BOTH books. The 24h
 # window IS the punishment for one loss; the block is for a pattern.
@@ -113,13 +111,10 @@ DB_PATH: Path = BASE_DIR / os.getenv("DB_PATH", "trading_bot.db")
 
 # ---------------------------------------------------------------------------
 # Supabase (Postgres) — optional remote DB backend. Empty USE_SUPABASE_DB
-# keeps the local SQLite book. The service-role key bypasses RLS; it must
-# live only in .env on the server, never in the repo or frontend.
+# keeps the local SQLite book. Only the pooler DSN is read; it must live
+# only in .env on the server, never in the repo or frontend.
 # ---------------------------------------------------------------------------
 USE_SUPABASE_DB: bool = os.getenv("USE_SUPABASE_DB", "") == "1"
-SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-SUPABASE_SERVICE_ROLE_KEY: str = os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
-SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "")
 SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "")
 KNOWLEDGE_BASE_DIR: Path = BASE_DIR / "knowledge_base"
 STATIC_KNOWLEDGE_FILE: Path = KNOWLEDGE_BASE_DIR / "static_knowledge.md"
@@ -300,11 +295,6 @@ EXIT_SCAN_INTERVAL_SECONDS: float = 15.0
 # do NOT ratchet high-water. Upward-only on purpose — a genuine collapse must
 # still be able to exit. Real prices do not 50x in one 15s scan; bad quotes do.
 EXIT_PRICE_JUMP_MAX: float = 50.0
-# Backstop: a single close/trim crediting more than this multiple of the
-# position's cost basis is refused before any state write (the cash can never
-# be corrupted even if a bad price reaches the exit math). 200x on one
-# position is already a once-in-a-blue-moon gain; beyond it is a data bug.
-MAX_EXIT_PROCEEDS_MULT: float = 200.0
 
 # ---------------------------------------------------------------------------
 # Rule engine thresholds (§2.3). All in USD / percent as labelled.
@@ -447,7 +437,6 @@ PROMOTION_MAX_DRAWDOWN_PCT: float = 20.0
 # ---------------------------------------------------------------------------
 # API server
 # ---------------------------------------------------------------------------
-API_HOST: str = os.getenv("API_HOST", "127.0.0.1")
 API_PORT: int = int(os.getenv("API_PORT", "8000"))
 # The backend SERVES the built dashboard itself, so the API's own origins
 # (loopback host variants on API_PORT) are same-origin deployments and must
@@ -465,29 +454,11 @@ FRONTEND_ORIGIN: str = os.getenv(
 # are dropped; the local same-origin + dev origins remain the fail-closed
 # default.
 FRONTEND_ORIGINS: list = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.strip()]
-WS_POLL_INTERVAL_SECONDS: float = 2.0
 # Live book public access (SEC-02): when False (default), live portfolio and
 # executions endpoints require the X-Admin-Token operator header or loopback.
 LIVE_BOOK_PUBLIC: bool = os.getenv("LIVE_BOOK_PUBLIC", "false").strip().lower() == "true"
 # HTTPS enforcement: when True, non-loopback HTTP requests are redirected to HTTPS.
 FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "false").strip().lower() == "true"
-
-
-
-
-def assert_paper_trading_only() -> None:
-    """
-    §52: RETIRED with the paper book — no caller remains (the paper engine
-    that asserted it at runtime was deleted). Kept only because external
-    scripts may import it; live trading NEVER calls this: live arming is
-    LIVE_TRADING_ENABLED in live_execution/config.py, human-edit-only.
-    """
-    if PAPER_TRADING_ONLY is not True:
-        raise RuntimeError(
-            "PAPER_TRADING_ONLY is not True — refusing to touch trade state. "
-            "This flag is hardcoded in config.py and must only be changed by "
-            "a human, manually."
-        )
 
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0

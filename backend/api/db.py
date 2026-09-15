@@ -550,35 +550,6 @@ async def close_trade_row(
     return max(cursor.rowcount, 0)
 
 
-async def trim_position_row(
-    conn: aiosqlite.Connection,
-    trade_id: str,
-    qty_out: float,
-    size_out_usd: float,
-) -> int:
-    """
-    ATOMIC PARTIAL CLOSE (E8/E9 — reference-style TP tranches). Reduces an
-    open position by the given fraction's quantity/cost basis and bumps the
-    tranche counter, only while the row is still open and would keep a
-    positive remainder. rowcount 0 = already closed or degenerate trim;
-    caller must NOT touch cash unless it is 1.
-    """
-    cursor = await conn.execute(
-        """
-        UPDATE trades
-        SET quantity = quantity - ?,
-            position_size_usd = position_size_usd - ?,
-            tranches_taken = tranches_taken + 1
-        WHERE trade_id = ? AND is_open = 1
-          AND quantity - ? > 0
-          AND position_size_usd - ? >= 0
-        """,
-        (qty_out, size_out_usd, trade_id, qty_out, size_out_usd),
-    )
-    await conn.commit()
-    return max(cursor.rowcount, 0)
-
-
 async def update_high_water(
     conn: aiosqlite.Connection,
     trade_id: str,
@@ -594,50 +565,6 @@ async def update_high_water(
         (high_water_usd, trade_id, high_water_usd),
     )
     await conn.commit()
-
-
-async def get_last_closed_at_for_mint(
-    conn: aiosqlite.Connection, mint_address: str
-) -> Optional[str]:
-    """Timestamp of this mint's most recent CLOSED position (sell cooldown)."""
-    async with conn.execute(
-        """
-        SELECT closed_at FROM trades
-        WHERE mint_address = ? AND closed_at IS NOT NULL
-        ORDER BY closed_at DESC LIMIT 1
-        """,
-        (mint_address,),
-    ) as cur:
-        row = await cur.fetchone()
-    return row["closed_at"] if row else None
-
-
-async def count_closes_since(
-    conn: aiosqlite.Connection, since_iso: str
-) -> int:
-    """Closed positions since a timestamp (rolling 24h exit ceiling)."""
-    async with conn.execute(
-        "SELECT COUNT(*) AS n FROM trades WHERE closed_at >= ?",
-        (since_iso,),
-    ) as cur:
-        row = await cur.fetchone()
-    return int(row["n"]) if row else 0
-
-
-async def get_recent_closed_reasons(
-    conn: aiosqlite.Connection, mint_address: str, limit: int = 2
-) -> list[str]:
-    """Newest-first exit reasons for a mint (auto-block consecutive check)."""
-    async with conn.execute(
-        """
-        SELECT exit_reason FROM trades
-        WHERE mint_address = ? AND closed_at IS NOT NULL
-        ORDER BY closed_at DESC LIMIT ?
-        """,
-        (mint_address, limit),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [r["exit_reason"] for r in rows if r["exit_reason"]]
 
 
 async def deployed_today(
@@ -916,11 +843,6 @@ async def update_reflection(conn: aiosqlite.Connection, trade_id: str, text: str
     await conn.commit()
 
 
-async def count_trades(conn: aiosqlite.Connection) -> int:
-    cursor = await conn.execute("SELECT COUNT(*) FROM trades")
-    return int((await cursor.fetchone())[0])
-
-
 # ===========================================================================
 # Portfolio cash — guarded adjustments (cash can never go negative)
 # ===========================================================================
@@ -931,21 +853,6 @@ async def get_cash_balance(conn: aiosqlite.Connection) -> float:
     if row is None:
         raise RuntimeError("Portfolio state not initialised — call init_db() first.")
     return float(row["cash_usd"])
-
-
-async def adjust_cash(conn: aiosqlite.Connection, delta: float) -> int:
-    """
-    Atomic, guarded cash adjustment. The WHERE clause makes the write a
-    no-op if it would drive cash negative (rowcount 0 = refused). Returns
-    affected row count.
-    """
-    cursor = await conn.execute(
-        "UPDATE portfolio_state SET cash_usd = cash_usd + ?, updated_at = ? "
-        "WHERE id = 1 AND cash_usd + ? >= 0",
-        (delta, _now_iso(), delta),
-    )
-    await conn.commit()
-    return max(cursor.rowcount, 0)
 
 
 async def get_first_trade_date(conn: aiosqlite.Connection) -> Optional[str]:
@@ -1258,26 +1165,6 @@ async def get_verify_commits(
         (limit,),
     )
     return [dict(r) for r in await cursor.fetchall()]
-
-
-async def set_trade_thesis(
-    conn: aiosqlite.Connection, trade_id: str, text: str
-) -> None:
-    """Attach the full thesis to a freshly opened position (open only)."""
-    await conn.execute(
-        "UPDATE trades SET thesis = ? WHERE trade_id = ? AND is_open = 1",
-        (text, trade_id),
-    )
-    await conn.commit()
-
-
-async def delete_trade_row(conn: aiosqlite.Connection, trade_id: str) -> int:
-    """Rollback helper: remove an unfunded open position (cash refused)."""
-    cursor = await conn.execute(
-        "DELETE FROM trades WHERE trade_id = ? AND is_open = 1", (trade_id,)
-    )
-    await conn.commit()
-    return max(cursor.rowcount, 0)
 
 
 # ===========================================================================

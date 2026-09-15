@@ -2,7 +2,7 @@
 fastapi>=0.115,<1
 uvicorn[standard]>=0.32
 
-# Async HTTP client (Ollama + external data APIs)
+# Async HTTP client (external data APIs; the retired Ollama path is gone)
 httpx>=0.28
 
 # Async SQLite (WAL mode) — default local DB backend

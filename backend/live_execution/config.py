@@ -94,7 +94,9 @@ SLIPPAGE_BPS: int = 50             # matches the paper-side quote param
 # consumed after expiry are refused at consume-time too.
 CONFIRM_EXPIRY_SECONDS: float = 300.0
 
-# On-chain confirmation polling
+# On-chain confirmation polling. A5 (repo audit): jupiter_executor now uses
+# solana.confirm_signature for BOTH money paths; this constant configures that
+# shared poller's timeout.
 CONFIRM_TIMEOUT_SECONDS: float = 60.0
 
 

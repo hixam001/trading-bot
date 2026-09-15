@@ -274,6 +274,8 @@ class _StubPayer:
 
 
 def _wire_fake_network(monkeypatch, calls: list[dict]):
+    from live_execution import solana as le_solana
+
     async def fake_get(url, params):
         calls.append({"verb": "get", "url": url, "params": params})
         if url.endswith("/quote"):
@@ -286,16 +288,24 @@ def _wire_fake_network(monkeypatch, calls: list[dict]):
         if url.endswith("/swap"):
             return {"swapTransaction":
                     base64.b64encode(b"unsigned-tx").decode()}
-        method = payload.get("method")
-        if method == "sendTransaction":
-            return {"result": "sent"}
-        if method == "getSignatureStatuses":
-            return {"result": {"value": [
-                {"confirmationStatus": "finalized", "err": None}]}}
-        raise AssertionError(f"unexpected rpc call {method}")
+        raise AssertionError(
+            f"unexpected rpc call {payload.get('method')}")
+
+    # A5: send/confirm now go through the unified solana helpers (the SAME
+    # broadcast policy the automated executor uses) — fake those, and make
+    # any stray hand-rolled RPC a loud failure.
+    async def fake_send(raw_signed, endpoints=None):
+        calls.append({"verb": "send", "raw": raw_signed})
+        return "SIG123"
+
+    async def fake_confirm(signature, timeout_s=None, endpoints=None):
+        calls.append({"verb": "confirm", "signature": signature})
+        return {"confirmed": True, "slot": 1, "err": None}
 
     monkeypatch.setattr(je, "_get_json", fake_get)
     monkeypatch.setattr(je, "_post_json", fake_post)
+    monkeypatch.setattr(le_solana, "send_raw_transaction", fake_send)
+    monkeypatch.setattr(le_solana, "confirm_signature", fake_confirm)
 
 
 def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
@@ -323,8 +333,12 @@ def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
     assert rec is not None and rec.signature == "SIG123"
     assert ledger.total_open_exposure() == pytest.approx(10.0)
 
-    swap_calls = [c for c in calls if c["url"].endswith("/swap")]
+    swap_calls = [c for c in calls if c.get("url", "").endswith("/swap")]
     assert len(swap_calls) == 1
+    # A5: the send + confirm MUST have gone through the unified solana
+    # helpers (one broadcast policy for both money paths).
+    assert any(c["verb"] == "send" for c in calls)
+    assert any(c["verb"] == "confirm" for c in calls)
 
     # Retry with the SAME key returns the prior outcome — never re-sends.
     calls.clear()

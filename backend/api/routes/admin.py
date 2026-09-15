@@ -141,6 +141,9 @@ async def admin_reset(
         "started_at": started_at,
         "completed_at": _now_iso(),
         "mode": mode,
-        "paper_trading_only": config.PAPER_TRADING_ONLY,
+        # §52: the paper book is retired — every other surface reports False
+        # (this response was the last hold-out still echoing the hardcoded
+        # paper-era flag, contradicting /api/stats and /api/system-status).
+        "paper_trading_only": False,
         **result,
     }

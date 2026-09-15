@@ -294,7 +294,7 @@ async def test_admin_reset_book_returns_200():
     assert result["reset"] is True
     assert result["initial_cash_usd"] == 1000.0
     assert result["total_deleted"] == 8
-    assert result["paper_trading_only"] is True
+    assert result["paper_trading_only"] is False  # §52: paper book retired
 
 
 @pytest.mark.asyncio
@@ -325,7 +325,7 @@ async def test_admin_prune_only_returns_200():
     assert result["prune_only"] is True
     assert result["feed_events_deleted"] == 42
     assert result["market_regime_deleted"] == 17
-    assert result["paper_trading_only"] is True
+    assert result["paper_trading_only"] is False  # §52: paper book retired
 
 
 # ---------------------------------------------------------------------------
@@ -442,5 +442,5 @@ async def test_admin_wipe_paper_returns_200():
     assert result["scope"] == "wipe_paper"
     assert result["reset"] is True
     assert result["total_deleted"] == 9
-    assert result["paper_trading_only"] is True
+    assert result["paper_trading_only"] is False  # §52: paper book retired
     mock_db.wipe_paper_book.assert_awaited_once()

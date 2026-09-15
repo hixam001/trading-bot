@@ -148,12 +148,16 @@ function LoadingPanel({ title, rows }: { title: string; rows: number }) {
   )
 }
 
-/** Journal error panel (DESIGN.md §3.3). */
-function JournalErrorPanel({ message }: { message: string }) {
+/**
+ * Error panel (DESIGN.md §3.3) — the shared twin of LoadingPanel: what failed
+ * + automatic retry inside a titled panel. Only reached when a feed has never
+ * succeeded; later-poll failures keep panels populated (§3.4).
+ */
+function ErrorPanel({ title, message }: { title: string; message: string }) {
   return (
-    <div className="panel">
+    <div className="panel" data-testid="error-panel">
       <div className="panel-header">
-        <h2 className="panel-title">journal · live order history</h2>
+        <h2 className="panel-title">{title}</h2>
       </div>
       <ErrorState message={message} />
     </div>
@@ -255,11 +259,15 @@ export default function App() {
                   <LoadingPanel title="Performance" rows={2} />
                 ) : stats.data ? (
                   <Performance stats={stats.data} />
+                ) : stats.error ? (
+                  <ErrorPanel title="Performance" message={stats.error} />
                 ) : null}
                 {regimes.loading ? (
                   <LoadingPanel title="Market regime" rows={4} />
                 ) : regimes.data ? (
                   <MarketRegimePanel regimes={regimes.data.regimes} />
+                ) : regimes.error ? (
+                  <ErrorPanel title="Market regime" message={regimes.error} />
                 ) : null}
               </div>
             </div>
@@ -271,6 +279,8 @@ export default function App() {
                 <LoadingPanel title="Holdings · live positions" rows={4} />
               ) : liveBook.data ? (
                 <Holdings book={liveBook.data} />
+              ) : liveBook.error ? (
+                <ErrorPanel title="Holdings · live positions" message={liveBook.error} />
               ) : null}
             </div>
           )}
@@ -282,7 +292,7 @@ export default function App() {
               ) : journal.data ? (
                 <Journal data={journal.data} />
               ) : journal.error ? (
-                <JournalErrorPanel message={journal.error} />
+                <ErrorPanel title="Journal · live order history" message={journal.error} />
               ) : null}
             </div>
           )}
@@ -293,6 +303,8 @@ export default function App() {
                 <LoadingPanel title="Market regime" rows={4} />
               ) : regimes.data ? (
                 <MarketRegimePanel regimes={regimes.data.regimes} tall />
+              ) : regimes.error ? (
+                <ErrorPanel title="Market regime" message={regimes.error} />
               ) : null}
             </div>
           )}
@@ -303,6 +315,8 @@ export default function App() {
                 <LoadingPanel title="System status" rows={4} />
               ) : status.data ? (
                 <SystemStatus status={status.data} />
+              ) : status.error ? (
+                <ErrorPanel title="System status" message={status.error} />
               ) : null}
             </div>
           )}

@@ -55,6 +55,38 @@ def test_full_close_realizes_pnl_on_full_cost(tmp_path):
     assert rec.pnl_usd == pytest.approx(2.0)
 
 
+# --- A2 (repo audit): full_close closes EVERY open buy of the mint -------------
+# One-position-per-name is enforced by the gate, but a mint can accumulate
+# several open buys through operator repairs / backfills; a full exit that
+# closed only the OLDEST left the rest as phantom OPEN positions. A full
+# close must realize against the summed cost of all of them — same contract
+# as close_out_of_band.
+
+def test_full_close_closes_all_open_buys_of_the_mint(tmp_path):
+    ledger = ExecutionLedger(tmp_path / "exec.json", now_fn=Clock())
+    ledger.record_buy("b1", "MINT", 10.0, 5.0, 2.0, "sig", status="confirmed")
+    ledger.record_buy("b2", "MINT", 30.0, 10.0, 3.0, "sig", status="confirmed")
+    rec = ledger.reduce_position("MINT", 1.0, 35.0, full_close=True,
+                                 rule_id="exit_stop_loss")
+    assert _open_buys(ledger, "MINT") == []          # NOTHING left open
+    assert rec.pnl_usd == pytest.approx(35.0 - 40.0)  # vs summed cost
+    assert rec.rule_id == "exit_stop_loss"
+
+
+def test_partial_trim_still_targets_only_oldest_buy(tmp_path):
+    ledger = ExecutionLedger(tmp_path / "exec.json", now_fn=Clock())
+    ledger.record_buy("b1", "MINT", 10.0, 5.0, 2.0, "sig", status="confirmed")
+    ledger.record_buy("b2", "MINT", 30.0, 10.0, 3.0, "sig", status="confirmed")
+    ledger.reduce_position("MINT", 0.5, 8.0)          # NOT full_close
+    opens = _open_buys(ledger, "MINT")
+    assert len(opens) == 2                            # both still open
+    oldest = next(r for r in opens if r["idempotency_key"] == "b1")
+    newest = next(r for r in opens if r["idempotency_key"] == "b2")
+    assert oldest["usd_size"] == pytest.approx(5.0)   # FIFO trim on b1 only
+    assert oldest["tokens_out"] == pytest.approx(2.5)
+    assert newest["usd_size"] == pytest.approx(30.0)  # b2 untouched
+
+
 # --- out-of-band close (2026-08-29, the vanished-position repair) --------------
 # The operator sells a held coin from their own wallet; reconcile flags it
 # chain_excluded + "operator review needed" every cycle but never mutates the

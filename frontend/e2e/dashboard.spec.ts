@@ -31,10 +31,15 @@ test.describe('dashboard', () => {
     await expect(page.getByText('trading-bot', { exact: false }).first()).toBeVisible()
     await expect(page.getByText('LIVE · real money')).toBeVisible()
 
-    // The four panels resolve to data or an explicit empty state — never blank.
+    // The panels resolve to data or an explicit empty state — never blank.
+    // Live view: feed + regime section (§59 five-tab shell). System status
+    // lives on its own view now, so it is asserted after the tab switch —
+    // the same panel the tab-walk test pins.
     await expect(page.getByTestId('live-feed')).toBeVisible({ timeout: 15_000 })
-    await expect(page.getByTestId('system-status')).toBeVisible({ timeout: 15_000 })
     await expect(page.getByTestId('market-regime')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('tab-system').click()
+    await expect(page.getByTestId('system-status')).toBeVisible({ timeout: 15_000 })
+    await page.getByTestId('tab-dashboard').click()
 
     // Live book renders when armed/enabled; otherwise it is intentionally absent.
     // We assert the page reached a settled state either way (no perpetual skeleton).
@@ -201,5 +206,61 @@ test.describe('pages (tabs)', () => {
     // Collapse again.
     await proofBtn.click()
     await expect(proofBtn).toHaveAttribute('aria-expanded', 'false')
+  })
+})
+
+test.describe('panel error states (DESIGN.md §3.3)', () => {
+  test('system tab shows an explicit error panel when only its feed fails', async ({ page }) => {
+    // Abort ONLY /api/system-status. One primary feed stays up, so the global
+    // offline banner (§3.4 — fires only when BOTH primary feeds fail) must
+    // stay absent; the panel itself must say what failed + that retry is
+    // automatic, with the same title its LoadingPanel uses.
+    await page.route('**/api/system-status*', (route) => route.abort())
+    await page.goto(APP)
+    await page.getByTestId('tab-system').click()
+
+    const panel = page.getByTestId('error-panel')
+    await expect(panel).toBeVisible({ timeout: 15_000 })
+    await expect(panel).toContainText('System status')
+    await expect(panel).toContainText('Retrying automatically')
+    // Boundary: a single-feed failure is a panel error, not an app offline.
+    await expect(page.getByTestId('offline-banner')).toHaveCount(0)
+  })
+
+  test('journal tab shows an explicit error panel when its feed fails', async ({ page }) => {
+    // Abort ONLY /api/live/executions: the journal view must show its
+    // documented error state (§3.3). This also pins the §61
+    // JournalErrorPanel→ErrorPanel swap: same title, message, retry note.
+    await page.route('**/api/live/executions*', (route) => route.abort())
+    await page.goto(APP)
+    await page.getByTestId('tab-journal').click()
+
+    const panel = page.getByTestId('error-panel')
+    await expect(panel).toBeVisible({ timeout: 15_000 })
+    await expect(panel).toContainText('Journal · live order history')
+    await expect(panel).toContainText('Retrying automatically')
+  })
+
+  test('every tab shows an explicit error panel (never blank) when the API is unreachable', async ({ page }) => {
+    // All feeds down: each view must render an explicit error state, never
+    // nothing (DESIGN.md §3.3) — the §61 gap-closure walk.
+    await page.route('**/api/**', (route) => route.abort())
+    await page.goto(APP)
+
+    // Dashboard Col 3: the Performance + Market regime panels surface errors.
+    await expect(
+      page.getByTestId('error-panel').filter({ hasText: 'Performance' }),
+    ).toBeVisible({ timeout: 15_000 })
+    await expect(
+      page.getByTestId('error-panel').filter({ hasText: 'Market regime' }),
+    ).toBeVisible()
+
+    // The four tab views: one explicit error panel each.
+    for (const t of ['holdings', 'journal', 'market', 'system'] as const) {
+      await page.getByTestId(`tab-${t}`).click()
+      const panel = page.getByTestId('error-panel')
+      await expect(panel).toBeVisible({ timeout: 15_000 })
+      await expect(panel).toContainText('Retrying automatically')
+    }
   })
 })

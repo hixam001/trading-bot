@@ -32,7 +32,6 @@ from typing import Optional
 from fastapi import APIRouter
 import config
 from api import db
-from rule_engine.exits import ExitDecision  # noqa: F401 — type docs only
 
 router = APIRouter()
 log = logging.getLogger(__name__)

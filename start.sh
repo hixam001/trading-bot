@@ -20,10 +20,6 @@ RUN="$ROOT/.run"
 LOGS="$ROOT/logs"
 mkdir -p "$RUN" "$LOGS"
 
-# --- 0) One-time migration: Ollama was retired from the stack (DeepSeek is
-#        the main model). Remove stale marker files left by old launches. ---
-rm -f "$RUN/ollama.pid" "$RUN/ollama_started_by_us"
-
 up() { curl -s -o /dev/null --max-time 2 "$1"; }
 
 # --- 1) Python venv + deps ---------------------------------------------------
@@ -94,7 +90,13 @@ fi
 #      committed armed state — human-edit-only, never env), and
 #   b) .env points WALLET_KEYPAIR_PATH at a wallet file that exists.
 # Without a funded wallet configured, nothing real-money ever starts.
-ARMED="$(grep -E '^LIVE_TRADING_ENABLED' "$ROOT/backend/live_execution/config.py" 2>/dev/null | grep -c 'True')"
+# A8 (repo audit): parse the FLAG'S VALUE, not "True anywhere in the line".
+# The old `grep -c 'True'` counted `LIVE_TRADING_ENABLED = False # was True`
+# as ARMED — starting the live-cycle process and printing "REAL FUNDS" while
+# the code flag was off. This regex anchors on the actual assignment value
+# ([^=]* tolerates the ": bool" type annotation; the FIRST "=" is the
+# assignment, and True must be the value on its right).
+ARMED="$(grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b' "$ROOT/backend/live_execution/config.py" 2>/dev/null)"
 KP="$(grep -E '^WALLET_KEYPAIR_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
 KPJ="$(grep -E '^WALLET_KEYPAIR_JSON=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
 # Wallet configured = secret file exists (preferred channel) OR the env JSON
@@ -127,7 +129,7 @@ echo "==========================================================="
 if [ "$ARMED" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
   echo " trading-bot is live   (LIVE TRADING ARMED — REAL FUNDS)"
 else
-  echo " trading-bot is live   (PAPER TRADING — NO REAL FUNDS)"
+  echo " trading-bot is live   (DISARMED — NO LIVE TRADING)"
 fi
 echo " dashboard : http://localhost:8000"
 echo " live cycle: $LIVE_STATE"

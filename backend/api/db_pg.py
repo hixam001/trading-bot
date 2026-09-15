@@ -590,31 +590,6 @@ async def close_trade_row(
     return _rowcount(status)
 
 
-async def trim_position_row(
-    conn: asyncpg.Connection,
-    trade_id: str,
-    qty_out: float,
-    size_out_usd: float,
-) -> int:
-    """
-    ATOMIC PARTIAL CLOSE (E8/E9): only while open and keeping a positive
-    remainder; rowcount 0 = already closed or degenerate trim.
-    """
-    status = await conn.execute(
-        """
-        UPDATE trades
-        SET quantity = quantity - $1,
-            position_size_usd = position_size_usd - $2,
-            tranches_taken = tranches_taken + 1
-        WHERE trade_id = $3 AND is_open = TRUE
-          AND quantity - $4 > 0
-          AND position_size_usd - $5 >= 0
-        """,
-        qty_out, size_out_usd, trade_id, qty_out, size_out_usd,
-    )
-    return _rowcount(status)
-
-
 async def update_high_water(
     conn: asyncpg.Connection,
     trade_id: str,
@@ -629,38 +604,6 @@ async def update_high_water(
         """,
         high_water_usd, trade_id, high_water_usd,
     )
-
-
-async def get_last_closed_at_for_mint(
-    conn: asyncpg.Connection, mint_address: str
-) -> Optional[str]:
-    return await conn.fetchval(
-        """
-        SELECT closed_at::text FROM trades
-        WHERE mint_address = $1 AND closed_at IS NOT NULL
-        ORDER BY closed_at DESC LIMIT 1
-        """,
-        mint_address,
-    )
-
-
-async def count_closes_since(conn: asyncpg.Connection, since_iso: str) -> int:
-    return int(await conn.fetchval(
-        "SELECT COUNT(*) FROM trades WHERE closed_at >= $1", _ts(since_iso)))
-
-
-async def get_recent_closed_reasons(
-    conn: asyncpg.Connection, mint_address: str, limit: int = 2
-) -> list[str]:
-    rows = await conn.fetch(
-        """
-        SELECT exit_reason FROM trades
-        WHERE mint_address = $1 AND closed_at IS NOT NULL
-        ORDER BY closed_at DESC LIMIT $2
-        """,
-        mint_address, limit,
-    )
-    return [r["exit_reason"] for r in rows if r["exit_reason"]]
 
 
 async def deployed_today(
@@ -937,10 +880,6 @@ async def update_reflection(conn: asyncpg.Connection, trade_id: str, text: str) 
         text, trade_id)
 
 
-async def count_trades(conn: asyncpg.Connection) -> int:
-    return int(await conn.fetchval("SELECT COUNT(*) FROM trades"))
-
-
 # ===========================================================================
 # Portfolio cash — guarded adjustments (cash can never go negative)
 # ===========================================================================
@@ -950,18 +889,6 @@ async def get_cash_balance(conn: asyncpg.Connection) -> float:
     if val is None:
         raise RuntimeError("Portfolio state not initialised — call init_db() first.")
     return float(val)
-
-
-async def adjust_cash(conn: asyncpg.Connection, delta: float) -> int:
-    """Atomic guarded adjustment; rowcount 0 = would go negative → refused."""
-    status = await conn.execute(
-        """
-        UPDATE portfolio_state SET cash_usd = cash_usd + $1, updated_at = $2
-        WHERE id = 1 AND cash_usd + $3 >= 0
-        """,
-        delta, _now(), delta,
-    )
-    return _rowcount(status)
 
 
 async def get_first_trade_date(conn: asyncpg.Connection) -> Optional[str]:
@@ -1365,24 +1292,6 @@ async def get_verify_commits(
     )
     return [dict(r) for r in rows]
 
-
-
-async def set_trade_thesis(
-    conn: asyncpg.Connection, trade_id: str, text: str
-) -> None:
-    """Attach the full thesis to a freshly opened position (open only)."""
-    await conn.execute(
-        "UPDATE trades SET thesis = $1 WHERE trade_id = $2 AND is_open = TRUE",
-        text, trade_id,
-    )
-
-
-async def delete_trade_row(conn: asyncpg.Connection, trade_id: str) -> int:
-    """Rollback helper: remove an unfunded open position (cash refused)."""
-    status = await conn.execute(
-        "DELETE FROM trades WHERE trade_id = $1 AND is_open = TRUE", trade_id
-    )
-    return _rowcount(status)
 
 
 # ===========================================================================

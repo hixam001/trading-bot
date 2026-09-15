@@ -121,29 +121,17 @@ for module in (feed, holdings, journal, stats, market_regime,
                promotion_gate, knowledge_base, system_status):
     app.include_router(module.router)
 
-try:
-    from api.routes.proof import router as proof_router
-    app.include_router(proof_router)
-except ImportError:
-    pass  # proof endpoints optional; decision_commits table may not exist yet
+from api.routes.proof import router as proof_router  # noqa: E402
+app.include_router(proof_router)
 
-try:
-    from api.routes.disclosure import router as disclosure_router
-    app.include_router(disclosure_router)
-except ImportError:
-    pass  # REF-R6 disclosure endpoints
+from api.routes.disclosure import router as disclosure_router  # noqa: E402
+app.include_router(disclosure_router)
 
-try:
-    from api.routes.admin import router as admin_router
-    app.include_router(admin_router)
-except ImportError:
-    pass  # operator admin/reset endpoint
+from api.routes.admin import router as admin_router  # noqa: E402
+app.include_router(admin_router)
 
-try:
-    from api.routes.live_book import router as live_book_router
-    app.include_router(live_book_router)
-except ImportError:
-    pass  # live book surface (read-only view of the real wallet/ledger)
+from api.routes.live_book import router as live_book_router  # noqa: E402
+app.include_router(live_book_router)
 
 
 @app.websocket("/ws/feed")

@@ -58,8 +58,8 @@ progress (updated as items complete).
 | E3 | `scale_into_position()` — new function, same atomicity discipline as E1/E2 (exposure cap enforced atomically in the UPDATE's WHERE clause) | DONE |
 | E4 | `decide_and_act()` — unified entry point routing to E1 or E3 based on existing exposure | DONE |
 | E5 | `compute_unrealized_pnl()` / `compute_realized_pnl()` — pure functions, tested with known-correct expected outputs, raise on invalid input rather than returning 0 | DONE |
-| E6 | `check_exit_conditions()` — take-profit, stop-loss, timeout, in that order | DONE (order test included) |
-| E7 | `PAPER_TRADING_ONLY` asserted at runtime inside every position-opening function (belt-and-suspenders, not just checked once upstream) | DONE (`config.assert_paper_trading_only()` + dedicated test) |
+| E6 | `check_exit_conditions()` — take-profit, stop-loss, timeout, in that order | SUPERSEDED by the §5.2 reference-bot exit engine (`rule_engine/exits.py::evaluate_exits` + `sell_risk_gate`); the price-only probe was deleted as dead code |
+| E7 | `PAPER_TRADING_ONLY` asserted at runtime inside every position-opening function (belt-and-suspenders, not just checked once upstream) | RETIRED (§52): the paper engine was deleted; `config.assert_paper_trading_only()` had no caller and was removed. Live arming is `LIVE_TRADING_ENABLED` in `live_execution/config.py` |
 | E8 | *(Post-calibration)* `scale_out_partial()` — trims a fraction of an open position on a structural-trim trigger | NOT STARTED (per §5.3 sequencing) |
 | E9 | *(Post-calibration)* Rolling price/volume history per open position | NOT STARTED |
 

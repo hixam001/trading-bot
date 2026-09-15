@@ -35,15 +35,6 @@ export function price(v: number | null | undefined): string {
   return `$${v.toPrecision(4)}`
 }
 
-/** Percent with sign: `+12.3%` / `−4.5%` — or `—` when missing. */
-export function signedPct(v: number | null | undefined, digits = 1): string {
-  if (v === null || v === undefined || Number.isNaN(v)) return '—'
-  const abs = `${Math.abs(v).toFixed(digits)}%`
-  if (v > 0) return `+${abs}`
-  if (v < 0) return `−${abs}`
-  return `0.${'0'.repeat(digits)}%`
-}
-
 /** `1234.5678` plain number (SOL balances, token counts) — or `—`. */
 export function num(v: number | null | undefined, digits = 4): string {
   if (v === null || v === undefined || Number.isNaN(v)) return '—'

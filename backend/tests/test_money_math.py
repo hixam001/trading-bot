@@ -11,7 +11,6 @@ import pytest
 
 import config
 from models import Trade
-from rule_engine.exits import check_exit_conditions
 from sizing import (
     compute_entry_cost,
     compute_position_size,
@@ -101,28 +100,3 @@ def test_entry_cost_includes_fees_and_slippage():
 def test_sizing_invalid_price_raises():
     with pytest.raises(ValueError):
         compute_position_size(0.0)
-
-
-# --- check_exit_conditions (E6 — the reference bot-model engine, price-only probe) ---
-
-def test_exit_stop_loss():
-    trade = make_trade()
-    price = trade.entry_price_usd * 0.75   # ~-26% net
-    assert check_exit_conditions(trade, price) == "exit_stop_loss"
-
-
-def test_exit_below_first_tranche_holds():
-    """+60% net is BELOW the first ladder tranche (+100%): the old +50%
-    take-profit is gone — winners now run on the trail + ladder (the reference bot
-    model). The single-price probe must hold here."""
-    trade = make_trade()
-    price = trade.entry_price_usd * 1.62   # ~+60% net
-    assert check_exit_conditions(trade, price) is None
-
-
-def test_exit_no_condition_holds():
-    trade = make_trade()
-    from datetime import datetime, timezone
-    trade.opened_at = datetime.now(timezone.utc).isoformat()  # fresh position
-    mid = trade.entry_price_usd * 1.10     # ~+7% net — inside both bands
-    assert check_exit_conditions(trade, mid) is None

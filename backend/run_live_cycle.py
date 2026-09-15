@@ -528,8 +528,19 @@ async def _scan_exits_for_position(
         # §52 Phase B: keep the shared trades table (calibration /
         # learning / perf_report / reflections / stats routes) in sync
         # with the live close, then fire the closed-trade reflection.
-        await _mirror_live_close(mint, exit_price_usd=result.usd_value
-                                  / max(m.get("tokens") or 1.0, 1e-12),
+        # The exit price divides the ACTUAL proceeds by the tokens the fill
+        # actually sold (result.tokens — the chain-clamped amount whenever
+        # reconcile found drift), NOT the journal's token count. Dividing by
+        # the journal count understated the price whenever the fraction was
+        # clamped, skewing the mirrored realized_pnl_pct that calibration /
+        # learning / perf_report consume. pnl_usd itself keeps the §50
+        # full-cost write-off (dust); only the price must be the fill price.
+        sold_tokens = result.tokens or m.get("tokens") or 1.0
+        if sold_tokens <= 0:
+            sold_tokens = 1.0
+        await _mirror_live_close(mint,
+                                  exit_price_usd=result.usd_value
+                                  / sold_tokens,
                                   pnl_usd=pnl, rule_id=decision.rule_id)
         try:
             asyncio.create_task(_store_live_reflection(
@@ -577,6 +588,34 @@ async def _scan_exits_for_position(
             except Exception:
                 log.warning("§49 loss-memory journaling failed for %s "
                             "(non-fatal)", mint[:8], exc_info=True)
+
+
+async def _seed_hwm_from_mirror(hwm: dict) -> dict:
+    """A7 (repo audit): restore high-water marks from the shared trades
+    table's OPEN rows (the live mirror persists high_water_usd on every
+    _manage pass) so a restart does not reset every trailing exit to its
+    entry price — a position that rallied and pulled back while the cycle
+    was down could otherwise never fire exit_trail_give_back until it made
+    a new high. Only fills marks that are missing or lower than the
+    mirror's (an in-memory mark from this run stays authoritative).
+    Fail-soft: any mirror trouble logs and returns the marks unchanged
+    (cold start applies) — never raises into the caller.
+    """
+    try:
+        async with db.get_db() as conn:
+            for t in await db.get_open_trades(conn):
+                if (t.mint_address and t.high_water_usd
+                        and t.high_water_usd > 0):
+                    existing = hwm.get(t.mint_address)
+                    if existing is None or float(t.high_water_usd) > existing:
+                        hwm[t.mint_address] = float(t.high_water_usd)
+        if hwm:
+            log.info("hwm: %d high-water mark(s) restored from the "
+                     "trades mirror", len(hwm))
+    except Exception:
+        log.warning("hwm seeding from the trades mirror failed "
+                    "(non-fatal — cold start applies)", exc_info=True)
+    return hwm
 
 
 def _journal_meta(ledger: ExecutionLedger, flags: dict) -> dict:
@@ -1055,7 +1094,15 @@ def main() -> None:
         exit_task: asyncio.Task | None = None
         if not args.once:
             if not hasattr(run_cycle, "_hwm"):
-                run_cycle._hwm = {}
+                # A7 (repo audit): restore high-water marks from the shared
+                # trades table's OPEN rows (the live mirror persists
+                # high_water_usd on every _manage pass) so a restart does not
+                # reset every trailing exit to its entry price — a position
+                # that rallied and pulled back while the cycle was down could
+                # otherwise never fire exit_trail_give_back until it made a
+                # new high. Fail-soft: an unreadable mirror degrades to the
+                # old cold-start ({}), never blocks the first cycle.
+                run_cycle._hwm = await _seed_hwm_from_mirror({})
             if not hasattr(run_cycle, "_chain_flags"):
                 run_cycle._chain_flags = {}
             ledger = ExecutionLedger(

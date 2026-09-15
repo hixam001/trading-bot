@@ -1,9 +1,19 @@
-**Last updated:** 2026-09-10 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-09-14 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 709 passing (backend + live_execution) + 9 Playwright E2E
+**Tests:** 736 passing (backend + live_execution) + 11 Playwright E2E
 (suite fully green; the flag-state canary pins the committed ARMED state — §33)
+**QUALITY (§62):** full-repo dead-code sweep — 8 zero-caller DB functions
+removed from BOTH dialect twins, dead config constants retired, legacy exit
+engine + Ollama residue deleted, two paper-era truth bugs fixed
+(admin/reset `paper_trading_only`, start.sh "PAPER TRADING" banner), and a
+new DB-surface parity test now fails loudly on db.py↔db_pg.py drift;
+`backend/pytest.ini` (competing config) deleted; TS `noUnusedLocals` on.
+**UI (§61):** every view closes DESIGN.md §3.3 — a shared `ErrorPanel` beside
+`LoadingPanel` replaces the Journal-only wrapper; the five blank-on-failure
+sites (Performance, regime ×2, holdings, system) now say what failed +
+"Retrying automatically" instead of rendering nothing.
 **UI (§60):** dashboard freshness — the wallet is chain-scanned every
 `WALLET_SCAN_TTL_SECONDS` (300s default) so manually-closed positions
 leave the book automatically (`chain_excluded` surfacing, ledger never
@@ -35,6 +45,153 @@ credits added 2026-08-30 — the paid chain stays primary until then.
 
 Read this top-to-bottom before touching anything. It contains everything a
 new session needs: state, decisions, bugs fixed, invariants, and next steps.
+
+---
+
+## 62. Full-repo code-quality & maintainability cleanup — dead code, truth bugs, drift guards (2026-09-14)
+
+Operator directive: senior-engineer quality review of the entire codebase —
+identify dead code, duplication, unused UI, complexity, legacy, redundant
+queries, abandoned files, and tech debt ("aggressive but safe") — then
+implement the safe parts. Method: AST inventory of all 149 Python files
+(31,560 LOC backend / 2,232 LOC frontend src), cross-reference of every
+module-level def and every `config.py` constant against all code, route-
+consumer tracing (route file → tests/frontend/docs/scripts), DB import-
+surface diffing, pytest collection + orphaned-bytecode detection. Findings
+ranked P1–P14; Batches A–D (hygiene, dead code, prevention, legacy
+retirement) executed here; Batch E (structural refactors) deferred with a
+written plan.
+
+**Dead code removed (zero references verified before AND after deletion):**
+
+1. **Eight repository functions deleted from BOTH `api/db.py` and
+   `api/db_pg.py`** (~175 lines): `adjust_cash`, `trim_position_row`,
+   `count_trades`, `count_closes_since`, `delete_trade_row`,
+   `get_last_closed_at_for_mint`, `get_recent_closed_reasons`,
+   `set_trade_thesis` — paper-book/`trades`-mirror mechanics superseded by
+   the ExecutionLedger (§52): trims/closes are booked in `live_execution/`,
+   and `adjust_cash` mutated `portfolio_state.cash_usd`, which is no longer
+   the cash authority (chain USDC is).
+2. **Dead config**: `assert_paper_trading_only()` (docstring already said
+   RETIRED), `WS_POLL_INTERVAL_SECONDS` (`websocket.py` hardcodes 2.0s),
+   `MAX_EXIT_PROCEEDS_MULT`, `API_HOST`, `SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY`/
+   `SUPABASE_ANON_KEY` (only `SUPABASE_DB_URL` is read), and legacy alias
+   `AUTO_BLOCK_CONSECUTIVE_STOPS` (+ its stale churn-guard assertion) —
+   with their `.env.example` and docs/02 mentions.
+3. **Legacy exit engine** `rule_engine/exits.py::check_exit_conditions`
+   (superseded by `evaluate_exits`/`sell_risk_gate`) + its 3 money-math
+   tests; unused `ExitDecision` import in `routes/proof.py`.
+4. **Frontend dead exports**: `Stat` (`ui.tsx`), `signedPct` (`format.ts`).
+5. **Runtime artifacts**: orphaned bytecode of deleted modules
+   (`paper_trading_engine`, renamed `test_omo_*` tests), 3.6 MB of logs
+   (`live_cycle_restart*.log`, retired `ollama.log`), `.pytest_cache` ×2,
+   `executions.json.bak-dust` (§37 one-time repair backup; the repair
+   shipped). Live state (`break_state.json`, `executions.json`, `.run/`)
+   untouched.
+
+**Two truth bugs fixed (paper-era language contradicting the live-only
+truth):** `/api/admin/reset` reported `paper_trading_only: true`; and
+start.sh's disarmed banner printed "PAPER TRADING — NO REAL FUNDS" when
+nothing trades while disarmed → now "DISARMED — NO LIVE TRADING".
+Admin-reset test expectations updated to match.
+
+**Prevention (closing the worst silent-failure mode in the repo):**
+
+6. **NEW `tests/test_db_surface_parity.py`** (2 tests): `db_pg.py` must
+   expose every public function of `db.py` — the twins merge via
+   `globals().update()`, so a missing Postgres implementation silently ran
+   the SQLite version against Postgres. Postgres-only additions restricted
+   to an explicit allow-list (`close_pool`). Current surface: 55 vs 56
+   public fns, parity clean.
+7. **Competing `backend/pytest.ini` DELETED** — running pytest from
+   `backend/` silently skipped all 300+ `live_execution` tests; the root
+   `pytest.ini` covers both suites (`asyncio_mode = auto`).
+8. **`tsconfig.json`: `noUnusedLocals`/`noUnusedParameters` → true**
+   (passes clean — confirming `Stat`/`signedPct` were the only dead
+   exports). ruff/ESLint still absent from the repo: recommended immediate
+   follow-up (machine-finds every class of dead code this section removed).
+
+**Legacy retirement:**
+
+9. **`api/main.py`**: the four `try/except ImportError` router loads
+   (split-repo era) became plain imports — they only ever swallowed REAL
+   ImportErrors, i.e. a syntax error in `proof.py` silently deleted its
+   endpoints instead of failing startup. Fail-fast now.
+10. **Ollama residue purged**: `knowledge_base/loader.py` docstrings (digests
+    use the main LLM provider), `models.py` `narration_source` stale
+    `"ollama:<model>"` comment (actual values are provider names), the
+    one-time migration `rm` blocks removed from `start.sh`/`stop.sh`, stale
+    `.run/ollama*` markers deleted.
+
+**Verification:** 736 passing (737 − 3 removed legacy tests + 2 parity
+tests), `tsc -b` clean under the new strict flags, `py_compile` on every
+edited file, `bash -n` on both scripts. Engine/money paths untouched except
+the zero-caller function deletions above.
+
+**Deferred (Batch E — review §2/§4/§6/§7; each its own isolated change):**
+db.py/db_pg.py unification behind a small SQL-dialect builder (~1,450 dup
+lines; gated on the new parity test); `run_cycle()` (316 lines) stage
+decomposition; `crowd.py` (887 lines) auth/transport/feed split; the four
+zero-consumer proof endpoints (`/api/events.json`, `/exits.json`,
+`/refusals.json`, `/theses.json` — documented external audit surface:
+confirm no external monitor, or add smoke tests first); legacy
+`/api/holdings` + `/api/journal` routes (rewrite their tests against
+`/api/live/*`); paid-scraper trim to Scrapling+failover; `scripts/`
+consolidation; docs consolidation (222 MDs; handoff/memory-bank/07
+triplicate the session log); redundant-query fixes (double `_profit_factor`,
+3× chain-cash, WS re-fetch).
+
+---
+
+## 61. ErrorPanel generalized — the error-state gap closed on every view (2026-09-13)
+
+Operator directive: replicate the Journal tab's error branch everywhere.
+Audit confirmed only Journal implemented DESIGN.md §3.3's error state; five
+other render sites ended `: null` — a failed fetch silently rendered
+nothing, indistinguishable from "nothing to show" on a dashboard whose
+point is legibility about what's actually happening.
+
+**Shipped (frontend-only; engine/ledger/money paths untouched):**
+
+1. **`JournalErrorPanel` → shared `ErrorPanel({ title, message })`**
+   (`App.tsx`, directly beside its sibling `LoadingPanel`): same visual
+   treatment (`.panel` + `.panel-title` + `ErrorState` from `ui.tsx`),
+   now with `data-testid="error-panel"` per the shell's testid convention.
+   The Journal wrapper is deleted — one component, six call sites.
+2. **The five previously-blank sites** gained Journal's exact
+   `loading → data → error → null` chain — data checked before error, so
+   a later-poll failure keeps the last-known-good panel (§3.4 design):
+   Performance (`stats`), the dashboard's regime section + the market
+   view (`regimes` — ONE shared `useApi` hook serves both sites), holdings
+   (`liveBook`), and system (`status`). Each title is verbatim from that
+   site's own `LoadingPanel` so loading/error/success read as one panel.
+3. **Left as-is, deliberately:** the global offline banner (fires only
+   when BOTH primary feeds fail) and the dashboard's positions column —
+   its "waiting for the first poll" line can mislead on a first-load
+   failure, but that's a different branch shape (its disabled-book path
+   is a documented empty state, not a `: null` gap).
+
+**Tests (+3 Playwright, `panel error states` describe):** single-feed
+failure (abort only `/api/system-status` → the system view shows its error
+panel AND the offline banner stays absent — pinning the §3.4 boundary);
+journal swap pin (abort only `/api/live/executions` → same title/message/
+retry-note as before); all-API-down walk (abort `**/api/**` → every tab
+renders an explicit error panel, never blank — the gap-closure itself).
+Also repaired one stale pre-existing assertion: test 1 demanded
+`system-status` on the live view, but §59 had moved it to its own tab and
+the suite was never re-run ("not running at port time") — it failed on
+HEAD before this change; it now asserts the panel on the system view.
+Suite: **11/11 passing**.
+
+**Verification:** `tsc -b && vite build` clean (45 modules; 174.93 kB JS /
+54.53 kB gzip). Playwright 11/11 against the live backend on :8000.
+
+**OPEN (operator follow-up, flagged this session):** once enough trades
+have accumulated on the live book since §57 shipped, run
+`python3 scripts/perf_report.py` against the real database and compare
+the §50 baseline (24 samples / 12.5% hit / +57.88% avg / −26.05% /
+negative expectancy) — the only way to confirm the loss-shape and
+refusal-layer fixes actually moved expectancy.
 
 ---
 

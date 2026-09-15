@@ -238,9 +238,6 @@ def test_live_book_records_then_autoblocks_on_full_close():
 def test_anti_churn_thresholds_are_pinned():
     """Hardcoded, never env-settable (like every other risk number)."""
     assert config.AUTO_BLOCK_CONSECUTIVE_LOSSES == 2
-    # legacy alias kept so old references still resolve
-    assert config.AUTO_BLOCK_CONSECUTIVE_STOPS == \
-        config.AUTO_BLOCK_CONSECUTIVE_LOSSES
     assert config.REENTRY_COOLDOWN_HOURS == 24.0
 
 
