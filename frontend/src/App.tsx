@@ -5,12 +5,15 @@ import Holdings from './components/Holdings'
 import Journal from './components/Journal'
 import MarketRegimePanel from './components/MarketRegimePanel'
 import SystemStatus from './components/SystemStatus'
+import CommandPalette, { type PaletteJournalFilter } from './components/CommandPalette'
 import Performance from './components/Performance'
+import RefusalFunnel from './components/RefusalFunnel'
 import { ErrorState, Skeleton, Spark } from './components/ui'
 import { useApi } from './hooks/useApi'
 import { useFeedSocket } from './hooks/useWebSocket'
 import { usd } from './lib/format'
 import type {
+  FunnelResponse,
   LiveExecutionsResponse,
   LivePortfolioResponse,
   RegimeRow,
@@ -172,6 +175,16 @@ export default function App() {
   const regimes = useApi<{ regimes: RegimeRow[] }>('/api/market-regime?limit=30', 15000)
   const status = useApi<SystemStatusResponse>('/api/system-status', 15000)
   const stats = useApi<StatsResponse>('/api/stats', 15000)
+  const funnel = useApi<FunnelResponse>('/api/funnel', 15000)
+
+  // §63 operator upgrades: read-only command palette state. The palette
+  // navigates, filters the journal and jumps to a position; it never writes.
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [journalFilter, setJournalFilter] = useState<PaletteJournalFilter>({
+    status: 'all',
+    query: '',
+  })
+  const [focusMint, setFocusMint] = useState<string | null>(null)
 
   // Global offline banner (DESIGN.md §3.4): only when BOTH primary feeds fail.
   // Panels keep their last data and recover automatically.
@@ -223,6 +236,9 @@ export default function App() {
                 <div className="sticky top-0 z-10 flex items-center gap-2 bg-base border-b border-line px-4 py-2.5">
                   <h2 className="panel-title">decisions</h2>
                   <span className="font-mono text-[10px] text-faint tnum">{events.length}</span>
+                  <span className="font-mono text-[10px] text-faint hidden xl:inline">
+                    j/k move · enter expand · esc collapse
+                  </span>
                   <span className={`ml-auto badge ${connected ? 'badge-pass' : 'badge-fail'}`}>
                     {connected ? '● ws live' : '● ws offline'}
                   </span>
@@ -278,7 +294,7 @@ export default function App() {
               {liveBook.loading ? (
                 <LoadingPanel title="Holdings · live positions" rows={4} />
               ) : liveBook.data ? (
-                <Holdings book={liveBook.data} />
+                <Holdings book={liveBook.data} focusMint={focusMint} />
               ) : liveBook.error ? (
                 <ErrorPanel title="Holdings · live positions" message={liveBook.error} />
               ) : null}
@@ -290,7 +306,11 @@ export default function App() {
               {journal.loading ? (
                 <LoadingPanel title="Journal · live order history" rows={5} />
               ) : journal.data ? (
-                <Journal data={journal.data} />
+                <Journal
+                  data={journal.data}
+                  filter={journalFilter}
+                  onClearFilter={() => setJournalFilter({ status: 'all', query: '' })}
+                />
               ) : journal.error ? (
                 <ErrorPanel title="Journal · live order history" message={journal.error} />
               ) : null}
@@ -318,6 +338,16 @@ export default function App() {
               ) : status.error ? (
                 <ErrorPanel title="System status" message={status.error} />
               ) : null}
+              {/* §63: the refusal funnel — selectivity at a glance, server-computed. */}
+              <div className="mt-3">
+                {funnel.loading ? (
+                  <LoadingPanel title="Refusal funnel" rows={3} />
+                ) : funnel.data ? (
+                  <RefusalFunnel funnel={funnel.data} />
+                ) : funnel.error ? (
+                  <ErrorPanel title="Refusal funnel" message={funnel.error} />
+                ) : null}
+              </div>
             </div>
           )}
         </div>
@@ -326,6 +356,7 @@ export default function App() {
       {/* Statusline — the terminal sign-off: quiet truths, one strip. */}
       <footer className="statusline">
         <span>single book · live engine</span>
+        <span className="hidden lg:inline">⌘K · command palette</span>
         <span className="hidden md:inline">
           every figure verbatim from the backend · no client-side math
         </span>
@@ -333,6 +364,24 @@ export default function App() {
           read-only surface · no endpoint can move money
         </span>
       </footer>
+
+      {/* §63: read-only command palette (⌘K / Ctrl-K) — navigation, journal
+          filtering and jump-to-position; no state writes, ever. */}
+      <CommandPalette
+        open={paletteOpen}
+        onOpen={() => setPaletteOpen(true)}
+        onClose={() => setPaletteOpen(false)}
+        onGo={setTab}
+        onJournal={(f) => {
+          setJournalFilter(f)
+          setTab('journal')
+        }}
+        onPosition={(mint) => {
+          setFocusMint(mint)
+          setTab('holdings')
+        }}
+        positions={liveBook.data?.positions ?? []}
+      />
     </div>
   )
 }

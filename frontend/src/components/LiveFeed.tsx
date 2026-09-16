@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { FeedEventRow, RuleResultRow } from '../types'
 import { CopyText, Empty } from './ui'
 import { clock } from '../lib/format'
@@ -41,6 +41,38 @@ export default function LiveFeed({
   freshId: number | null
 }) {
   const [expanded, setExpanded] = useState<number | null>(null)
+  // §63 keyboard navigation: j/k move a cursor down/up the tape, enter
+  // toggles the cursor row, esc collapses. The tape container is focusable
+  // (tabIndex=0) and owns the keys while focused — global j/k would fire
+  // while typing elsewhere, so scope beats convenience here. Existing
+  // accessibility is untouched: rows stay real <button>s with visible
+  // focus rings and aria-expanded.
+  const [cursor, setCursor] = useState(0)
+  const listRef = useRef<HTMLDivElement>(null)
+
+  function onListKeyDown(e: React.KeyboardEvent) {
+    if (events.length === 0) return
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      setCursor((c) => Math.min(c + 1, events.length - 1))
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      setCursor((c) => Math.max(c - 1, 0))
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const ev = events[cursor]
+      if (ev) setExpanded((cur) => (cur === ev.id ? null : ev.id))
+    } else if (e.key === 'Escape') {
+      setExpanded(null)
+    }
+  }
+
+  // Keep the cursor row in view as j/k moves it.
+  useEffect(() => {
+    listRef.current
+      ?.querySelector(`[data-feed-row="${cursor}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [cursor])
 
   return (
     <section data-testid="live-feed" className="flex flex-col flex-1 min-h-0">
@@ -52,8 +84,17 @@ export default function LiveFeed({
           </Empty>
         </div>
       ) : (
-        <div className="flex-1 min-h-0 overflow-y-auto max-h-[65vh] xl:max-h-none">
-          {events.map((ev) => {
+        <div
+          ref={listRef}
+          className="flex-1 min-h-0 overflow-y-auto max-h-[65vh] xl:max-h-none focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-line-strong"
+          tabIndex={0}
+          role="listbox"
+          aria-label="decisions tape · j/k move, enter expand, esc collapse"
+          aria-activedescendant={`feed-row-${cursor}`}
+          onKeyDown={onListKeyDown}
+          data-testid="feed-list"
+        >
+          {events.map((ev, i) => {
             // All rules passed but no entry -> the model itself declined.
             const modelDeclined = ev.verdict !== 'pass' && ev.failed_rule_ids.length === 0
             const isOpen = expanded === ev.id
@@ -61,7 +102,13 @@ export default function LiveFeed({
             return (
               <div
                 key={ev.id}
-                className={`border-b border-line-soft ${isFresh ? 'row-flash' : ''}`}
+                id={`feed-row-${i}`}
+                data-feed-row={i}
+                role="option"
+                aria-selected={i === cursor}
+                className={`border-b border-line-soft ${isFresh ? 'row-flash' : ''} ${
+                  i === cursor ? 'bg-surface shadow-[inset_2px_0_0_0] shadow-live' : ''
+                }`}
               >
                 <button
                   className="w-full text-left px-4 py-3 hover:bg-surface min-h-[24px]"

@@ -178,3 +178,23 @@ export interface LiveExecutionsResponse {
     closes: number
   }
 }
+
+
+/** Journal status filter set from the command palette (§63). */
+export type JournalFilter = "all" | "bound" | "published" | "failed"
+
+/** GET /api/funnel — the §57 refusal funnel (§63): candidates seen ->
+ *  gate-passed -> model-approved -> filled. Server-computed with the exact
+ *  scripts/perf_report.py classification; a null rate renders `—`, never 0. */
+export interface FunnelResponse {
+  window: { limit: number; feed_events: number }
+  candidates_seen_total: number
+  candidates_seen: number
+  gate_refused: number
+  model_refused: number
+  gate_passed: number
+  model_approved: number
+  filled: number
+  model_refusal_rate_of_gate_passers: number | null
+  note: string
+}

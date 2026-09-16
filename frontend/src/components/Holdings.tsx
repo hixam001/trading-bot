@@ -9,7 +9,14 @@ import { clock, num, pnlClass, price, signedUsd, usd } from '../lib/format'
  * COMPLETE contract address, click-to-copy (operator directive, §59).
  * Every figure is rendered verbatim from the backend (DESIGN.md §5).
  */
-export default function Holdings({ book }: { book: LivePortfolioResponse }) {
+export default function Holdings({
+  book,
+  focusMint,
+}: {
+  book: LivePortfolioResponse
+  /** §63: mint jumped to from the command palette — row highlighted. */
+  focusMint?: string | null
+}) {
   if (!book.enabled) {
     return (
       <Panel testId="holdings" title="Holdings · live positions">
@@ -64,7 +71,10 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
         </Empty>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs border-collapse">
+          {/* Responsive commitment (§63 Stage 2): below the table's natural
+              width it scrolls INSIDE this container — never squashes, never
+              stretches the page. */}
+          <table className="w-full min-w-[720px] text-xs border-collapse">
             <thead>
               <tr>
                 <th className="th">Token</th>
@@ -79,7 +89,15 @@ export default function Holdings({ book }: { book: LivePortfolioResponse }) {
             </thead>
             <tbody>
               {positions.map((p) => (
-                <tr key={p.mint_address} className="hover:bg-raised">
+                <tr
+                  key={p.mint_address}
+                  data-mint={p.mint_address}
+                  className={
+                    focusMint === p.mint_address
+                      ? 'bg-raised shadow-[inset_2px_0_0_0] shadow-live'
+                      : 'hover:bg-raised'
+                  }
+                >
                   <td className="td font-semibold text-bright">${p.symbol}</td>
                   <td className="td max-w-[260px]">
                     <CopyText

@@ -1,6 +1,21 @@
 # Active Context — trading-bot
 
-**As of 2026-09-14 (§62 SHIPPED — FULL-REPO CODE-QUALITY CLEANUP: dead code
+**As of 2026-09-16 (§63 SHIPPED — FRONTEND OPERATOR UPGRADES + audit
+remediation: Stage 1 was a stale premise (Journal's tables already carry the
+§59 scroll-bound guard — nothing fixed, sweep found no other gap); Stage 2
+committed TO RESPONSIVE (dense tables get min-width in-container scroll);
+Stage 3 shipped: hand-rolled READ-ONLY command palette ⌘K/Ctrl-K (nav +
+journal filter + jump-to-position; break-state toggle deliberately absent),
+server-computed `/api/funnel` + RefusalFunnel panel (candidates → gate →
+model → filled, classification identical to perf_report.py), decisions-tape
+j/k/enter/esc (a11y preserved), `perf_report.py --since` helper. Verified:
+tsc+vite clean, 547 backend green, 8pt grep clean, E2E extended to 16 (not
+run — engine was DOWN and is REAL-MONEY ARMED). OPEN, operator-only: run the
+post-§57 baseline `.venv/bin/python scripts/perf_report.py --since
+2026-09-06` — the §50 numbers still describe a system that no longer exists.
+PREVIOUS:**
+
+**Then — 2026-09-14 (§62 SHIPPED — FULL-REPO CODE-QUALITY CLEANUP: dead code
 swept (8 zero-caller DB functions from BOTH db.py/db_pg.py, dead config
 constants incl. the retired paper-era SUPABASE trio, legacy
 check_exit_conditions engine + its tests, frontend Stat/signedPct, orphaned

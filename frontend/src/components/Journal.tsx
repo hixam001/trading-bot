@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { LiveCommitEntry, LiveExecutionsResponse } from '../types'
+import type { PaletteJournalFilter } from './CommandPalette'
 import { Badge, CopyText, Empty, Panel, type Tone } from './ui'
 import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 
@@ -56,7 +57,16 @@ function TxLink({ sig, label }: { sig: string | null; label: string }) {
   )
 }
 
-export default function Journal({ data }: { data: LiveExecutionsResponse }) {
+export default function Journal({
+  data,
+  filter,
+  onClearFilter,
+}: {
+  data: LiveExecutionsResponse
+  /** §63: filter set from the command palette (status and/or free text). */
+  filter?: PaletteJournalFilter
+  onClearFilter?: () => void
+}) {
   const [expanded, setExpanded] = useState<string | null>(null)
 
   if (!data.enabled) {
@@ -67,7 +77,21 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
     )
   }
 
-  const commits = data.commits ?? []
+  const all = data.commits ?? []
+  // §63: optional palette-driven filter — a status and/or free text over
+  // symbol, mint and exit (fail) reason. Verbatim rows, client-side view only.
+  const active = !!filter && (filter.status !== 'all' || filter.query.trim() !== '')
+  const commits = active
+    ? all.filter((c) => {
+        if (filter!.status !== 'all' && c.status !== filter!.status) return false
+        const q = filter!.query.trim().toLowerCase()
+        if (!q) return true
+        const hay = `${c.payload?.symbol ?? ''} ${c.payload?.mint ?? ''} ${
+          c.fail_reason ?? ''
+        }`.toLowerCase()
+        return hay.includes(q)
+      })
+    : all
   // §59: the money ledger shows CLOSED TRADES ONLY — confirmed closes with
   // realized P&L. Buys remain in the order-decisions lifecycle above.
   const closes = (data.records ?? []).filter((r) => r.kind === 'close')
@@ -107,6 +131,27 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
           </div>
         )}
 
+        {active && (
+          <div
+            className="flex items-center gap-2 mb-2 text-[10.5px] text-warn"
+            data-testid="journal-filter-note"
+          >
+            <span>
+              filtered
+              {filter!.status !== 'all' ? ` · ${filter!.status}` : ''}
+              {filter!.query.trim() ? ` · "${filter!.query.trim()}"` : ''} — {commits.length} of{' '}
+              {all.length} decisions
+            </span>
+            <button
+              type="button"
+              className="text-live underline decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
+              onClick={onClearFilter}
+            >
+              show all
+            </button>
+          </div>
+        )}
+
         <div className="divider" />
 
         {commits.length === 0 ? (
@@ -116,7 +161,9 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
           </Empty>
         ) : (
           <div className="overflow-auto max-h-[60vh] border border-line-soft rounded">
-            <table className="w-full text-xs border-collapse">
+            {/* §63 Stage 2: below natural width this scrolls INSIDE its
+                container — never squashes, never stretches the page. */}
+            <table className="w-full min-w-[640px] text-xs border-collapse">
               <thead>
                 <tr>
                   <th className="th sticky top-0 bg-surface">Time</th>
@@ -159,7 +206,8 @@ export default function Journal({ data }: { data: LiveExecutionsResponse }) {
           </Empty>
         ) : (
           <div className="overflow-auto max-h-[60vh] border border-line-soft rounded">
-            <table className="w-full text-xs border-collapse">
+            {/* §63 Stage 2: same in-container scroll guard as the table above. */}
+            <table className="w-full min-w-[720px] text-xs border-collapse">
               <thead>
                 <tr>
                   <th className="th sticky top-0 bg-surface">Time</th>

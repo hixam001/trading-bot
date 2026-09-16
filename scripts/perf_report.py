@@ -22,6 +22,8 @@ visible every time it runs.
 
 Usage:
     python scripts/perf_report.py
+    python scripts/perf_report.py --since YYYY-MM-DD   (UTC; e.g. the §57
+        exit-scanner restoration date, for a fresh post-§57 baseline sample)
 """
 from __future__ import annotations
 
@@ -29,6 +31,7 @@ import argparse
 import asyncio
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -40,7 +43,20 @@ for p in (str(BACKEND),):
 LEDGER_PATH = BACKEND / "live_execution" / "state" / "executions.json"
 
 
-def ledger_stats() -> dict:
+# _ts_epoch: epoch seconds from a record timestamp — epoch float/int for
+# ledger records, ISO text for journal tables; None when missing/unparseable.
+def _ts_epoch(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if isinstance(value, str):
+            try:
+                return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+            except ValueError:
+                return None
+        return None
+    return float(value)
+
+
+def ledger_stats(since_ts: float | None = None) -> dict:
     """Closed-live-trade stats in the reference disclosure's learning shape."""
     rows = json.loads(LEDGER_PATH.read_text())["records"]
     buys: dict[str, list[dict]] = {}
@@ -50,6 +66,7 @@ def ledger_stats() -> dict:
 
     samples: list[dict] = []
     skipped_no_basis = 0
+    filtered_closes = 0
     last_close_ts: dict[str, float] = {}
     for r in sorted(rows, key=lambda x: float(x.get("ts") or 0.0)):
         if r.get("kind") == "close":
@@ -68,6 +85,15 @@ def ledger_stats() -> dict:
                         if lo < float(b.get("ts") or 0.0)
                         <= float(r.get("ts") or 0.0))
             last_close_ts[mint] = float(r.get("ts") or 0.0)
+            # §63 --since: the pairing loop walks every close so the
+            # honest-basis math (buys since the previous close of that mint)
+            # is unchanged; out-of-window closes are counted, never dropped
+            # silently. Buys are never filtered.
+            if since_ts is not None:
+                cts = _ts_epoch(r.get("ts"))
+                if cts is None or cts < since_ts:
+                    filtered_closes += 1
+                    continue
             if basis >= 0.01:
                 samples.append({
                     "mint": mint, "pnl_usd": r["pnl_usd"],
@@ -100,6 +126,7 @@ def ledger_stats() -> dict:
     return {
         "samples": n, "wins": len(wins), "win_rate": round(win_rate, 3),
         "skipped_no_basis": skipped_no_basis,
+        "filtered_closes": filtered_closes,
         "avg_win_pct": round(avg_win, 2), "avg_loss_pct": round(avg_loss, 2),
         "expectancy_pct": round(expectancy, 2),
         "conviction_factor": round(conviction, 3),
@@ -112,7 +139,7 @@ def ledger_stats() -> dict:
 
 
 
-async def refusal_stats() -> dict:
+async def refusal_stats(since_ts: float | None = None) -> dict:
     """The LLM/gate refusal funnel from the journal DB (read-only).
 
     Uses the repo's own backend-agnostic query helpers so it works against
@@ -163,7 +190,7 @@ async def refusal_stats() -> dict:
             model_refused_sources[src] = model_refused_sources.get(src, 0) + 1
     gate_passers = model_refused + sum(
         1 for row in feed if str(row.get("verdict")) == "pass")
-    return {
+    result: dict = {
         "decision_commits_by_verdict": commit_verdicts,
         "feed_events_by_verdict": feed_verdicts,
         "feed_fail_share": round(feed_verdicts.get("fail", 0) / total_feed, 3),
@@ -177,16 +204,35 @@ async def refusal_stats() -> dict:
                  "empty) — compare with omo's 74% decline rate (504 declines "
                  "vs 175 order intents)"),
     }
+    if since_ts is not None:
+        result["excluded_out_of_window"] = out_of_window
+        result["excluded_unparseable_ts"] = unparseable_ts
+    return result
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--since", metavar="YYYY-MM-DD", default=None,
+        help=("restrict every sample to timestamps at/after this UTC date "
+              "(§63: a fresh post-§57 baseline, e.g. --since 2026-09-06). "
+              "Ledger buys stay unfiltered so the honest-basis pairing is "
+              "intact; out-of-window closes are counted, never dropped."))
     args = parser.parse_args()
+
+    since_ts: float | None = None
+    if args.since:
+        try:
+            since_ts = datetime.strptime(
+                args.since, "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp()
+        except ValueError:
+            print(f"error: --since expects YYYY-MM-DD, got {args.since}")
+            return 2
 
     print("=" * 70)
     print("LIVE BOOK — the honest scorecard (reference disclosure format)")
     print("=" * 70)
-    stats = ledger_stats()
+    stats = ledger_stats(since_ts)
     print(f"samples (closed live trades): {stats['samples']}"
           f"   (skipped no-basis rows: {stats.get('skipped_no_basis', 0)} — "
           f"counted in USD only)")
@@ -198,7 +244,11 @@ def main() -> int:
     print(f"exit-rule mix: {stats['exit_rule_mix']}")
     print(f"formula: {stats['formula']}")
     print()
-    ref = asyncio.run(refusal_stats())
+    if since_ts is not None:
+        fc = stats.get("filtered_closes", 0)
+        print(f"window: closes/decisions at or after {args.since} UTC | "
+              f"pre-window closes excluded: {fc}")
+    ref = asyncio.run(refusal_stats(since_ts))
     print("REFUSAL FUNNEL (journal, read-only):")
     for k, v in ref.items():
         print(f"  {k}: {v}")

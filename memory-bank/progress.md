@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §63 Frontend operator upgrades (2026-09-16): operator directive —
+      staged prompt. Stage 1 premise correction (journal tables already
+      guarded; sweep clean, no code); Stage 2 responsive commitment
+      (min-width in-container table scroll); Stage 3: hand-rolled read-only
+      ⌘K palette (no new dep, no break-state toggle), /api/funnel +
+      RefusalFunnel panel, tape j/k/enter/esc, perf_report --since.
+      Verified: tsc -b + vite build clean, 547 backend green, E2E 11 → 16
+      (operator.spec.ts; NOT run — engine DOWN, REAL-MONEY ARMED). Open:
+      operator post-§57 baseline (--since 2026-09-06). Full detail: handoff
+      §63, DESIGN.md §7.
 - [x] §62 Full-repo code-quality cleanup (2026-09-14): operator directive —
       senior-engineer quality review of the whole codebase, "aggressive but
       safe", then implement the safe parts. Shipped (Batches A–D): dead code

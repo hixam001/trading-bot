@@ -157,6 +157,26 @@ Instrument Serif, grain textures.
 - [ ] Tab order walks hero → tabs → panels without traps
 
 ## 7. Revision history (condensed)
+- **§63 (2026-09-16)** — operator upgrades. (1) Responsive is now a
+  *commitment*, not an accident: every dense table carries a min-width and
+  scrolls INSIDE its container below natural width (Holdings 720px, journal
+  tables 640/720px); stat grids already collapse 2-up; full mobile panel
+  redesigns are out of scope until real usage asks. (2) Command palette
+  (⌘K / Ctrl-K), hand-rolled ~150 lines — no new runtime dependency (§5
+  holds; cmdk needed no exception). READ-ONLY by construction: view
+  navigation, journal status/text filtering, jump-to-position. The
+  break-state toggle is deliberately absent: a fuzzy-matched keystroke must
+  never sit next to live system state; state writes keep their explicit
+  gated paths. Dialog+combobox semantics, focus stays in the single input
+  (Tab inert), arrows/enter/esc. (3) Refusal funnel on the system view:
+  candidates seen → gate passed → model approved → filled, plus the
+  §57 model-refusal-rate-of-gate-passers — server-computed by the new
+  `/api/funnel` (classification identical to `scripts/perf_report.py`),
+  bespoke divs, no chart library (§5), unknowns as `—` (§2). (4) Decisions
+  tape keyboard navigation: j/k move a cursor, enter expands, esc collapses;
+  scoped to the focused tape (tabIndex=0 listbox) so keys never leak into
+  typing contexts; existing focus rings and `aria-expanded` untouched.
+  `perf_report.py --since YYYY-MM-DD` added for a post-§57 baseline sample.
 - **§59 (2026-09-10)** — SIGNAL world ported from the operator's
   `demo_2_signal.html` (which superseded the §58 PHOSPHOR AMBER gold world):
   full-height shell + hero band + five views + statusline; decisions tape,

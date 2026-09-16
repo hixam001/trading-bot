@@ -31,6 +31,7 @@ import config
 # try/except ImportError at every call site: a paper-only checkout still boots.
 from api.routes import (
     feed,
+    funnel,
     holdings,
     journal,
     knowledge_base,
@@ -117,7 +118,7 @@ async def security_headers(request, call_next):
     return response
 
 
-for module in (feed, holdings, journal, stats, market_regime,
+for module in (feed, funnel, holdings, journal, stats, market_regime,
                promotion_gate, knowledge_base, system_status):
     app.include_router(module.router)
 
