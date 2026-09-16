@@ -11,10 +11,18 @@ on the system view fed by the new server-computed `/api/funnel` (candidates →
 gate-passed → model-approved → filled + the §57 refusal rate; classification
 identical to perf_report.py), decisions-tape j/k/enter/esc cursor navigation
 (a11y preserved), responsive commitment (dense tables scroll in-container via
-min-widths), and `perf_report.py --since YYYY-MM-DD`. **STILL OPEN (§50→§63
-Stage 0): the operator has NOT yet run the post-§57 performance baseline** —
-run `.venv/bin/python scripts/perf_report.py --since 2026-09-06` and compare
-against the stale §50 numbers before drawing any conclusion from the funnel.
+min-widths), and `perf_report.py --since YYYY-MM-DD`. **Stage 0 EXECUTED
+(2026-09-16, operator-authorized, read-only): post-§57 sample is EMPTY —
+0 closed trades and 0 order commits since 2026-09-06; the only in-window
+activity was 66 feed events, ALL gate refusals (0 model refusals — there
+were no gate-passers).** Full-history run reproduces the §50 baseline
+exactly (24 samples, 12.5%, +57.88%, −26.05%, −15.56%), validating the
+report; all-time funnel: 60% model refusal of gate-passers. CONSEQUENCE:
+the §57 remediation (refusal discipline + restored exit scanner) is
+UNEVALUATED — the system has not traded since the fixes; the §50 numbers
+remain the only measurable record and they describe the pre-fix system.
+Next decision is operational: run the engine to accumulate a real post-§57
+sample before judging the funnel or the loss shape.
 **QUALITY (§62):** full-repo dead-code sweep — 8 zero-caller DB functions
 removed from BOTH dialect twins, dead config constants retired, legacy exit
 engine + Ollama residue deleted, two paper-era truth bugs fixed
@@ -135,9 +143,19 @@ E2E suite needs the backend on :8000; the engine was DOWN and it is
 REAL-MONEY ARMED, so it was deliberately not started. Run
 `npx playwright test` next time the engine is up.
 
-**Next:** operator runs the post-§57 baseline (Stage 0); then Stage 3
-follow-ups if wanted — persisted funnel snapshots for the refusal trend,
-palette-driven time-window filters.
+**Next:** ~~operator runs the post-§57 baseline (Stage 0)~~ **Stage 0 RUN
+(2026-09-16):** `perf_report.py --since 2026-09-06` → **0 samples, 0 commits,
+66 feed events all gate-refused in-window** (26 pre-window closes excluded;
+0 unparseable). Full-history run reproduces §50 exactly (24 / 12.5% /
++57.88% / −26.05% / −15.56%; funnel 60% all-time) — report validated.
+The §57 remediation is therefore UNEVALUATED: no trades since the fixes.
+Fix shipped with it: refusal_stats window filtering was referenced but never
+implemented (`NameError: out_of_window`) — now filters commits+feed with the
+ledger's tolerant `_ts_epoch` parsing (unparseables counted + excluded;
+no window = exact prior behavior). Follow-up is OPERATIONAL, not code:
+run the engine long enough to accumulate a real post-§57 sample (closes +
+gate-passers), then re-run `--since` and only then judge the funnel,
+the loss shape and the promotion gate.
 
 ---
 

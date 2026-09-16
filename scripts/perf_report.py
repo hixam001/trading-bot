@@ -154,6 +154,28 @@ async def refusal_stats(since_ts: float | None = None) -> dict:
     except Exception as exc:
         return {"error": f"journal unreadable (non-fatal): {type(exc).__name__}: {exc}"}
 
+    # §63: window filter — the same tolerant timestamp handling as the ledger
+    # section. Unparseable timestamps are COUNTED and excluded from a windowed
+    # funnel (never silently treated as in-window); with no window every row
+    # is counted, exactly as before.
+    out_of_window = 0
+    unparseable_ts = 0
+    if since_ts is not None:
+
+        def _in_window(row: dict) -> bool:
+            nonlocal out_of_window, unparseable_ts
+            ts_e = _ts_epoch(row.get("ts") or row.get("created_at"))
+            if ts_e is None:
+                unparseable_ts += 1
+                return False
+            if ts_e < since_ts:
+                out_of_window += 1
+                return False
+            return True
+
+        commits = [r for r in commits if _in_window(r)]
+        feed = [r for r in feed if _in_window(r)]
+
     commit_verdicts: dict[str, int] = {}
     for row in commits:
         v = row.get("think_verdict") or row.get("verdict")

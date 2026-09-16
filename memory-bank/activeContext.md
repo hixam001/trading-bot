@@ -13,7 +13,10 @@ tsc+vite clean, 547 backend green, 8pt grep clean, E2E extended to 16 (not
 run — engine was DOWN and is REAL-MONEY ARMED). OPEN, operator-only: run the
 post-§57 baseline `.venv/bin/python scripts/perf_report.py --since
 2026-09-06` — the §50 numbers still describe a system that no longer exists.
-PREVIOUS:**
+**Stage 0 now RUN (2026-09-16): result — the post-§57 sample is EMPTY (0
+closes, 0 commits since 2026-09-06; 66 in-window feed events, all gate
+refusals). The §57 remediation cannot yet be evaluated; the system must run
+and trade to accumulate a real sample. PREVIOUS:**
 
 **Then — 2026-09-14 (§62 SHIPPED — FULL-REPO CODE-QUALITY CLEANUP: dead code
 swept (8 zero-caller DB functions from BOTH db.py/db_pg.py, dead config

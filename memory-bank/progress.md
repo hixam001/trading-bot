@@ -9,8 +9,10 @@
       RefusalFunnel panel, tape j/k/enter/esc, perf_report --since.
       Verified: tsc -b + vite build clean, 547 backend green, E2E 11 → 16
       (operator.spec.ts; NOT run — engine DOWN, REAL-MONEY ARMED). Open:
-      operator post-§57 baseline (--since 2026-09-06). Full detail: handoff
-      §63, DESIGN.md §7.
+      ~~operator post-§57 baseline~~ **Stage 0 RUN (2026-09-16): post-§57
+      sample is EMPTY — 0 closes, 0 commits since 2026-09-06; 66 in-window
+      feed events, all gate refusals. §57 remediation unevaluated until the
+      engine runs and accumulates a real sample. Full detail: handoff §63.
 - [x] §62 Full-repo code-quality cleanup (2026-09-14): operator directive —
       senior-engineer quality review of the whole codebase, "aggressive but
       safe", then implement the safe parts. Shipped (Batches A–D): dead code
