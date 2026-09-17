@@ -1,3 +1,17 @@
+## Memory-bank update — 2026-09-17 (§64 September audit)
+
+Implemented approved audit dashboard scope, excluding §2.1. Safety status and
+alerts are read-only; persisted funnel snapshots unlock honest rate trends;
+stages drill to classified tape/bound journal; tape seen marker and shell
+extraction landed. Fixed disclosure's `active`/`tripped` mismatch and avoided
+blocklist loader writes during reads. Crowd health crosses engine/API process
+boundary through atomic shared-state observations (900s max age).
+Validation: 772 Python tests, 19 focused safety tests, clean tsc/Vite build,
+4 mocked Playwright tests. Live-backed browser tests not run (API down), no
+engine start, no real-money state changes, no post-§57 report rerun. Zero new
+dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
+
+
 ## Memory-bank update - 2026-09-06 (§56 full-repo consistency audit + Batch A)
 
 - **Task**: operator directive — "Audit the repo and find any bugs or

@@ -223,6 +223,25 @@ CREATE TABLE IF NOT EXISTS theses (
     realized_pnl_usd  REAL
 );
 CREATE INDEX IF NOT EXISTS idx_theses_mint ON theses(mint_address);
+-- §64: persisted funnel snapshots — one row per throttled cycle, written by
+-- the live cycle (engine-side; the API process never writes book state).
+-- The refusal-rate trend over these rows is what makes the §57 question
+-- ("is model refusal drifting toward the reference's 74%, or recovering?")
+-- answerable from real persisted data instead of a single point.
+CREATE TABLE IF NOT EXISTS funnel_snapshots (
+    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+    ts                      TEXT    NOT NULL,
+    candidates_seen         INTEGER NOT NULL,
+    gate_refused            INTEGER NOT NULL,
+    model_refused           INTEGER NOT NULL,
+    gate_passed             INTEGER NOT NULL,
+    model_approved          INTEGER NOT NULL,
+    filled                  INTEGER NOT NULL,
+    model_refusal_rate      REAL
+);
+CREATE INDEX IF NOT EXISTS idx_funnel_snapshots_ts ON funnel_snapshots(ts);
+
+-- REF-R3 Durable thesis book
 """
 
 
@@ -1048,6 +1067,67 @@ async def patch_daily_stats(
         (json.dumps(merged), date),
     )
     await conn.commit()
+
+
+# ===========================================================================
+# Funnel snapshots (§64) — persisted refusal-funnel history
+# ===========================================================================
+
+async def insert_funnel_snapshot(
+    conn: aiosqlite.Connection,
+    ts: str,
+    candidates_seen: int,
+    gate_refused: int,
+    model_refused: int,
+    gate_passed: int,
+    model_approved: int,
+    filled: int,
+    model_refusal_rate: Optional[float],
+) -> int:
+    """One throttled funnel snapshot row (see run_live_cycle._snapshot_funnel).
+    The rate stays None whenever gate_passed == 0 — the null-never-zero rule
+    applies to persisted history exactly like it does to /api/funnel."""
+    cursor = await conn.execute(
+        """
+        INSERT INTO funnel_snapshots (
+            ts, candidates_seen, gate_refused, model_refused, gate_passed,
+            model_approved, filled, model_refusal_rate
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (ts, candidates_seen, gate_refused, model_refused, gate_passed,
+         model_approved, filled, model_refusal_rate),
+    )
+    await conn.commit()
+    return int(cursor.lastrowid)
+
+
+async def get_funnel_snapshots(
+    conn: aiosqlite.Connection, limit: int = 300
+) -> list[dict[str, Any]]:
+    """Stored snapshots, OLDEST first (a trend series reads left-to-right)."""
+    cursor = await conn.execute(
+        """
+        SELECT id, ts, candidates_seen, gate_refused, model_refused,
+               gate_passed, model_approved, filled, model_refusal_rate
+        FROM funnel_snapshots ORDER BY id DESC LIMIT ?
+        """,
+        (max(1, limit),),
+    )
+    rows = await cursor.fetchall()
+    return [
+        {
+            "id": r["id"],
+            "ts": r["ts"],
+            "candidates_seen": r["candidates_seen"],
+            "gate_refused": r["gate_refused"],
+            "model_refused": r["model_refused"],
+            "gate_passed": r["gate_passed"],
+            "model_approved": r["model_approved"],
+            "filled": r["filled"],
+            "model_refusal_rate": r["model_refusal_rate"],
+        }
+        for r in reversed(rows)
+    ]
 
 
 # ===========================================================================

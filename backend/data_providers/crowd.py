@@ -391,6 +391,8 @@ def _bench(name: str, seconds: Optional[float] = None) -> None:
     gets the short STEALTH_THROTTLE_BACKOFF_SECONDS instead."""
     wait = config.STEALTH_BENCH_SECONDS if seconds is None else seconds
     _BENCHED_UNTIL[name] = time.monotonic() + wait
+    # Publish immediately: an exhausted chain may abort the rest of a cycle.
+    publish_chain_status()
     log.warning("stealth scraper %s benched %.0f min", name, wait / 60.0)
 
 
@@ -455,6 +457,71 @@ def _rejection_success(name: str) -> None:
     """A 200 proves the provider's proxy got through — the rejection streak
     resets so a provider that recovers is used again."""
     _CONSECUTIVE_REJECTIONS[name] = 0
+
+
+def chain_status() -> dict:
+    """
+    §64: read-only crowd-scrape chain truth for /api/safety. Which stealth
+    scrapers are configured and which are CURRENTLY benched (in-memory bench
+    state, same dicts the fetch loop consults — no invented health). The
+    free Scrapling hop counts only when enabled; paid hops only when their
+    key is set. Never raises.
+    """
+    try:
+        configured = [name for name, _fn in _configured_scrapers()]
+        benched = [name for name in configured if _is_benched(name)]
+    except Exception:
+        configured, benched = [], []
+    return {
+        "configured": configured,
+        "benched": benched,
+        # The symptom /api/safety alerts on: at least one scraper configured
+        # and EVERY one of them is benched right now (the chain is exhausted).
+        "exhausted": bool(configured) and len(benched) == len(configured),
+    }
+
+
+# Engine/API are separate processes; never inspect the API's empty bench cache.
+CHAIN_STATUS_MAX_AGE_SECONDS = 900.0
+
+
+def _chain_status_path():
+    from pathlib import Path
+    return Path(config.LIVE_STATE_DIR) / "crowd_chain_status.json"
+
+
+def publish_chain_status() -> None:
+    """Engine-only, atomic observation. Failure must not affect trading."""
+    try:
+        import os
+        state = chain_status()
+        state["observed_at"] = time.time()
+        path = _chain_status_path()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state))
+        os.replace(tmp, path)
+    except Exception:
+        log.warning("crowd chain observation write failed", exc_info=True)
+
+
+def observed_chain_status() -> dict:
+    """API-only read. Missing/stale observations are unknown, never healthy."""
+    unknown = {"configured": [], "benched": [], "exhausted": None,
+               "observed_at": None, "stale": True}
+    try:
+        state = json.loads(_chain_status_path().read_text())
+        age = time.time() - float(state["observed_at"])
+        if not 0 <= age <= CHAIN_STATUS_MAX_AGE_SECONDS:
+            return {**unknown, "observed_at": state["observed_at"]}
+        if (not isinstance(state["configured"], list)
+                or not isinstance(state["benched"], list)
+                or not isinstance(state["exhausted"], bool)):
+            return unknown
+        return {**state, "stale": False}
+    except (OSError, ValueError, KeyError, TypeError):
+        return unknown
+
 
 
 def _json_from_body(text: str) -> Optional[dict]:

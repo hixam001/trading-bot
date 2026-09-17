@@ -551,3 +551,11 @@ REGIME_PRUNE_KEEP: int = int(os.getenv("REGIME_PRUNE_KEEP", "500"))
 # system-status within this window, not freeze at the first read).
 WALLET_SCAN_TTL_SECONDS: float = float(os.getenv("WALLET_SCAN_TTL_SECONDS", "300"))
 LLM_HEALTH_TTL_SECONDS: float = float(os.getenv("LLM_HEALTH_TTL_SECONDS", "300"))
+
+# §64 — Alert-strip thresholds (observability, NOT trading-risk numbers; see
+# api/routes/safety.py). The no-fills alert fires only when the feed shows
+# candidates still flowing (>= MIN_CANDIDATES in the window) AND zero bound
+# fills in the window — "the machine is evaluating but not completing" is the
+# symptom; quiet hours with no candidates are not an alert.
+ALERT_NO_FILLS_HOURS: float = float(os.getenv("ALERT_NO_FILLS_HOURS", "6"))
+ALERT_NO_FILLS_MIN_CANDIDATES: int = int(os.getenv("ALERT_NO_FILLS_MIN_CANDIDATES", "10"))

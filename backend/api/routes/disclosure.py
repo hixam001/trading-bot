@@ -43,7 +43,15 @@ def _kill_switch_state() -> dict:
     try:
         if ks_path.is_file():
             data = json.loads(ks_path.read_text())
-            return {"active": bool(data.get("active", False)),
+            # §64: the ONLY writer (live_execution/kill_switch.py::_write)
+            # persists {"tripped": bool, "reason": str}. This reader looked for
+            # "active" instead, so an ENGAGED switch — including one the daily
+            # loss breaker tripped on its own — was reported as clear here and
+            # in every UI that renders this feed. Accept BOTH spellings: truth
+            # is the union, so neither key can hide an engaged switch.
+            engaged = bool(data.get("tripped", False)
+                           or data.get("active", False))
+            return {"active": engaged,
                     "reason": str(data.get("reason", ""))}
         return {"active": False, "reason": "no state file"}
     except Exception as exc:

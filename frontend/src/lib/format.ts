@@ -52,6 +52,18 @@ export function clock(iso: string | null | undefined): string {
   return d.toLocaleTimeString('en-GB', { hour12: false })
 }
 
+/**
+ * `14:03:22` local clock time from an epoch-SECONDS number (the live state
+ * files store unix seconds, not ISO strings — e.g. break_until_epoch).
+ * Missing/invalid stays `—`, never `1970-01-01`.
+ */
+export function epochClock(epoch: number | null | undefined): string {
+  if (epoch === null || epoch === undefined || !Number.isFinite(epoch) || epoch <= 0) {
+    return '—'
+  }
+  return clock(new Date(epoch * 1000).toISOString())
+}
+
 /** `AbCd…WxYz` — short address form. Full value stays in the DOM/title. */
 export function shortAddr(addr: string | null | undefined, head = 4, tail = 4): string {
   if (!addr) return '—'

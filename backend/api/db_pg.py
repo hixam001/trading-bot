@@ -275,6 +275,24 @@ _SCHEMA_SYNC_SQL = (
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_llm_call_usage_ts ON llm_call_usage(ts)",
+    # §64: persisted funnel snapshots (005_funnel_snapshots.sql).
+    """
+    CREATE TABLE IF NOT EXISTS funnel_snapshots (
+        id                      BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+        ts                      TIMESTAMPTZ NOT NULL,
+        candidates_seen         INTEGER NOT NULL,
+        gate_refused            INTEGER NOT NULL,
+        model_refused           INTEGER NOT NULL,
+        gate_passed             INTEGER NOT NULL,
+        model_approved          INTEGER NOT NULL,
+        filled                  INTEGER NOT NULL,
+        model_refusal_rate      DOUBLE PRECISION
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_funnel_snapshots_ts ON funnel_snapshots(ts)",
+    "ALTER TABLE funnel_snapshots ENABLE ROW LEVEL SECURITY",
+    "INSERT INTO schema_migrations (version) VALUES ('005_funnel_snapshots') "
+    "ON CONFLICT (version) DO NOTHING",
     "ALTER TABLE feed_events ADD COLUMN IF NOT EXISTS model_version TEXT",
     "ALTER TABLE feed_events ADD COLUMN IF NOT EXISTS prompt_version TEXT",
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS model_version TEXT",
@@ -1076,6 +1094,53 @@ async def patch_daily_stats(
         """,
         date, json.dumps(patch),
     )
+
+
+# ===========================================================================
+# Funnel snapshots (§64) - persisted refusal-funnel history
+# ===========================================================================
+
+async def insert_funnel_snapshot(
+    conn: asyncpg.Connection,
+    ts: str,
+    candidates_seen: int,
+    gate_refused: int,
+    model_refused: int,
+    gate_passed: int,
+    model_approved: int,
+    filled: int,
+    model_refusal_rate: Optional[float],
+) -> int:
+    """Postgres twin of db.insert_funnel_snapshot - identical surface.
+    The rate stays None whenever gate_passed == 0 (null-never-zero)."""
+    return await conn.fetchval(
+        """
+        INSERT INTO funnel_snapshots (
+            ts, candidates_seen, gate_refused, model_refused, gate_passed,
+            model_approved, filled, model_refusal_rate
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id
+        """,
+        _ts(ts), candidates_seen, gate_refused, model_refused, gate_passed,
+        model_approved, filled, model_refusal_rate,
+    )
+
+
+async def get_funnel_snapshots(
+    conn: asyncpg.Connection, limit: int = 300
+) -> list[dict[str, Any]]:
+    """Postgres twin of db.get_funnel_snapshots - oldest first, like SQLite."""
+    rows = await conn.fetch(
+        """
+        SELECT id, ts::text AS ts, candidates_seen, gate_refused,
+               model_refused, gate_passed, model_approved, filled,
+               model_refusal_rate
+        FROM (SELECT * FROM funnel_snapshots ORDER BY id DESC LIMIT $1) t
+        ORDER BY id ASC
+        """,
+        max(1, limit),
+    )
+    return [dict(r) for r in rows]
 
 
 # ===========================================================================

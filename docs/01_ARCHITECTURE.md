@@ -427,7 +427,10 @@ modify a trade, or change `PAPER_TRADING_ONLY`.
 | `GET /api/knowledge-base` | Static + ingested knowledge content, plus dynamic win-rate-by-bucket stats |
 | `GET /api/promotion-gate` | Current status of every promotion criterion |
 | `GET /api/market-regime` | Recent regime history |
-| `GET /api/system-status` | Ollama reachability, active model, per-provider daily call counts |
+| `GET /api/system-status` | Main LLM reachability, active provider, per-provider daily call counts |
+| `GET /api/safety` | Read-only kill/breaker/P&L/blocklist/break state + symptom alerts; live-book access policy |
+| `GET /api/funnel` | Server-classified recent decision counts and refusal rate |
+| `GET /api/funnel/snapshots` | Stored engine funnel observations, oldest-first (no frontend synthesis) |
 | `WS /ws/feed` | Real-time push of new feed events as ticks happen |
 | `POST /api/knowledge-base/ingest` | Add new material to the knowledge base (file upload or batch) |
 

@@ -1,6 +1,15 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §64 September audit remediation (2026-09-17): read-only safety panel and
+      all-view alerts, cross-process crowd observation, persisted funnel trend,
+      classified tape/journal drill-down, session seen marker, App extraction.
+      Disclosure now respects the writer's `tripped` key; corrupt blocklist
+      display is unknown and read-only. 772 Python passing; tsc/Vite clean;
+      4/4 new hermetic browser tests. No new dependencies. Live-backed E2E and
+      deployment not run; §2.1 excluded. Mobile redesign remains deferred;
+      bounded history / freshness / deployment details in handoff §64.
+
 - [x] §63 Frontend operator upgrades (2026-09-16): operator directive —
       staged prompt. Stage 1 premise correction (journal tables already
       guarded; sweep clean, no code); Stage 2 responsive commitment

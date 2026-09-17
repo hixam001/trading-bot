@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import LiveFeed from './components/LiveFeed'
 import LiveBook from './components/LiveBook'
 import Holdings from './components/Holdings'
@@ -8,11 +8,16 @@ import SystemStatus from './components/SystemStatus'
 import CommandPalette, { type PaletteJournalFilter } from './components/CommandPalette'
 import Performance from './components/Performance'
 import RefusalFunnel from './components/RefusalFunnel'
-import { ErrorState, Skeleton, Spark } from './components/ui'
+import { ErrorPanel, LoadingPanel } from './components/ui'
+import Hero from './components/Hero'
+import AlertStrip from './components/AlertStrip'
 import { useApi } from './hooks/useApi'
 import { useFeedSocket } from './hooks/useWebSocket'
-import { usd } from './lib/format'
 import type {
+  Tab,
+  FeedFilter,
+  SafetyResponse,
+  FunnelSnapshotsResponse,
   FunnelResponse,
   LiveExecutionsResponse,
   LivePortfolioResponse,
@@ -37,135 +42,6 @@ const TABS = [
   { id: 'market', label: 'market' },
   { id: 'system', label: 'system' },
 ] as const
-type Tab = (typeof TABS)[number]['id']
-
-/** Live UTC clock (HH:MM:SS) — the terminal's heartbeat; 1s tick. */
-function UtcClock() {
-  const [now, setNow] = useState(() => new Date())
-  useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000)
-    return () => clearInterval(id)
-  }, [])
-  const h = String(now.getUTCHours()).padStart(2, '0')
-  const m = String(now.getUTCMinutes()).padStart(2, '0')
-  const s = String(now.getUTCSeconds()).padStart(2, '0')
-  return (
-    <span className="font-mono text-faint text-xs tnum shrink-0 hidden sm:inline" data-testid="utc-clock">
-      {h}:{m}:{s} UTC<span className="clock-cursor" aria-hidden="true">_</span>
-    </span>
-  )
-}
-
-/** Hero band stat — small uppercase mono label over a semibold value. */
-function HeroStat({ label, value, cls = '' }: { label: string; value: string; cls?: string }) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="font-mono text-[9.5px] tracking-[0.12em] text-faint">{label}</span>
-      <span className={`font-mono tnum font-semibold text-[15px] leading-none ${cls}`}>{value}</span>
-    </div>
-  )
-}
-
-/** The hero band — equity headline, equity-curve sparkline, record stats. */
-function Hero({
-  equity,
-  curve,
-  winRate,
-  profitFactor,
-  drawdown,
-  connected,
-}: {
-  equity: number | null | undefined
-  curve: number[]
-  winRate: number | null
-  profitFactor: number | null
-  drawdown: number | null
-  connected: boolean
-}) {
-  return (
-    <header
-      data-testid="hero"
-      className="hero flex items-center justify-between gap-5 flex-wrap px-4 sm:px-7 py-3.5 bg-surface border-b border-line"
-    >
-      <div className="flex items-center gap-6 xl:gap-8 flex-wrap">
-        <div className="flex flex-col gap-0.5 shrink-0">
-          <span className="font-mono font-semibold text-[12.5px] tracking-[0.04em] text-bright">
-            trading-bot
-          </span>
-          <span className="font-mono text-[10px] text-faint">solana memecoin · signal console</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <div className="flex flex-col gap-1.5">
-            <span className="font-mono text-[9.5px] tracking-[0.12em] text-faint">EQUITY</span>
-            <span className="font-mono tnum font-semibold text-[30px] leading-none text-bright">
-              {usd(equity)}
-            </span>
-          </div>
-          <Spark values={curve} className="w-36 h-11 text-pass shrink-0" />
-        </div>
-        <div className="hidden md:flex items-center gap-6">
-          <HeroStat
-            label="WIN RATE"
-            value={winRate === null ? '—' : `${(winRate * 100).toFixed(1)}%`}
-          />
-          <HeroStat
-            label="PROFIT FACTOR"
-            value={profitFactor === null ? '—' : profitFactor.toFixed(2)}
-            cls={
-              profitFactor === null
-                ? ''
-                : profitFactor >= 1
-                  ? 'text-pass'
-                  : 'text-fail'
-            }
-          />
-          <HeroStat
-            label="DRAWDOWN"
-            value={drawdown === null ? '—' : `−${drawdown.toFixed(1)}%`}
-          />
-        </div>
-      </div>
-      <div className="flex items-center gap-3 flex-wrap">
-        <span className={`badge ${connected ? 'badge-pass' : 'badge-fail'}`} data-testid="ws-state">
-          {connected ? 'stream connected' : 'stream offline'}
-        </span>
-        <UtcClock />
-        <span className="live-tag">
-          <span className="live-dot" aria-hidden="true" />
-          LIVE · real money
-        </span>
-      </div>
-    </header>
-  )
-}
-
-/** Loading placeholder panel (DESIGN.md §3.1). */
-function LoadingPanel({ title, rows }: { title: string; rows: number }) {
-  return (
-    <div className="panel">
-      <div className="panel-header">
-        <h2 className="panel-title">{title}</h2>
-      </div>
-      <Skeleton rows={rows} />
-    </div>
-  )
-}
-
-/**
- * Error panel (DESIGN.md §3.3) — the shared twin of LoadingPanel: what failed
- * + automatic retry inside a titled panel. Only reached when a feed has never
- * succeeded; later-poll failures keep panels populated (§3.4).
- */
-function ErrorPanel({ title, message }: { title: string; message: string }) {
-  return (
-    <div className="panel" data-testid="error-panel">
-      <div className="panel-header">
-        <h2 className="panel-title">{title}</h2>
-      </div>
-      <ErrorState message={message} />
-    </div>
-  )
-}
 
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
@@ -176,6 +52,9 @@ export default function App() {
   const status = useApi<SystemStatusResponse>('/api/system-status', 15000)
   const stats = useApi<StatsResponse>('/api/stats', 15000)
   const funnel = useApi<FunnelResponse>('/api/funnel', 15000)
+  const safety = useApi<SafetyResponse>('/api/safety', 15000)
+  const snapshots = useApi<FunnelSnapshotsResponse>('/api/funnel/snapshots?limit=300', 60000)
+  const [feedFilter, setFeedFilter] = useState<FeedFilter>('all')
 
   // §63 operator upgrades: read-only command palette state. The palette
   // navigates, filters the journal and jumps to a position; it never writes.
@@ -200,6 +79,8 @@ export default function App() {
         drawdown={stats.data?.max_drawdown_pct ?? null}
         connected={connected}
       />
+
+      <AlertStrip safety={safety.data} error={safety.error} />
 
       {/* View tabs — the active view carries the signal underline. */}
       <nav className="tabs" aria-label="views">
@@ -243,7 +124,7 @@ export default function App() {
                     {connected ? '● ws live' : '● ws offline'}
                   </span>
                 </div>
-                <LiveFeed events={events} freshId={freshId} />
+                <LiveFeed events={events} freshId={freshId} filter={feedFilter} onClearFilter={() => setFeedFilter('all')} />
               </div>
 
               {/* Col 2 — the live book's open positions. */}
@@ -334,7 +215,7 @@ export default function App() {
               {status.loading ? (
                 <LoadingPanel title="System status" rows={4} />
               ) : status.data ? (
-                <SystemStatus status={status.data} />
+                <SystemStatus status={status.data} safety={safety.data} />
               ) : status.error ? (
                 <ErrorPanel title="System status" message={status.error} />
               ) : null}
@@ -343,7 +224,12 @@ export default function App() {
                 {funnel.loading ? (
                   <LoadingPanel title="Refusal funnel" rows={3} />
                 ) : funnel.data ? (
-                  <RefusalFunnel funnel={funnel.data} />
+                  <RefusalFunnel
+                    funnel={funnel.data}
+                    snapshots={snapshots.data}
+                    onDrill={(stage) => { setFeedFilter(stage); setTab('dashboard') }}
+                    onJournal={() => { setJournalFilter({ status: 'bound', query: '' }); setTab('journal') }}
+                  />
                 ) : funnel.error ? (
                   <ErrorPanel title="Refusal funnel" message={funnel.error} />
                 ) : null}

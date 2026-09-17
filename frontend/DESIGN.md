@@ -157,6 +157,15 @@ Instrument Serif, grain textures.
 - [ ] Tab order walks hero → tabs → panels without traps
 
 ## 7. Revision history (condensed)
+- **§64 (2026-09-17)** — read-only safety state and persistent symptom alerts
+  across all views. Empty means quiet; poll failure means unknown/stale, never
+  all-clear. No dismiss/toggle control. Persisted refusal-rate Spark requires
+  two real non-null snapshots; no synthetic history. Stage buttons investigate
+  classified tape rows or bound journal commits; session-only seen marker.
+  Hero/clock/shared-panel extraction keeps shell lean; no new dependencies.
+  **Responsive remains partial:** table scroll guards are delivered, full mobile
+  panel redesign is deferred pending usage, not marked complete.
+
 - **§63 (2026-09-16)** — operator upgrades. (1) Responsive is now a
   *commitment*, not an accident: every dense table carries a min-width and
   scrolls INSIDE its container below natural width (Holdings 720px, journal

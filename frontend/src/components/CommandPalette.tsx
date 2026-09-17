@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { JournalFilter, LivePositionRow } from '../types'
+import type { JournalFilter, LivePositionRow, Tab } from '../types'
 
 /**
  * Command palette (§63.1) — hand-rolled, deliberately: no new runtime
@@ -16,7 +16,6 @@ import type { JournalFilter, LivePositionRow } from '../types'
  * aria-activedescendant tracks the highlighted row.
  */
 
-type Tab = 'dashboard' | 'holdings' | 'journal' | 'market' | 'system'
 
 export interface PaletteJournalFilter {
   status: JournalFilter

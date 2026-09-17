@@ -37,6 +37,7 @@ from api.routes import (
     knowledge_base,
     market_regime,
     promotion_gate,
+    safety,
     stats,
     system_status,
 )
@@ -119,7 +120,7 @@ async def security_headers(request, call_next):
 
 
 for module in (feed, funnel, holdings, journal, stats, market_regime,
-               promotion_gate, knowledge_base, system_status):
+               promotion_gate, knowledge_base, system_status, safety):
     app.include_router(module.router)
 
 from api.routes.proof import router as proof_router  # noqa: E402

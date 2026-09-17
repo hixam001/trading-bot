@@ -102,6 +102,31 @@ def test_kill_switch_reader_follows_config(tmp_path, monkeypatch):
     assert state["reason"] == "operator test"
 
 
+def test_kill_switch_reader_understands_the_real_writers_schema(
+        tmp_path, monkeypatch):
+    """§64: pin the reader to the REAL writer's file.
+
+    `live_execution/kill_switch.py::_write` persists {"tripped": ...}; the
+    reader here once looked only for "active", so an engaged switch (manual OR
+    breaker-tripped) read as clear on every surface that renders this feed.
+    Reading it through the actual writer makes that class of drift impossible
+    to reintroduce silently.
+    """
+    from live_execution import kill_switch
+
+    state = tmp_path / "ks"
+    kill_switch.trip("operator panic", state_dir=state)
+    monkeypatch.setattr(config, "KILL_SWITCH_FILE",
+                        str(state / "kill_switch.json"))
+
+    engaged = disclosure._kill_switch_state()
+    assert engaged["active"] is True
+    assert engaged["reason"] == "operator panic"
+
+    kill_switch.clear(state_dir=state)
+    assert disclosure._kill_switch_state()["active"] is False
+
+
 # --- codebase-wide guard ------------------------------------------------------
 
 def test_no_module_anchors_live_state_on_the_repo_root():

@@ -1,9 +1,63 @@
-**Last updated:** 2026-09-16 · **Branch:** main · **Status:** LIVE
+## §64 — September audit remediation (2026-09-17)
+
+Implemented all approved dashboard work; audit §2.1 performance validation was
+excluded by the operator and was NOT rerun. Historical §63 results below remain
+historical; no trading engine or real-money operation was started for this work.
+
+- Read-only `GET /api/safety` (same local/admin or LIVE_BOOK_PUBLIC policy as
+  live-book endpoints): kill state/reason, daily realized ledger P&L versus
+  configured loss limit, mint-blocklist counts/latest addition, break state.
+  Fixed disclosure reading `active` while the writer persists `tripped`;
+  both spellings now preserve an engaged switch. Manual kills are NOT reported
+  as daily-loss trips. Corrupt ledger/blocklist figures stay null; blocklist
+  display never invokes the mutating quarantine loader.
+- Persistent alert strip across all five views: kill/breaker engaged, LLM down,
+  observed crowd-chain exhaustion, and no fills while candidates flow (defaults
+  6h / 10 feed events; ALERT_NO_FILLS_HOURS and ALERT_NO_FILLS_MIN_CANDIDATES).
+  Quiet state renders nothing, routine breaks do not alert, failed safety polls
+  explicitly warn that protection status is unavailable/stale. No toggles.
+- Engine publishes atomic crowd observations in its shared live state directory
+  when benching and at cycle end. API reads these, not its own empty in-process
+  bench cache. Missing/corrupt/future/>900s observations are unknown. This is
+  crowd-scraper chain health, NOT a claim about every market-data provider.
+- Persisted funnel history in SQLite and PostgreSQL, migration
+  `migrations/supabase/005_funnel_snapshots.sql` plus schema-sync/RLS parity.
+  Engine writes at completed cycles, at most once per 300s (single engine);
+  GET `/api/funnel/snapshots?limit=300` reads oldest-first stored observations.
+  Classification matches `/api/funnel` and perf_report, not necessarily their
+  different time windows. Snapshot counts use latest 1000 feed/commit rows.
+  Trend uses actual non-null rates only, requires two points, no backfill or
+  synthesized prices. Chart spacing is observation order, not elapsed time.
+- Funnel stages drill into the classified tape; filled jumps to bound journal.
+  Refusals belong on the tape, not the commit-only journal. Tape is a loaded
+  subset (initial 50, live cap 200), not exhaustive history of the 1000-row funnel.
+  No-fill heuristic also examines latest 1000 feed/commit rows, not an unbounded
+  activity query; it is advisory, not a trading rule or promotion criterion.
+- Session-only seen marker on tape; extracted Hero/clock and shared error/loading
+  panels; shared Tab type. App reduced from 386 to 270 lines.
+- Mobile remains **partially delivered**: dense tables scroll in-container;
+  full mobile panel redesign and broader Batch E work remain deferred.
+
+Validation: full Python suite **772 passed** (one existing Starlette deprecation
+warning); focused safety **19 passed**; `tsc -b` and Vite production build clean;
+new hermetic Playwright audit suite **4/4 passed** against static frontend with
+mocked API/WS. Existing live-backed browser suite NOT run (API down); no live
+Postgres migration or provider/trading smoke test performed. No dependency changes.
+Deployment: restart API/engine through normal operator deployment to load changes;
+shared state must be mounted in both processes; normal Postgres init syncs schema.
+Snapshots accumulate only after engine cycles. No risk flags or execution sizing
+changed; no performance verdict inferred from snapshots.
+
+---
+
+
+**Last updated:** 2026-09-17 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests:** 738 passing (backend + live_execution) + 16 Playwright E2E
-(suite fully green; the flag-state canary pins the committed ARMED state — §33)
+**Tests (§64):** 772 Python passing; 4 new hermetic Playwright tests passing.
+Existing 16 live-backed browser tests were not rerun (API down).
+(The flag-state canary pins the committed ARMED state — §33.)
 **UI (§63):** operator upgrades — read-only command palette (⌘K/Ctrl-K:
 navigation, journal filtering, jump-to-position; the break-state toggle is
 deliberately ABSENT — no fuzzy keystroke next to live state), refusal funnel

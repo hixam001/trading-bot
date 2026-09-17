@@ -737,6 +737,57 @@ async def _journal_feed_event(conn, c, think, gate, regime,
     )
 
 
+FUNNEL_SNAPSHOT_INTERVAL_SECONDS: float = 300.0   # one row / 5 min, max
+
+
+async def _snapshot_funnel(
+    min_interval_seconds: float = FUNNEL_SNAPSHOT_INTERVAL_SECONDS,
+) -> int | None:
+    """
+    §64: persist ONE throttled refusal-funnel snapshot per interval window.
+    Called at the end of every cycle (fail-soft in the caller): if the newest
+    stored row is younger than the interval, nothing is written — an idle
+    engine must not pad the trend with identical rows. The counts come from
+    the SAME compute_funnel() /api/funnel serves, so the stored series, the
+    UI funnel and scripts/perf_report.py reconcile by construction. Returns
+    the inserted row id, or None when throttled.
+    """
+    from api.routes.funnel import compute_funnel
+
+    async with db.get_db() as conn:
+        latest = await db.get_funnel_snapshots(conn, limit=1)
+    if latest:
+        try:
+            last = datetime.fromisoformat(
+                str(latest[0]["ts"]).replace("Z", "+00:00"))
+            age = (datetime.now(timezone.utc) - last).total_seconds()
+            if age < min_interval_seconds:
+                return None
+        except ValueError:
+            pass  # unreadable timestamp: write the row (better a dup than a gap)
+
+    async with db.get_db() as conn:
+        total = await db.count_feed_events(conn)
+        feed = await db.get_feed_events(conn, limit=1000)
+        commits = await db.get_recent_decision_commits(conn, limit=1000)
+    counts = compute_funnel(feed, commits, total, 1000)
+    async with db.get_db() as conn:
+        row_id = await db.insert_funnel_snapshot(
+            conn,
+            ts=datetime.now(timezone.utc).isoformat(),
+            candidates_seen=counts["candidates_seen"],
+            gate_refused=counts["gate_refused"],
+            model_refused=counts["model_refused"],
+            gate_passed=counts["gate_passed"],
+            model_approved=counts["model_approved"],
+            filled=counts["filled"],
+            model_refusal_rate=counts["model_refusal_rate_of_gate_passers"],
+        )
+    log.info("funnel snapshot #%s persisted (model_refused=%s gate_passed=%s)",
+             row_id, counts["model_refused"], counts["gate_passed"])
+    return row_id
+
+
 async def run_cycle(once: bool = False) -> dict:
     """One full cycle. Returns a step-by-step outcome record, refusals included."""
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
@@ -1048,6 +1099,20 @@ async def run_cycle(once: bool = False) -> dict:
             await run_retro_match(retro_conn)
     except Exception:
         log.debug("retro_match post-cycle failed (non-fatal)", exc_info=True)
+
+    # Publish engine-local provider state for the separate API process.
+    from data_providers.crowd import publish_chain_status
+    publish_chain_status()
+
+    # --- §64: persist a throttled refusal-funnel snapshot ----------------
+    # The persisted series is what makes the §57 question ("is model refusal
+    # drifting toward the reference's 74%, or recovering?") answerable from
+    # real data. Same classification as /api/funnel and perf_report.py, by
+    # construction. Observability only — never blocks or alters the cycle.
+    try:
+        await _snapshot_funnel()
+    except Exception:
+        log.warning("funnel snapshot write failed (non-fatal)", exc_info=True)
 
     return outcome
 

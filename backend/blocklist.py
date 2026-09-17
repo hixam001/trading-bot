@@ -274,6 +274,47 @@ def record_close_outcome(mint: str, symbol: str, rule_id: str,
                     symbol or mint[:8], exc_info=True)
 
 
+def summary() -> dict:
+    """
+    §64: read-only blocklist summary for /api/safety. Counts actual BLOCK
+    entries (manual + auto — closes-history-only entries are memory, not
+    blocks) and finds the most recent addition by blocked_at. This read must
+    NOT use _load(): its corruption recovery renames files. Unknown is null.
+    """
+    try:
+        try:
+            state = json.loads(_path().read_text())
+        except FileNotFoundError:
+            state = {}
+        mints = state.get("mints", {})
+        if not isinstance(mints, dict) or any(not isinstance(v, dict) for v in mints.values()):
+            raise ValueError("invalid mint entries")
+    except (OSError, ValueError, AttributeError):
+        return {"blocks": None, "auto": None, "manual": None, "latest": None}
+    blocks = [
+        {"mint": mint, **(entry or {})}
+        for mint, entry in mints.items()
+        if _is_block_entry(entry)
+    ]
+    latest = None
+    for b in blocks:
+        if latest is None or str(b.get("blocked_at") or "") > str(
+                latest.get("blocked_at") or ""):
+            latest = b
+    return {
+        "blocks": len(blocks),
+        "auto": sum(1 for b in blocks if b.get("kind") == "auto"),
+        "manual": sum(1 for b in blocks if b.get("kind") == "manual"),
+        "latest": {
+            "mint": latest.get("mint"),
+            "symbol": latest.get("symbol", ""),
+            "reason": latest.get("reason", ""),
+            "kind": latest.get("kind", ""),
+            "blocked_at": latest.get("blocked_at", ""),
+        } if latest else None,
+    }
+
+
 def maybe_autoblock(mint: str, symbol: str) -> bool:
     """
     §49 DONT-pattern killer: block the mint when its newest

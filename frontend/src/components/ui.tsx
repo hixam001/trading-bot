@@ -72,6 +72,37 @@ export function ErrorState({ message }: { message: string }) {
 }
 
 /**
+ * Loading placeholder panel (DESIGN.md §3.1) — moved here from App.tsx in
+ * §64.4 so the shell stops being the home of shared primitives.
+ */
+export function LoadingPanel({ title, rows }: { title: string; rows: number }) {
+  return (
+    <div className="panel">
+      <div className="panel-header">
+        <h2 className="panel-title">{title}</h2>
+      </div>
+      <Skeleton rows={rows} />
+    </div>
+  )
+}
+
+/**
+ * Error panel (DESIGN.md §3.3) — the shared twin of LoadingPanel: what failed
+ * + automatic retry inside a titled panel. Only reached when a feed has never
+ * succeeded; later-poll failures keep panels populated (§3.4).
+ */
+export function ErrorPanel({ title, message }: { title: string; message: string }) {
+  return (
+    <div className="panel" data-testid="error-panel">
+      <div className="panel-header">
+        <h2 className="panel-title">{title}</h2>
+      </div>
+      <ErrorState message={message} />
+    </div>
+  )
+}
+
+/**
  * Click-to-copy text (§59: the COMPLETE contract address is always shown —
  * never truncated). The copy affordance announces "copied" by text, not
  * color alone (DESIGN.md §4).

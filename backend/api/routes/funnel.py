@@ -38,13 +38,12 @@ def _failed_ids(row: dict) -> list:
     return failed
 
 
-@router.get("/api/funnel")
-async def get_funnel(limit: int = Query(1000, ge=1, le=10000)):
-    async with db.get_db() as conn:
-        total = await db.count_feed_events(conn)
-        feed = await db.get_feed_events(conn, limit=limit)
-        commits = await db.get_recent_decision_commits(conn, limit=limit)
-
+def compute_funnel(feed: list, commits: list, total: int, limit: int) -> dict:
+    """The §57 funnel over verbatim rows, EXACTLY as scripts/perf_report.py
+    classifies: verdict=fail with EMPTY failed_rule_ids = a MODEL refusal
+    among gate-passers; non-empty = the GATE refused. Shared by /api/funnel
+    and the live cycle's snapshot writer, so the UI, the stored trend and
+    the operator report can never silently disagree (§64)."""
     gate_refused = 0
     model_refused = 0
     for row in feed:
@@ -58,7 +57,6 @@ async def get_funnel(limit: int = Query(1000, ge=1, le=10000)):
     model_approved = sum(1 for row in feed if str(row.get("verdict")) == "pass")
     gate_passed = model_refused + model_approved
     filled = sum(1 for c in commits if c.get("signature"))
-
     return {
         "window": {"limit": limit, "feed_events": len(feed)},
         "candidates_seen_total": total,
@@ -71,8 +69,41 @@ async def get_funnel(limit: int = Query(1000, ge=1, le=10000)):
         "model_refusal_rate_of_gate_passers": (
             round(model_refused / gate_passed, 3) if gate_passed else None
         ),
+    }
+
+
+async def _funnel_window(limit: int) -> tuple[list, list, int]:
+    async with db.get_db() as conn:
+        total = await db.count_feed_events(conn)
+        feed = await db.get_feed_events(conn, limit=limit)
+        commits = await db.get_recent_decision_commits(conn, limit=limit)
+    return feed, commits, total
+
+
+@router.get("/api/funnel")
+async def get_funnel(limit: int = Query(1000, ge=1, le=10000)):
+    feed, commits, total = await _funnel_window(limit)
+    counts = compute_funnel(feed, commits, total, limit)
+    return {
+        **counts,
         "note": ("classification identical to scripts/perf_report.py §57: "
                  "verdict=fail with empty failed_rule_ids = a MODEL refusal "
                  "among gate-passers; filled counts windowed commits whose "
                  "fill signature is present"),
+    }
+
+
+@router.get("/api/funnel/snapshots")
+async def get_funnel_snapshots(limit: int = Query(300, ge=1, le=1000)):
+    """§64: the persisted funnel history, oldest first. Written by the live
+    cycle (one throttled row per cycle); the API never writes here. Rows are
+    verbatim stored counts — the trend UI renders them, never re-derives."""
+    async with db.get_db() as conn:
+        snapshots = await db.get_funnel_snapshots(conn, limit=limit)
+    return {
+        "snapshots": snapshots,
+        "count": len(snapshots),
+        "note": ("one row per throttled cycle, written engine-side; "
+                 "classification identical to /api/funnel and "
+                 "scripts/perf_report.py"),
     }

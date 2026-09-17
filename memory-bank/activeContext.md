@@ -1,5 +1,18 @@
 # Active Context — trading-bot
 
+**Current — 2026-09-17 (§64):** September audit dashboard remediation shipped:
+read-only safety state + persistent actionable alerts; disclosure kill-switch
+writer/reader key mismatch fixed; engine→API crowd observation with 900s freshness;
+SQLite/Postgres funnel snapshots + real-rate Spark; stage drill-downs to tape or
+bound journal; session seen marker; Hero/shared panel extraction and shared Tab.
+772 Python tests passed, 19 focused safety tests, clean TypeScript/Vite build,
+4 new hermetic browser tests passed. Existing live-backed browser suite not run;
+engine/API not started. No dependencies, risk flags or real-money state changed.
+§2.1 excluded: no new performance validation. Mobile is still partial (table
+scroll guards, not redesigned panels). See handoff §64 for bounded-window and
+shared-state deployment limitations. Historical context follows.
+
+
 **As of 2026-09-16 (§63 SHIPPED — FRONTEND OPERATOR UPGRADES + audit
 remediation: Stage 1 was a stale premise (Journal's tables already carry the
 §59 scroll-bound guard — nothing fixed, sweep found no other gap); Stage 2

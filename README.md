@@ -154,6 +154,9 @@ feeds (no endpoint can change trading state):
 | `/api/disclosure.json` | public machine truth: armed state, kill switch, config caps/floors, sizing formulas |
 | `/api/proof.json`, `/api/verify.json`, `/api/binding.json`, `/api/reasoning.json` | the decision-proof surface: commit seals, on-chain memo verification, fill binding, per-decision provenance |
 | `/api/system-status` | health: provider call counters, LLM state |
+| `/api/safety` | read-only safety state + actionable alerts; live-book access policy |
+| `/api/funnel` | bounded decision funnel, server-classified refusal rate |
+| `/api/funnel/snapshots` | persisted engine observations, oldest-first; limit 1–2000 |
 | `/api/promotion-gate` | READ-ONLY live-readiness report (never writes, ever) |
 
 ## Tests

@@ -180,8 +180,77 @@ export interface LiveExecutionsResponse {
 }
 
 
+export type Tab = 'dashboard' | 'holdings' | 'journal' | 'market' | 'system'
+
 /** Journal status filter set from the command palette (§63). */
 export type JournalFilter = "all" | "bound" | "published" | "failed"
+
+/** Which slice of the decisions tape is shown (§64.3 drill-down). */
+export type FeedFilter = "all" | "approved" | "refused" | "gate_refused" | "gate_passed"
+
+/** One §64.1b alert — a symptom that genuinely demands operator attention.
+ *  The strip renders NOTHING when the list is empty (that is the feature
+ *  working, not wasted space). */
+export interface SafetyAlert {
+  id: string
+  severity: "fail" | "warn"
+  message: string
+}
+
+export interface BlocklistLatest {
+  mint: string | null
+  symbol: string
+  reason: string
+  kind: string
+  blocked_at: string
+}
+
+/** GET /api/safety (§64.1a) — the read-only safety-state surface behind the
+ *  SystemStatus safety section and the alert strip. Display only: no
+ *  endpoint behind it can change any of this state. */
+export interface SafetyResponse {
+  generated_at_utc: string
+  armed: boolean
+  kill_switch: { engaged: boolean; reason: string }
+  daily_loss_breaker: {
+    limit_usd: number | null
+    realized_pnl_today_usd: number | null
+    engaged: boolean
+    headroom_usd: number | null
+  }
+  blocklist: {
+    blocks: number | null
+    auto: number | null
+    manual: number | null
+    latest: BlocklistLatest | null
+  }
+  break: { on_break: boolean; reason: string; break_until_epoch: number | null }
+  llm: { main_reachable: boolean; provider: string }
+  crowd_chain: { configured: string[]; benched: string[]; exhausted: boolean | null; stale: boolean; observed_at: number | null }
+  alerts: SafetyAlert[]
+  thresholds: { no_fills_hours: number; no_fills_min_candidates: number }
+}
+
+/** One persisted funnel snapshot (§64.2) — the trend series' data points. */
+export interface FunnelSnapshot {
+  id: number
+  ts: string
+  candidates_seen: number
+  gate_refused: number
+  model_refused: number
+  gate_passed: number
+  model_approved: number
+  filled: number
+  model_refusal_rate: number | null
+}
+
+/** GET /api/funnel/snapshots — stored history, oldest first. */
+export interface FunnelSnapshotsResponse {
+  snapshots: FunnelSnapshot[]
+  count: number
+  /** Threshold in the backend's own words when history is too short to trend. */
+  note: string
+}
 
 /** GET /api/funnel — the §57 refusal funnel (§63): candidates seen ->
  *  gate-passed -> model-approved -> filled. Server-computed with the exact
