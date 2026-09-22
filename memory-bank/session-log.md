@@ -1,4 +1,45 @@
-## Memory-bank update — 2026-09-17 (§64 September audit)
+## Memory-bank update — 2026-09-21 (§65 keyboard + mint drill-down)
+
+- **Task**: operator master prompt §65 — (1) complete the vim-adjacent
+  keyboard vocabulary (j/k/Enter/Esc/g-G/?), (2) mint-history drill-down
+  (backend + frontend), with three explicit confirm-gates BEFORE code.
+- **Confirm-gate answers given then honored**: single `g` not `gg` (the only
+  g-verb — no chord worth timeout state); DEDICATED route
+  `GET /api/mint/{mint}/history` not a `?mint=` filter (different semantics:
+  unbounded-depth per-mint history vs live-window tape; default 100/cap 500;
+  reuses the feed row shape verbatim); drill-down trigger = dedicated
+  `history` button BESIDE CopyText (never one overloaded click target).
+- **Prompt's premise corrected with evidence**: j/k DID already exist — §63
+  shipped a scoped tape cursor (LiveFeed.tsx listbox). The genuinely new
+  work: promoting it global with typing guards, journal cursor, g/G, ?,
+  and the entire drill-down (backend + frontend).
+- **Backend**: db twins get_feed_events_for_mint + count_feed_events_for_mint
+  in api/db.py AND api/db_pg.py (parameterized; parity test green); route in
+  api/routes/feed.py with function-local SEC-07 base58 validator import —
+  422 malformed, EMPTY (total 0) unknown, pagination 1..500/0..; response
+  {mint, total, limit, offset, events[]} with the identical feed projection.
+- **Frontend**: lib/shortcuts.ts (ListController registry + SHORTCUTS table
+  + isTextTarget guard); App.tsx document-level dispatcher (guards: palette
+  open → palette wins incl. Escape; help open; text-field focus; any
+  meta/ctrl/alt; owns() stand-down for focused listboxes); ShortcutOverlay
+  rendered from SHORTCUTS; LiveFeed g/G + registration (Escape deliberately
+  NOT claimed in-list so the dispatcher can back out of drill-down levels);
+  Journal cursor over order-decisions rows (ledger deliberately NOT
+  registered — no expand, Enter would be a lie); MintHistory.tsx fetches
+  /api/mint/{m}/history, registers its list, five §3 states, "load older"
+  paging, ← back; HistoryButton beside every CopyText address (feed
+  expanded, journal proof, journal ledger, Holdings, LiveBook); statusline
+  advertises "⌘K palette · ? shortcuts".
+- **Verification**: 789 Python passed (4 new tests; parity guards pass);
+  tsc -b + vite build clean (52 modules, 203.17 kB JS / 62.78 kB gzip);
+  e2e/keyboard.spec.ts 7/7 PASSED against the built frontend served via
+  vite preview + BASE_URL override, mocked API/WS (engine REAL-MONEY ARMED —
+  never started for UI work; live-backed :8000 suites not rerun, API down).
+  Zero new runtime
+  dependencies. Docs updated: DESIGN.md §7 §65 entry, handoff §65,
+  activeContext/progress/this log.
+
+
 
 Implemented approved audit dashboard scope, excluding §2.1. Safety status and
 alerts are read-only; persisted funnel snapshots unlock honest rate trends;

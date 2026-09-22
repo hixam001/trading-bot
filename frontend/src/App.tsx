@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import LiveFeed from './components/LiveFeed'
 import LiveBook from './components/LiveBook'
 import Holdings from './components/Holdings'
@@ -8,11 +8,14 @@ import SystemStatus from './components/SystemStatus'
 import CommandPalette, { type PaletteJournalFilter } from './components/CommandPalette'
 import Performance from './components/Performance'
 import RefusalFunnel from './components/RefusalFunnel'
+import ShortcutOverlay from './components/ShortcutOverlay'
+import MintHistory from './components/MintHistory'
 import { ErrorPanel, LoadingPanel } from './components/ui'
 import Hero from './components/Hero'
 import AlertStrip from './components/AlertStrip'
 import { useApi } from './hooks/useApi'
 import { useFeedSocket } from './hooks/useWebSocket'
+import { activeList, isTextTarget } from './lib/shortcuts'
 import type {
   Tab,
   FeedFilter,
@@ -65,9 +68,86 @@ export default function App() {
   })
   const [focusMint, setFocusMint] = useState<string | null>(null)
 
+  // §65 — the navigation stack's top level: the mint-history drill-down.
+  // This is a LEVEL above the tabs (Esc backs out of it), not a disconnected
+  // modal. `focusMint` keeps its §63 meaning (palette jump → highlight row).
+  const [historyMint, setHistoryMint] = useState<string | null>(null)
+  // §65 — the `?` help overlay (rendered verbatim from the SHORTCUTS table).
+  const [helpOpen, setHelpOpen] = useState(false)
+
   // Global offline banner (DESIGN.md §3.4): only when BOTH primary feeds fail.
   // Panels keep their last data and recover automatically.
   const offline = liveBook.error && status.error
+
+  // §65 — the global keyboard dispatcher. ONE listener, guarded: nothing
+  // fires while the palette is open (its own handler keeps winning — the
+  // palette's Escape-closes behavior is untouched), while the help overlay is
+  // up, while focus sits in any text field (the standard global-shortcut
+  // failure mode: firing while someone types), or for any meta/ctrl/alt
+  // chord. Escape resolves top-down: collapse the focused row first, then
+  // back out of the drill-down stack level, then close the help overlay.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey) return
+      const key = e.key
+      // Palette open ⇒ the vocabulary is inert. Its own listener owns every
+      // key (including Escape-closes), so the two handlers can never fight.
+      if (paletteOpen) return
+      // Help open ⇒ only Escape acts (no list moves behind the overlay).
+      if (helpOpen && key !== 'Escape') return
+      if (key === '?') {
+        if (isTextTarget()) return
+        e.preventDefault()
+        setHelpOpen((h) => !h)
+        return
+      }
+      if (key === 'Escape') {
+        if (helpOpen) {
+          e.preventDefault()
+          setHelpOpen(false)
+          return
+        }
+        if (historyMint) {
+          e.preventDefault()
+          const list = activeList()
+          // Collapse the drill-down's expanded row first, if any.
+          if (list?.id === 'mint-history' && list.collapse()) return
+          // Not expanded: back out one level of the stack.
+          setHistoryMint(null)
+          return
+        }
+        const list = activeList()
+        if (list && !isTextTarget() && !(list.owns?.(document.activeElement) ?? false)) {
+          // Focused tape/journal row expanded → collapse it (the same duty
+          // the focused listboxes already handle for their own keys).
+          if (list.collapse()) e.preventDefault()
+        }
+        return
+      }
+      if (isTextTarget()) return
+      const list = activeList()
+      if (!list || list.length() === 0) return
+      if (list.owns?.(document.activeElement)) return // the list handles itself
+      if (key === 'j') {
+        e.preventDefault()
+        list.moveDown()
+      } else if (key === 'k') {
+        e.preventDefault()
+        list.moveUp()
+      } else if (key === 'g') {
+        e.preventDefault()
+        list.jumpTop()
+      } else if (key === 'G') {
+        e.preventDefault()
+        list.jumpBottom()
+      } else if (key === 'Enter') {
+        e.preventDefault()
+        list.toggle()
+      }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => document.removeEventListener('keydown', onKey)
+  }, [paletteOpen, helpOpen, historyMint])
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -108,6 +188,12 @@ export default function App() {
       )}
 
       <main className={`flex-1 min-h-0 overflow-y-auto ${tab === 'dashboard' ? 'xl:overflow-hidden' : ''}`}>
+        {/* §65: the mint-history drill-down is a LEVEL above the tab views —
+            when open it replaces the view body, and Esc backs out of it. */}
+        {historyMint && (
+          <MintHistory mint={historyMint} onClose={() => setHistoryMint(null)} />
+        )}
+        {!historyMint && (
         <div key={tab} className="animate-fade-rise h-full">
           {tab === 'dashboard' && (
             /* Mission control — three independently scrolled columns on xl. */
@@ -118,13 +204,19 @@ export default function App() {
                   <h2 className="panel-title">decisions</h2>
                   <span className="font-mono text-[10px] text-faint tnum">{events.length}</span>
                   <span className="font-mono text-[10px] text-faint hidden xl:inline">
-                    j/k move · enter expand · esc collapse
+                    j/k move · g/G jump · enter expand · esc collapse · ? help
                   </span>
                   <span className={`ml-auto badge ${connected ? 'badge-pass' : 'badge-fail'}`}>
                     {connected ? '● ws live' : '● ws offline'}
                   </span>
                 </div>
-                <LiveFeed events={events} freshId={freshId} filter={feedFilter} onClearFilter={() => setFeedFilter('all')} />
+                <LiveFeed
+                  events={events}
+                  freshId={freshId}
+                  filter={feedFilter}
+                  onClearFilter={() => setFeedFilter('all')}
+                  onMintHistory={setHistoryMint}
+                />
               </div>
 
               {/* Col 2 — the live book's open positions. */}
@@ -134,7 +226,7 @@ export default function App() {
                     <LoadingPanel title="positions" rows={3} />
                   </div>
                 ) : liveBook.data?.enabled ? (
-                  <LiveBook book={liveBook.data} />
+                  <LiveBook book={liveBook.data} onMintHistory={setHistoryMint} />
                 ) : (
                   <div className="m-3">
                     <div className="panel">
@@ -175,7 +267,7 @@ export default function App() {
               {liveBook.loading ? (
                 <LoadingPanel title="Holdings · live positions" rows={4} />
               ) : liveBook.data ? (
-                <Holdings book={liveBook.data} focusMint={focusMint} />
+                <Holdings book={liveBook.data} focusMint={focusMint} onMintHistory={setHistoryMint} />
               ) : liveBook.error ? (
                 <ErrorPanel title="Holdings · live positions" message={liveBook.error} />
               ) : null}
@@ -191,6 +283,7 @@ export default function App() {
                   data={journal.data}
                   filter={journalFilter}
                   onClearFilter={() => setJournalFilter({ status: 'all', query: '' })}
+                  onMintHistory={setHistoryMint}
                 />
               ) : journal.error ? (
                 <ErrorPanel title="Journal · live order history" message={journal.error} />
@@ -237,12 +330,13 @@ export default function App() {
             </div>
           )}
         </div>
+        )}
       </main>
 
       {/* Statusline — the terminal sign-off: quiet truths, one strip. */}
       <footer className="statusline">
         <span>single book · live engine</span>
-        <span className="hidden lg:inline">⌘K · command palette</span>
+        <span className="hidden lg:inline">⌘K palette · ? shortcuts</span>
         <span className="hidden md:inline">
           every figure verbatim from the backend · no client-side math
         </span>
@@ -268,6 +362,11 @@ export default function App() {
         }}
         positions={liveBook.data?.positions ?? []}
       />
+
+      {/* §65: the `?` overlay — every real shortcut, rendered from the same
+          SHORTCUTS table the dispatcher implements (cannot drift). Esc or a
+          click outside closes it; the palette's own Escape still wins first. */}
+      {helpOpen && <ShortcutOverlay onClose={() => setHelpOpen(false)} />}
     </div>
   )
 }

@@ -432,6 +432,26 @@ async def get_refusal_events(
     return [_row_to_feed_dict(r) for r in rows]
 
 
+async def get_feed_events_for_mint(
+    conn: asyncpg.Connection, mint: str, limit: int = 100, offset: int = 0
+) -> list[dict[str, Any]]:
+    """Postgres twin of db.get_feed_events_for_mint - identical surface.
+    §65 mint-history drill-down: every feed event for ONE mint, newest first.
+    """
+    rows = await conn.fetch(
+        f"SELECT {_FEED_COLS} FROM feed_events WHERE mint_address = $1 "
+        "ORDER BY id DESC LIMIT $2 OFFSET $3",
+        mint, limit, offset,
+    )
+    return [_row_to_feed_dict(r) for r in rows]
+
+
+async def count_feed_events_for_mint(conn: asyncpg.Connection, mint: str) -> int:
+    return int(await conn.fetchval(
+        "SELECT COUNT(*) FROM feed_events WHERE mint_address = $1", mint,
+    ))
+
+
 # ===========================================================================
 # REF-R5 memory/events — append-only observations and weighted lessons
 # ===========================================================================

@@ -1,16 +1,24 @@
 import type { LivePortfolioResponse } from '../types'
-import { CopyText, Empty } from './ui'
+import { CopyText, Empty, HistoryButton } from './ui'
 import { clock, num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 
 /**
  * Live positions — the dashboard's middle column. The wallet equity headline
  * lives in the hero band (§59); this panel carries the open positions
  * themselves, each with its COMPLETE contract address visible and
- * click-to-copy (operator directive, §59). The list is scroll-bounded so it
- * never stretches the column. Every figure is rendered verbatim from
- * /api/live/portfolio (DESIGN.md §5: no client-side math).
+ * click-to-copy (operator directive, §59), plus the §65 `history` affordance
+ * (a separate target beside the copy button — copy stays copy).
+ * The list is scroll-bounded so it never stretches the column. Every figure
+ * is rendered verbatim from /api/live/portfolio (DESIGN.md §5: no math).
  */
-export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
+export default function LiveBook({
+  book,
+  onMintHistory,
+}: {
+  book: LivePortfolioResponse
+  /** §65: opens the mint-history drill-down level. */
+  onMintHistory?: (mint: string) => void
+}) {
   if (!book.enabled) return null
   const positions = book.positions ?? []
   const hidden = book.chain_excluded ?? []
@@ -52,12 +60,16 @@ export default function LiveBook({ book }: { book: LivePortfolioResponse }) {
                   {signedUsd(p.unrealized_pnl_usd)}
                 </span>
               </div>
-              {/* Complete contract address, click-to-copy (§59). */}
-              <div className="mt-1">
+              {/* Complete contract address, click-to-copy (§59); the §65
+                  `history` affordance sits beside it — separate targets. */}
+              <div className="mt-1 flex items-start gap-1.5 flex-wrap">
                 <CopyText
                   value={p.mint_address}
                   className="font-mono text-[10px] text-dim break-all hover:text-live"
                 />
+                {onMintHistory && (
+                  <HistoryButton mint={p.mint_address} onOpen={onMintHistory} />
+                )}
               </div>
               <div className="flex justify-between gap-2 mt-1 font-mono text-[10.5px] text-faint tnum">
                 <span>

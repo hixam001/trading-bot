@@ -355,6 +355,27 @@ async def count_feed_events(conn: aiosqlite.Connection) -> int:
     return int((await cursor.fetchone())[0])
 
 
+async def get_feed_events_for_mint(
+    conn: aiosqlite.Connection, mint: str, limit: int = 100, offset: int = 0
+) -> list[dict[str, Any]]:
+    """§65 mint-history drill-down: every feed event ever recorded for ONE
+    mint, newest first. Same row shape as get_feed_events (shared projection).
+    """
+    cursor = await conn.execute(
+        "SELECT * FROM feed_events WHERE mint_address = ? ORDER BY id DESC LIMIT ? OFFSET ?",
+        (mint, limit, offset),
+    )
+    rows = await cursor.fetchall()
+    return [_row_to_feed_dict(r) for r in rows]
+
+
+async def count_feed_events_for_mint(conn: aiosqlite.Connection, mint: str) -> int:
+    cursor = await conn.execute(
+        "SELECT COUNT(*) FROM feed_events WHERE mint_address = ?", (mint,)
+    )
+    return int((await cursor.fetchone())[0])
+
+
 async def get_refusal_events(
     conn: aiosqlite.Connection, limit: int = 100
 ) -> list[dict[str, Any]]:

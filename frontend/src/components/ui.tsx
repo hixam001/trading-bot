@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react'
+import type { RuleResultRow } from '../types'
 
 /**
  * Shared UI primitives — DESIGN.md §2/§3. Every data panel composes these so
@@ -181,5 +182,53 @@ export function Spark({
     >
       <polyline points={pts} fill="none" stroke="currentColor" strokeWidth="1.6" />
     </svg>
+  )
+}
+
+/**
+ * One rule result line (§43 semantics) — shared by the decisions tape and the
+ * §65 mint-history drill-down so both render the identical verbatim breakdown.
+ * A rule the engine deliberately did NOT evaluate is SKIP, never a failure.
+ */
+export function RuleLine({ r }: { r: RuleResultRow }) {
+  const skipped = r.evaluated === false
+  const dot = skipped ? 'text-dim' : r.passed ? 'text-pass' : 'text-fail'
+  return (
+    <div className="flex justify-between gap-3 text-[10.5px] py-0.5">
+      <span className="text-dim whitespace-nowrap">
+        <span className={`mr-1 ${dot}`} aria-hidden="true">●</span>
+        {r.rule_id}
+      </span>
+      <span className="text-faint text-right">{r.detail}</span>
+    </div>
+  )
+}
+
+/**
+ * The §65 mint-history entry point (operator-confirmed shape): a small
+ * dedicated affordance BESIDE the CopyText address, never on the same click
+ * target — copy stays copy, history opens the drill-down. A real <button>
+ * with a ≥24px hit area and visible focus ring (DESIGN.md §4), so keyboard
+ * access comes free via Tab + Enter/Space.
+ */
+export function HistoryButton({
+  mint,
+  onOpen,
+}: {
+  mint: string
+  onOpen: (mint: string) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onOpen(mint)}
+      aria-label={`open mint history for ${mint}`}
+      title="every decision ever recorded for this mint"
+      className="shrink-0 text-[10px] text-live underline decoration-line-strong decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo min-h-[24px]"
+      data-testid="mint-history-button"
+      data-mint={mint}
+    >
+      history
+    </button>
   )
 }

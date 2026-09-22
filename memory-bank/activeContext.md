@@ -1,6 +1,22 @@
 # Active Context — trading-bot
 
-**Current — 2026-09-17 (§64):** September audit dashboard remediation shipped:
+**Current — 2026-09-21 (§65):** full keyboard vocabulary + mint-history
+drill-down shipped. Global guarded j/k/Enter/g/G (single `g`,
+operator-confirmed) + `?` help overlay rendered from the same SHORTCUTS
+table the dispatcher implements; tape's §63 focused keys preserved via
+owns(). New read-only GET /api/mint/{mint}/history (base58 422 on
+malformed, empty-not-error on unknown) over new db twins in BOTH dialects;
+MintHistory.tsx is a navigation-stack level above the tabs (Esc collapses
+row then backs out), with all five DESIGN.md §3 states; dedicated
+`history` button beside every CopyText address (copy stays copy). Verified:
+789 Python passing, tsc -b + vite build clean (203.17 kB JS), 7/7 new
+hermetic Playwright tests passing against the built frontend served via
+vite preview + BASE_URL override with mocked API/WS (engine NOT started —
+REAL-MONEY ARMED). No dependencies, risk flags or
+real-money state changed. §2.1 remains excluded. See handoff §65.
+**PREVIOUS:**
+
+**As of 2026-09-17 (§64):** September audit dashboard remediation shipped:
 read-only safety state + persistent actionable alerts; disclosure kill-switch
 writer/reader key mismatch fixed; engine→API crowd observation with 900s freshness;
 SQLite/Postgres funnel snapshots + real-rate Spark; stage drill-downs to tape or

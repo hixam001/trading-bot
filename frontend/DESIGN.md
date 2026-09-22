@@ -157,6 +157,38 @@ Instrument Serif, grain textures.
 - [ ] Tab order walks hero → tabs → panels without traps
 
 ## 7. Revision history (condensed)
+- **§65 (2026-09-21)** — full keyboard vocabulary + mint-history drill-down.
+  (1) The §63 decisions-tape cursor is promoted to a GLOBAL vocabulary:
+  j/k move, Enter expands, g/G jump to top/bottom (single `g`, deliberate —
+  it is the only `g`-verb, so vim's double-tap chord would buy timeout state
+  for nothing), operated by one document-level dispatcher in `App.tsx`. It
+  guards the classic failure modes explicitly: nothing fires while the
+  palette is open (its own keys still win, Escape included), while the `?`
+  overlay is up, while focus is in any text field (input/textarea/select/
+  contentEditable), or for any meta/ctrl/alt chord. Lists register a
+  controller (`lib/shortcuts.ts`); a list that owns its own focused key
+  handling (the tape listbox) exposes `owns()` so keys never double-step.
+  The journal's order-decisions table gets the same cursor (j/k/g/G/Enter on
+  proof rows); the money ledger is deliberately not registered — its rows
+  cannot expand, so Enter would be a lie. (2) `?` opens a help overlay
+  listing EVERY real shortcut, rendered verbatim from the same SHORTCUTS
+  table the dispatcher implements — the overlay is structurally incapable of
+  drifting from actual bindings. Esc/click-outside dismiss. (3) Mint-history
+  drill-down: `GET /api/mint/{mint}/history` (backend: db twins
+  `get_feed_events_for_mint`/`count_feed_events_for_mint` in BOTH dialects,
+  base58-validated via the SEC-07 validator, empty result for unknown mints,
+  422 for malformed ones) returns every feed event ever recorded for one
+  mint in the SAME row shape as `/api/feed`. The frontend opens it from a
+  dedicated `history` affordance BESIDE each CopyText address (expanded feed
+  rows, journal proof + ledger rows, holdings/dashboard position rows) —
+  copy stays copy; one click target never carries both actions. The
+  drill-down is a LEVEL above the tab views (navigation stack, not a
+  modal): Esc collapses its expanded row first, then backs out to the
+  underlying view; `← back` does the same by click. All five §3 states
+  implemented (skeleton / explicit empty / error + scheduled 5s retry /
+  app-level offline / refresh-by-reopen instead of hidden polling). No new
+  runtime dependencies (§5 holds).
+
 - **§64 (2026-09-17)** — read-only safety state and persistent symptom alerts
   across all views. Empty means quiet; poll failure means unknown/stale, never
   all-clear. No dismiss/toggle control. Persisted refusal-rate Spark requires

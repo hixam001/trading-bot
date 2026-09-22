@@ -79,6 +79,68 @@ async def test_feed_shape_and_pagination(client):
     assert not set(ids) & set(ids2)
 
 
+# §65: the seeded factory mints contain '0' (deliberately NOT valid base58);
+# the history tests use this syntactically valid one (base58 has no zero).
+MINT58 = "5" * 44
+
+
+async def _seed_mint_events(mint: str, n: int) -> None:
+    from models import FeedEvent
+
+    async with db.get_db() as conn:
+        for i in range(n):
+            ev = FeedEventFactory(i)
+            await db.insert_feed_event(
+                conn,
+                FeedEvent(
+                    symbol=f"H{i}", mint_address=mint, verdict=ev.verdict,
+                    thesis=f"history {i}", rule_breakdown=ev.rule_breakdown,
+                ),
+            )
+
+
+async def test_mint_history_shape_and_pagination(client):
+    await _seed_mint_events(MINT58, 3)
+    r = await client.get(f"/api/mint/{MINT58}/history")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["mint"] == MINT58 and body["total"] == 3
+    assert len(body["events"]) == 3
+    # Same row shape as /api/feed (the shared projection).
+    ev = body["events"][0]
+    for key in ("id", "ts", "symbol", "mint_address", "verdict", "thesis",
+                "rule_breakdown", "failed_rule_ids", "grounding_flags"):
+        assert key in ev
+    assert all(e["mint_address"] == MINT58 for e in body["events"])
+    ids = [e["id"] for e in body["events"]]
+    assert ids == sorted(ids, reverse=True)  # newest first
+    # Pagination: pages continue without overlap.
+    r1 = await client.get(f"/api/mint/{MINT58}/history", params={"limit": 2, "offset": 0})
+    page1 = r1.json()["events"]
+    r2 = await client.get(f"/api/mint/{MINT58}/history", params={"limit": 2, "offset": 2})
+    body2 = r2.json()
+    assert body2["total"] == 3 and len(body2["events"]) == 1
+    ids = [e["id"] for e in page1]
+    assert not set(ids) & {e["id"] for e in body2["events"]}
+
+
+async def test_mint_history_unknown_mint_is_empty_not_error(client):
+    r = await client.get(f"/api/mint/{MINT58}/history")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 0 and body["events"] == []
+
+
+async def test_mint_history_rejects_malformed_mint(client):
+    # '0' is not in the base58 alphabet (SEC-07 validator reused).
+    r = await client.get("/api/mint/Mint0xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/history")
+    assert r.status_code == 422
+    assert "mint" in r.json()["detail"]
+    # Pagination bounds still enforced on the valid path.
+    r2 = await client.get(f"/api/mint/{MINT58}/history", params={"limit": 501})
+    assert r2.status_code == 422
+
+
 async def test_journal_contains_closed_trade(client):
     r = await client.get("/api/journal")
     body = r.json()

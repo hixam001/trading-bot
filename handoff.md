@@ -1,4 +1,77 @@
-## §64 — September audit remediation (2026-09-17)
+## §65 — full keyboard vocabulary + mint-history drill-down (2026-09-21)
+
+Implemented both approved items after the three confirm-gates were answered
+in chat (single `g`, dedicated history route, separate history affordance).
+Frontend + read-only API only; no trading engine or real-money operation was
+started for this work.
+
+- Global keyboard vocabulary (frontend): the §63 tape cursor promoted to a
+  global, guarded vocabulary — j/k move, Enter toggles, g/G jump top/bottom
+  (SINGLE `g`, operator-confirmed: the only `g`-verb, so vim's gg chord would
+  buy nothing but timeout state), `?` help overlay. One document-level
+  dispatcher (`App.tsx`); lists register controllers (`lib/shortcuts.ts`);
+  the tape's §63 focused-listbox keys still work unchanged via `owns()` —
+  no double-step. Journal order-decisions rows get the same cursor; the
+  money ledger deliberately NOT registered (rows cannot expand). Guards:
+  palette-open (palette wins, Escape included), help-open, text-field focus
+  (input/textarea/select/contentEditable), any meta/ctrl/alt chord.
+- `?` overlay (`ShortcutOverlay.tsx`): every real shortcut incl. ⌘K/Ctrl-K,
+  rendered verbatim from the SHORTCUTS table the dispatcher implements —
+  cannot drift from bindings; Esc/click-outside dismiss; palette visual
+  language. Statusline now advertises "⌘K palette · ? shortcuts".
+- Mint-history drill-down (backend + frontend): NEW read-only
+  `GET /api/mint/{mint}/history?limit=100&offset=0` (route in
+  `api/routes/feed.py`; db twins `get_feed_events_for_mint` +
+  `count_feed_events_for_mint` added to BOTH api/db.py and api/db_pg.py —
+  parameterized SQL, surface-parity test still green). Base58 validation via
+  the SEC-07 validator (function-local import): malformed mint → 422;
+  unknown mint → EMPTY result (total 0), never 404. Rows are the SAME
+  projection as /api/feed so the frontend reuses the tape's row rendering.
+- Frontend drill-down (`MintHistory.tsx`): a LEVEL above the tab views
+  (navigation stack semantics, not a modal) — replaces the view body while
+  open; Esc collapses its expanded row first, then backs out; `← back`
+  button is the click path. Registered with the §65 registry so j/k/g/G/
+  Enter operate it like every other list. All five DESIGN.md §3 states:
+  skeleton loading, explicit empty ("no recorded decisions for this mint"),
+  error + automatic 5s retry, app-level offline banner, refresh-by-reopen
+  (no hidden polling behind a drill-down). "load older" paginates deeper.
+- Entry points: a dedicated `history` text-button (`HistoryButton` in
+  ui.tsx) BESIDE every CopyText address — expanded feed rows, journal proof
+  rows, journal money-ledger rows, Holdings rows, dashboard LiveBook rows.
+  Operator-confirmed coexistence shape: copy stays copy; the drill-down
+  trigger never overloads the copy target's click. Both are real buttons
+  (Tab-reachable, ≥24px hit area, visible focus ring).
+- Known limitation (deliberate): the drill-down shows FEED events (every
+  gate/model decision). Journal commits and ledger closes for the same mint
+  remain in their own views; cross-surface stitching was explicitly out of
+  scope this round.
+
+Validation: full Python suite **789 passed** (includes 4 new mint-history
+tests: shape+pagination, empty-not-error, malformed-422 + limit-bounds;
+DB surface-parity guards included); `tsc -b && vite build` clean (52 modules,
+203.17 kB JS / 62.78 kB gzip); NEW hermetic Playwright suite
+`e2e/keyboard.spec.ts` **7/7 passed** against the BUILT frontend served
+statically (vite preview, BASE_URL override) with mocked API/WS — covering
+the typing guard (j/k/g/G/? typed into the palette input move nothing),
+global j/k/g/G, Enter/Esc, the `?` overlay, drill-down open/j/k/Enter/
+double-Esc back-out, and the drill-down's empty + error states. The engine
+was NOT started (REAL-MONEY ARMED); the live-backed suites
+(dashboard.spec.ts / operator.spec.ts, :8000) were not rerun — API down at
+session time — while the existing HERMETIC §64 suite was re-run green
+(audit.spec.ts 4/4, no regression from the Journal/LiveFeed changes).
+NOTE on the 789 count: it is the whole WORKING TREE. The tree also carried
+~13 tests of pre-existing uncommitted changes from an earlier session
+(backend/api/auth.py + main.py, live_execution/executor.py,
+jupiter_executor.py, models.py, solana.py, their tests, the untracked
+live_execution/tests/test_audit_fixes.py) which were NOT made by this work
+and are deliberately NOT part of this commit — money-path files require
+their own devnet re-drill per the repo rule, so bundling them under a UI
+commit would be wrong. Committed §65 alone: 776 = 772 + 4 new. No
+dependency changes; no risk flags, sizing or money paths touched.
+
+---
+
+
 
 Implemented all approved dashboard work; audit §2.1 performance validation was
 excluded by the operator and was NOT rerun. Historical §63 results below remain

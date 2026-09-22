@@ -267,3 +267,14 @@ export interface FunnelResponse {
   model_refusal_rate_of_gate_passers: number | null
   note: string
 }
+
+/** GET /api/mint/{mint}/history (§65) — every feed event ever recorded for
+ *  one mint, newest first. Rows are the SAME shape as /api/feed (the shared
+ *  backend projection), so the drill-down reuses the tape's row rendering. */
+export interface MintHistoryResponse {
+  mint: string
+  total: number
+  limit: number
+  offset: number
+  events: FeedEventRow[]
+}

@@ -1,6 +1,21 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §65 Keyboard vocabulary + mint-history drill-down (2026-09-21):
+      operator staged prompt with 3 confirm-gates answered (single `g`,
+      dedicated route, separate affordance). Global guarded j/k/Enter/g/G
+      dispatcher + registry (lib/shortcuts.ts); `?` overlay from the shared
+      SHORTCUTS table (cannot drift); GET /api/mint/{mint}/history + db
+      twins in both dialects (422 malformed / empty unknown / same row shape
+      as /api/feed); MintHistory.tsx stack level with all five §3 states;
+      `history` button beside CopyText in feed/journal/holdings/live-book.
+      Verified: 789 Python passing, tsc+vite clean, 7/7 new hermetic Playwright
+      tests passing (built frontend via vite preview + BASE_URL, mocked
+      API/WS; engine NOT started — REAL-MONEY ARMED). No new
+      dependencies. Mobile redesign remains deferred; drill-down shows feed
+      events only (cross-surface stitching out of scope). Full detail:
+      handoff §65.
+
 - [x] §64 September audit remediation (2026-09-17): read-only safety panel and
       all-view alerts, cross-process crowd observation, persisted funnel trend,
       classified tape/journal drill-down, session seen marker, App extraction.

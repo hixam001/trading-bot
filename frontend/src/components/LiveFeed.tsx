@@ -1,25 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import type { FeedEventRow, FeedFilter, RuleResultRow } from '../types'
-import { CopyText, Empty } from './ui'
+import type { FeedEventRow, FeedFilter } from '../types'
+import { CopyText, Empty, HistoryButton, RuleLine } from './ui'
 import { clock } from '../lib/format'
-
-function RuleLine({ r }: { r: RuleResultRow }) {
-  // §43: a rule the engine deliberately did not evaluate (metered crowd feed,
-  // reserved for candidates that cleared every other rule) is shown as SKIP —
-  // never as a failure it did not actually report. Rows written before §43
-  // have no `evaluated` field; missing means evaluated.
-  const skipped = r.evaluated === false
-  const dot = skipped ? 'text-dim' : r.passed ? 'text-pass' : 'text-fail'
-  return (
-    <div className="flex justify-between gap-3 text-[10.5px] py-0.5">
-      <span className="text-dim whitespace-nowrap">
-        <span className={`mr-1 ${dot}`} aria-hidden="true">●</span>
-        {r.rule_id}
-      </span>
-      <span className="text-faint text-right">{r.detail}</span>
-    </div>
-  )
-}
+import { registerList, type ListController } from '../lib/shortcuts'
 
 /**
  * The decisions tape — the main content. Rows are full-width <button>s
@@ -66,11 +49,14 @@ export default function LiveFeed({
   freshId,
   filter = 'all',
   onClearFilter,
+  onMintHistory,
 }: {
   events: FeedEventRow[]
   freshId: number | null
   filter?: FeedFilter
   onClearFilter?: () => void
+  /** §65: the `history` affordance beside the mint address opens the drill-down. */
+  onMintHistory?: (mint: string) => void
 }) {
   const [expanded, setExpanded] = useState<number | null>(null)
   // §63 keyboard navigation: j/k move a cursor down/up the tape, enter
@@ -141,6 +127,12 @@ export default function LiveFeed({
     } else if (e.key === 'k' || e.key === 'ArrowUp') {
       e.preventDefault()
       setCursor((c) => Math.max(c - 1, 0))
+    } else if (e.key === 'g') {
+      e.preventDefault()
+      setCursor(0)
+    } else if (e.key === 'G') {
+      e.preventDefault()
+      setCursor(visible.length - 1)
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const ev = visible[cursor]
@@ -149,6 +141,37 @@ export default function LiveFeed({
       setExpanded(null)
     }
   }
+
+  // §65: the tape registers with the global vocabulary so j/k/g/G/Enter also
+  // work WITHOUT the tape having focus (guarded by App's dispatcher). The
+  // controller reads fresh state through refs; `owns` makes the dispatcher
+  // stand down while this focused listbox handles its own keys — no key ever
+  // double-steps. Escape is NOT claimed here: App's dispatcher collapses the
+  // row first and then may back out of a drill-down level.
+  const ctrlRef = useRef<ListController>(null as unknown as ListController)
+  ctrlRef.current = {
+    id: 'feed',
+    owns: (el) => !!listRef.current && (el === listRef.current || listRef.current.contains(el)),
+    length: () => visible.length,
+    moveDown: () => setCursor((c) => Math.min(c + 1, Math.max(visible.length - 1, 0))),
+    moveUp: () => setCursor((c) => Math.max(c - 1, 0)),
+    jumpTop: () => setCursor(0),
+    jumpBottom: () => setCursor(Math.max(visible.length - 1, 0)),
+    toggle: () => {
+      const ev = visible[cursorRef.current]
+      if (ev) setExpanded((cur) => (cur === ev.id ? null : ev.id))
+    },
+    collapse: () => {
+      if (expanded !== null) {
+        setExpanded(null)
+        return true
+      }
+      return false
+    },
+  }
+  useEffect(() => registerList('feed', ctrlRef), [])
+  const cursorRef = useRef(cursor)
+  cursorRef.current = cursor
 
   // Keep the cursor row in view as j/k moves it.
   useEffect(() => {
@@ -199,7 +222,7 @@ export default function LiveFeed({
           className="flex-1 min-h-0 overflow-y-auto max-h-[65vh] xl:max-h-none focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-line-strong"
           tabIndex={0}
           role="listbox"
-          aria-label="decisions tape · j/k move, enter expand, esc collapse"
+          aria-label="decisions tape · j/k move, g/G jump, enter expand, esc collapse"
           aria-activedescendant={`feed-row-${cursor}`}
           onKeyDown={onListKeyDown}
           data-testid="feed-list"
@@ -263,13 +286,19 @@ export default function LiveFeed({
 
                   {isOpen && (
                     <div className="mx-4 mb-3 bg-raised border border-line-soft rounded p-3 space-y-2.5">
-                      {/* The complete contract address — click to copy. */}
+                      {/* The complete contract address — click to copy (§59).
+                          §65: the `history` affordance beside it opens the
+                          mint drill-down — a separate target, never the same
+                          click (copy stays copy). */}
                       <div className="flex items-center gap-2 flex-wrap text-[10.5px]">
                         <span className="text-faint shrink-0">contract:</span>
                         <CopyText
                           value={ev.mint_address || 'unknown'}
                           className="font-mono text-[10.5px] text-dim break-all hover:text-live"
                         />
+                        {onMintHistory && ev.mint_address && (
+                          <HistoryButton mint={ev.mint_address} onOpen={onMintHistory} />
+                        )}
                       </div>
 
                       {/* Complete model answer, verbatim */}

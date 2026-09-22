@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { LiveCommitEntry, LiveExecutionsResponse } from '../types'
 import type { PaletteJournalFilter } from './CommandPalette'
-import { Badge, CopyText, Empty, Panel, type Tone } from './ui'
+import { Badge, CopyText, Empty, HistoryButton, Panel, type Tone } from './ui'
 import { num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
+import { registerList, type ListController } from '../lib/shortcuts'
 
 /**
  * Journal — the live order history. Two verbatim views of the live_execution
@@ -61,21 +62,22 @@ export default function Journal({
   data,
   filter,
   onClearFilter,
+  onMintHistory,
 }: {
   data: LiveExecutionsResponse
   /** §63: filter set from the command palette (status and/or free text). */
   filter?: PaletteJournalFilter
   onClearFilter?: () => void
+  /** §65: the `history` affordance beside a mint opens the drill-down. */
+  onMintHistory?: (mint: string) => void
 }) {
   const [expanded, setExpanded] = useState<string | null>(null)
-
-  if (!data.enabled) {
-    return (
-      <Panel testId="journal" title="Journal · live order history">
-        <Empty>Live journal not available: {data.reason ?? 'unknown reason'}.</Empty>
-      </Panel>
-    )
-  }
+  // §65 keyboard navigation over the ORDER-DECISIONS rows: j/k move a cursor,
+  // enter toggles the cursor row's proof detail (the existing expand
+  // mechanism), esc collapses, g/G jump. The money ledger is not registered —
+  // its rows have no expand mechanism, so Enter would be a lie.
+  const [cursor, setCursor] = useState(0)
+  const tableRef = useRef<HTMLDivElement>(null)
 
   const all = data.commits ?? []
   // §63: optional palette-driven filter — a status and/or free text over
@@ -96,6 +98,49 @@ export default function Journal({
   // realized P&L. Buys remain in the order-decisions lifecycle above.
   const closes = (data.records ?? []).filter((r) => r.kind === 'close')
   const t = data.totals
+
+  // §65 registration: fresh state through refs, subscribed once on mount.
+  // Only the active tab's components are mounted, so this is "the journal
+  // list" exactly while the journal tab is up.
+  const stateRef = useRef({ commits, expanded, cursor })
+  stateRef.current = { commits, expanded, cursor }
+  const ctrlRef = useRef<ListController>(null as unknown as ListController)
+  ctrlRef.current = {
+    id: 'journal',
+    length: () => stateRef.current.commits.length,
+    moveDown: () =>
+      setCursor((c) => Math.min(c + 1, Math.max(stateRef.current.commits.length - 1, 0))),
+    moveUp: () => setCursor((c) => Math.max(c - 1, 0)),
+    jumpTop: () => setCursor(0),
+    jumpBottom: () => setCursor(Math.max(stateRef.current.commits.length - 1, 0)),
+    toggle: () => {
+      const c = stateRef.current.commits[stateRef.current.cursor]
+      if (c) setExpanded((cur) => (cur === c.hash ? null : c.hash))
+    },
+    collapse: () => {
+      if (stateRef.current.expanded !== null) {
+        setExpanded(null)
+        return true
+      }
+      return false
+    },
+  }
+  useEffect(() => registerList('journal', ctrlRef), [])
+
+  // Keep the cursor row in view as j/k moves it.
+  useEffect(() => {
+    tableRef.current
+      ?.querySelector(`[data-journal-row="${cursor}"]`)
+      ?.scrollIntoView({ block: 'nearest' })
+  }, [cursor])
+
+  if (!data.enabled) {
+    return (
+      <Panel testId="journal" title="Journal · live order history">
+        <Empty>Live journal not available: {data.reason ?? 'unknown reason'}.</Empty>
+      </Panel>
+    )
+  }
 
   return (
     <div className="space-y-3 min-w-0">
@@ -160,7 +205,7 @@ export default function Journal({
             is sealed here before any network call — including the ones that fail.
           </Empty>
         ) : (
-          <div className="overflow-auto max-h-[60vh] border border-line-soft rounded">
+          <div ref={tableRef} className="overflow-auto max-h-[60vh] border border-line-soft rounded">
             {/* §63 Stage 2: below natural width this scrolls INSIDE its
                 container — never squashes, never stretches the page. */}
             <table className="w-full min-w-[640px] text-xs border-collapse">
@@ -175,7 +220,7 @@ export default function Journal({
                 </tr>
               </thead>
               <tbody>
-                {commits.map((c) => {
+                {commits.map((c, i) => {
                   const st = commitTone[c.status] ?? { tone: 'dim' as Tone, label: c.status }
                   const isOpen = expanded === c.hash
                   return (
@@ -185,6 +230,9 @@ export default function Journal({
                       st={st}
                       isOpen={isOpen}
                       onToggle={() => setExpanded(isOpen ? null : c.hash)}
+                      focused={i === cursor}
+                      rowIndex={i}
+                      mintHistory={onMintHistory ? () => onMintHistory(c.payload?.mint ?? '') : undefined}
                     />
                   )
                 })}
@@ -226,10 +274,15 @@ export default function Journal({
                     <td className="td whitespace-nowrap text-dim">{ts(r.ts)}</td>
                     <td className="td font-semibold text-bright">{r.kind}</td>
                     <td className="td max-w-[240px]">
-                      <CopyText
-                        value={r.mint}
-                        className="font-mono text-[10px] text-dim break-all hover:text-live"
-                      />
+                      <span className="inline-flex items-center gap-1.5 flex-wrap">
+                        <CopyText
+                          value={r.mint}
+                          className="font-mono text-[10px] text-dim break-all hover:text-live"
+                        />
+                        {onMintHistory && (
+                          <HistoryButton mint={r.mint} onOpen={onMintHistory} />
+                        )}
+                      </span>
                     </td>
                     <td className="td-num">{usd(r.usd_size, 4)}</td>
                     <td className="td-num">{num(r.tokens_out)}</td>
@@ -255,15 +308,26 @@ function CommitRow({
   st,
   isOpen,
   onToggle,
+  focused = false,
+  rowIndex,
+  mintHistory,
 }: {
   c: LiveCommitEntry
   st: { tone: Tone; label: string }
   isOpen: boolean
   onToggle: () => void
+  /** §65: the j/k cursor highlight (a cursor, not a hover state). */
+  focused?: boolean
+  rowIndex: number
+  /** §65: open the mint drill-down (only when a mint exists on the commit). */
+  mintHistory?: () => void
 }) {
   return (
     <>
-      <tr className="hover:bg-raised">
+      <tr
+        data-journal-row={rowIndex}
+        className={`hover:bg-raised ${focused ? 'bg-raised shadow-[inset_2px_0_0_0] shadow-live' : ''}`}
+      >
         <td className="td whitespace-nowrap text-dim">{ts(c.sealed_at)}</td>
         <td className="td font-semibold text-bright">{c.kind}</td>
         <td className="td">{c.payload?.symbol ?? shortAddr(c.payload?.mint)}</td>
@@ -311,10 +375,13 @@ function CommitRow({
               <div>
                 <span className="text-dim">mint: </span>
                 {c.payload?.mint ? (
-                  <CopyText
-                    value={c.payload.mint}
-                    className="font-mono text-[10.5px] text-dim break-all hover:text-live"
-                  />
+                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                    <CopyText
+                      value={c.payload.mint}
+                      className="font-mono text-[10.5px] text-dim break-all hover:text-live"
+                    />
+                    {mintHistory && <HistoryButton mint={c.payload.mint} onOpen={() => mintHistory()} />}
+                  </span>
                 ) : (
                   <span className="text-dim">—</span>
                 )}

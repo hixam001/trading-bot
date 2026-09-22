@@ -1,5 +1,5 @@
 import type { LivePortfolioResponse } from '../types'
-import { Badge, CopyText, Empty, Panel } from './ui'
+import { Badge, CopyText, Empty, HistoryButton, Panel } from './ui'
 import { clock, num, pnlClass, price, signedUsd, usd } from '../lib/format'
 
 /**
@@ -7,15 +7,20 @@ import { clock, num, pnlClass, price, signedUsd, usd } from '../lib/format'
  * positions panel (single source: /api/live/portfolio), rendered wide: every
  * open position with entry, mark, value, unrealized P&L, age, and the
  * COMPLETE contract address, click-to-copy (operator directive, §59).
+ * §65: a `history` affordance beside the address opens the mint drill-down —
+ * a separate click target, never overloading the copy button.
  * Every figure is rendered verbatim from the backend (DESIGN.md §5).
  */
 export default function Holdings({
   book,
   focusMint,
+  onMintHistory,
 }: {
   book: LivePortfolioResponse
   /** §63: mint jumped to from the command palette — row highlighted. */
   focusMint?: string | null
+  /** §65: opens the mint-history drill-down level. */
+  onMintHistory?: (mint: string) => void
 }) {
   if (!book.enabled) {
     return (
@@ -100,10 +105,15 @@ export default function Holdings({
                 >
                   <td className="td font-semibold text-bright">${p.symbol}</td>
                   <td className="td max-w-[260px]">
-                    <CopyText
-                      value={p.mint_address}
-                      className="font-mono text-[10px] text-dim break-all hover:text-live"
-                    />
+                    <span className="inline-flex items-center gap-1.5 flex-wrap">
+                      <CopyText
+                        value={p.mint_address}
+                        className="font-mono text-[10px] text-dim break-all hover:text-live"
+                      />
+                      {onMintHistory && (
+                        <HistoryButton mint={p.mint_address} onOpen={onMintHistory} />
+                      )}
+                    </span>
                   </td>
                   <td className="td-num">
                     {usd(p.cost_usd)}
