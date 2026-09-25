@@ -1,6 +1,18 @@
 # Active Context — trading-bot
 
-**Current — 2026-09-21 (§65):** full keyboard vocabulary + mint-history
+**Current — 2026-09-22 (§66):** Frontend design polish across typography, case
+hierarchy, motion keyframes, and subtitle dot reduction completed per DESIGN.md.
+Lowercase mono hierarchy applied to `.panel-title`, `.stat-label`, `.th`, `.tab`,
+Hero stats (`equity`, `win rate`, `profit factor`, `drawdown`), AlertStrip (`alerts`),
+and LiveFeed arrival marker; Tailwind `@keyframes` restored for `row-flash`, `sweep`,
+and `blink`; panel titles cleaned up across Journal, Holdings, MarketRegimePanel,
+and LiveBook with E2E assertions updated. Build clean (203.18 kB JS, 30.35 kB CSS),
+hermetic browser tests 11/11 green, full Python suite 789/789 passed.
+No real-money or backend execution changes made.
+
+**PREVIOUS:**
+
+**As of 2026-09-21 (§65):** full keyboard vocabulary + mint-history
 drill-down shipped. Global guarded j/k/Enter/g/G (single `g`,
 operator-confirmed) + `?` help overlay rendered from the same SHORTCUTS
 table the dispatcher implements; tape's §63 focused keys preserved via

@@ -69,21 +69,25 @@
   .panel-header {
     @apply flex items-center justify-between gap-2 mb-2.5;
   }
-  /* Titles speak with the shell prompt: '> ' in signal cyan. */
+  /* Titles speak with the shell prompt: '> ' in signal cyan. §66: lowercase
+   * mono (no text-transform) — the prompt glyph, weight and tracking carry
+   * the hierarchy; case was doing none of that work and was the loudest
+   * generated-content tell in the chrome. */
   .panel-title {
-    @apply font-mono text-[11.5px] font-semibold uppercase tracking-[0.06em] text-bright;
+    @apply font-mono text-[11.5px] font-semibold tracking-[0.06em] text-bright;
   }
   .panel-title::before {
     content: '> ';
     color: theme('colors.live');
   }
 
-  /* Stat card — nested surface with an uppercase mono label. */
+  /* Stat card — nested surface with a lowercase mono label (§66: labels are
+   * not shouters; the 16px value + surface step carry the emphasis). */
   .stat-card {
     @apply bg-raised border border-line-soft rounded px-3 py-2.5;
   }
   .stat-label {
-    @apply font-mono text-[10px] uppercase tracking-[0.08em] text-faint;
+    @apply font-mono text-[10px] tracking-[0.08em] text-faint;
   }
   .stat-value {
     @apply font-mono tnum text-[16px] font-semibold text-bright leading-tight;
@@ -112,9 +116,9 @@
     @apply w-[5px] h-[5px] rounded-full bg-live;
   }
 
-  /* Table primitives (DESIGN.md §2). */
+  /* Table primitives (DESIGN.md §2). §66: headers are lowercase mono too. */
   .th {
-    @apply font-mono text-[10px] font-medium uppercase tracking-[0.06em]
+    @apply font-mono text-[10px] font-medium tracking-[0.06em]
            text-faint text-left py-1.5 px-2.5 border-b border-line
            whitespace-nowrap;
   }
@@ -133,13 +137,14 @@
     border-bottom: none;
   }
 
-  /* Tabs — an underline of signal cyan marks the active view. */
+  /* Tabs — an underline of signal cyan marks the active view (§66: lowercase
+   * mono names, the same register as the panel titles they switch between). */
   .tabs {
     @apply flex items-stretch gap-0.5 px-2 sm:px-7 bg-base border-b border-line
            overflow-x-auto;
   }
   .tab {
-    @apply font-mono text-[11.5px] font-semibold uppercase tracking-[0.08em] text-dim
+    @apply font-mono text-[11.5px] font-semibold tracking-[0.08em] text-dim
            px-3.5 pt-2.5 pb-2 border-b-2 border-transparent -mb-px
            whitespace-nowrap;
   }
@@ -180,14 +185,33 @@
   }
 
   /* Skeleton loading bar (DESIGN.md §3 — never a spinner alone): a solid
-   * light block sweeps across; no gradient (banned §5), no plain pulse. */
+   * light block sweeps across; no gradient (banned §5), no plain pulse.
+   * §66: `@apply animate-sweep` (not a hand-written `animation:` shorthand)
+   * so Tailwind actually emits `@keyframes sweep` — the previous form left
+   * the keyframes out of the bundle and the ::after sat frozen on the left
+   * quarter of every bar. */
   .skeleton {
     @apply relative overflow-hidden bg-raised rounded;
   }
   .skeleton::after {
     content: '';
-    @apply absolute inset-y-0 left-0 w-1/4 bg-surface-3;
-    animation: theme('animation.sweep');
+    @apply absolute inset-y-0 left-0 w-1/4 bg-surface-3 animate-sweep;
+  }
+
+  /* §66 — the authored arrival moment (DESIGN.md §4): a fresh decision lands
+   * on the tape and the row lifts signal-cyan once, then settles. This rule
+   * did not exist outside the reduced-motion block, so the class matched
+   * nothing for normal-motion users and the flash never painted; `@apply`
+   * of the utility also makes Tailwind emit `@keyframes row-flash`. */
+  .row-flash {
+    @apply animate-row-flash;
+  }
+
+  /* §66 — the clock cursor. Referenced in Hero.tsx since §59 but defined
+   * nowhere (and `@keyframes blink` was never emitted), so the underscore
+   * never blinked; same `@apply` fix. */
+  .clock-cursor {
+    @apply animate-blink;
   }
 
   /* Hairline divider used inside panels. */
@@ -222,5 +246,10 @@
   }
   .skeleton::after {
     animation: none;
+  }
+  /* §66: the blanket 0.01ms rule above freezes `blink` on its LAST frame
+   * (opacity 0) — i.e. an invisible cursor. It must stay solid instead. */
+  .clock-cursor {
+    animation: none !important;
   }
 }

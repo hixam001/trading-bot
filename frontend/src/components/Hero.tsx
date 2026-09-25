@@ -26,7 +26,12 @@ function UtcClock() {
   )
 }
 
-/** Hero band stat — small uppercase mono label over a semibold value. */
+/**
+ * Hero band stat — small lowercase mono label over a semibold value
+ * (§66: the label is a label, not a shout — tracking + weight carry the
+ * emphasis, matching the band's own lowercase chrome: wordmark, sub,
+ * `stream connected`, `[● LIVE · real money]`).
+ */
 function HeroStat({ label, value, cls = '' }: { label: string; value: string; cls?: string }) {
   return (
     <div className="flex flex-col gap-1">
@@ -65,7 +70,7 @@ export default function Hero({
         </div>
         <div className="flex items-center gap-4">
           <div className="flex flex-col gap-1.5">
-            <span className="font-mono text-[9.5px] tracking-[0.12em] text-faint">EQUITY</span>
+            <span className="font-mono text-[9.5px] tracking-[0.12em] text-faint">equity</span>
             <span className="font-mono tnum font-semibold text-[30px] leading-none text-bright">
               {usd(equity)}
             </span>
@@ -74,11 +79,11 @@ export default function Hero({
         </div>
         <div className="hidden md:flex items-center gap-6">
           <HeroStat
-            label="WIN RATE"
+            label="win rate"
             value={winRate === null ? '—' : `${(winRate * 100).toFixed(1)}%`}
           />
           <HeroStat
-            label="PROFIT FACTOR"
+            label="profit factor"
             value={profitFactor === null ? '—' : profitFactor.toFixed(2)}
             cls={
               profitFactor === null
@@ -89,7 +94,7 @@ export default function Hero({
             }
           />
           <HeroStat
-            label="DRAWDOWN"
+            label="drawdown"
             value={drawdown === null ? '—' : `−${drawdown.toFixed(1)}%`}
           />
         </div>

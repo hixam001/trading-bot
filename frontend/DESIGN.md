@@ -198,6 +198,22 @@ Instrument Serif, grain textures.
   **Responsive remains partial:** table scroll guards are delivered, full mobile
   panel redesign is deferred pending usage, not marked complete.
 
+- **§66 (2026-09-22)** — frontend typography, case hierarchy, and motion polish.
+  (1) Case hierarchy: replaced `uppercase` text-transform with quiet lowercase mono
+  across `.panel-title`, `.stat-label`, `.th`, and `.tab`. Converted uppercase hero
+  stat labels (`equity`, `win rate`, `profit factor`, `drawdown`), alert header
+  (`alerts`), and the new decisions marker chip to lowercase mono — weight, tracking,
+  and prompt glyphs carry hierarchy instead of uppercase shouting. Bracketed badges
+  and decision chips (`[● LIVE · real money]`, `[SKIP]`) preserve their semantics.
+  (2) Animation keyframes: wired `.skeleton::after` (`@apply animate-sweep`),
+  `.row-flash` (`@apply animate-row-flash`), and `.clock-cursor` (`@apply animate-blink`)
+  using Tailwind utilities to guarantee `@keyframes` are emitted into the production
+  CSS bundle. Added reduced-motion overrides keeping `.clock-cursor` visible.
+  (3) Middle-dot cleanup: removed redundant dot-chained subtitles across panel titles
+  (`Journal · live order history` → `Journal`, `Money ledger · closed trades` →
+  `Money ledger`, `Holdings · ...` → `Holdings`, `Market regime · ...` → `Market regime`),
+  moving auxiliary metrics cleanly to header right slots and updating E2E selectors.
+
 - **§63 (2026-09-16)** — operator upgrades. (1) Responsive is now a
   *commitment*, not an accident: every dense table carries a min-width and
   scrolls INSIDE its container below natural width (Holdings 720px, journal

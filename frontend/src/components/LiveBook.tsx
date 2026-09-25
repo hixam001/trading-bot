@@ -45,8 +45,8 @@ export default function LiveBook({
 
       {positions.length === 0 ? (
         <Empty>
-          No open live positions. Deployed today: {usd(book.deployed_today_usd)} ·
-          closed trades: {book.closed_trades ?? 0}.
+          No open live positions (deployed today: {usd(book.deployed_today_usd)},
+          closed trades: {book.closed_trades ?? 0}).
         </Empty>
       ) : (
         <div className="flex-1 min-h-0 overflow-y-auto max-h-[65vh] xl:max-h-none">

@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §66 Frontend design polish: typography, case hierarchy, and motion keyframes (2026-09-22):
+      Lowercase mono hierarchy across `.panel-title`, `.stat-label`, `.th`, `.tab`,
+      Hero stats, AlertStrip header, and LiveFeed arrival marker; Tailwind `@keyframes`
+      restored in CSS distribution bundle for `row-flash`, `sweep`, and `blink`;
+      redundant dot-chained panel subtitles stripped across Journal, Holdings,
+      MarketRegimePanel, and LiveBook; E2E title assertions updated. Verified:
+      clean Vite/TypeScript build (203.18 kB JS, 30.35 kB CSS), hermetic Playwright
+      suite 11/11 passing, 789/789 backend tests green. Full detail: handoff §66.
+
+
 - [x] §65 Keyboard vocabulary + mint-history drill-down (2026-09-21):
       operator staged prompt with 3 confirm-gates answered (single `g`,
       dedicated route, separate affordance). Global guarded j/k/Enter/g/G

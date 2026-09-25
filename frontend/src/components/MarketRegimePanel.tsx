@@ -13,7 +13,7 @@ export default function MarketRegimePanel({
   tall?: boolean
 }) {
   return (
-    <Panel testId="market-regime" title="Market regime · one row per tick">
+    <Panel testId="market-regime" title="Market regime">
       {regimes.length === 0 ? (
         <Empty>No ticks yet. Regime rows appear once the live cycle runs.</Empty>
       ) : (

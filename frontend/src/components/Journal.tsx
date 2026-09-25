@@ -136,7 +136,7 @@ export default function Journal({
 
   if (!data.enabled) {
     return (
-      <Panel testId="journal" title="Journal · live order history">
+      <Panel testId="journal" title="Journal">
         <Empty>Live journal not available: {data.reason ?? 'unknown reason'}.</Empty>
       </Panel>
     )
@@ -146,7 +146,7 @@ export default function Journal({
     <div className="space-y-3 min-w-0">
       <Panel
         testId="journal"
-        title="Journal · live order history"
+        title="Journal"
         right={<Badge tone="fail">● LIVE</Badge>}
       >
         {t && (
@@ -243,7 +243,7 @@ export default function Journal({
       </Panel>
 
       <Panel
-        title="Money ledger · closed trades"
+        title="Money ledger"
         right={<span className="font-mono text-[10px] text-faint tnum">{closes.length} closed</span>}
       >
         {closes.length === 0 ? (

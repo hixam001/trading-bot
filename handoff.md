@@ -1,3 +1,37 @@
+## §66 — frontend design polish: lowercase hierarchy, motion keyframes, dot cleanup (2026-09-22)
+
+Frontend visual refinement, typography, and motion keyframe fixes per DESIGN.md:
+
+- **Lowercase mono hierarchy**: Stripped `uppercase` text-transform from shared
+  primitives in `frontend/src/index.css` (`.panel-title`, `.stat-label`, `.th`, `.tab`),
+  relying on JetBrains Mono tracking, font weight, and cyan prompt glyphs for
+  visual hierarchy. Converted Hero stat labels (`equity`, `win rate`, `profit factor`,
+  `drawdown`), AlertStrip (`alerts`), and the new arrival marker chip (`▲ new since you last looked · {n}`)
+  to lowercase mono. Bracketed tokens (`[● LIVE · real money]`, `[SKIP]`) retain
+  their casing for semantic consistency.
+- **Keyframe emission & motion restore**: Fixed broken `@keyframes` emission in the
+  production Tailwind stylesheet by binding `.skeleton::after` (`@apply animate-sweep`),
+  `.row-flash` (`@apply animate-row-flash`), and `.clock-cursor` (`@apply animate-blink`)
+  to Tailwind's animation utility classes. The fresh arrival flash now visibly decays
+  from cyan to transparent over 900ms. Added reduced-motion overrides so `.clock-cursor`
+  remains solid when animations are disabled.
+- **Middle-dot subtitle reduction**: Streamlined panel titles by removing decorative
+  dot-chained subtitle phrases: `Journal · live order history` → `Journal`,
+  `Money ledger · closed trades` → `Money ledger`, `Market regime · one row per tick` →
+  `Market regime`, and `Holdings · {n} open live positions` → `Holdings` (moving the
+  open position count into the panel's right slot alongside real-money badge).
+  Replaced dot separators in `LiveBook` empty fallback copy with clean parenthesized clauses.
+  Updated E2E title assertions in `frontend/e2e/dashboard.spec.ts`.
+
+Verification:
+- Clean production Vite/TypeScript build: 52 modules transformed, 203.18 kB JS, 30.35 kB CSS.
+- Keyframes verified present in CSS bundle: `sweep`, `blink`, `row-flash`, `fade-rise`.
+- Hermetic Playwright browser test suite (11/11 passed across `audit.spec.ts` and `keyboard.spec.ts`).
+- Full Python test suite verified green (789/789 passed).
+
+---
+
+
 ## §65 — full keyboard vocabulary + mint-history drill-down (2026-09-21)
 
 Implemented both approved items after the three confirm-gates were answered

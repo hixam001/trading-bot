@@ -242,8 +242,12 @@ export default function LiveFeed({
                     role="separator"
                     data-testid="feed-new-marker"
                   >
+                    {/* §66: lowercase mono, like every other small tracked
+                        label in the shell — the `▲` and the hairline box
+                        already mark it as an arrival; case was doing nothing
+                        but shouting. */}
                     <span className="font-mono text-[9.5px] tracking-[0.12em] text-faint">
-                      ▲ NEW SINCE YOU LAST LOOKED · {unseenCount}
+                      ▲ new since you last looked · {unseenCount}
                     </span>
                   </div>
                 )}

@@ -39,7 +39,14 @@ export default function AlertStrip({ safety, error }: {
       aria-label="operator alerts"
       className="flex items-start gap-2.5 flex-wrap px-4 sm:px-7 py-2 border-b border-line bg-raised"
     >
-      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-faint pt-[1px] shrink-0">
+      {/*
+        §66: the strip's label is lowercase mono like the rest of the shell's
+        chrome — weight + tracking carry it, not case. The bracketed severity
+        token that follows stays a bracketed token: it is the same chip device
+        the tape's [ENTER]/[SKIP] verdicts and the hero's [● LIVE · real money]
+        tag use (DESIGN.md §2), so it keeps its case.
+      */}
+      <span className="font-mono text-[10px] font-semibold tracking-[0.12em] text-faint pt-[1px] shrink-0">
         alerts
       </span>
       {alerts.map((a) => (

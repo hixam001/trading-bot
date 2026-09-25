@@ -237,7 +237,10 @@ test.describe('panel error states (DESIGN.md §3.3)', () => {
 
     const panel = page.getByTestId('error-panel')
     await expect(panel).toBeVisible({ timeout: 15_000 })
-    await expect(panel).toContainText('Journal · live order history')
+    // §66: the title dropped its old `Journal · live order history` subtitle
+    // (the "title · subtitle" dot chain was one of the audited sites); the
+    // loading/error/real panels now share the bare view name.
+    await expect(panel).toContainText('Journal')
     await expect(panel).toContainText('Retrying automatically')
   })
 

@@ -24,7 +24,7 @@ export default function Holdings({
 }) {
   if (!book.enabled) {
     return (
-      <Panel testId="holdings" title="Holdings · live positions">
+      <Panel testId="holdings" title="Holdings">
         <Empty>Live book not available: {book.reason ?? 'unknown reason'}.</Empty>
       </Panel>
     )
@@ -35,8 +35,18 @@ export default function Holdings({
   return (
     <Panel
       testId="holdings"
-      title={`Holdings · ${positions.length} open live position${positions.length === 1 ? '' : 's'}`}
-      right={<Badge tone="fail">● LIVE · real money</Badge>}
+      /* §66: the title is the view's name; the count moved into the header's
+         right slot (the form the dashboard's positions panel already uses) and
+         the redundant `live positions` subtitle is gone. */
+      title="Holdings"
+      right={
+        <span className="flex items-baseline gap-3">
+          <span className="font-mono text-[10px] text-faint tnum">
+            {positions.length} open
+          </span>
+          <Badge tone="fail">● LIVE · real money</Badge>
+        </span>
+      }
     >
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-3">
         <div className="stat-card">
@@ -50,7 +60,7 @@ export default function Holdings({
           </div>
         </div>
         <div className="stat-card">
-          <div className="stat-label">Cash · USDC</div>
+          <div className="stat-label">Cash</div>
           <div className="stat-value">{usd(book.cash_usd)}</div>
         </div>
         <div className="stat-card">
