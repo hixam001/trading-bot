@@ -144,15 +144,23 @@ endpoints and any future auth should go over TLS. Free + automatic:
 sudo apt-get install -y caddy
 # /etc/caddy/Caddyfile:
 #   bot.example.com {
+#       header_up X-Admin-Token {env.ADMIN_TOKEN}
 #       reverse_proxy 127.0.0.1:8000
 #   }
+#   # ensure ADMIN_TOKEN is exported in the service environment, e.g.
+#   # EnvironmentFile=/etc/default/caddy
+#
 sudo systemctl reload caddy
 ```
 
-Point a DNS A record at the VM first. Set
-`FRONTEND_ORIGIN=https://bot.example.com` in `.env` and
-`docker compose up -d` again. (Once Caddy fronts it, remove the public 8000
-ingress rule and keep only 443.)
+Point a DNS A record at the VM first. Set `ADMIN_TOKEN` in the Caddy service
+environment (or `/etc/default/caddy` via `EnvironmentFile`) and set
+`FRONTEND_ORIGIN=https://bot.example.com` in `.env`, then `docker compose up -d`
+again. (Once Caddy fronts it, remove the public 8000 ingress rule and keep
+only 443.)
+
+Do not add a `VITE_ADMIN_TOKEN` value; the dashboard is public JS and must not
+contain the operator secret. The proxy injects the admin token server-side.
 
 **§55 — what Caddy changes about authorization.** Once traffic arrives
 through the reverse proxy, every visitor's socket address is loopback

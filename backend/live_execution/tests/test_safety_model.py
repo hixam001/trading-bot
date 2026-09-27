@@ -84,6 +84,17 @@ def test_assert_not_tripped_raises_with_reason(state):
         kill_switch.assert_not_tripped(state)
 
 
+def test_auto_tripped_sell_is_allowed(state):
+    kill_switch.trip("AUTO: realized daily loss -80.00 USD breached breaker (-75.00)", state_dir=state)
+    kill_switch.assert_exit_allowed(state)
+
+
+def test_manually_tripped_sell_is_blocked(state):
+    kill_switch.trip("operator panic", state_dir=state)
+    with pytest.raises(kill_switch.KillSwitchTripped, match="manual"):
+        kill_switch.assert_exit_allowed(state)
+
+
 def test_kill_switch_survives_recreation(state):
     kill_switch.trip("persistme", state_dir=state)
     # A brand-new process would read the same file:

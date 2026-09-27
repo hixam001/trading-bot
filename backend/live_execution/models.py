@@ -158,6 +158,11 @@ class ExecutionLedger:
         """
         Close the OLDEST open buy of `mint` (FIFO), realize PnL against its
         cost, and append a close record. Refuses if nothing is open.
+
+        A7 (repo audit note): this is a PER-BUY close — callers disposing a
+        whole mint that may hold several open buys (operator repairs,
+        vanished positions) must use close_out_of_band(proceeds_usd=...),
+        which closes EVERY open buy and realizes against the summed cost.
         """
         records = self._load()
         open_buys = [r for r in records
@@ -208,11 +213,15 @@ class ExecutionLedger:
     def tranches_taken(self, mint: str) -> int:
         """
         Take-profit tranches taken against the CURRENT open buy of `mint`:
-        the count of `exit_take_profit` close records newer than the open
-        buy's own timestamp. Kills the latent re-trim bug at the source —
-        before §50 the live path passed tranches_taken=0 to the exit engine
-        on every cycle, so a TP rung would have re-trimmed every 60s until
-        the position was gone.
+        the count of `exit_take_profit` close records strictly NEWER than
+        the open buy's own timestamp. Kills the latent re-trim bug at the
+        source — before §50 the live path passed tranches_taken=0 to the
+        exit engine on every cycle, so a TP rung would have re-trimmed
+        every 60s until the position was gone.
+
+        A7 (repo audit): strictly `>`, not `>=` — a close stamped in the
+        same tick as the buy (frozen clocks in backfills/repairs) is a
+        close of an EARLIER position, not a tranche of this one.
         """
         records = self._load()
         open_ts = None
@@ -227,7 +236,7 @@ class ExecutionLedger:
         for r in records:
             if (r.get("kind") == "close" and r.get("mint") == mint
                     and (r.get("rule_id") or "") == "exit_take_profit"
-                    and float(r.get("ts") or 0.0) >= float(open_ts)):
+                    and float(r.get("ts") or 0.0) > float(open_ts)):
                 n += 1
         return n
 
@@ -247,16 +256,25 @@ class ExecutionLedger:
                    if r.get("kind") == "close"
                    and float(r.get("ts") or 0.0) >= float(ts))
 
-    def realized_pnl_today(self) -> float:
-        """Sum of pnl on close entries stamped today (local date)."""
+    # A7 (repo audit): the daily windows are UTC-day windows — MAX_DAILY_DEPLOY_USD
+    # is documented as a "Rolling UTC-day notional cap" and the daily-loss
+    # breaker is judged against the same boundary. `date.fromtimestamp()`
+    # rolls at server-LOCAL midnight, shifting the risk window on any
+    # non-UTC host. Both now and record ts convert through UTC explicitly.
+    @staticmethod
+    def _utc_date(ts: float):
         import datetime as _dt
 
-        today = _dt.date.fromtimestamp(self.now_fn())
+        return _dt.datetime.fromtimestamp(ts, tz=_dt.timezone.utc).date()
+
+    def realized_pnl_today(self) -> float:
+        """Sum of pnl on close entries stamped today (UTC date)."""
+        today = self._utc_date(self.now_fn())
         total = 0.0
         for r in self._load():
             if r["kind"] != "close" or r.get("pnl_usd") is None:
                 continue
-            if _dt.date.fromtimestamp(r["ts"]) == today:
+            if self._utc_date(r["ts"]) == today:
                 total += r["pnl_usd"]
         return total
 
@@ -269,13 +287,11 @@ class ExecutionLedger:
         return out
 
     def deployed_today_usd(self) -> float:
-        """Sum of buy cost stamped today - feeds MAX_DAILY_DEPLOY_USD."""
-        import datetime as _dt
-
-        today = _dt.date.fromtimestamp(self.now_fn())
+        """Sum of buy cost stamped today (UTC date) - feeds MAX_DAILY_DEPLOY_USD."""
+        today = self._utc_date(self.now_fn())
         total = 0.0
         for r in self._load():
-            if r["kind"] == "buy" and _dt.date.fromtimestamp(r["ts"]) == today:
+            if r["kind"] == "buy" and self._utc_date(r["ts"]) == today:
                 total += float(r.get("usd_size") or 0.0)
         return total
 

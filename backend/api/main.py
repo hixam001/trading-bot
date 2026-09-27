@@ -85,8 +85,11 @@ async def force_https_middleware(request, call_next):
             request.url.scheme == "http"
             and client_host not in ("127.0.0.1", "::1", "localhost", "testclient")
         ):
+            # A7 (repo audit): 308, not 301 — a 301 redirect is re-issued
+            # as GET by many clients (dropping a POST body) and is cached
+            # aggressively; 308 preserves the method on both counts.
             https_url = str(request.url.replace(scheme="https"))
-            return RedirectResponse(url=https_url, status_code=301)
+            return RedirectResponse(url=https_url, status_code=308)
     return await call_next(request)
 
 

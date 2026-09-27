@@ -48,6 +48,7 @@ export default function Hero({
   profitFactor,
   drawdown,
   connected,
+  risk,
 }: {
   equity: number | null | undefined
   curve: number[]
@@ -55,7 +56,24 @@ export default function Hero({
   profitFactor: number | null
   drawdown: number | null
   connected: boolean
+  risk: {
+    state: 'normal' | 'watch' | 'blocked' | 'offline'
+    severity: 'ok' | 'warning' | 'critical' | 'offline'
+    label: string
+    action: string
+    detail: string
+  }
 }) {
+  const riskTone =
+    risk.severity === 'ok' ? 'text-pass' :
+    risk.severity === 'warning' ? 'text-warn' :
+    risk.severity === 'offline' ? 'text-dim' : 'text-fail'
+
+  const statusBadge =
+    risk.severity === 'ok' ? 'badge-pass' :
+    risk.severity === 'warning' ? 'badge-warn' :
+    risk.severity === 'offline' ? 'badge-dim' : 'badge-fail'
+
   return (
     <header
       data-testid="hero"
@@ -103,11 +121,22 @@ export default function Hero({
         <span className={`badge ${connected ? 'badge-pass' : 'badge-fail'}`} data-testid="ws-state">
           {connected ? 'stream connected' : 'stream offline'}
         </span>
+        <div className={`flex items-center gap-2 rounded border bg-raised px-2.5 py-1.5 min-h-[31px] ${risk.state === 'normal' ? 'border-pass/40' : risk.state === 'watch' ? 'border-warn/40' : risk.state === 'offline' ? 'border-line-strong' : 'border-fail/40'}`}>
+          <span className="font-mono text-[9.5px] tracking-[0.12em] text-faint">posture</span>
+          <span className={`font-mono text-[11px] font-semibold uppercase ${riskTone}`}>
+            {risk.label}
+          </span>
+        </div>
+        <span className={`badge ${statusBadge}`}>{risk.action}</span>
         <UtcClock />
         <span className="live-tag">
           <span className="live-dot" aria-hidden="true" />
           LIVE · real money
         </span>
+      </div>
+      <div className="w-full pt-1.5 text-[11px] text-body font-mono">
+        <span className={`font-semibold uppercase ${riskTone}`}>{risk.label}</span>
+        <span className="ml-2 text-faint">{risk.detail}</span>
       </div>
     </header>
   )

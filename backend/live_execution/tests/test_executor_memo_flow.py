@@ -135,6 +135,24 @@ async def test_memo_failure_blocks_fill_entirely(env, monkeypatch):
     assert res.commit_hash != ""
 
 
+async def test_buy_without_idempotency_key_refuses_before_anything(env, monkeypatch):
+    """A7: the old time-based fallback key was NOT idempotent — a retry
+    after an unclear failure generated a fresh key, bypassed the replay
+    check, and could double-send. Refuse instead of fabricating."""
+    async def boom(*a, **k):
+        raise AssertionError("order progressed without an idempotency key")
+
+    monkeypatch.setattr(ex.memo, "publish_commit_memo", boom)
+    monkeypatch.setattr(ex, "get_jupiter_quote", boom)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6, ledger=ledger)
+
+    assert res.status == "blocked"
+    assert "idempotency_key is required" in res.reason
+    assert ledger._load() == []       # nothing was ever journaled
+
+
 async def test_insufficient_usdc_blocks_before_memo(env, monkeypatch):
     _arm_balances(monkeypatch, sol=1.0, usdc=0.5)   # below the 1.5 ticket
 

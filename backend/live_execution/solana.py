@@ -111,6 +111,20 @@ async def confirm_signature(
             if status.get("confirmationStatus") in ("confirmed", "finalized"):
                 return {"confirmed": True, "slot": status.get("slot"), "err": None}
         await asyncio.sleep(2.0)
+    # A7 (repo audit): some RPCs keep only a short recent-status cache;
+    # ask ONCE with history search before declaring the send unconfirmed —
+    # a fill that actually landed must not be reported as absent (the
+    # caller would then leave it unjournaled while reconcile flags it).
+    res = await rpc(
+        "getSignatureStatuses",
+        [[signature], {"searchTransactionHistory": True}],
+        endpoints=endpoints,
+    )
+    values = (res or {}).get("value") or []
+    if values and values[0]:
+        status = values[0]
+        if not status.get("err") and status.get("confirmationStatus") in ("confirmed", "finalized"):
+            return {"confirmed": True, "slot": status.get("slot"), "err": None}
     return {"confirmed": False, "slot": None, "err": "not confirmed before timeout"}
 
 
@@ -236,7 +250,12 @@ async def get_usdc_balance(address: str) -> float | None:
                     continue
                 return raw_amount / (10 ** decimals)
             err_msg = str(((body.get("error") or {}).get("message")) or "").lower()
-            if "could not find account" in err_msg or "invalid param" in err_msg:
+            # A7 (repo audit): ONLY "account not found" maps to a 0.0
+            # balance. "invalid param" is a malformed-REQUEST error — the
+            # old code reported it as "wallet holds $0", conflating an RPC
+            # bug with a plausible-looking empty account instead of the
+            # honest None ("unreadable") that callers refuse on.
+            if "could not find account" in err_msg:
                 return 0.0   # account does not exist -> zero balance
             log.info("[solana] usdc balance refused by %s: %s",
                      endpoint, body.get("error"))

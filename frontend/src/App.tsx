@@ -78,6 +78,74 @@ export default function App() {
   // Global offline banner (DESIGN.md §3.4): only when BOTH primary feeds fail.
   // Panels keep their last data and recover automatically.
   const offline = liveBook.error && status.error
+  type RiskState = {
+    state: 'normal' | 'watch' | 'blocked' | 'offline'
+    severity: 'ok' | 'warning' | 'critical' | 'offline'
+    label: string
+    action: string
+    canBuy: boolean
+    canSell: boolean
+    detail: string
+  }
+
+  const riskState: RiskState = (() => {
+    if (safety.data?.kill_switch.engaged) {
+      const auto = safety.data.kill_switch.reason.startsWith('AUTO:')
+      return {
+        state: 'blocked' as const,
+        severity: auto ? 'warning' : 'critical',
+        label: auto ? 'buy pause' : 'manual stop',
+        action: auto ? 'exits allowed · buys paused' : 'no trades allowed',
+        canBuy: !auto,
+        canSell: true,
+        detail: auto
+          ? 'auto breaker active · de-risk exits only'
+          : 'manual stop engaged · all trading frozen',
+      }
+    }
+    if (safety.data?.daily_loss_breaker.engaged) {
+      return {
+        state: 'watch' as const,
+        severity: 'warning' as const,
+        label: 'buy pause',
+        action: 'exits allowed · buys paused',
+        canBuy: false,
+        canSell: true,
+        detail: 'daily-loss breaker active · reduce risk while monitoring',
+      }
+    }
+    if (!connected || (liveBook.error && status.error)) {
+      return {
+        state: 'offline' as const,
+        severity: 'offline' as const,
+        label: 'feed degraded',
+        action: 'wait for recovery · no live confidence',
+        canBuy: false,
+        canSell: false,
+        detail: 'primary feeds unavailable · panels retry automatically',
+      }
+    }
+    if (liveBook.data && !liveBook.data.enabled) {
+      return {
+        state: 'watch' as const,
+        severity: 'warning' as const,
+        label: 'engine paused',
+        action: 'execution disabled · no live entries',
+        canBuy: false,
+        canSell: false,
+        detail: liveBook.data.reason ?? 'execution engine disabled',
+      }
+    }
+    return {
+      state: 'normal' as const,
+      severity: 'ok' as const,
+      label: 'safe to trade',
+      action: 'entries allowed · live execution active',
+      canBuy: true,
+      canSell: true,
+      detail: 'breakers clear · trading posture normal',
+    }
+  })()
 
   // §65 — the global keyboard dispatcher. ONE listener, guarded: nothing
   // fires while the palette is open (its own handler keeps winning — the
@@ -158,7 +226,28 @@ export default function App() {
         profitFactor={stats.data?.profit_factor ?? null}
         drawdown={stats.data?.max_drawdown_pct ?? null}
         connected={connected}
+        risk={riskState}
       />
+
+      <div className="border-b border-line bg-surface px-4 py-2 sm:px-7">
+        <div className="flex flex-wrap items-center gap-2.5 text-[10.5px] font-mono tracking-[0.08em] text-faint">
+          <span className="text-dim">system state</span>
+          <span
+            className={`badge ${
+              riskState.state === 'normal'
+                ? 'badge-pass'
+                : riskState.state === 'watch'
+                  ? 'badge-warn'
+                  : riskState.state === 'offline'
+                    ? 'badge-dim'
+                    : 'badge-fail'
+            }`}
+          >
+            {riskState.label}
+          </span>
+          <span className="text-body normal-case tracking-normal">{riskState.detail}</span>
+        </div>
+      </div>
 
       <AlertStrip safety={safety.data} error={safety.error} />
 

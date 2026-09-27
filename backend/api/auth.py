@@ -62,6 +62,13 @@ def require_admin_token(request: Request) -> None:
     """Raise 403 unless the request carries the configured operator token.
 
     Enforces rate limiting on repeated failed attempts (brute-force defense).
+
+    A7 (repo audit): the token is verified BEFORE the lockout check.
+    The old order (lockout first) let an attacker brick the operator:
+    5 bad guesses from the shared proxy address locked out even the
+    CORRECT token for a renewable 60s window. The lockout now governs
+    wrong attempts only — a valid credential always authenticates, while
+    guessers are still throttled exactly as before.
     """
     client_ip = getattr(getattr(request, "client", None), "host", "unknown")
     now = time.time()
@@ -69,26 +76,28 @@ def require_admin_token(request: Request) -> None:
     # Prune expired attempts outside the sliding window (A6: map stays bounded)
     attempts = _prune_failures(client_ip, now)
 
-    if len(attempts) >= _MAX_FAILED_ATTEMPTS:
-        raise HTTPException(
-            status_code=429,
-            detail="too many failed authentication attempts — rate limited",
-        )
-
     configured = config.ADMIN_TOKEN
+    supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
+    token_ok = bool(configured) and bool(supplied) and hmac.compare_digest(
+        supplied, configured)
+    if token_ok:
+        # Clear recorded failures on successful authentication
+        _FAILED_ATTEMPTS.pop(client_ip, None)
+        return
+
     if not configured:
         # Fail closed: no token configured -> endpoint disabled.
         raise HTTPException(
             status_code=403,
             detail="operator endpoints are disabled (ADMIN_TOKEN not set)",
         )
-    supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
-    if not supplied or not hmac.compare_digest(supplied, configured):
-        _FAILED_ATTEMPTS[client_ip].append(now)
-        raise HTTPException(status_code=403, detail="invalid operator token")
-
-    # Clear recorded failures on successful authentication
-    _FAILED_ATTEMPTS.pop(client_ip, None)
+    if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+        raise HTTPException(
+            status_code=429,
+            detail="too many failed authentication attempts — rate limited",
+        )
+    _FAILED_ATTEMPTS[client_ip].append(now)
+    raise HTTPException(status_code=403, detail="invalid operator token")
 
 
 # ---------------------------------------------------------------------------

@@ -203,3 +203,71 @@ def test_sec07_solana_address_sanitization():
     assert is_valid_solana_address("O" * 44) is False  # 'O' is not in Base58 alphabet
     assert is_valid_solana_address("I" * 44) is False  # 'I' is not in Base58 alphabet
     assert is_valid_solana_address("l" * 44) is False  # 'l' is not in Base58 alphabet
+
+
+# ---------------------------------------------------------------------------
+# A7: SEC-01 fail-closed hardening — ALTs and unresolvable program indexes
+# ---------------------------------------------------------------------------
+
+def test_sec01_lookup_table_transaction_refused():
+    """A v0 message with address-lookup tables cannot be statically verified
+    (program IDs may live in the lookup region); the old guard SILENTLY
+    SKIPPED such instructions. It must refuse instead."""
+    from live_execution.jupiter_executor import ExecutionError, inspect_swap_transaction
+
+    class _Msg:
+        account_keys = ["WALLETADDR"]
+        instructions = []
+        address_table_lookups = [object()]     # any non-empty LUT list
+
+    class _Tx:
+        message = _Msg()
+
+    with pytest.raises(ExecutionError, match="address lookup tables"):
+        inspect_swap_transaction(_Tx(), "WALLETADDR")
+
+
+def test_sec01_out_of_range_program_index_refused():
+    """An instruction whose program_id_index falls outside the static
+    account keys must be refused, never skipped (the old `prog_idx <
+    len(account_keys)` guard silently skipped it — fail-open)."""
+    from live_execution.jupiter_executor import ExecutionError, inspect_swap_transaction
+
+    class _Ix:
+        program_id_index = 7                   # beyond the 2 static keys
+
+    class _Msg:
+        account_keys = [
+            "WALLETADDR",
+            "JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4",
+        ]
+        instructions = [_Ix()]
+        address_table_lookups = []
+
+    class _Tx:
+        message = _Msg()
+
+    with pytest.raises(ExecutionError, match="unresolvable program"):
+        inspect_swap_transaction(_Tx(), "WALLETADDR")
+
+
+def test_sec01_swap_request_pins_legacy_transactions():
+    """The swap build requests a legacy transaction (no ALTs) so the
+    static allowlist check is complete for every well-formed Jupiter swap."""
+    import asyncio
+
+    from live_execution import jupiter_executor as je
+
+    calls: list[dict] = []
+
+    async def fake_post(url, payload):
+        calls.append(payload)
+        return {"swapTransaction": "QUJD"}
+
+    je._post_json = fake_post
+
+    async def run():
+        return await je._build_swap_transaction({"quote": 1}, "WALLETADDR")
+
+    assert asyncio.run(run()) == "QUJD"
+    assert calls[0]["asLegacyTransaction"] is True

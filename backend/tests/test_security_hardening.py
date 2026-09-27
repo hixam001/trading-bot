@@ -182,6 +182,37 @@ async def test_auth_rate_limiting_lockout(client, monkeypatch):
     auth._FAILED_ATTEMPTS.clear()
 
 
+async def test_lockout_never_blocks_a_valid_token(client, monkeypatch):
+    """A7: the token is verified BEFORE the lockout check.
+
+    Behind the §55 proxy every client shares one socket address, so the old
+    order (lockout first) let 5 bad guesses from anyone brick even the
+    operator's CORRECT token for a renewable window. Wrong attempts are
+    still throttled exactly as before; a valid credential always wins.
+    """
+    from api import auth
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "valid-token")
+    auth._FAILED_ATTEMPTS.clear()
+
+    for _ in range(5):
+        r = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "bad"})
+        assert r.status_code == 403
+
+    # Wrong token is now locked out...
+    r_locked = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "bad"})
+    assert r_locked.status_code == 429
+
+    # ...but the correct token authenticates despite the lockout (it passes
+    # the token gate; the endpoint then demands ?confirm — hence 400, not
+    # 403/429).
+    r_ok = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "valid-token"})
+    assert r_ok.status_code == 200
+
+    # And a successful auth clears the recorded failures again.
+    assert auth._FAILED_ATTEMPTS == {}
+    auth._FAILED_ATTEMPTS.clear()
+
+
 async def test_additional_security_headers(client):
     r = await client.get("/api/system-status", headers={"x-forwarded-proto": "https"})
     assert r.status_code == 200
@@ -195,7 +226,9 @@ async def test_additional_security_headers(client):
 async def test_force_https_redirect(client, monkeypatch):
     monkeypatch.setattr(config, "FORCE_HTTPS", True)
     r = await client.get("/api/system-status", headers={"x-forwarded-proto": "http"}, follow_redirects=False)
-    assert r.status_code == 301
+    # 308, not 301: preserves the HTTP method (a 301 lets clients re-issue
+    # POSTs as GET, silently dropping the body) and is equally cacheable.
+    assert r.status_code == 308
     assert r.headers["location"].startswith("https://")
 
 

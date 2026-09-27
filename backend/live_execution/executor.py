@@ -170,6 +170,14 @@ async def place_buy(
     base = OrderResult(side="buy", symbol=symbol, mint=mint)
     ledger = ledger or default_ledger()
     queue = queue or default_queue()
+    if not idempotency_key:
+        # A7 (repo audit): the old time-based fallback key was NOT
+        # idempotent — a retry after an unclear network failure generated a
+        # fresh key, bypassed the replay check, and could double-send.
+        # Mirror execute_confirmed_trade: refuse instead of fabricating.
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": "idempotency_key is required for live buys — "
+                                        "retries after an unclear failure must never double-send"})
     try:
         preflight(usd, mint, output_decimals, ledger)
     except Refusal as exc:
@@ -301,7 +309,7 @@ async def place_buy(
                 "fill actuals unreadable for %s — journaling the quote "
                 "snapshot (usd=%.2f)", outcome.signature[:16], usd)
         rec = ledger.record_buy(
-            idempotency_key=idempotency_key or f"buy-{mint}-{int(time.time())}",
+            idempotency_key=idempotency_key,
             mint=mint, usd_size=usd_actual, tokens_out=tokens_actual,
             price_usd=(usd_actual / tokens_actual) if tokens_actual > 0
             else q["price_usd"],
@@ -344,7 +352,7 @@ async def place_sell(
     ledger = ledger or default_ledger()
     queue = queue or default_queue()
     try:
-        kill_switch.assert_not_tripped()
+        kill_switch.assert_exit_allowed()
     except Exception as exc:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
 

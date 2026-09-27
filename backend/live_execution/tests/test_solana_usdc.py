@@ -64,3 +64,13 @@ async def test_all_rpcs_fail_returns_none(monkeypatch):
     _patch_client(monkeypatch,
                   [_FakeResp(200, {"error": {"message": "boom"}})] * n)
     assert await solana.get_usdc_balance("OWNER") is None
+
+
+async def test_invalid_param_is_none_not_zero(monkeypatch):
+    """A7: 'invalid param' is a malformed-REQUEST error, not evidence of an
+    empty wallet — it must be None (unreadable, callers refuse), never the
+    plausible-looking 0.0 the old code fabricated."""
+    n = len(solana.config.RPC_URLS)
+    body = {"error": {"message": "Invalid param: wrong owner"}}
+    _patch_client(monkeypatch, [_FakeResp(200, body)] * n)
+    assert await solana.get_usdc_balance("OWNER") is None

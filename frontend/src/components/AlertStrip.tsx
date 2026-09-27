@@ -61,6 +61,9 @@ export default function AlertStrip({ safety, error }: {
             [{a.severity === 'fail' ? 'FAIL' : 'WARN'}]
           </span>
           <span className="text-body">{a.message}</span>
+          <span className="font-mono text-[9.5px] uppercase tracking-[0.08em] text-faint shrink-0">
+            {a.severity === 'fail' ? 'action required' : 'check state'}
+          </span>
         </span>
       ))}
     </div>

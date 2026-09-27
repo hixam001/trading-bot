@@ -169,6 +169,30 @@ def test_quote_happy_path_six_decimals(env, monkeypatch):
     assert "quote-api.jup.ag" not in calls[0]["url"]      # dead endpoint gone
 
 
+def test_quote_impact_above_cap_refuses(env, monkeypatch):
+    """A7: the price-impact guard lives in get_jupiter_quote — the single
+    choke point — so the manual propose→execute path inherits the same
+    2.5% floor the automated path always had."""
+    capture_post(monkeypatch, {"outAmount": "691000", "priceImpactPct": "0.30"})
+    with pytest.raises(je.ExecutionError, match="price impact"):
+        asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
+
+
+def test_quote_impact_within_cap_passes_and_is_returned(env, monkeypatch):
+    calls = capture_post(monkeypatch, {"outAmount": "691000", "priceImpactPct": "0.02"})
+    q = asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
+    assert q["price_impact_pct"] == pytest.approx(2.0)
+    assert q["tokens_out"] == pytest.approx(0.691)
+    assert calls[0]["verb"] == "get"
+
+
+def test_quote_impact_missing_field_is_zero(env, monkeypatch):
+    """A quote with no priceImpactPct field must not fabricate an impact."""
+    capture_post(monkeypatch, {"outAmount": "691000"})
+    q = asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
+    assert q["price_impact_pct"] == 0.0
+
+
 def test_quote_happy_path_nine_decimals_in_cap(env, monkeypatch):
     # SOL-like: 9 decimals. $47.22 (UNDER MAX_TRADE_USD=50) at $94.44/token
     # buys exactly 0.5 tokens -> outAmount raw = 0.5 * 1e9 = 500000000.

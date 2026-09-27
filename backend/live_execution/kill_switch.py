@@ -82,6 +82,25 @@ def assert_not_tripped(state_dir: Optional[Path] = None) -> None:
         )
 
 
+def is_auto_tripped(state_dir: Optional[Path] = None) -> bool:
+    reason = trip_reason(state_dir)
+    return is_tripped(state_dir) and str(reason).startswith("AUTO: realized daily loss")
+
+
+def assert_exit_allowed(state_dir: Optional[Path] = None) -> None:
+    """Allow exits when the only active trip is the automatic daily-loss breaker.
+
+    The automatic breaker exists to cap realized losses; freezing exits would keep
+    the book exposed while the loss continues to worsen. A human-tripped panic
+    still blocks all trades, including exits.
+    """
+    if is_tripped(state_dir) and not is_auto_tripped(state_dir):
+        raise KillSwitchTripped(
+            f"KILL SWITCH ENGAGED (manual trip) — reason: {trip_reason(state_dir)!r}. "
+            f"A human must clear it explicitly before any trade, including exits."
+        )
+
+
 def check_daily_loss_breaker(
     ledger,
     state_dir: Optional[Path] = None,

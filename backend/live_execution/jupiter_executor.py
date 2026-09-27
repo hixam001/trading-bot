@@ -249,12 +249,27 @@ async def get_jupiter_quote(
     tokens_out = out_amount_raw / raw_units_for_one_token(dec)
     if tokens_out <= 0:
         raise ExecutionError(f"jupiter: non-positive quote for {output_mint}")
+    # A7 (repo audit): the price-impact guard now lives HERE — the single
+    # choke point every buy path shares. Previously only executor.place_buy
+    # checked it, so the manual propose→approve→execute path could fill a
+    # thin-pool quote (e.g. 20% impact) the automated path would refuse.
+    try:
+        impact_pct = abs(float(data.get("priceImpactPct") or 0)) * 100.0
+    except (TypeError, ValueError):
+        impact_pct = 0.0
+    if impact_pct > config.MAX_PRICE_IMPACT_PCT:
+        raise ExecutionError(
+            f"jupiter: price impact {impact_pct:.2f}% exceeds "
+            f"MAX_PRICE_IMPACT_PCT {config.MAX_PRICE_IMPACT_PCT}% — "
+            f"refusing {output_mint}"
+        )
     return {
         "quote": data,
         "amount_raw": amount_raw,
         "out_amount_raw": out_amount_raw,
         "tokens_out": tokens_out,
         "price_usd": usd_size / tokens_out,
+        "price_impact_pct": impact_pct,
     }
 
 
@@ -273,6 +288,15 @@ async def _build_swap_transaction(quote: dict, user_public_key: str) -> str:
             "quoteResponse": quote,
             "userPublicKey": user_public_key,
             "wrapAndUnwrapSol": True,
+            # A7 (repo audit): legacy transactions carry NO address-lookup
+            # tables, so inspect_swap_transaction can verify EVERY program
+            # ID statically before signing. v0+ALTs made the SEC-01 guard
+            # silently skip unresolvable instructions (fail-open). A route
+            # too large for a legacy tx fails closed at build time — a
+            # refused order costs nothing, a blind-signed one does not.
+            # NOTE: any change here must be re-drilled on devnet with a
+            # throwaway keypair BEFORE it touches mainnet (module header).
+            "asLegacyTransaction": True,
         },
     )
     b64 = data.get("swapTransaction")
@@ -287,10 +311,28 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
     Ensures:
       1. Fee payer matches our loaded keypair.
       2. All invoked program IDs are in APPROVED_SWAP_PROGRAM_IDS.
+
+    A7 (repo audit) — FAIL CLOSED on anything unresolvable:
+      * A v0 message with address-lookup tables cannot be statically
+        verified (program IDs may live in the lookup region, which
+        account_keys does not contain). The old guard SILENTLY SKIPPED
+        such instructions (`if prog_idx < len(account_keys)`) — a
+        fail-open hole in the anti-drainer check. Refuse instead.
+        _build_swap_transaction requests a legacy transaction precisely
+        so this situation never arises for a well-formed Jupiter swap.
+      * Any instruction whose program index falls outside the static
+        account keys is refused, never skipped.
     """
     account_keys = [str(k) for k in getattr(tx.message, "account_keys", [])]
     if not account_keys:
         raise ExecutionError("swap transaction has empty accountKeys")
+
+    if getattr(tx.message, "address_table_lookups", None):
+        raise ExecutionError(
+            "swap transaction uses address lookup tables — program IDs "
+            "cannot be statically verified — refusing to sign unverified "
+            "payload"
+        )
 
     fee_payer = account_keys[0]
     if fee_payer != payer_pubkey:
@@ -300,13 +342,17 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
 
     for i, ix in enumerate(tx.message.instructions):
         prog_idx = ix.program_id_index
-        if prog_idx < len(account_keys):
-            prog_id = account_keys[prog_idx]
-            if prog_id not in config.APPROVED_SWAP_PROGRAM_IDS:
-                raise ExecutionError(
-                    f"unapproved program ID in swap instruction #{i}: {prog_id} "
-                    "— refusing to sign unverified payload"
-                )
+        if prog_idx >= len(account_keys):
+            raise ExecutionError(
+                f"swap instruction #{i} references unresolvable program "
+                f"index {prog_idx} — refusing to sign unverified payload"
+            )
+        prog_id = account_keys[prog_idx]
+        if prog_id not in config.APPROVED_SWAP_PROGRAM_IDS:
+            raise ExecutionError(
+                f"unapproved program ID in swap instruction #{i}: {prog_id} "
+                "— refusing to sign unverified payload"
+            )
 
 
 def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
