@@ -2,15 +2,17 @@
 
 ## Architecture
 Single-process app: FastAPI serves API + WS + built React dashboard on :8000;
-an in-process asyncio tick loop (TICK_LOOP_IN_PROCESS=1) drives the strategy.
-SQLite in WAL mode: tick loop writes, API reads, no blocking. `./start.sh`
-orchestrates ollama serve (if needed) + this app; `./stop.sh` reverses.
+`run_live_cycle.py` drives the live trading loop as a separate async process.
+SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
+`./start.sh` orchestrates the app; `./stop.sh` reverses.
 
 ## The core pattern: separate deciding from explaining
 - rule_engine/rules.py — 10 pure functions → RuleResult(id, passed, detail
   with real numbers, value)
 - rule_engine/gate.py evaluate_gate() — runs ALL rules unconditionally (no
   short-circuit); all_passed = AND = the entire entry decision
+- llm/thinker.py — evaluates each candidate BEFORE rules; entry requires
+  model buy AND all-rules-pass (think→gate intersection)
 - llm/narrator.py — receives only the GateDecision; prompt forbids
   second-guessing; output validated for groundedness; flags recorded
 
@@ -31,7 +33,11 @@ orchestrates ollama serve (if needed) + this app; `./stop.sh` reverses.
 6. **Grounding validation:** thesis checked against rule-derived vocabulary,
    invented rule-ids, and number echo; flags recorded on feed events.
 7. **Read-only boundary:** promotion gate + all API endpoints report state;
-   nothing outside paper_trading_engine.py may change trade/cash state.
+   nothing outside run_live_cycle.py may change trade/cash state.
+8. **Exit engine (§5.2):** 6 rules — stop (−20%), HWM trail (50%/40pp),
+   liquidity break (<$8k), invalidation (−25%&1.4×sells), stale (14d),
+   TP ladder (+100/300/900 trims). Dedicated 15s fast exit scanner to avoid
+   stop-loss gap risk.
 
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;

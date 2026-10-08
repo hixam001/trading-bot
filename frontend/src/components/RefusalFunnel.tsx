@@ -76,7 +76,7 @@ export default function RefusalFunnel({
       key: 'model_approved',
       label: 'model approved',
       n: funnel.model_approved,
-      note: `${funnel.model_refused} refusals`,
+      note: `${funnel.model_approved} approvals`,
       drill: 'approved',
       hint: 'open the approved rows',
     },

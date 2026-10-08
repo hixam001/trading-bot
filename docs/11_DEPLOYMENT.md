@@ -95,9 +95,8 @@ spin-down. On Oracle's always-on VM this is unnecessary.
 
 - **Default:** SQLite at `DB_PATH` — put it on a mounted volume (compose does).
 - **Supabase:** run `migrations/supabase/*.sql` in the SQL editor, then set
-  `USE_SUPABASE_DB=1`, `SUPABASE_DB_URL`, `SUPABASE_SERVICE_ROLE_KEY`
-  (server-side only, never frontend). `api/db_pg.py` is a drop-in with the
-  identical surface.
+  `USE_SUPABASE_DB=1`, `SUPABASE_DB_URL` (direct asyncpg connection to the pooler).
+  `api/db_pg.py` is a drop-in with the identical surface.
 
 ## 5. Persistence rules (real-money safety)
 

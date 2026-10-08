@@ -95,8 +95,8 @@ def _extract_pair_fields(pair: dict) -> dict:
         "price_change_6h_pct": require_type(chg_obj.get("h6"), (int, float), "priceChange.h6", "dexscreener"),
         "price_change_24h_pct": require_type(chg_obj.get("h24"), (int, float), "priceChange.h24", "dexscreener"),
         "fdv_usd": fdv_usd,
-        "buys_6h": int(h6t.get("buys") or 0) or None,
-        "sells_6h": int(h6t.get("sells") or 0) or None,
+        "buys_6h": None if h6t.get("buys") is None else int(h6t.get("buys")),
+        "sells_6h": None if h6t.get("sells") is None else int(h6t.get("sells")),
         "volume_6h_usd": require_type(vol_obj.get("h6"), (int, float), "volume.h6", "dexscreener"),
     }
 

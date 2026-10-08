@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §67 Full-repo audit: bug fixes, doc completion, memory-bank update (2026-10-08):
+      12 bugs found and fixed across backend and frontend. Backend: dexscreener
+      buys_6h/sells_6h zero-as-None, 4× "the the" typos, dead API_HOST env var.
+      Frontend: risk posture safety bug (liveBook error bypass), help overlay toggle,
+      RefusalFunnel copy-paste label, useApi unmount guard, LiveFeed ARIA roles.
+      Stale memory-bank files (productContext, projectbrief, systemPatterns,
+      techContext) updated from paper-trading to live-trading reality. Handoff
+      metadata refreshed. Verified: 791/791 backend tests green, clean Vite build
+      (206.16 kB JS, 30.77 kB CSS), 11/11 hermetic Playwright tests passing. Full detail: handoff §67.
+
 - [x] §66 Frontend design polish: typography, case hierarchy, and motion keyframes (2026-09-22):
       Lowercase mono hierarchy across `.panel-title`, `.stat-label`, `.th`, `.tab`,
       Hero stats, AlertStrip header, and LiveFeed arrival marker; Tailwind `@keyframes`

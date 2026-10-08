@@ -12,8 +12,8 @@
   local runs
 
 ## Layout
-backend/ (all Python; THE deployable module — paper pipeline + live_execution/
-subpackage + run_live_cycle.py; run commands from inside it) · frontend/
+backend/ (all Python; THE deployable module — run_live_cycle.py is the live
+runner + live_execution/ subpackage; run commands from inside it) · frontend/
 (deployable to Vercel/CF Pages) · Dockerfile + docker-compose.yml +
 .dockerignore (root) · backend/docker-entrypoint.sh · docs/ (…,
 11_DEPLOYMENT.md) · memory-bank/ · handoff.md · start.sh / stop.sh ·
@@ -21,11 +21,10 @@ subpackage + run_live_cycle.py; run commands from inside it) · frontend/
 
 ## Commands
 - One click: ./start.sh | ./stop.sh
-- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q  (448, ~12s)
-- All suites from repo root: .venv/bin/python -m pytest -q  (597 = 448 backend
-  + 149 live_execution; root pytest.ini sets asyncio_mode=auto)
+- Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q
+- All suites from repo root: .venv/bin/python -m pytest -q  (791 = backend + live_execution;
+  root pytest.ini sets asyncio_mode=auto)
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
-- KB ingest: cd backend && ../.venv/bin/python scripts/ingest_directory.py <dir>
 - Deploy (Docker/VM): docker build -t trading-bot . && see docs/11_DEPLOYMENT.md
 
 ## External services & keys (in .env)
@@ -39,9 +38,10 @@ subpackage + run_live_cycle.py; run commands from inside it) · frontend/
   direct → firecrawl → scrapingbee(keyless-only) → zenrows(custom_headers+
   premium_proxy) → scrapeops(keep_headers). ZenRows/scrapeops forward the
   Privy bearer through Cloudflare (verified live).
-- Supabase (USE_SUPABASE_DB, SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY [server-
-  only, bypasses RLS], SUPABASE_ANON_KEY, SUPABASE_DB_URL pooler :6543)
+- Supabase (USE_SUPABASE_DB, SUPABASE_DB_URL pooler :6543)
 - DATA_BACKEND=mock|live is the single provider selection (A9)
+- DeepSeek (DEEPSEEK_API_KEY — primary LLM)
+- Groq (SOCIAL_LLM_API_KEY — social/crowd read fallback)
 
 ## Environment rules
 - .env holds operator settings only. Hardcoded in config.py, never env-set:
@@ -50,6 +50,6 @@ subpackage + run_live_cycle.py; run commands from inside it) · frontend/
 - Tests monkeypatch DATA_BACKEND=mock and tmp DB paths (hermeticity).
 
 ## Hardware reality
-LLM is the bottleneck (~23 tok/s; narrations ~2s each after disabling qwen3
-thinking). 20 candidates → tick ≈40–90s; TICK_INTERVAL_SECONDS=60 sleeps
+Cloud LLM APIs (DeepSeek/Groq) replaced local Ollama. Tick cadence limited
+by API latency and MAX_CANDIDATES_PER_TICK; TICK_INTERVAL_SECONDS=60 sleeps
 between ticks regardless.

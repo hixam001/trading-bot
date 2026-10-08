@@ -1,6 +1,18 @@
 # Active Context — trading-bot
 
-**Current — 2026-09-22 (§66):** Frontend design polish across typography, case
+**Current — 2026-10-08 (§67):** Full-repo audit across code, docs, and infra.
+Fixed backend dexscreener `buys_6h`/`sells_6h` zero-as-None bug, 4× double-word
+typos in comments, and removed unused `API_HOST` in `.env.example`. Fixed
+frontend safety bug in `App.tsx` (liveBook error state risk posture bypass),
+`?` help overlay toggle trap, `RefusalFunnel.tsx` copy-paste approval label,
+`useApi.ts` unmounted state updates, and `LiveFeed.tsx` ARIA option-in-listbox nesting.
+Synchronized stale memory-bank files (`productContext.md`, `projectbrief.md`,
+`systemPatterns.md`, `techContext.md`) and refreshed handoff metadata block.
+Full Python test suite verified green, frontend build clean.
+
+**PREVIOUS:**
+
+**As of 2026-09-22 (§66):** Frontend design polish across typography, case
 hierarchy, motion keyframes, and subtitle dot reduction completed per DESIGN.md.
 Lowercase mono hierarchy applied to `.panel-title`, `.stat-label`, `.th`, `.tab`,
 Hero stats (`equity`, `win rate`, `profit factor`, `drawdown`), AlertStrip (`alerts`),

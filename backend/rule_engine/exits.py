@@ -1,5 +1,5 @@
 """
-rule_engine/exits.py — the the reference bot-model exit engine (§5.2 rebuild).
+rule_engine/exits.py — the reference bot-model exit engine (§5.2 rebuild).
 
 Ported from the reference bot' documented exit set (PROCESS.md §5), adapted to the
 paper engine's money math. Evaluation order is fixed and RISK-OFF BEATS

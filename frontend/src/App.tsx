@@ -114,7 +114,7 @@ export default function App() {
         detail: 'daily-loss breaker active · reduce risk while monitoring',
       }
     }
-    if (!connected || (liveBook.error && status.error)) {
+    if (!connected || liveBook.error || status.error) {
       return {
         state: 'offline' as const,
         severity: 'offline' as const,
@@ -162,7 +162,7 @@ export default function App() {
       // key (including Escape-closes), so the two handlers can never fight.
       if (paletteOpen) return
       // Help open ⇒ only Escape acts (no list moves behind the overlay).
-      if (helpOpen && key !== 'Escape') return
+      if (helpOpen && key !== 'Escape' && key !== '?') return
       if (key === '?') {
         if (isTextTarget()) return
         e.preventDefault()

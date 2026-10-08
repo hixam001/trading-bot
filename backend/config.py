@@ -242,13 +242,13 @@ INTENDED_POSITION_SIZE_USD: float = 100.0   # fixed per-entry size the cash_avai
 SLIPPAGE_PCT: float = 0.02    # 2% simulated entry/exit slippage
 FEE_PCT: float = 0.01         # 1% simulated DEX fee each way
 
-# Exit conditions — now owned by the the reference bot-model exit engine below
+# Exit conditions — now owned by the reference bot-model exit engine below
 # (the old +50% take-profit and 72h force-close were replaced by
 # EXIT_TP_LADDER + EXIT_STALE_* in that block).
 STOP_LOSS_PCT: float = 0.20      # close if unrealized loss >= -20%
 
 # ---------------------------------------------------------------------------
-# Exit engine (§5.2 rebuilt on the the reference bot model — PROCESS.md §5).
+# Exit engine (§5.2 rebuilt on the reference bot model — PROCESS.md §5).
 # Risk-off rules close FULLY and outrank profit taking; only take-profit
 # tranches are partial. All values hardcoded (non-env-configurable).
 # ---------------------------------------------------------------------------

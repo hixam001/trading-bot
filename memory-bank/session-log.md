@@ -1,3 +1,33 @@
+## Memory-bank update — 2026-10-08 (§67 full-repo audit & bug fixes)
+
+- **Task**: Full-repo audit of code, documentation, infrastructure, and memory bank.
+  Find and fix all bugs, resolve inconsistencies, update all memory-bank files and
+  handoff.md, run verifications, and commit and push without adding any contributors.
+- **Backend fixes**:
+  - `backend/data_providers/dexscreener.py`: fixed `buys_6h` and `sells_6h`
+    zero-as-None bug where `0` counts were incorrectly reported as `None`.
+  - Fixed 4 double-word "the the" typos in comments/docstrings (`config.py`,
+    `rule_engine/exits.py`, `run_live_cycle.py`).
+  - `.env.example`: removed dead `API_HOST=127.0.0.1` setting.
+- **Frontend fixes**:
+  - `frontend/src/App.tsx`: fixed risk posture calculation bug where liveBook error
+    without status error bypassed offline status and defaulted to "safe to trade".
+  - `frontend/src/App.tsx`: fixed shortcut handler so `?` key toggles help overlay off
+    as well as on.
+  - `frontend/src/components/RefusalFunnel.tsx`: corrected `model_approved` note from
+    `{refusals} refusals` to `{approvals} approvals`.
+  - `frontend/src/hooks/useApi.ts`: added `mountedRef` guard to prevent state updates
+    on unmounted components after fetch completes.
+  - `frontend/src/components/LiveFeed.tsx`: updated ARIA role hierarchy (`role="list"`
+    and `role="listitem"` with `aria-current`) to avoid illegal nested interactive
+    elements inside `role="option"`.
+- **Docs & Memory-Bank synchronization**:
+  - `productContext.md`, `projectbrief.md`, `systemPatterns.md`, `techContext.md`
+    updated to accurately represent current live execution status instead of stale
+    paper-trading descriptions.
+  - `handoff.md` updated with §67 entry and refreshed header metadata.
+  - `progress.md`, `activeContext.md`, `decisionLog.md` synchronized.
+
 ## Memory-bank update — 2026-09-21 (§65 keyboard + mint drill-down)
 
 - **Task**: operator master prompt §65 — (1) complete the vim-adjacent

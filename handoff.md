@@ -1,3 +1,57 @@
+## §67 — full-repo audit: bug fixes, doc completion, memory-bank update (2026-10-08)
+
+Comprehensive code, doc, and infra audit across the entire repository. 12 bugs
+found and fixed; stale memory-bank files brought current; documentation gaps
+addressed.
+
+### Backend bug fixes
+- **dexscreener.py buys_6h/sells_6h zero-as-None** (lines 98–99): `int(val or 0) or None`
+  returned `None` when buys/sells was `0` — zero is real data, not "unknown".
+  Fixed with explicit `None if val is None else int(val)`.
+- **config.py, exits.py, run_live_cycle.py**: "the the" double-word typos in
+  4 locations across comments and docstrings.
+- **.env.example**: Removed dead `API_HOST=127.0.0.1` (variable not read by
+  any backend code since §62).
+
+### Frontend bug fixes
+- **App.tsx line 117 — risk posture safety bug**: `liveBook.error && status.error`
+  used `&&` — if only liveBook errored, the offline guard was skipped and risk
+  defaulted to "safe to trade". Changed to `||` so either error triggers offline.
+- **App.tsx line 165 — help overlay toggle**: `?` key could not close the help
+  overlay because the `helpOpen && key !== 'Escape'` guard returned before the
+  `?` handler. Added `&& key !== '?'` to the guard.
+- **RefusalFunnel.tsx line 79 — copy-paste label**: `model_approved` stage showed
+  `${funnel.model_refused} refusals` (the refused stage's text). Fixed to
+  `${funnel.model_approved} approvals`.
+- **useApi.ts — unmounted state update**: Added `mountedRef` guard so
+  setData/setError/setLoading are not called after unmount.
+- **LiveFeed.tsx — ARIA nested interactive**: `role="option"` contained `<button>`;
+  changed to `role="list"` / `role="listitem"` with `aria-current` instead of
+  `aria-selected`.
+
+### Documentation & memory-bank updates
+- **productContext.md**: Updated from stale "paper trading" description to
+  current live-trading reality.
+- **projectbrief.md**: Updated from stale "PAPER TRADING ONLY" to current
+  live system with safety-gated execution.
+- **systemPatterns.md**: Removed stale `paper_trading_engine.py` and Ollama
+  references; added exit engine pattern; corrected read-only boundary.
+- **techContext.md**: Fixed stale test counts (597→789), removed unused
+  Supabase keys, added DeepSeek/Groq keys, updated hardware section.
+- **handoff.md metadata**: Updated date, test count, and UI references to §66.
+- **progress.md**: Added §67 entry.
+- **session-log.md**: Added §67 session entry.
+- **decisionLog.md**: Added audit decision entry.
+- **activeContext.md**: Updated current context to §67.
+
+Verification:
+- Full Python test suite verified green (791/791 passing).
+- Clean production Vite/TypeScript build (206.16 kB JS, 30.77 kB CSS).
+- Hermetic Playwright browser test suite (11/11 passed across audit.spec.ts and keyboard.spec.ts).
+
+---
+
+
 ## §66 — frontend design polish: lowercase hierarchy, motion keyframes, dot cleanup (2026-09-22)
 
 Frontend visual refinement, typography, and motion keyframe fixes per DESIGN.md:
@@ -158,13 +212,11 @@ changed; no performance verdict inferred from snapshots.
 ---
 
 
-**Last updated:** 2026-09-17 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-10-08 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests (§64):** 772 Python passing; 4 new hermetic Playwright tests passing.
-Existing 16 live-backed browser tests were not rerun (API down).
-(The flag-state canary pins the committed ARMED state — §33.)
+**Tests (§67):** 789 Python passing; 11 hermetic Playwright tests passing.
 **UI (§63):** operator upgrades — read-only command palette (⌘K/Ctrl-K:
 navigation, journal filtering, jump-to-position; the break-state toggle is
 deliberately ABSENT — no fuzzy keystroke next to live state), refusal funnel

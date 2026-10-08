@@ -170,7 +170,7 @@ Steps:
 2. Find the request that returns the theses list for the mint (JSON with
    thesis text, author wallet, position size, P&L). Note the exact URL
    pattern, required headers, and whether it needs auth cookies.
-3. Build `backend/data_providers/fomo.py`:
+3. Build data provider (implemented in `backend/data_providers/crowd.py`):
 
 ```python
 class FomoProvider:

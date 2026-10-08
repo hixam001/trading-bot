@@ -395,7 +395,7 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
 
 
 async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, meta: dict) -> None:
-    """Re-price every open position, run the the reference exit rule set, route sells.
+    """Re-price every open position, run the reference exit rule set, route sells.
 
     §57: serialized by _EXIT_LOCK — the dedicated fast exit scanner runs this
     SAME function between 60s cycles (the §5.2/§20 lesson: stops gap badly

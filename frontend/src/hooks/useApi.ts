@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { apiUrl } from '../lib/api'
 
 /**
@@ -9,17 +9,30 @@ export function useApi<T>(url: string, intervalMs?: number) {
   const [data, setData] = useState<T | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   const refresh = useCallback(async () => {
     try {
       const r = await fetch(apiUrl(url))
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
-      setData((await r.json()) as T)
-      setError(null)
+      const json = (await r.json()) as T
+      if (mountedRef.current) {
+        setData(json)
+        setError(null)
+      }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (mountedRef.current) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
     } finally {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLoading(false)
+      }
     }
   }, [url])
 

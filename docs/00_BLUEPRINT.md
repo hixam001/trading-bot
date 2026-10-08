@@ -1,5 +1,14 @@
 # 00 — Project Blueprint
 
+> [!NOTE]
+> **Architecture Evolution Note:** This document records the Day-1 foundational
+> blueprint. In §52, the paper engine (`paper_trading_engine.py`) and in-process
+> loop were superseded by live execution via `backend/run_live_cycle.py`,
+> backed by `backend/live_execution/` and real Jupiter swap routing; candidate
+> evaluation evolved to the think→gate pipeline (`llm/thinker.py` + `decision_pipeline.py`);
+> and LLM narration migrated from local Ollama to cloud APIs (`DEEPSEEK_API_KEY`/`GROQ_API_KEY`).
+> See `docs/01_ARCHITECTURE.md`, `docs/07_PROJECT_REPORT.md`, and `handoff.md` for current runtime details.
+
 ## Vision
 
 Build a local, self-hosted system that watches Solana memecoin markets in
