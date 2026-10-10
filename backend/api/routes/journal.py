@@ -13,7 +13,7 @@ router = APIRouter()
 @router.get("/api/journal")
 async def get_journal(
     limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=100_000),
 ):
     async with db.get_db() as conn:
         trades = await db.get_closed_trades_paginated(conn, limit=limit, offset=offset)

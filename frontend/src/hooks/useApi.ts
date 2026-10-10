@@ -18,7 +18,7 @@ export function useApi<T>(url: string, intervalMs?: number) {
 
   const refresh = useCallback(async () => {
     try {
-      const r = await fetch(apiUrl(url))
+      const r = await fetch(apiUrl(url), { credentials: 'include' })
       if (!r.ok) throw new Error(`HTTP ${r.status}`)
       const json = (await r.json()) as T
       if (mountedRef.current) {

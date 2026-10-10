@@ -1,3 +1,22 @@
+## Memory-bank update — 2026-10-10 (§70 comprehensive 10-rule security audit & platform hardening)
+
+- **Task**: Audit and harden the entire application across the 10 rules:
+  1. Cookie-based authentication: moved session tokens out of client-side `localStorage` into secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with 15-minute rolling idle expiration and 24-hour absolute session duration. Added `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+  2. Broken access control & RLS: audited every ID-based read/update endpoint; verified operator authorization checks; added Supabase Row-Level Security migration `migrations/supabase/006_rls_policies.sql`.
+  3. Mass assignment: locked down mutating request bodies with Pydantic `extra="ignore"`, whitelisting only allowed fields and stripping sensitive/privilege attributes.
+  4. Server-side rate limiting: created sliding window token bucket middleware (`backend/api/rate_limiter.py`) applying strict per-IP rate limits across authentication (5 req/min), AI/LLM (10 req/min), write endpoints (20 req/min), and general reads (120 req/min).
+  5. Billing caps & alerts: established operational runbooks and hard limit strategies for LLMs, RPCs, and databases.
+  6. Bot protection: built server-side HMAC-SHA256 challenge-response and 2.0s time-lock mechanism (`backend/api/bot_protection.py`) on authentication.
+  7. SQL injection: audited all queries in `db.py` and `db_pg.py`; converted dynamic queries to parameterized statements; enforced strict column name whitelisting on dynamic sorts.
+  8. Server-side input validation: implemented type, length, regex format, and boundary checks; rejected null bytes, control chars, path traversal sequences, and oversized payloads.
+  9. Cross-Site Scripting (XSS): audited frontend components; ensured safe React JSX rendering; sanitized URL protocols to `http:` and `https:`; added Content Security Policy (CSP) headers.
+  10. File upload & ingestion security: whitelisted extensions (`.md`, `.txt`, `.json`, `.csv`); inspected binary executable magic signatures and script shebangs; enforced size limits; stored uploads outside web root with `0o600` non-executable permissions.
+- **Tests**:
+  - Full test suite: **870 passed** in pytest (increased from 796).
+  - 10 new test modules and fixtures covering each security rule.
+- **Documentation**:
+  - Updated `README.md`, `handoff.md`, `docs/01_ARCHITECTURE.md`, `docs/02_FEATURE_LIST.md`, and all `memory-bank/` files.
+
 ## Memory-bank update — 2026-10-10 (§69 finish zero-as-unknown in research.py)
 
 - **Task**: Finish the zero-as-unknown fix in `research.py` (backend only; no frontend, no `live_execution/`, no `rule_engine/`).

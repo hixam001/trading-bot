@@ -14,9 +14,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from knowledge_base.loader import ingest_file  # noqa: E402
+from knowledge_base.loader import ALLOWED_EXTENSIONS, ingest_file  # noqa: E402
 
-SUPPORTED = {".md", ".txt", ".json"}
+SUPPORTED = ALLOWED_EXTENSIONS
 
 
 async def main(paths: list[str]) -> None:

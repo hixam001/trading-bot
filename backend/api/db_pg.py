@@ -1421,6 +1421,19 @@ async def prune_market_regime(conn: asyncpg.Connection, keep_rows: int) -> int:
     return _rowcount(status)
 
 
+_ALLOWED_RESET_TABLES: frozenset[str] = frozenset({
+    "feed_events",
+    "market_regime",
+    "decision_commits",
+    "events",
+    "memories",
+    "theses",
+    "daily_stats",
+    "llm_call_usage",
+    "trades",
+})
+
+
 async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
     """Full operator reset: wipe all operational tables and restore the
     starting balance. This is a paper-trading maintenance function — it
@@ -1451,6 +1464,8 @@ async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
     ]
     counts: dict[str, int] = {}
     for table in tables:
+        if table not in _ALLOWED_RESET_TABLES:
+            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
         # Fetch the count before truncating so we can report it.
         row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
         counts[table] = int(row["n"]) if row else 0
@@ -1487,6 +1502,8 @@ async def wipe_paper_book(
     tables = ["feed_events", "trades"]
     counts: dict[str, int] = {}
     for table in tables:
+        if table not in _ALLOWED_RESET_TABLES:
+            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
         row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
         counts[table] = int(row["n"]) if row else 0
         await conn.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")

@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 import config
 from api import db
 
@@ -486,7 +486,7 @@ async def get_binding():
 
 
 @router.get("/api/refusals.json")
-async def get_refusals(limit: int = 100):
+async def get_refusals(limit: int = Query(100, ge=1, le=500)):
     """Every refusal with its full rule breakdown, newest first.
 
     the reference publishes refusals as loudly as fills: a person faking automation
@@ -495,7 +495,7 @@ async def get_refusals(limit: int = 100):
     model vetoes and failed gate rules.
     """
     async with db.get_db() as conn:
-        rows = await db.get_refusal_events(conn, min(max(limit, 1), 500))
+        rows = await db.get_refusal_events(conn, limit)
     return {
         "generated_at_utc": _now_iso(),
         "count": len(rows),
@@ -503,14 +503,14 @@ async def get_refusals(limit: int = 100):
     }
 
 @router.get("/api/theses.json")
-async def get_theses(limit: int = 100):
+async def get_theses(limit: int = Query(100, ge=1, le=500)):
     """The Durable Thesis Book.
     
     Every position's written thesis, updated over its lifecycle, and stamped
     with the realized PnL on exit.
     """
     async with db.get_db() as conn:
-        rows = await db.get_theses(conn, min(max(limit, 1), 500))
+        rows = await db.get_theses(conn, limit)
     return {
         "generated_at_utc": _now_iso(),
         "count": len(rows),

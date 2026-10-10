@@ -1,6 +1,19 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §70 Ten-rule security audit & platform hardening (2026-10-10):
+      1. Cookie authentication: moved tokens from `localStorage` into secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with rolling 15-minute idle expiration and 24-hour absolute session ceiling (`test_cookie_auth.py`, 9 tests).
+      2. Access control & record ownership: audited all endpoints by ID; added Supabase Row-Level Security migration `006_rls_policies.sql` (`test_authz_surface.py`, 14 tests).
+      3. Mass assignment: Pydantic `extra="ignore"` on all write models, stripping unexpected fields (`test_mass_assignment.py`, 4 tests).
+      4. Rate limiting: in-memory sliding window token bucket middleware (auth: 5/min, AI: 10/min, writes: 20/min, reads: 120/min) (`test_rate_limiting.py`, 5 tests).
+      5. Billing caps: documented usage alert and hard cap procedures across all external services.
+      6. Bot protection: HMAC-SHA256 challenge-response and 2.0s human time-lock before login processing (`test_bot_protection.py`, 5 tests).
+      7. SQL injection: 100% parameterized queries in SQLite and PostgreSQL/Supabase with strict column whitelisting (`test_db_surface_parity.py`, 2 tests).
+      8. Input validation: comprehensive type, length, regex, and boundary enforcement, blocking null bytes and path traversal (`test_input_validation.py`, 18 tests).
+      9. XSS defense: safe React JSX rendering, URL protocol sanitation, Content-Security-Policy headers.
+      10. File upload security: whitelist (`.md`, `.txt`, `.json`, `.csv`), binary executable magic bytes and shebang inspection, `0o600` permissions, storage outside web root (`test_file_upload_security.py`, 31 tests).
+      Verified: full test suite passes with **870/870 tests green**. Full detail: handoff §70.
+
 - [x] §69 Finish zero-as-unknown fix in research.py (2026-10-10):
       1. Fixed `aggregate_pairs()` in `backend/data_providers/research.py`: tracks reported numeric `txns.h6.buys`/`sells` and returns `None` when unreported, preserving explicit `0` and summing mixed reporting pairs. Kept `_i()` intact.
       2. Replaced tautological tests in `backend/tests/test_zero_as_unknown.py` with real end-to-end tests for `aggregate_pairs` and `enrich_with_research` using `httpx.MockTransport` covering all 4 cases: (a) all 0 -> 0, (b) no txns -> None, (c) mixed pairs -> sum, (d) h6 key missing -> None.

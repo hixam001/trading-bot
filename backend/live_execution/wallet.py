@@ -92,7 +92,30 @@ def _read_file_material(kp_path: Path) -> str:
             f"WALLET_KEYPAIR_PATH not set or file missing ({str(kp_path)!r})"
         )
     try:
-        return kp_path.read_text()
+        content = kp_path.read_text()
+        stripped = content.strip()
+        # If the file is an encrypted envelope created by secret_store, decrypt in memory
+        if stripped.startswith("{") and '"enc"' in stripped:
+            try:
+                import secret_store
+                decrypted = secret_store.decrypt_from_file(str(kp_path))
+                if decrypted is None:
+                    raise WalletError(
+                        f"keypair file {str(kp_path)!r} is encrypted but could not be decrypted "
+                        "(invalid key, missing key file, or tampered)"
+                    )
+                if isinstance(decrypted, list):
+                    return json.dumps(decrypted)
+                if isinstance(decrypted, dict):
+                    for k in ("keypair", "raw", "bytes", "material"):
+                        if k in decrypted and isinstance(decrypted[k], list):
+                            return json.dumps(decrypted[k])
+                raise WalletError(
+                    f"encrypted keypair file {str(kp_path)!r} has invalid decrypted payload format"
+                )
+            except ImportError:
+                raise WalletError("secret_store module unavailable to decrypt encrypted keypair file")
+        return content
     except OSError as exc:
         raise WalletError(f"keypair file unreadable: {exc}") from exc
 

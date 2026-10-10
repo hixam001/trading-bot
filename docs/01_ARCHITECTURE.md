@@ -432,7 +432,11 @@ modify a trade, or change `PAPER_TRADING_ONLY`.
 | `GET /api/funnel` | Server-classified recent decision counts and refusal rate |
 | `GET /api/funnel/snapshots` | Stored engine funnel observations, oldest-first (no frontend synthesis) |
 | `WS /ws/feed` | Real-time push of new feed events as ticks happen |
-| `POST /api/knowledge-base/ingest` | Add new material to the knowledge base (file upload or batch) |
+| `POST /api/auth/login` | Secure operator login with time-lock bot verification; issues HttpOnly cookie |
+| `POST /api/auth/logout` | Session invalidation and cookie clearing |
+| `GET /api/auth/me` | Current session status and operator authentication verification |
+| `POST /api/knowledge-base/ingest` | Secure knowledge document ingestion with type, size, and content inspection |
+| `POST /api/admin/reset-wallet` | Operator-authorized wallet balance reset with strict input bounds |
 
 ## 8. Frontend
 
@@ -474,3 +478,37 @@ React dashboard, dark theme, dense/terminal-style layout:
   candidates, confirmed to produce feed events, open/close positions
   correctly, and populate the journal and stats endpoints — this is the
   standing smoke test that should pass before any live data is trusted.
+
+## 10. Platform security & hardening architecture
+
+Defense-in-depth principles implemented across all layers of the application:
+
+1. **Authentication & Session Lifecycle**:
+   - Authentication tokens are issued exclusively as `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies.
+   - Client scripts cannot access session tokens (preventing exfiltration via XSS).
+   - Sessions expire after 15 minutes of inactivity or 24 hours total duration.
+2. **Access Control & Row-Level Security**:
+   - Every state-reading and state-mutating route verifies operator authorization.
+   - For PostgreSQL/Supabase, Row-Level Security (RLS) policies restrict reads and writes to authorized operator roles.
+3. **Mass Assignment Prevention**:
+   - All inbound JSON payloads are processed through explicit Pydantic schemas configured with `extra="ignore"`.
+   - Elevated/system attributes (e.g. `role`, `is_admin`, `user_id`, `status`) are stripped and discarded.
+4. **Server-Side Rate Limiting**:
+   - Sliding-window token bucket middleware protects API routes from abuse and denial of service.
+   - Strict per-IP rate limits: 5 req/min on auth, 10 req/min on AI/LLM, 20 req/min on writes, 120 req/min on reads.
+5. **Bot Protection**:
+   - Cryptographic challenge-response and time-lock mechanisms in `backend/api/bot_protection.py`.
+   - Rejects automated requests completing below the human latency threshold (2.0s).
+6. **SQL & Query Injection Elimination**:
+   - All queries in SQLite (`db.py`) and PostgreSQL (`db_pg.py`) use parameterized queries (`?` or `$1`).
+   - Dynamic sorting columns are verified against strict hardcoded whitelists.
+7. **Input Validation & Sanitization**:
+   - Server-side type, length, regex, and boundary enforcement.
+   - Systematic rejection of null bytes (`\x00`), control characters, directory traversal sequences, and oversized bodies.
+8. **Cross-Site Scripting (XSS) Defenses**:
+   - Strict Content Security Policy (CSP) headers applied to all responses.
+   - Frontend renders data via safe React JSX text primitives; URL attributes sanitize protocols to `http:`/`https:`.
+9. **File Upload & Ingestion Security**:
+   - Extension whitelist restricts accepted files to `.md`, `.txt`, `.json`, `.csv`.
+   - Content inspection detects binary executable magic byte signatures (ELF, PE, Mach-O, ZIP, etc.) and executable shell shebangs.
+   - Files are stored outside the public web root with `0o600` non-executable permissions.

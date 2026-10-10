@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import config
-from fastapi import APIRouter
+from fastapi import APIRouter, Query
 from api import db
 
 router = APIRouter()
@@ -269,7 +269,7 @@ async def get_disclosure():
 
 
 @router.get("/api/reasoning.json")
-async def get_reasoning(limit: int = 50):
+async def get_reasoning(limit: int = Query(50, ge=1, le=200)):
     """
     REF-R6: per-decision provenance — model, inputs hash, commit hash.
 
@@ -283,7 +283,7 @@ async def get_reasoning(limit: int = 50):
     included as null for future instrumentation.
     """
     async with db.get_db() as conn:
-        rows = await db.get_recent_decision_commits(conn, min(max(limit, 1), 200))
+        rows = await db.get_recent_decision_commits(conn, limit)
 
     reasoning = []
     for row in rows:

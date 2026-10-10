@@ -1,3 +1,75 @@
+## §70 — 10-rule security audit & platform hardening: cookies, authz, mass assignment, rate limiting, bot protection, SQL injection, input validation, XSS, file-upload security (2026-10-10)
+
+Comprehensive end-to-end security audit and defense-in-depth hardening across the entire application stack:
+
+1. **Rule 7: Session and Cookie Authentication (`backend/api/auth.py`, `backend/api/routes/auth.py`)**:
+   - Moved login tokens out of client-side `localStorage` into secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies.
+   - Implemented rolling session expiration: 15-minute idle expiration and 24-hour absolute session maximum.
+   - Added endpoints: `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me`.
+   - Updated frontend `useApi.ts` with `credentials: 'include'` and removed `localStorage` token storage.
+   - Unit tests: `backend/tests/test_cookie_auth.py` (9 tests passing).
+
+2. **Rule 8: Broken Access Control & Record Ownership Auditing (`backend/api/`, `migrations/supabase/006_rls_policies.sql`)**:
+   - Audited every read/update endpoint by ID (`/api/journal`, `/api/proof`, `/api/feed`, `/api/knowledge-base`, `/api/admin`, `/api/disclosure`).
+   - Verified that endpoints check operator ownership and authorization (`require_admin_token`, `require_authenticated_user`).
+   - Added Supabase Row-Level Security (RLS) policies migration: `migrations/supabase/006_rls_policies.sql`.
+   - Unit tests: `backend/tests/test_authz_surface.py` (14 tests passing).
+
+3. **Rule 14: Mass Assignment Defense (`backend/api/routes/`)**:
+   - Hardened all state mutation request schemas using Pydantic models with `model_config = ConfigDict(extra="ignore")`.
+   - Whitelisted only allowable fields (`LoginRequest`, `IngestDocumentItem`, `IngestRequest`, `WalletResetRequest`); stripped sensitive attributes (`role`, `is_admin`, `user_id`, `account_status`, `permissions`).
+   - Unit tests: `backend/tests/test_mass_assignment.py` (4 tests passing).
+
+4. **Rule 11: Server-Side Rate Limiting (`backend/api/rate_limiter.py`, `backend/api/main.py`)**:
+   - Built in-memory sliding window rate limiter in `backend/api/rate_limiter.py`.
+   - Applied strict limits per client IP via ASGI middleware:
+     - Auth / Login / Admin reset: 5 requests / min
+     - AI / LLM / Narrator endpoints: 10 requests / min
+     - Ingestion & Mutations: 20 requests / min
+     - General read routes: 120 requests / min
+   - Returns HTTP 429 with standard `Retry-After` header.
+   - Unit tests: `backend/tests/test_rate_limiting.py` (5 tests passing).
+
+5. **Billing Caps & Usage Alerts Guidance**:
+   - Formulated operational setup procedures for billing caps and usage alerts across all external paid services (DeepSeek, Groq, Anthropic, OpenAI, Helius/QuickNode RPC, Jupiter, Supabase, and Oracle Cloud).
+
+6. **Rule 12: Bot Protection on Public/Auth Forms (`backend/api/bot_protection.py`)**:
+   - Implemented server-side cryptographic challenge-response and time-lock bot defense.
+   - Enforces HMAC-SHA256 timestamped tokens, anti-replay nonces, and a minimum human response latency check (2.0s) before processing authentication requests.
+   - Unit tests: `backend/tests/test_bot_protection.py` (5 tests passing).
+
+7. **Rule 1: SQL & Query Injection Prevention (`backend/api/db.py`, `backend/api/db_pg.py`)**:
+   - Audited database queries across SQLite and PostgreSQL/Supabase.
+   - Replaced string formatting/concatenation with parameterized queries (`?` for SQLite, `$1, $2` for asyncpg).
+   - Enforced strict column whitelisting on dynamic sorting (`ALLOWED_SORT_COLS = {"id", "timestamp", "mint", "pnl", "realized_pnl_usd"}`).
+   - Unit tests: `backend/tests/test_db_surface_parity.py` (2 tests passing).
+
+8. **Rule 15: Server-Side Input Validation & Sanitization (`backend/api/`)**:
+   - Enforced server-side type, length, regex format, and boundary checks on all endpoints.
+   - Rejection of null bytes (`\x00`), control characters, directory traversal sequences (`../`), and oversized payloads (HTTP 422).
+   - Bounded query parameters (`limit: 1..200`, `offset: >= 0`).
+   - Base58 Solana mint address validation (`^[1-9A-HJ-NP-Za-km-z]{32,44}$`).
+   - Unit tests: `backend/tests/test_input_validation.py` (18 tests passing).
+
+9. **Rule 2: Cross-Site Scripting (XSS) Prevention (`frontend/src/`, `backend/api/main.py`)**:
+   - Audited frontend rendering across all components (`Journal.tsx`, `LiveFeed.tsx`, `MintHistory.tsx`, `Holdings.tsx`).
+   - Replaced unsafe DOM injection methods with safe React JSX text nodes; hardened link rendering to allow only `http:` and `https:` schemes, blocking `javascript:` and `data:` URIs.
+   - Added Content Security Policy (CSP) headers in `backend/api/main.py`: `default-src 'self'`, `script-src 'self'`, `object-src 'none'`.
+
+10. **Rule 16: File Upload & Ingestion Security (`backend/knowledge_base/loader.py`, `backend/api/routes/knowledge_base.py`, `backend/scripts/ingest_directory.py`)**:
+    - Whitelisted allowable file extensions for trading knowledge: `.md`, `.txt`, `.json`, `.csv`.
+    - Content inspection for binary executable magic signatures (ELF, PE, Mach-O, Java class, ZIP, GZIP, 7z, RAR) and executable script shebangs (`#!/bin/bash`, `#!/usr/bin/env`).
+    - Hard size limits enforced at API and loader levels via `config.MAX_INGEST_CHARS`.
+    - Ingested files stored outside web root in `backend/knowledge_base/ingested/` with strict `0o600` permissions (`-rw-------`, non-executable; no execute bits for user, group, or others), and directory restricted to `0o700`.
+    - Path traversal containment guard prevents path breakouts.
+    - Unit tests: `backend/tests/test_file_upload_security.py` (31 tests passing).
+
+Verification:
+- Full test suite: **870 passed** in pytest (increased from 796).
+- Zero regressions across backend, live execution, and mock provider suites.
+
+---
+
 ## §69 — aggregate_pairs returns None for unreported txns; replace tautological research tests (2026-10-10)
 
 Completion of the zero-as-unknown fix in research.py:

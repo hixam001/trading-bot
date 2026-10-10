@@ -14,6 +14,7 @@ read-only research surface only.
 from __future__ import annotations
 
 import contextlib
+import html
 import logging
 from pathlib import Path
 
@@ -63,6 +64,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="trading-bot", version="1.0.0", lifespan=lifespan)
+from api.rate_limiter import RateLimitMiddleware
+app.add_middleware(RateLimitMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
     # Split deployments (dashboard on Vercel, API elsewhere) may need more
@@ -71,6 +75,7 @@ app.add_middleware(
     # §38 F6: only the verbs/headers the dashboard actually uses.
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "X-Admin-Token"],
+    allow_credentials=True,
 )
 
 
@@ -105,6 +110,19 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault(
+        "Content-Security-Policy",
+        "default-src 'self'; "
+        "script-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: https:; "
+        "font-src 'self' data:; "
+        "connect-src 'self' ws: wss:; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'; "
+        "form-action 'self'",
+    )
     # X-XSS-Protection intentionally NOT set: deprecated and disabled in all
     # modern browsers (it was an IE-era header that auditing flags as stale).
     response.headers.setdefault(
@@ -135,6 +153,9 @@ app.include_router(disclosure_router)
 from api.routes.admin import router as admin_router  # noqa: E402
 app.include_router(admin_router)
 
+from api.routes.auth import router as auth_router  # noqa: E402
+app.include_router(auth_router)
+
 from api.routes.live_book import router as live_book_router  # noqa: E402
 app.include_router(live_book_router)
 
@@ -162,12 +183,12 @@ def _safe_dist_file(full_path: str) -> Path | None:
     comparable path; is_relative_to() then enforces containment. Everything
     else (empty, traversal, escape) gets the SPA shell.
     """
-    if not full_path or ".." in full_path:
+    if not full_path or ".." in full_path or len(full_path) > 512 or "\x00" in full_path:
         return None
     try:
         root = FRONTEND_DIST.resolve()
         candidate = (FRONTEND_DIST / full_path).resolve()
-    except OSError:
+    except (OSError, ValueError):
         return None
     if candidate.is_file() and candidate.is_relative_to(root):
         return candidate
@@ -209,9 +230,12 @@ async def unknown_api_path(full_path: str = ""):
     """An unmatched /api/* path is a wrong URL (or a removed endpoint) —
     it must fail loudly as JSON 404, never fall through to the SPA shell (a
     200 HTML body silently breaks API clients and monitors)."""
+    safe_path = html.escape(
+        full_path.replace("\r", "").replace("\n", "").replace("\x00", "")[:200]
+    )
     return JSONResponse(
         status_code=404,
-        content={"detail": f"Unknown API path: /api/{full_path}"},
+        content={"detail": f"Unknown API path: /api/{safe_path}"},
     )
 
 if FRONTEND_DIST.exists():

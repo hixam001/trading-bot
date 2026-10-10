@@ -129,9 +129,24 @@ INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 # ---------------------------------------------------------------------------
 ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
 
+# Secure session cookie configuration (Rule 9: http-only cookie session auth).
+SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "admin_session")
+SESSION_MAX_AGE_SECONDS: int = int(os.getenv("SESSION_MAX_AGE_SECONDS", "3600"))  # 1 hour
+
 # §38 finding F4: hard cap on one ingested knowledge document (chars).
 # Rejects oversized payloads before they touch disk, the DB, or prompt context.
 MAX_INGEST_CHARS: int = int(os.getenv("MAX_INGEST_CHARS", "200000"))
+
+# ---------------------------------------------------------------------------
+# Bot Protection & CAPTCHA (Rule 12: server-side CAPTCHA / challenge verification)
+# ---------------------------------------------------------------------------
+CAPTCHA_ENABLED: bool = os.getenv("CAPTCHA_ENABLED", "false").strip().lower() == "true"
+CAPTCHA_PROVIDER: str = os.getenv("CAPTCHA_PROVIDER", "turnstile")  # "turnstile" | "hcaptcha" | "internal"
+CAPTCHA_SECRET_KEY: str = os.getenv("CAPTCHA_SECRET_KEY", "")
+CAPTCHA_VERIFY_URL: str = os.getenv(
+    "CAPTCHA_VERIFY_URL",
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+)
 
 # ---------------------------------------------------------------------------
 # LLM providers
@@ -463,6 +478,14 @@ FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "false").strip().lower() == "true"
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0
 RATE_LIMIT_EXTRA_BACKOFF_SECONDS: float = 15.0
+
+# ---------------------------------------------------------------------------
+# Server-side API Rate Limiting (Rule 11: rate limit login & paid/AI endpoints)
+# ---------------------------------------------------------------------------
+RATE_LIMIT_ENABLED: bool = os.getenv("RATE_LIMIT_ENABLED", "true").strip().lower() == "true"
+RATE_LIMIT_AUTH_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_AUTH_PER_MINUTE", "5"))
+RATE_LIMIT_PAID_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_PAID_PER_MINUTE", "20"))
+RATE_LIMIT_GENERAL_PER_MINUTE: int = int(os.getenv("RATE_LIMIT_GENERAL_PER_MINUTE", "120"))
 
 # ---------------------------------------------------------------------------
 # Tick loop

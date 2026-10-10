@@ -51,6 +51,14 @@ on a React dashboard served by the backend itself.
   file outside the repo **or** the `WALLET_KEYPAIR_JSON` env channel
   (in-memory only) for file-less hosts. API keys and keypair material are
   redacted from logs.
+- **Platform security hardening (10-rule defense-in-depth)**:
+  - Auth tokens stored exclusively in secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with 15-minute idle expiration (never in `localStorage`).
+  - Strict server-side sliding-window rate limiting across all endpoints (auth: 5/min, AI: 10/min, mutations: 20/min, reads: 120/min).
+  - Server-side cryptographic challenge-response and time-lock bot protection.
+  - Parameterized database queries across SQLite and PostgreSQL/Supabase with strict column whitelisting against SQL injection.
+  - Strict mass-assignment protection with Pydantic extra-field stripping on all write routes.
+  - Content Security Policy (CSP) headers and safe React JSX rendering preventing Cross-Site Scripting (XSS).
+  - File upload and knowledge ingestion secured with strict extension whitelisting (`.md`, `.txt`, `.json`, `.csv`), binary executable magic signature and script shebang inspection, path containment guards, and `0o600` non-executable storage outside the web root.
 
 ---
 
@@ -144,6 +152,7 @@ feeds (no endpoint can change trading state):
 | Endpoint | Content |
 |---|---|
 | `http://localhost:8000/` | dashboard: live decision feed (WS), holdings, journal, stats, regime, status |
+| `/api/auth/login`, `/api/auth/logout`, `/api/auth/me` | secure cookie session management with rolling 15-minute TTL & bot time-lock challenge |
 | `/api/stats` | five-number portfolio truth: cash, equity, total spend, realized + unrealized P&L |
 | `/api/feed`, `/api/events.json` | per-candidate decision events (ENTER/PASS + full rule breakdown) |
 | `/api/holdings`, `/api/journal` | open positions (live marks) / closed trades |
@@ -158,16 +167,19 @@ feeds (no endpoint can change trading state):
 | `/api/funnel` | bounded decision funnel, server-classified refusal rate |
 | `/api/funnel/snapshots` | persisted engine observations, oldest-first; limit 1–2000 |
 | `/api/promotion-gate` | READ-ONLY live-readiness report (never writes, ever) |
+| `/api/knowledge-base`, `/api/knowledge-base/ingest` | knowledge base content + secure file ingestion (.md, .txt, .json, .csv) |
 
 ## Tests
 
-486 tests cover the rule engine, exit engine, money math (hand-computed
+870 tests cover the rule engine, exit engine, money math (hand-computed
 expectations), the atomic open/close journal, LLM provider swap, crowd feed,
 risk budget × calibration, thesis restatement, the live-execution safety
-model, and more.
+model, cookie session authentication, access control and RLS, mass assignment
+prevention, server-side rate limiting, bot protection, parameterized SQL queries,
+input validation, XSS prevention, and file upload security.
 
 ```bash
-.venv/bin/python -m pytest -q                            # full suite (~2s)
+.venv/bin/python -m pytest -q                            # full suite (~34s)
 cd backend && ../.venv/bin/python -m pytest tests/ -q    # backend only
 cd backend && ../.venv/bin/python -m pytest live_execution/tests/ -q   # live package only
 ```

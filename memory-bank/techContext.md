@@ -22,10 +22,19 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 ## Commands
 - One click: ./start.sh | ./stop.sh
 - Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- All suites from repo root: .venv/bin/python -m pytest -q  (791 = backend + live_execution;
+- All suites from repo root: .venv/bin/python -m pytest -q  (870 = backend + live_execution;
   root pytest.ini sets asyncio_mode=auto)
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
 - Deploy (Docker/VM): docker build -t trading-bot . && see docs/11_DEPLOYMENT.md
+
+## Security & Protection Architecture
+- Authentication: HttpOnly, SameSite=Lax, Path=/api secure cookies with 15m idle / 24h absolute expiration (`backend/api/auth.py`).
+- Rate Limiting: in-memory sliding window token bucket middleware (`backend/api/rate_limiter.py`).
+- Bot Protection: HMAC-SHA256 time-lock challenge-response (`backend/api/bot_protection.py`).
+- Database: 100% parameterized queries in SQLite and PostgreSQL + column whitelisting against SQL injection.
+- Mass Assignment: Pydantic schemas configured with `extra="ignore"` strip sensitive fields.
+- Content Security: CSP headers in `main.py`; React JSX text rendering and URI scheme sanitization.
+- File Ingestion: `.md`, `.txt`, `.json`, `.csv` extension whitelist, binary magic bytes / shebang inspection, `0o600` permissions outside web root.
 
 ## External services & keys (in .env)
 - Birdeye (BIRDEYE_API_KEY, X-API-KEY header) — REQUIRED for DATA_BACKEND=live;

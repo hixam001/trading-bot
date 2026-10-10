@@ -45,15 +45,19 @@ function ts(epochSeconds: number | null | undefined): string {
 
 function TxLink({ sig, label }: { sig: string | null; label: string }) {
   if (!sig) return <span className="text-dim">—</span>
+  const trimmed = sig.trim()
+  if (!/^[1-9A-HJ-NP-Za-km-z]+$/.test(trimmed)) {
+    return <span className="text-dim">{label} (invalid sig)</span>
+  }
   return (
     <a
       className="text-live underline decoration-line-strong decoration-dotted underline-offset-2 hover:text-bright transition-colors duration-150 ease-out-expo"
-      href={`https://solscan.io/tx/${sig}`}
+      href={`https://solscan.io/tx/${encodeURIComponent(trimmed)}`}
       target="_blank"
       rel="noopener noreferrer"
-      title={sig}
+      title={trimmed}
     >
-      {label} {shortAddr(sig, 6, 6)}
+      {label} {shortAddr(trimmed, 6, 6)}
     </a>
   )
 }

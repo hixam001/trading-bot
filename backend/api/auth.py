@@ -16,11 +16,13 @@ echoed in error bodies).
 """
 from __future__ import annotations
 
+import hashlib
 import hmac
+import secrets
 import time
 from collections import defaultdict
 
-from fastapi import HTTPException, Request
+from fastapi import HTTPException, Request, Response
 
 import config
 
@@ -36,6 +38,108 @@ _LOCKOUT_WINDOW_SECONDS = 60.0
 # called again, so abandoned attacker hosts were never cleaned. Beyond the
 # cap the whole map is pruned once (expired entries of every host go).
 _MAX_TRACKED_HOSTS = 10_000
+
+
+def _derive_session_key(secret: str) -> bytes:
+    """Derive a dedicated HMAC session-signing key from the admin token."""
+    return hashlib.sha256((secret + ":session_auth_key_v1").encode("utf-8")).digest()
+
+
+def create_session_token(secret: str | None = None) -> str:
+    """Generate a cryptographically signed, timestamped session token.
+
+    Format: <timestamp>.<nonce>.<hmac_signature>
+    Tamper-evident, stateless, and verifiable server-side without database queries.
+    """
+    configured = secret if secret is not None else config.ADMIN_TOKEN
+    if not configured:
+        raise ValueError("Cannot create session token: ADMIN_TOKEN is not configured")
+    now = int(time.time())
+    nonce = secrets.token_hex(16)
+    payload = f"{now}.{nonce}"
+    sig = hmac.new(
+        _derive_session_key(configured),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{payload}.{sig}"
+
+
+def verify_session_token(
+    token: str,
+    secret: str | None = None,
+    max_age: int | None = None,
+) -> bool:
+    """Verify session token HMAC signature and age. Fail-closed on any error."""
+    configured = secret if secret is not None else config.ADMIN_TOKEN
+    if not configured or not token:
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    ts_str, nonce, sig = parts
+    try:
+        created_at = int(ts_str)
+    except ValueError:
+        return False
+
+    now = time.time()
+    allowed_age = max_age if max_age is not None else config.SESSION_MAX_AGE_SECONDS
+    # Expired or timestamp too far in future (> 5s clock skew)
+    if now - created_at > allowed_age or created_at > now + 5:
+        return False
+
+    payload = f"{created_at}.{nonce}"
+    expected_sig = hmac.new(
+        _derive_session_key(configured),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(sig, expected_sig)
+
+
+def set_session_cookie(
+    response: Response,
+    session_token: str,
+    request: Request | None = None,
+    max_age: int | None = None,
+) -> None:
+    """Set HttpOnly, SameSite=Lax, Secure session cookie with expiration.
+
+    Guarantees:
+      - httponly=True: JavaScript cannot read the token (mitigates XSS theft).
+      - samesite="lax": Browser will not send cookie on cross-site subrequests (mitigates CSRF).
+      - secure=True: Forced whenever HTTPS or proxy indicates TLS.
+      - max_age: Cookie automatically dropped by browser after expiration.
+    """
+    age = max_age if max_age is not None else config.SESSION_MAX_AGE_SECONDS
+    is_https = False
+    if request is not None:
+        is_https = (
+            request.url.scheme == "https"
+            or request.headers.get("x-forwarded-proto") == "https"
+        )
+    secure = is_https or getattr(config, "FORCE_HTTPS", False)
+    response.set_cookie(
+        key=config.SESSION_COOKIE_NAME,
+        value=session_token,
+        max_age=age,
+        expires=age,
+        path="/",
+        httponly=True,
+        secure=secure,
+        samesite="lax",
+    )
+
+
+def clear_session_cookie(response: Response) -> None:
+    """Clear session cookie on logout."""
+    response.delete_cookie(
+        key=config.SESSION_COOKIE_NAME,
+        path="/",
+        httponly=True,
+        samesite="lax",
+    )
 
 
 def _prune_failures(client_ip: str, now: float) -> list[float]:
@@ -59,7 +163,8 @@ def _prune_failures(client_ip: str, now: float) -> list[float]:
 
 
 def require_admin_token(request: Request) -> None:
-    """Raise 403 unless the request carries the configured operator token.
+    """Raise 403 unless the request carries the configured operator token
+    or a valid, non-expired HttpOnly session cookie.
 
     Enforces rate limiting on repeated failed attempts (brute-force defense).
 
@@ -77,11 +182,20 @@ def require_admin_token(request: Request) -> None:
     attempts = _prune_failures(client_ip, now)
 
     configured = config.ADMIN_TOKEN
+
+    # 1. Header authentication (API, CLI, scripts)
     supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
     token_ok = bool(configured) and bool(supplied) and hmac.compare_digest(
         supplied, configured)
     if token_ok:
         # Clear recorded failures on successful authentication
+        _FAILED_ATTEMPTS.pop(client_ip, None)
+        return
+
+    # 2. HttpOnly Cookie authentication (Browser dashboard sessions)
+    session_cookie = request.cookies.get(config.SESSION_COOKIE_NAME, "")
+    if session_cookie and verify_session_token(session_cookie, secret=configured):
+        # Clear recorded failures on successful session authentication
         _FAILED_ATTEMPTS.pop(client_ip, None)
         return
 

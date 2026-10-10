@@ -1411,6 +1411,19 @@ async def prune_market_regime(conn: aiosqlite.Connection, keep_rows: int) -> int
     return max(cursor.rowcount, 0)
 
 
+_ALLOWED_RESET_TABLES: frozenset[str] = frozenset({
+    "feed_events",
+    "market_regime",
+    "decision_commits",
+    "events",
+    "memories",
+    "theses",
+    "daily_stats",
+    "llm_call_usage",
+    "trades",
+})
+
+
 async def reset_book(conn: aiosqlite.Connection, initial_cash_usd: float) -> dict:
     """Full operator reset: wipe all operational tables and restore the
     starting balance. This is a paper-trading maintenance function — it
@@ -1432,6 +1445,8 @@ async def reset_book(conn: aiosqlite.Connection, initial_cash_usd: float) -> dic
     counts: dict[str, int] = {}
 
     async def _del(table: str) -> int:
+        if table not in _ALLOWED_RESET_TABLES:
+            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
         cur = await conn.execute(f"DELETE FROM {table}")
         return max(cur.rowcount, 0)
 
@@ -1477,6 +1492,8 @@ async def wipe_paper_book(
     counts: dict[str, int] = {}
 
     async def _del(table: str) -> int:
+        if table not in _ALLOWED_RESET_TABLES:
+            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
         cur = await conn.execute(f"DELETE FROM {table}")
         return max(cur.rowcount, 0)
 

@@ -41,6 +41,7 @@ Never call this from the tick loop, the LLM, or the frontend.
 """
 from __future__ import annotations
 
+import html
 import logging
 from datetime import datetime, timezone
 
@@ -60,9 +61,14 @@ def _now_iso() -> str:
 @router.post("/api/admin/reset", include_in_schema=False)
 async def admin_reset(
     request: Request,
-    confirm: str = Query(default="", description="Must be 'yes' to proceed."),
+    confirm: str = Query(
+        default="",
+        max_length=10,
+        description="Must be 'yes' to proceed.",
+    ),
     mode: str = Query(
         default="reset_book",
+        max_length=20,
         description=(
             "'reset_book' (full wipe), 'wipe_paper' (feed+trades only), or "
             "'prune_only' (trim old rows)."
@@ -79,7 +85,14 @@ async def admin_reset(
     mode=prune_only trims feed_events and market_regime to configured limits.
     """
     require_admin_token(request)
-    if confirm.strip().lower() != "yes":
+    if "\x00" in confirm or "\x00" in mode:
+        raise HTTPException(
+            status_code=400,
+            detail="Null bytes are not permitted in parameters.",
+        )
+    confirm = confirm.strip()
+    mode = mode.strip()
+    if confirm.lower() != "yes":
         raise HTTPException(
             status_code=400,
             detail=(
@@ -89,10 +102,11 @@ async def admin_reset(
         )
 
     if mode not in ("reset_book", "wipe_paper", "prune_only"):
+        safe_mode = html.escape(mode)
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unknown mode '{mode}'. Use 'reset_book', 'wipe_paper', or "
+                f"Unknown mode '{safe_mode}'. Use 'reset_book', 'wipe_paper', or "
                 "'prune_only'."
             ),
         )

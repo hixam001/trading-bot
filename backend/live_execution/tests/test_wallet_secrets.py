@@ -55,6 +55,26 @@ def test_path_wins_when_both_channels_set(clean_wallet_env, tmp_path):
     assert wallet.pubkey_string(loaded) == str(file_kp.pubkey())
 
 
+def test_encrypted_file_loads_keypair(clean_wallet_env, tmp_path, monkeypatch):
+    import secret_store
+    import config as b_config
+    monkeypatch.setattr(b_config, "SECRET_STORE_KEY", "")
+    monkeypatch.setattr(b_config, "SECRET_STORE_KEY_FILE", str(tmp_path / "test.key"))
+
+    kp = Keypair()
+    p = tmp_path / "wallet_encrypted.json"
+    assert secret_store.encrypt_to_file(str(p), {"keypair": list(bytes(kp))})
+
+    # Verify the file on disk does NOT contain the raw integers
+    raw = p.read_text()
+    assert '"enc"' in raw
+    assert str(list(bytes(kp))[:10])[1:-1] not in raw
+
+    le_config.WALLET_KEYPAIR_PATH = str(p)
+    loaded = wallet.load_keypair()
+    assert wallet.pubkey_string(loaded) == str(kp.pubkey())
+
+
 def test_json_fallback_when_path_empty(clean_wallet_env):
     env_kp = Keypair()
     le_config.WALLET_KEYPAIR_PATH = ""

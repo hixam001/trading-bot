@@ -444,3 +444,17 @@ async def test_admin_wipe_paper_returns_200():
     assert result["total_deleted"] == 9
     assert result["paper_trading_only"] is False  # §52: paper book retired
     mock_db.wipe_paper_book.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reset_book_whitelist_enforced():
+    """Verify that only whitelisted operational tables can be cleared in db.py and db_pg.py."""
+    from api.db import _ALLOWED_RESET_TABLES as SQLITE_ALLOWED
+    from api.db_pg import _ALLOWED_RESET_TABLES as PG_ALLOWED
+
+    assert "portfolio_state" not in SQLITE_ALLOWED
+    assert "users" not in SQLITE_ALLOWED
+    assert "feed_events" in SQLITE_ALLOWED
+    assert "trades" in SQLITE_ALLOWED
+    assert SQLITE_ALLOWED == PG_ALLOWED
+

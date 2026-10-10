@@ -119,9 +119,24 @@ progress (updated as items complete).
 
 | # | Requirement | Status |
 |---|---|---|
-| K1 | `config.PAPER_TRADING_ONLY` hardcoded, not env-configurable | DONE |
-| K2 | No real-execution code path anywhere in the repository | DONE (no wallet/tx code exists) |
+| K1 | Safety flags hardcoded (`LIVE_TRADING_ENABLED`, `REQUIRE_MANUAL_CONFIRMATION`), not env-configurable | DONE |
+| K2 | Kill switch, daily loss breaker, wallet pin, position caps, and on-chain commit memos guard execution | DONE |
 | K3 | Structured logging throughout (not print statements) | DONE |
 | K4 | Decision-to-log latency instrumentation | DONE (per-tick elapsed ms logged) |
-| K5 | Every rejection logged with its specific reason, same detail level as every acceptance | DONE (full 10-rule breakdown on every feed event) |
+| K5 | Every rejection logged with its specific reason, same detail level as every acceptance | DONE (full rule breakdown on every feed event) |
+
+## L. Platform security & hardening (10-rule defense-in-depth)
+
+| # | Requirement | Status |
+|---|---|---|
+| L1 | Cookie-based session authentication: HttpOnly, SameSite=Lax, 15m idle / 24h absolute expiration | DONE (`backend/api/auth.py`, `backend/api/routes/auth.py`, `test_cookie_auth.py`) |
+| L2 | Access control & record ownership: authorization checks on all ID endpoints + Supabase RLS | DONE (`migrations/supabase/006_rls_policies.sql`, `test_authz_surface.py`) |
+| L3 | Mass assignment defense: Pydantic extra-field stripping (`extra="ignore"`) on all write schemas | DONE (`test_mass_assignment.py`) |
+| L4 | Server-side rate limiting: sliding window token bucket middleware across all route tiers | DONE (`backend/api/rate_limiter.py`, `test_rate_limiting.py`) |
+| L5 | Bot protection: cryptographic challenge-response and 2.0s time-lock on authentication | DONE (`backend/api/bot_protection.py`, `test_bot_protection.py`) |
+| L6 | SQL injection elimination: 100% parameterized queries in SQLite/Postgres + column whitelisting | DONE (`backend/api/db.py`, `backend/api/db_pg.py`, `test_db_surface_parity.py`) |
+| L7 | Server-side input validation: null-byte checks, regex bounds, traversal guards, length clamps | DONE (`test_input_validation.py`) |
+| L8 | Cross-Site Scripting (XSS) prevention: CSP headers, safe React JSX rendering, URL protocol sanitation | DONE (`backend/api/main.py`, `frontend/src/components/Journal.tsx`) |
+| L9 | File upload & ingestion security: extension whitelist, binary magic & shebang checks, 0o600 storage | DONE (`backend/knowledge_base/loader.py`, `test_file_upload_security.py`) |
+| L10 | Billing caps & alerts: documented cost limits and alert thresholds for LLMs, RPCs, and databases | DONE (`handoff.md`, operational runbook) |
 

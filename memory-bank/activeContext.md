@@ -1,6 +1,21 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-10 (§69):** Finished zero-as-unknown fix in `research.py`:
+**Current — 2026-10-10 (§70):** Comprehensive 10-point security audit and platform hardening completed:
+1. **Rule 7 (Cookie Auth)**: Moved auth tokens from `localStorage` into secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with rolling 15-minute idle expiration and 24-hour absolute session TTL (`test_cookie_auth.py`, 9 tests).
+2. **Rule 8 (Broken Access Control & RLS)**: Audited all ID-based read/update routes for operator ownership; added Supabase Row-Level Security migration `006_rls_policies.sql` (`test_authz_surface.py`, 14 tests).
+3. **Rule 14 (Mass Assignment)**: Hardened all mutating endpoints with Pydantic `extra="ignore"` and explicit field whitelists (`test_mass_assignment.py`, 4 tests).
+4. **Rule 11 (Rate Limiting)**: In-memory sliding window rate limiter middleware enforcing tier-based limits (auth: 5/min, AI/LLM: 10/min, writes: 20/min, reads: 120/min) (`test_rate_limiting.py`, 5 tests).
+5. **Billing Caps & Usage Alerts**: Documented setup runbook for API/LLM providers, RPC endpoints, and cloud infra.
+6. **Rule 12 (Bot Protection)**: Server-side cryptographic HMAC-SHA256 challenge-response and 2.0s human time-lock on authentication forms (`test_bot_protection.py`, 5 tests).
+7. **Rule 1 (SQL Injection)**: Audited SQLite and Postgres queries; converted 100% of dynamic queries to parameterized statements with strict column whitelisting (`test_db_surface_parity.py`, 2 tests).
+8. **Rule 15 (Input Validation)**: Full validation across types, lengths, regex formats, and boundaries; rejected null bytes, control chars, and traversal sequences (`test_input_validation.py`, 18 tests).
+9. **Rule 2 (XSS Defenses)**: Hardened React JSX rendering, eliminated unsafe DOM insertion, sanitized URL schemes (`http:`, `https:` only), and enforced CSP headers.
+10. **Rule 16 (File Upload Security)**: Enforced `.md`, `.txt`, `.json`, `.csv` extension whitelist, binary magic bytes and shebang inspection, path containment checks, and `0o600` non-executable storage outside web root (`test_file_upload_security.py`, 31 tests).
+Full suite: **870 passed** tests in pytest (0 failed).
+
+**PREVIOUS:**
+
+**As of 2026-10-10 (§69):** Finished zero-as-unknown fix in `research.py`:
 1. Root cause resolved in `aggregate_pairs`: tracked whether any Solana pair reported numeric `txns.h6.buys`/`sells` via `_parse_count()`. When no pair reported it, returns `None`; when reported, sums only reporting pairs, keeping explicit 0 as 0. Left `_i()` and `enrich_with_research` assignments intact.
 2. Replaced tautological research tests in `backend/tests/test_zero_as_unknown.py` with real calls to `aggregate_pairs` and `enrich_with_research` (with `httpx.MockTransport` stub). Verified all 4 cases: (a) all 0 → 0, (b) no txns → None, (c) mixed pairs → sum of reporting, (d) h6 present but keys missing → None.
 3. Test suite: 796 passed out of 796 in backend pytest. No touches under `live_execution/`, `rule_engine/`, or frontend.

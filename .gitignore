@@ -33,6 +33,9 @@ id_rsa.*
 blocklist_state.json
 backend/live_execution/state/
 wallet-keypair.json
+*wallet*.json
+*keypair*.json
+id.json
 # Live execution ledgers (real order nonces) — never commit, wherever they land
 commits.json
 # Operator-ingested knowledge archive (runtime data, not code)

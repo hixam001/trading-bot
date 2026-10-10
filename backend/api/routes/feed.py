@@ -4,7 +4,7 @@ GET /api/mint/{mint}/history (§65 mint-history drill-down).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Path, Query
 
 from api import db
 
@@ -14,7 +14,7 @@ router = APIRouter()
 @router.get("/api/feed")
 async def get_feed(
     limit: int = Query(50, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=100_000),
 ):
     async with db.get_db() as conn:
         events = await db.get_feed_events(conn, limit=limit, offset=offset)
@@ -24,9 +24,9 @@ async def get_feed(
 
 @router.get("/api/mint/{mint}/history")
 async def get_mint_history(
-    mint: str,
+    mint: str = Path(..., min_length=1, max_length=100, description="Solana mint address"),
     limit: int = Query(100, ge=1, le=500),
-    offset: int = Query(0, ge=0),
+    offset: int = Query(0, ge=0, le=100_000),
 ):
     """§65 drill-down: EVERY feed event ever recorded for one mint, newest
     first — not just the window the live tape holds. Read-only, reuses the
@@ -38,7 +38,8 @@ async def get_mint_history(
     # on the provider layer for a read-only route.
     from data_providers.discovery import is_valid_solana_address
 
-    if not is_valid_solana_address(mint):
+    mint = mint.strip()
+    if "\x00" in mint or not is_valid_solana_address(mint):
         raise HTTPException(status_code=422, detail="not a valid Solana mint address")
     async with db.get_db() as conn:
         events = await db.get_feed_events_for_mint(conn, mint, limit=limit, offset=offset)
