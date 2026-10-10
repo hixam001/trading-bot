@@ -1,6 +1,13 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-10 (§68):** Closed four gaps left by §67 (f0a0fb6):
+**Current — 2026-10-10 (§69):** Finished zero-as-unknown fix in `research.py`:
+1. Root cause resolved in `aggregate_pairs`: tracked whether any Solana pair reported numeric `txns.h6.buys`/`sells` via `_parse_count()`. When no pair reported it, returns `None`; when reported, sums only reporting pairs, keeping explicit 0 as 0. Left `_i()` and `enrich_with_research` assignments intact.
+2. Replaced tautological research tests in `backend/tests/test_zero_as_unknown.py` with real calls to `aggregate_pairs` and `enrich_with_research` (with `httpx.MockTransport` stub). Verified all 4 cases: (a) all 0 → 0, (b) no txns → None, (c) mixed pairs → sum of reporting, (d) h6 present but keys missing → None.
+3. Test suite: 796 passed out of 796 in backend pytest. No touches under `live_execution/`, `rule_engine/`, or frontend.
+
+**PREVIOUS:**
+
+**As of 2026-10-10 (§68):** Closed four gaps left by §67 (f0a0fb6):
 1. Risk header fail-open resolved: `safety.error` and missing `safety.data` after loading trigger offline posture ("feed degraded") instead of falling through to "safe to trade"; engaged kill-switch/breaker still outranks; global offline banner derived from `riskState.state === 'offline'`; `DESIGN.md` §3.4 updated.
 2. Zero-as-None parity: fixed `discovery.py` (buys/sells 1h/6h) and `research.py` (buys/sells 6h) to keep 0 as 0 and missing as None, matching `dexscreener.py`. Full grep confirmed no further occurrences.
 3. LiveFeed ARIA roles: corrected record (uncommitted in §67) and applied `role="list"` and `role="listitem"` with `aria-current` to LiveFeed while preserving keyboard navigation.

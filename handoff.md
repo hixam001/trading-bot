@@ -1,3 +1,33 @@
+## §69 — aggregate_pairs returns None for unreported txns; replace tautological research tests (2026-10-10)
+
+Completion of the zero-as-unknown fix in research.py:
+
+1. **Root cause confirmed in aggregate_pairs (`backend/data_providers/research.py`)**:
+   - In §68, `enrich_with_research` was modified to assign `cand.buys_6h = None if agg["buys_6h"] is None else int(agg["buys_6h"])`.
+   - However, `aggregate_pairs()` built `buys6h`/`sells6h` via `sum(_i(((p.get("txns") or {}).get("h6") or {}).get("buys")) for p in solana)`, where `_i(None)` returned `0`.
+   - As a result, when pairs omitted `txns.h6.buys`, `buys6h` summed to `0` rather than `None`. `agg["buys_6h"]` was never `None`, meaning missing transaction data was coerced to 0 — worse than before §68.
+
+2. **aggregate_pairs fix (`backend/data_providers/research.py`)**:
+   - Added `_parse_count(v) -> Optional[int]` to parse numeric transaction counts while keeping `_i()` unchanged for existing callers.
+   - `aggregate_pairs` now iterates over Solana pairs, collecting numeric reported values in `buys_reported` and `sells_reported`.
+   - If no pair reported the field, returns `None`. If any pair reported it, returns the sum of reporting pairs. Explicit `0` is preserved as `0`.
+   - `enrich_with_research` assignment unchanged (`None if agg[...] is None else int(...)`), now correctly preserving `None` when data is missing.
+
+3. **Replaced tautological unit tests (`backend/tests/test_zero_as_unknown.py`)**:
+   - Replaced tests that manually assigned dict fields on `Candidate` without exercising `aggregate_pairs` or `enrich_with_research`.
+   - Added full coverage across all 4 required cases for both `aggregate_pairs` and `enrich_with_research` (using `httpx.MockTransport` stubbed provider client):
+     - (a) All pairs report buys/sells = 0 → preserves 0.
+     - (b) No pair has a txns field → returns None.
+     - (c) Mixed pairs (one reports, one doesn't) → sums only reporting pairs.
+     - (d) `h6` txns present but buys/sells keys missing → returns None.
+   - Verified that the new tests fail against the unpatched aggregate_pairs (`assert 0 is None`).
+
+Verification:
+- Backend: 796/796 pytest passing in 29.48s (1 warning: Starlette TestClient deprecation).
+- Git diff confirms changes isolated to backend research & tests (no touches to live_execution/, rule_engine/, or frontend/).
+
+---
+
 ## §68 — close §67 gaps: safety-unknown risk state, zero-as-None parity, LiveFeed ARIA (2026-10-10)
 
 Surgical closure of four gaps left by §67 (f0a0fb6):

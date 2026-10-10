@@ -1,5 +1,5 @@
 """
-tests/test_zero_as_unknown.py — §68 zero-as-unknown regression tests.
+tests/test_zero_as_unknown.py — §68/§69 zero-as-unknown regression tests.
 
 Verifies that:
 1. discovery.py: legitimate 0 buys/sells stay 0, while missing fields remain None.
@@ -70,29 +70,66 @@ def test_discovery_missing_buys_and_sells_stay_none():
     assert c.sells_6h is None
 
 
-def test_research_aggregate_pairs_zero_stays_zero():
-    """aggregate_pairs preserves 0 for buys_6h and sells_6h when txns have 0."""
-    pairs = [
-        {
-            "chainId": "solana",
-            "liquidity": {"usd": 10_000},
-            "volume": {"h6": 5_000},
-            "priceChange": {"h6": 0.5},
-            "txns": {
-                "h6": {"buys": 0, "sells": 0},
-            },
-        }
+def test_research_aggregate_pairs_cases():
+    """aggregate_pairs handles all four required cases for buys_6h and sells_6h:
+    (a) all pairs report buys=0 -> 0
+    (b) no pair has a txns field -> None
+    (c) mixed pairs (one reports, one doesn't) -> sum of the reporting ones
+    (d) h6 txns present but buys key missing -> None
+    """
+    # (a) all pairs report 0
+    pairs_a = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 100}, "txns": {"h6": {"buys": 0, "sells": 0}}},
+        {"chainId": "solana", "liquidity": {"usd": 5_000}, "volume": {"h6": 50}, "txns": {"h6": {"buys": 0, "sells": 0}}},
     ]
-    agg = aggregate_pairs(pairs)
-    assert agg is not None
-    assert agg["buys_6h"] == 0
-    assert agg["sells_6h"] == 0
+    agg_a = aggregate_pairs(pairs_a)
+    assert agg_a is not None
+    assert agg_a["buys_6h"] == 0
+    assert agg_a["sells_6h"] == 0
+
+    # (b) no pair has a txns field
+    pairs_b = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 100}},
+        {"chainId": "solana", "liquidity": {"usd": 5_000}, "volume": {"h6": 50}},
+    ]
+    agg_b = aggregate_pairs(pairs_b)
+    assert agg_b is not None
+    assert agg_b["buys_6h"] is None
+    assert agg_b["sells_6h"] is None
+
+    # (c) mixed pairs (one reports, one doesn't)
+    pairs_c = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 100}, "txns": {"h6": {"buys": 7, "sells": 3}}},
+        {"chainId": "solana", "liquidity": {"usd": 5_000}, "volume": {"h6": 50}},
+    ]
+    agg_c = aggregate_pairs(pairs_c)
+    assert agg_c is not None
+    assert agg_c["buys_6h"] == 7
+    assert agg_c["sells_6h"] == 3
+
+    # (d) h6 txns present but buys key missing
+    pairs_d = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 100}, "txns": {"h6": {"unrelated": 1}}},
+    ]
+    agg_d = aggregate_pairs(pairs_d)
+    assert agg_d is not None
+    assert agg_d["buys_6h"] is None
+    assert agg_d["sells_6h"] is None
+
+
+def _stub_client(pairs_by_mint: dict[str, list]) -> httpx.AsyncClient:
+    def handler(request: httpx.Request) -> httpx.Response:
+        mint = request.url.path.rsplit("/", 1)[-1]
+        pairs = pairs_by_mint.get(mint, [])
+        return httpx.Response(200, json={"pairs": pairs})
+
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
 @pytest.mark.asyncio
 async def test_research_enrich_preserves_zero_buys_and_sells():
-    """enrich_with_research sets 0 (not None) on candidate when aggregate is 0."""
-    cand = Candidate(
+    """enrich_with_research preserves explicit 0 counts (case a) and sums mixed pairs (case c)."""
+    cand_zero = Candidate(
         symbol="ZERO",
         mint_address=MINT_A,
         price_usd=1.0,
@@ -100,52 +137,75 @@ async def test_research_enrich_preserves_zero_buys_and_sells():
         volume_24h_usd=20_000,
         market_cap_usd=50_000,
     )
-    # Mock aggregate dict where buys_6h and sells_6h are 0
-    agg = {
-        "pool_count": 1,
-        "total_liquidity_usd": 10_000.0,
-        "top_pool_share": 1.0,
-        "volume_6h_usd": 5_000.0,
-        "buys_6h": 0,
-        "sells_6h": 0,
-        "price_change_6h_pct": 2.5,
-    }
-
-    # Simulate the application step from enrich_with_research
-    cand.pool_count = agg["pool_count"]
-    cand.total_liquidity_usd = agg["total_liquidity_usd"] or None
-    cand.top_pool_share = agg["top_pool_share"]
-    cand.volume_6h_usd = agg["volume_6h_usd"] or None
-    cand.buys_6h = None if agg["buys_6h"] is None else int(agg["buys_6h"])
-    cand.sells_6h = None if agg["sells_6h"] is None else int(agg["sells_6h"])
-
-    assert cand.buys_6h == 0
-    assert cand.sells_6h == 0
-
-
-@pytest.mark.asyncio
-async def test_research_enrich_missing_stays_none():
-    """enrich_with_research sets None when aggregate buys_6h/sells_6h is None."""
-    cand = Candidate(
-        symbol="NONE",
+    cand_mixed = Candidate(
+        symbol="MIXED",
         mint_address=MINT_B,
         price_usd=1.0,
         liquidity_usd=10_000,
         volume_24h_usd=20_000,
         market_cap_usd=50_000,
     )
-    agg = {
-        "pool_count": 1,
-        "total_liquidity_usd": 10_000.0,
-        "top_pool_share": 1.0,
-        "volume_6h_usd": 5_000.0,
-        "buys_6h": None,
-        "sells_6h": None,
-        "price_change_6h_pct": None,
-    }
 
-    cand.buys_6h = None if agg["buys_6h"] is None else int(agg["buys_6h"])
-    cand.sells_6h = None if agg["sells_6h"] is None else int(agg["sells_6h"])
+    # Case (a): all pairs report buys=0, sells=0
+    pairs_zero = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 5_000}, "txns": {"h6": {"buys": 0, "sells": 0}}},
+        {"chainId": "solana", "liquidity": {"usd": 5_000}, "volume": {"h6": 1_000}, "txns": {"h6": {"buys": 0, "sells": 0}}},
+    ]
+    # Case (c): mixed pairs (one reports, one doesn't)
+    pairs_mixed = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 5_000}, "txns": {"h6": {"buys": 6, "sells": 2}}},
+        {"chainId": "solana", "liquidity": {"usd": 5_000}, "volume": {"h6": 1_000}},
+    ]
 
-    assert cand.buys_6h is None
-    assert cand.sells_6h is None
+    async with _stub_client({MINT_A: pairs_zero, MINT_B: pairs_mixed}) as client:
+        applied = await enrich_with_research([cand_zero, cand_mixed], client=client)
+
+    assert applied == 2
+    # Case (a): 0 must stay 0, not None
+    assert cand_zero.buys_6h == 0
+    assert cand_zero.sells_6h == 0
+    # Case (c): sum of reporting pairs
+    assert cand_mixed.buys_6h == 6
+    assert cand_mixed.sells_6h == 2
+
+
+@pytest.mark.asyncio
+async def test_research_enrich_missing_stays_none():
+    """enrich_with_research leaves buys_6h/sells_6h as None for missing txns (case b) or missing keys (case d)."""
+    cand_notxns = Candidate(
+        symbol="NOTXNS",
+        mint_address=MINT_A,
+        price_usd=1.0,
+        liquidity_usd=10_000,
+        volume_24h_usd=20_000,
+        market_cap_usd=50_000,
+    )
+    cand_missing_keys = Candidate(
+        symbol="NOKEYS",
+        mint_address=MINT_B,
+        price_usd=1.0,
+        liquidity_usd=10_000,
+        volume_24h_usd=20_000,
+        market_cap_usd=50_000,
+    )
+
+    # Case (b): no pair has a txns field
+    pairs_notxns = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 5_000}},
+        {"chainId": "solana", "liquidity": {"usd": 5_000}, "volume": {"h6": 1_000}},
+    ]
+    # Case (d): h6 txns present but buys/sells keys missing
+    pairs_missing_keys = [
+        {"chainId": "solana", "liquidity": {"usd": 10_000}, "volume": {"h6": 5_000}, "txns": {"h6": {"volume": 100}}},
+    ]
+
+    async with _stub_client({MINT_A: pairs_notxns, MINT_B: pairs_missing_keys}) as client:
+        applied = await enrich_with_research([cand_notxns, cand_missing_keys], client=client)
+
+    assert applied == 2
+    # Case (b): missing txns stays None
+    assert cand_notxns.buys_6h is None
+    assert cand_notxns.sells_6h is None
+    # Case (d): missing buys/sells key in h6 stays None
+    assert cand_missing_keys.buys_6h is None
+    assert cand_missing_keys.sells_6h is None

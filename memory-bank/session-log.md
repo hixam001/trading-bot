@@ -1,3 +1,14 @@
+## Memory-bank update — 2026-10-10 (§69 finish zero-as-unknown in research.py)
+
+- **Task**: Finish the zero-as-unknown fix in `research.py` (backend only; no frontend, no `live_execution/`, no `rule_engine/`).
+- **Backend fixes**:
+  - `backend/data_providers/research.py`: `aggregate_pairs()` previously coerced missing `txns.h6.buys`/`sells` to 0 via `_i()`, preventing `enrich_with_research` from ever producing `None`. Implemented `_parse_count()` to track whether any Solana pair reported numeric buys/sells. Returns `None` if unreported; sums reporting pairs if reported; preserves explicit `0`. Kept `_i()` unchanged for other callers.
+  - `backend/tests/test_zero_as_unknown.py`: replaced two tautological tests with real calls to `aggregate_pairs` and `enrich_with_research` via `httpx.MockTransport` stub. Covers cases (a) all pairs report 0, (b) no pair has txns, (c) mixed reporting pairs, (d) h6 present but keys missing. Confirmed tests failed against previous code with `assert 0 is None`.
+- **Tests**:
+  - Pytest: 796 passed, 1 warning (29.48s).
+- **Scope check**:
+  - `git diff --stat` confirms zero modifications to `live_execution/`, `rule_engine/`, or frontend.
+
 ## Memory-bank update — 2026-10-10 (§68 close §67 gaps)
 
 - **Task**: Close four surgical gaps left by §67 (f0a0fb6).

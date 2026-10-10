@@ -37,6 +37,15 @@ def _i(v) -> int:
         return 0
 
 
+def _parse_count(v) -> Optional[int]:
+    if v is None or isinstance(v, bool):
+        return None
+    try:
+        return int(float(v))
+    except (TypeError, ValueError):
+        return None
+
+
 def _liq_of(pair: dict) -> float:
     return _f((pair.get("liquidity") or {}).get("usd"))
 
@@ -51,8 +60,21 @@ def aggregate_pairs(pairs: list) -> Optional[dict]:
     total_liq = sum(_liq_of(p) for p in solana)
     deepest = max(solana, key=_liq_of)
     vol6h = sum(_f((p.get("volume") or {}).get("h6")) for p in solana)
-    buys6h = sum(_i(((p.get("txns") or {}).get("h6") or {}).get("buys")) for p in solana)
-    sells6h = sum(_i(((p.get("txns") or {}).get("h6") or {}).get("sells")) for p in solana)
+    buys_reported: list[int] = []
+    sells_reported: list[int] = []
+    for p in solana:
+        txns = p.get("txns")
+        h6 = txns.get("h6") if isinstance(txns, dict) else None
+        if isinstance(h6, dict):
+            b = _parse_count(h6.get("buys"))
+            if b is not None:
+                buys_reported.append(b)
+            s = _parse_count(h6.get("sells"))
+            if s is not None:
+                sells_reported.append(s)
+
+    buys6h: Optional[int] = sum(buys_reported) if buys_reported else None
+    sells6h: Optional[int] = sum(sells_reported) if sells_reported else None
     try:
         chg6h: Optional[float] = float(((deepest.get("priceChange") or {}).get("h6")))
     except (TypeError, ValueError):

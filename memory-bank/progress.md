@@ -1,6 +1,11 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §69 Finish zero-as-unknown fix in research.py (2026-10-10):
+      1. Fixed `aggregate_pairs()` in `backend/data_providers/research.py`: tracks reported numeric `txns.h6.buys`/`sells` and returns `None` when unreported, preserving explicit `0` and summing mixed reporting pairs. Kept `_i()` intact.
+      2. Replaced tautological tests in `backend/tests/test_zero_as_unknown.py` with real end-to-end tests for `aggregate_pairs` and `enrich_with_research` using `httpx.MockTransport` covering all 4 cases: (a) all 0 -> 0, (b) no txns -> None, (c) mixed pairs -> sum, (d) h6 key missing -> None.
+      3. Verified new tests fail against pre-fix code; full suite passes with 796/796 tests green. No changes to `live_execution/`, `rule_engine/`, or frontend. Full detail: handoff §69.
+
 - [x] §68 Close four gaps left by §67 (2026-10-10):
       1. Risk header fail-open: safety.error and unloaded safety.data now treat safety state as offline ("feed degraded"); kill switch / breaker still outrank; offline banner derived from riskState; DESIGN.md §3.4 updated.
       2. Zero-as-None parity: discovery.py (buys/sells 1h/6h) and research.py (buys/sells 6h) preserve 0 counts instead of coercing to None.
