@@ -101,9 +101,9 @@ realized P&L rows. Buys live in the order-decisions lifecycle above.
 1. **loading** — skeleton bars (sweeping block), never a spinner, never blank.
 2. **empty** — explicit `> `-prompted sentence: what is empty and why.
 3. **error** — what failed + that retry is automatic; `fail` border.
-4. **offline** (app-level) — single global banner when BOTH primary feeds
-   fail; panels keep last data; the WebSocket reconnects with exponential
-   backoff (1s–15s).
+4. **offline** (app-level) — single global banner when risk state is offline
+   (primary feeds fail or safety unknown); panels keep last data; the WebSocket
+   reconnects with exponential backoff (1s–15s).
 5. **stale** — deferred by operator decision (2026-09-06): every panel's
    REST poll self-heals on its next interval (see prior revisions).
 

@@ -1,3 +1,36 @@
+## §68 — close §67 gaps: safety-unknown risk state, zero-as-None parity, LiveFeed ARIA (2026-10-10)
+
+Surgical closure of four gaps left by §67 (f0a0fb6):
+
+1. **Risk header fail-open resolved (frontend/src/App.tsx & DESIGN.md §3.4)**:
+   - Added `safety.error` and `(!safety.loading && !safety.data)` to the offline condition in `riskState`. Unknown safety state now renders as "feed degraded" rather than falling through to "safe to trade".
+   - Preserved priority order: engaged kill switch and daily-loss breaker from last-known `safety.data` outrank offline state.
+   - Unified offline banner: derived `offline` directly from `riskState.state === 'offline'`.
+   - Updated `frontend/DESIGN.md` §3.4 to reflect the unified risk-derived offline banner definition.
+   - Verified `AlertStrip` receives and displays `safety.error`.
+
+2. **Zero-as-None parity completed (backend/data_providers/)**:
+   - The §67 audit fixed `buys_6h`/`sells_6h` in `dexscreener.py` but left two more sites unaddressed:
+     - `discovery.py` lines 209–212: `buys_1h`, `sells_1h`, `buys_6h`, `sells_6h` converted `0` to `None`. Fixed with explicit `None if val is None else int(val)`.
+     - `research.py` lines 120–121: `agg["buys_6h"]` and `agg["sells_6h"]` converted legitimate `0` to `None`. Fixed to preserve `0` counts.
+   - Full grep across `data_providers/` confirmed no other numeric zero-as-None bugs.
+
+3. **LiveFeed ARIA role hierarchy committed (frontend/src/components/LiveFeed.tsx)**:
+   - The §67 notes documented changing `role="listbox"` / `role="option"` with `<button>` to `role="list"` / `role="listitem"` with `aria-current`, but that change had not actually been committed in `f0a0fb6`.
+   - Applied `role="list"` to the tape container and `role="listitem"` with `aria-current={i === cursor ? 'true' : undefined}` to rows, keeping j/k/g/G/Enter keyboard operability intact.
+
+4. **Test coverage added**:
+   - Backend: unit tests in `backend/tests/test_zero_as_unknown.py` covering discovery and research zero-as-zero vs missing-as-None behavior (5 tests).
+   - Frontend: hermetic Playwright specs in `audit.spec.ts` (safety 500 degraded, kill switch outranking failure) and `keyboard.spec.ts` (`?` open/close toggle, LiveFeed `role="list"`/`role="listitem"`/`aria-current` with j/k navigation).
+
+Verification:
+- Backend: 796/796 pytest passing (count increased from 791).
+- Frontend: clean TypeScript/Vite build (`tsc -b && vite build`).
+- Playwright: 14/14 hermetic specs green.
+- Git diff confirms no touches under `live_execution/` or `rule_engine/`.
+
+---
+
 ## §67 — full-repo audit: bug fixes, doc completion, memory-bank update (2026-10-08)
 
 Comprehensive code, doc, and infra audit across the entire repository. 12 bugs
@@ -212,11 +245,11 @@ changed; no performance verdict inferred from snapshots.
 ---
 
 
-**Last updated:** 2026-10-08 · **Branch:** main · **Status:** LIVE
+**Last updated:** 2026-10-10 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
 engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
-**Tests (§67):** 789 Python passing; 11 hermetic Playwright tests passing.
+**Tests (§68):** 796 Python passing; 14 hermetic Playwright tests passing.
 **UI (§63):** operator upgrades — read-only command palette (⌘K/Ctrl-K:
 navigation, journal filtering, jump-to-position; the break-state toggle is
 deliberately ABSENT — no fuzzy keystroke next to live state), refusal funnel

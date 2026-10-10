@@ -1,16 +1,14 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-08 (§67):** Full-repo audit across code, docs, and infra.
-Fixed backend dexscreener `buys_6h`/`sells_6h` zero-as-None bug, 4× double-word
-typos in comments, and removed unused `API_HOST` in `.env.example`. Fixed
-frontend safety bug in `App.tsx` (liveBook error state risk posture bypass),
-`?` help overlay toggle trap, `RefusalFunnel.tsx` copy-paste approval label,
-`useApi.ts` unmounted state updates, and `LiveFeed.tsx` ARIA option-in-listbox nesting.
-Synchronized stale memory-bank files (`productContext.md`, `projectbrief.md`,
-`systemPatterns.md`, `techContext.md`) and refreshed handoff metadata block.
-Full Python test suite verified green, frontend build clean.
+**Current — 2026-10-10 (§68):** Closed four gaps left by §67 (f0a0fb6):
+1. Risk header fail-open resolved: `safety.error` and missing `safety.data` after loading trigger offline posture ("feed degraded") instead of falling through to "safe to trade"; engaged kill-switch/breaker still outranks; global offline banner derived from `riskState.state === 'offline'`; `DESIGN.md` §3.4 updated.
+2. Zero-as-None parity: fixed `discovery.py` (buys/sells 1h/6h) and `research.py` (buys/sells 6h) to keep 0 as 0 and missing as None, matching `dexscreener.py`. Full grep confirmed no further occurrences.
+3. LiveFeed ARIA roles: corrected record (uncommitted in §67) and applied `role="list"` and `role="listitem"` with `aria-current` to LiveFeed while preserving keyboard navigation.
+4. Test coverage: added `backend/tests/test_zero_as_unknown.py` (5 tests) and Playwright coverage (14 hermetic tests passing). Backend: 796 passed.
 
 **PREVIOUS:**
+
+**As of 2026-10-08 (§67):** Full-repo audit across code, docs, and infra.
 
 **As of 2026-09-22 (§66):** Frontend design polish across typography, case
 hierarchy, motion keyframes, and subtitle dot reduction completed per DESIGN.md.

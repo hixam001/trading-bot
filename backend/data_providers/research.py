@@ -117,8 +117,8 @@ async def enrich_with_research(
         cand.total_liquidity_usd = agg["total_liquidity_usd"] or None
         cand.top_pool_share = agg["top_pool_share"]
         cand.volume_6h_usd = agg["volume_6h_usd"] or None
-        cand.buys_6h = agg["buys_6h"] or None
-        cand.sells_6h = agg["sells_6h"] or None
+        cand.buys_6h = None if agg["buys_6h"] is None else int(agg["buys_6h"])
+        cand.sells_6h = None if agg["sells_6h"] is None else int(agg["sells_6h"])
         if cand.price_change_6h_pct is None:
             cand.price_change_6h_pct = agg["price_change_6h_pct"]
         applied += 1

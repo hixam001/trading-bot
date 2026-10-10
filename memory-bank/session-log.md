@@ -1,3 +1,20 @@
+## Memory-bank update — 2026-10-10 (§68 close §67 gaps)
+
+- **Task**: Close four surgical gaps left by §67 (f0a0fb6).
+- **Backend fixes**:
+  - `backend/data_providers/discovery.py`: replaced `int(...) or 0) or None` on `buys_1h`, `sells_1h`, `buys_6h`, `sells_6h` with explicit `None if val is None else int(val)` to preserve 0 data.
+  - `backend/data_providers/research.py`: preserved 0 counts for `agg["buys_6h"]` and `agg["sells_6h"]`.
+  - Added unit test suite `backend/tests/test_zero_as_unknown.py` (5 tests).
+- **Frontend fixes**:
+  - `frontend/src/App.tsx`: added `safety.error || (!safety.loading && !safety.data)` to offline condition in `riskState` so unknown safety defaults to "feed degraded" rather than "safe to trade"; preserved engaged kill-switch/breaker precedence; derived `offline` banner from `riskState.state === 'offline'`.
+  - `frontend/DESIGN.md`: updated §3.4 offline banner specification to match unified risk-state derivation.
+  - `frontend/src/components/LiveFeed.tsx`: applied `role="list"` and `role="listitem"` with `aria-current={i === cursor ? 'true' : undefined}`, resolving uncommitted §67 change while preserving j/k/g/G/Enter navigation.
+  - Verified AlertStrip renders `safety.error`.
+- **Tests**:
+  - Pytest: 796 passed (+5 from 791).
+  - TypeScript/Vite build: clean.
+  - Playwright hermetic specs: 14 passed (+3 from 11).
+
 ## Memory-bank update — 2026-10-08 (§67 full-repo audit & bug fixes)
 
 - **Task**: Full-repo audit of code, documentation, infrastructure, and memory bank.

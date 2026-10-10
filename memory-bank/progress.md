@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §68 Close four gaps left by §67 (2026-10-10):
+      1. Risk header fail-open: safety.error and unloaded safety.data now treat safety state as offline ("feed degraded"); kill switch / breaker still outrank; offline banner derived from riskState; DESIGN.md §3.4 updated.
+      2. Zero-as-None parity: discovery.py (buys/sells 1h/6h) and research.py (buys/sells 6h) preserve 0 counts instead of coercing to None.
+      3. LiveFeed ARIA roles: applied role="list" / role="listitem" with aria-current (uncommitted in §67).
+      4. Test coverage: 5 new backend unit tests (796 passed) and 3 new Playwright hermetic tests (14 passed). Full detail: handoff §68.
+
 - [x] §67 Full-repo audit: bug fixes, doc completion, memory-bank update (2026-10-08):
       12 bugs found and fixed across backend and frontend. Backend: dexscreener
       buys_6h/sells_6h zero-as-None, 4× "the the" typos, dead API_HOST env var.

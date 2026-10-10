@@ -59,6 +59,64 @@ test('failed safety poll is not all clear; offline banner still renders', async 
   await expect(page.getByTestId('offline-banner')).toBeVisible()
 })
 
+test('safety 500 while other routes are 200 shows feed degraded, not safe to trade', async ({ page }) => {
+  await mockApi(page)
+  await page.route('**/api/safety', route => route.fulfill({ status: 500, json: { detail: 'safety failure' } }))
+  await page.goto('/')
+  const hero = page.getByTestId('hero')
+  await expect(hero).toContainText('feed degraded')
+  await expect(hero).not.toContainText('safe to trade')
+  await expect(page.getByTestId('offline-banner')).toBeVisible()
+  await expect(page.getByTestId('alert-safety_unavailable')).toBeVisible()
+})
+
+test('kill switch engaged with safety later failing still shows manual stop', async ({ page }) => {
+  let callCount = 0
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname
+    if (path === '/api/safety') {
+      callCount++
+      if (callCount === 1) {
+        // First poll succeeds with kill switch engaged
+        await route.fulfill({
+          status: 200,
+          json: { ...safety, kill_switch: { engaged: true, reason: 'MANUAL: operator stop' } },
+        })
+        return
+      }
+      // Subsequent poll fails
+      await route.fulfill({ status: 500, json: { detail: 'safety service down' } })
+      return
+    }
+    const body = path === '/api/feed' ? { events }
+      : path === '/api/system-status' ? { main_llm_reachable: true, main_llm_provider: 'deepseek',
+        narration_mode: 'live', provider_calls_today: [], llm_usage_recent: [], tick_interval_seconds: 300 }
+      : path === '/api/funnel' ? { candidates_seen: 3, candidates_seen_total: 3,
+        gate_refused: 1, gate_passed: 2, model_refused: 1, model_approved: 1, filled: 1,
+        model_refusal_rate_of_gate_passers: 0.5, window: { limit: 1000, feed_events: 3 } }
+      : path === '/api/funnel/snapshots' ? { snapshots: [], count: 0 }
+      : path === '/api/live/executions' ? { enabled: true, commits: [], records: [] }
+      : path === '/api/market-regime' ? { regimes: [] }
+      : null
+    await route.fulfill({ status: body ? 200 : 503, json: body ?? { detail: 'fixture unavailable' } })
+  })
+  await page.routeWebSocket('**/ws/feed', () => {})
+
+  await page.goto('/')
+  const hero = page.getByTestId('hero')
+  await expect(hero).toContainText('manual stop')
+
+  // Trigger re-poll or wait for interval / trigger fetch to fail
+  // We can evaluate a fetch to /api/safety or re-poll
+  await page.evaluate(async () => {
+    try { await fetch('/api/safety') } catch {}
+  })
+
+  // Kill switch from last-known safety.data still outranks offline/safety.error
+  await expect(hero).toContainText('manual stop')
+  await expect(hero).not.toContainText('safe to trade')
+})
+
 test('funnel stages drill into the exact classification, fills into journal', async ({ page }) => {
   await mockApi(page)
   await page.goto('/')

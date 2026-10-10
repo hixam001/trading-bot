@@ -75,9 +75,6 @@ export default function App() {
   // §65 — the `?` help overlay (rendered verbatim from the SHORTCUTS table).
   const [helpOpen, setHelpOpen] = useState(false)
 
-  // Global offline banner (DESIGN.md §3.4): only when BOTH primary feeds fail.
-  // Panels keep their last data and recover automatically.
-  const offline = liveBook.error && status.error
   type RiskState = {
     state: 'normal' | 'watch' | 'blocked' | 'offline'
     severity: 'ok' | 'warning' | 'critical' | 'offline'
@@ -114,7 +111,7 @@ export default function App() {
         detail: 'daily-loss breaker active · reduce risk while monitoring',
       }
     }
-    if (!connected || liveBook.error || status.error) {
+    if (!connected || liveBook.error || status.error || safety.error || (!safety.loading && !safety.data)) {
       return {
         state: 'offline' as const,
         severity: 'offline' as const,
@@ -146,6 +143,9 @@ export default function App() {
       detail: 'breakers clear · trading posture normal',
     }
   })()
+
+  // Global offline banner (DESIGN.md §3.4): derived from riskState
+  const offline = riskState.state === 'offline'
 
   // §65 — the global keyboard dispatcher. ONE listener, guarded: nothing
   // fires while the palette is open (its own handler keeps winning — the

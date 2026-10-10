@@ -221,9 +221,8 @@ export default function LiveFeed({
           ref={listRef}
           className="flex-1 min-h-0 overflow-y-auto max-h-[65vh] xl:max-h-none focus-visible:outline focus-visible:outline-1 focus-visible:-outline-offset-1 focus-visible:outline-line-strong"
           tabIndex={0}
-          role="listbox"
+          role="list"
           aria-label="decisions tape · j/k move, g/G jump, enter expand, esc collapse"
-          aria-activedescendant={`feed-row-${cursor}`}
           onKeyDown={onListKeyDown}
           data-testid="feed-list"
         >
@@ -254,8 +253,8 @@ export default function LiveFeed({
                 <div
                   id={`feed-row-${i}`}
                   data-feed-row={i}
-                  role="option"
-                  aria-selected={i === cursor}
+                  role="listitem"
+                  aria-current={i === cursor ? 'true' : undefined}
                   className={`border-b border-line-soft ${isFresh ? 'row-flash' : ''} ${
                     i === cursor ? 'bg-surface shadow-[inset_2px_0_0_0] shadow-live' : ''
                   }`}

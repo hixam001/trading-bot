@@ -88,7 +88,7 @@ test.describe('§65 global keyboard vocabulary', () => {
 
     // Baseline: one global j moves the cursor to row 1.
     await page.keyboard.press('j')
-    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-selected', 'true')
+    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-current', 'true')
 
     // Open the palette and TYPE — every one of these keystrokes must be
     // swallowed by the input (the classic global-shortcut failure mode).
@@ -100,8 +100,8 @@ test.describe('§65 global keyboard vocabulary', () => {
     await expect(page.getByRole('dialog', { name: 'command palette' })).toBeHidden()
 
     // The cursor never moved past row 1, and no help overlay opened.
-    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-selected', 'true')
-    await expect(list.locator('[data-feed-row="2"]')).toHaveAttribute('aria-selected', 'false')
+    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-current', 'true')
+    await expect(list.locator('[data-feed-row="2"]')).not.toHaveAttribute('aria-current', 'true')
     await expect(page.getByTestId('shortcut-overlay')).toHaveCount(0)
   })
 
@@ -112,16 +112,16 @@ test.describe('§65 global keyboard vocabulary', () => {
     await expect(list.locator('[data-feed-row="0"]')).toBeVisible()
 
     await page.keyboard.press('j')
-    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-selected', 'true')
+    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-current', 'true')
     await page.keyboard.press('k')
-    await expect(list.locator('[data-feed-row="0"]')).toHaveAttribute('aria-selected', 'true')
+    await expect(list.locator('[data-feed-row="0"]')).toHaveAttribute('aria-current', 'true')
     await page.keyboard.press('j')
     await page.keyboard.press('j')
-    await expect(list.locator('[data-feed-row="2"]')).toHaveAttribute('aria-selected', 'true')
+    await expect(list.locator('[data-feed-row="2"]')).toHaveAttribute('aria-current', 'true')
     await page.keyboard.press('g')
-    await expect(list.locator('[data-feed-row="0"]')).toHaveAttribute('aria-selected', 'true')
+    await expect(list.locator('[data-feed-row="0"]')).toHaveAttribute('aria-current', 'true')
     await page.keyboard.press('G')
-    await expect(list.locator('[data-feed-row="2"]')).toHaveAttribute('aria-selected', 'true')
+    await expect(list.locator('[data-feed-row="2"]')).toHaveAttribute('aria-current', 'true')
   })
 
   test('Enter expands the focused row; Esc collapses it', async ({ page }) => {
@@ -140,11 +140,38 @@ test.describe('§65 global keyboard vocabulary', () => {
     await expect(rowButton).toHaveAttribute('aria-expanded', 'false')
   })
 
-  test('? opens the help overlay; Esc and click-outside close it', async ({ page }) => {
+  test('LiveFeed rows expose list/listitem roles and j/k moves cursor with aria-current', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+    const list = page.getByTestId('feed-list')
+    await expect(list).toHaveAttribute('role', 'list')
+
+    const row0 = list.locator('[data-feed-row="0"]')
+    const row1 = list.locator('[data-feed-row="1"]')
+    await expect(row0).toHaveAttribute('role', 'listitem')
+    await expect(row1).toHaveAttribute('role', 'listitem')
+
+    // Initial state: cursor on row 0
+    await expect(row0).toHaveAttribute('aria-current', 'true')
+    await expect(row1).not.toHaveAttribute('aria-current', 'true')
+
+    // j moves cursor to row 1
+    await page.keyboard.press('j')
+    await expect(row0).not.toHaveAttribute('aria-current', 'true')
+    await expect(row1).toHaveAttribute('aria-current', 'true')
+
+    // k moves cursor back to row 0
+    await page.keyboard.press('k')
+    await expect(row0).toHaveAttribute('aria-current', 'true')
+    await expect(row1).not.toHaveAttribute('aria-current', 'true')
+  })
+
+  test('? opens and closes the help overlay; Esc and click-outside also close it', async ({ page }) => {
     await mockApi(page)
     await page.goto('/')
     await expect(page.getByTestId('feed-list')).toBeVisible()
 
+    // ? opens help
     await page.keyboard.press('?')
     const overlay = page.getByTestId('shortcut-overlay')
     await expect(overlay).toBeVisible()
@@ -154,9 +181,17 @@ test.describe('§65 global keyboard vocabulary', () => {
     await expect(page.getByTestId('shortcut-list')).toContainText('j / k')
     await expect(page.getByTestId('shortcut-list')).toContainText('?')
 
+    // ? key also closes help (§67 fix / §68 verified)
+    await page.keyboard.press('?')
+    await expect(overlay).toBeHidden()
+
+    // Re-open with ? and close with Escape
+    await page.keyboard.press('?')
+    await expect(overlay).toBeVisible()
     await page.keyboard.press('Escape')
     await expect(overlay).toBeHidden()
 
+    // Re-open with ? and close by clicking outside
     await page.keyboard.press('?')
     await expect(overlay).toBeVisible()
     await page.mouse.click(10, 400) // outside the centered panel
