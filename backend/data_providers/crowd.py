@@ -210,6 +210,11 @@ def _load_persisted_refresh() -> str:
     if data is not None:
         value = str(data.get("refresh_token") or "")
         if value:
+            try:
+                from api.error_handler import register_secret
+                register_secret(value)
+            except Exception:
+                pass
             return value
     return config.FOMO_PRIVY_REFRESH_TOKEN
 
@@ -221,6 +226,11 @@ def _persist_refresh(value: str) -> None:
     cryptography install) the in-memory chain keeps working this process
     lifetime and a restart falls back to the .env bootstrap.
     """
+    try:
+        from api.error_handler import register_secret
+        register_secret(value)
+    except Exception:
+        pass
     if not secret_store.encrypt_to_file(_state_file(),
                                         {"refresh_token": value}):
         log.warning("fomo: could not persist rotated refresh token "

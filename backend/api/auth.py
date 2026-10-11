@@ -66,12 +66,44 @@ def create_session_token(secret: str | None = None) -> str:
     return f"{payload}.{sig}"
 
 
+_REVOKED_SESSION_SIGS: dict[str, float] = {}
+
+
+def revoke_session_token(token: str) -> None:
+    """Record token signature as revoked and prune expired entries (§77 E5)."""
+    if not token or not isinstance(token, str):
+        return
+    parts = token.split(".")
+    if len(parts) != 3:
+        return
+    sig = parts[2]
+    now = time.time()
+    _REVOKED_SESSION_SIGS[sig] = now
+
+    max_age = getattr(config, "SESSION_MAX_AGE_SECONDS", 86400)
+    for s, t in list(_REVOKED_SESSION_SIGS.items()):
+        if now - t > max_age:
+            _REVOKED_SESSION_SIGS.pop(s, None)
+
+
+def is_session_revoked(token: str) -> bool:
+    """Return True if the token's signature is in the revocation registry."""
+    if not token or not isinstance(token, str):
+        return False
+    parts = token.split(".")
+    if len(parts) != 3:
+        return False
+    return parts[2] in _REVOKED_SESSION_SIGS
+
+
 def verify_session_token(
     token: str,
     secret: str | None = None,
     max_age: int | None = None,
 ) -> bool:
     """Verify session token HMAC signature and age. Fail-closed on any error."""
+    if is_session_revoked(token):
+        return False
     configured = secret if secret is not None else config.ADMIN_TOKEN
     if not configured or len(configured) < 32 or not token:
         return False

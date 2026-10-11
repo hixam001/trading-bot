@@ -20,6 +20,7 @@ from api.auth import (
     _prune_failures,
     clear_session_cookie,
     create_session_token,
+    revoke_session_token,
     set_session_cookie,
     verify_session_token,
 )
@@ -199,7 +200,10 @@ async def signup(req: SignupRequest, request: Request):
 
 @router.post("/logout")
 async def logout(response: Response, request: Request):
-    """Clear the HttpOnly session cookie on logout."""
+    """Clear the HttpOnly session cookie and revoke the session token (§77 E5)."""
+    cookie = request.cookies.get(config.SESSION_COOKIE_NAME, "")
+    if cookie:
+        revoke_session_token(cookie)
     clear_session_cookie(response, request=request)
     return {"status": "logged_out"}
 

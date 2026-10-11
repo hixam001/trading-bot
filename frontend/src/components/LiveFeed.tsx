@@ -238,7 +238,7 @@ export default function LiveFeed({
                 {showMarker && i === markerAt && (
                   <div
                     className="flex items-center gap-2 px-4 py-1.5 bg-surface/60 border-y border-line-soft"
-                    role="separator"
+                    role="presentation"
                     data-testid="feed-new-marker"
                   >
                     {/* §66: lowercase mono, like every other small tracked

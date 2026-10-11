@@ -82,11 +82,15 @@ register_error_handlers(app)
 from api.rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
+cors_origins = [o for o in config.FRONTEND_ORIGINS if o != "*"]
+if "*" in config.FRONTEND_ORIGINS:
+    log.error("CORS misconfiguration: wildcard '*' origin forbidden when allow_credentials=True; stripping '*' (§77 E4)")
+
 app.add_middleware(
     CORSMiddleware,
     # Split deployments (dashboard on Vercel, API elsewhere) may need more
     # than one origin: FRONTEND_ORIGIN accepts a comma-separated list.
-    allow_origins=config.FRONTEND_ORIGINS,
+    allow_origins=cors_origins,
     # §38 F6: only the verbs/headers the dashboard actually uses.
     allow_methods=["GET", "POST"],
     allow_headers=["Content-Type", "X-Admin-Token"],

@@ -1465,6 +1465,11 @@ _ALLOWED_RESET_TABLES: frozenset[str] = frozenset({
 })
 
 
+def _now_iso() -> str:
+    """Return the current UTC timestamp formatted as ISO-8601 string (§77 E2)."""
+    return datetime.now(timezone.utc).isoformat()
+
+
 async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
     """Full operator reset: wipe all operational tables and restore the
     starting balance. This is a paper-trading maintenance function — it
@@ -1478,10 +1483,6 @@ async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
 
     Returns a summary dict for the operator log.
     """
-    # TRUNCATE with RESTART IDENTITY CASCADE is the idiomatic Postgres reset.
-    # We issue individual TRUNCATEs (not a multi-table one) to get per-table
-    # confirmation in the return dict; each is effectively instantaneous on
-    # small tables.
     tables = [
         "feed_events",
         "market_regime",
@@ -1494,21 +1495,22 @@ async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
         "trades",
     ]
     counts: dict[str, int] = {}
-    for table in tables:
-        if table not in _ALLOWED_RESET_TABLES:
-            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
-        # Fetch the count before truncating so we can report it.
-        row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
-        counts[table] = int(row["n"]) if row else 0
-        await conn.execute(
-            f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"
-        )
+    async with conn.transaction():
+        for table in tables:
+            if table not in _ALLOWED_RESET_TABLES:
+                raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
+            # Fetch the count before truncating so we can report it.
+            row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
+            counts[table] = int(row["n"]) if row else 0
+            await conn.execute(
+                f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE"
+            )
 
-    # Restore the starting balance.
-    await conn.execute(
-        "UPDATE portfolio_state SET cash_usd = $1, updated_at = $2 WHERE id = 1",
-        initial_cash_usd, _now_iso(),
-    )
+        # Restore the starting balance.
+        await conn.execute(
+            "UPDATE portfolio_state SET cash_usd = $1, updated_at = $2 WHERE id = 1",
+            initial_cash_usd, _now_iso(),
+        )
 
     return {
         "reset": True,

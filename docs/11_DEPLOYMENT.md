@@ -139,6 +139,7 @@ never keep serving a green dashboard while the decision cycle is dead.
 - [ ] `EXPECTED_WALLET_ADDRESS` set and matching the funded keypair
 - [ ] State dir on a persistent volume
 - [ ] Log dir on a persistent volume (audit trail preservation)
-- [ ] `ADMIN_TOKEN` set (mutating endpoints disabled without it — by design)
-- [ ] `FRONTEND_ORIGIN` = the actual dashboard origin (CORS fail-closed)
+- [ ] `ADMIN_TOKEN` set and >= 32 characters (`openssl rand -hex 32`) — mutating and operator endpoints disabled without it
+- [ ] `FRONTEND_ORIGIN` = the actual dashboard origin (never wildcard `*` with credentials)
+- [ ] WebSocket connections per IP bounded (`MAX_WS_PER_IP=4` default)
 - [ ] Dashboard reachable; `/api/live/portfolio` shows `enabled` only if armed

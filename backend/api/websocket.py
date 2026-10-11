@@ -12,20 +12,24 @@ import contextlib
 import json
 import logging
 
+from collections import defaultdict
 from fastapi import WebSocket, WebSocketDisconnect
 
 import config
 from api import db
+from api.rate_limiter import get_client_ip
 
 log = logging.getLogger(__name__)
 
 MAX_WS_CLIENTS: int = 32
+MAX_WS_PER_IP: int = 4
 
 
 
 class FeedBroadcaster:
     def __init__(self) -> None:
         self._clients: set[WebSocket] = set()
+        self._clients_by_ip: dict[str, set[WebSocket]] = defaultdict(set)
         self._task: asyncio.Task | None = None
         self._last_id = 0
 
@@ -38,7 +42,7 @@ class FeedBroadcaster:
             except Exception:
                 dead.append(ws)
         for ws in dead:
-            self._clients.discard(ws)
+            self.disconnect(ws)
 
     async def _poll_loop(self) -> None:
         with contextlib.suppress(asyncio.CancelledError):
@@ -72,20 +76,45 @@ class FeedBroadcaster:
                 await self._task
             self._task = None
 
-    async def connect(self, ws: WebSocket) -> bool:
+    async def connect(self, ws: WebSocket, client_ip: str | None = None) -> bool:
+        if client_ip is not None:
+            max_per_ip = getattr(config, "MAX_WS_PER_IP", MAX_WS_PER_IP)
+            if len(self._clients_by_ip[client_ip]) >= max_per_ip:
+                log.warning(
+                    "websocket rejected: maximum connections per IP (%d) reached for %s",
+                    max_per_ip,
+                    client_ip,
+                )
+                await ws.close(code=1008, reason=f"maximum connections per IP ({max_per_ip}) reached")
+                return False
+
         if len(self._clients) >= MAX_WS_CLIENTS:
             log.warning("websocket rejected: maximum client capacity (%d) reached", MAX_WS_CLIENTS)
             await ws.close(code=1008, reason="maximum connections reached")
             return False
+
         await ws.accept()
         self._clients.add(ws)
+        if client_ip is not None:
+            self._clients_by_ip[client_ip].add(ws)
         return True
 
-    def disconnect(self, ws: WebSocket) -> None:
+    def disconnect(self, ws: WebSocket, client_ip: str | None = None) -> None:
         self._clients.discard(ws)
+        if client_ip:
+            self._clients_by_ip[client_ip].discard(ws)
+            if not self._clients_by_ip[client_ip]:
+                self._clients_by_ip.pop(client_ip, None)
+        else:
+            for ip in list(self._clients_by_ip.keys()):
+                self._clients_by_ip[ip].discard(ws)
+                if not self._clients_by_ip[ip]:
+                    self._clients_by_ip.pop(ip, None)
 
 
 async def websocket_endpoint(ws: WebSocket, broadcaster: FeedBroadcaster) -> None:
+    client_ip = get_client_ip(ws)
+
     # SEC-04: Cross-Site WebSocket Hijacking (CSWSH) origin validation
     origin = ws.headers.get("origin")
     if origin:
@@ -95,12 +124,19 @@ async def websocket_endpoint(ws: WebSocket, broadcaster: FeedBroadcaster) -> Non
             await ws.close(code=1008, reason="origin not allowed")
             return
 
-    connected = await broadcaster.connect(ws)
+    connected = await broadcaster.connect(ws, client_ip=client_ip)
     if not connected:
         return
     try:
         while True:
-            await ws.receive_text()   # keepalive; ignore client messages
-    except WebSocketDisconnect:
-        broadcaster.disconnect(ws)
+            try:
+                # 30s server-side ping/timeout to reap dead half-open connections (§77 E3)
+                await asyncio.wait_for(ws.receive_text(), timeout=30.0)
+            except asyncio.TimeoutError:
+                # Verify socket liveness with zero-byte frame
+                await ws.send_bytes(b"")
+    except (WebSocketDisconnect, Exception):
+        pass
+    finally:
+        broadcaster.disconnect(ws, client_ip=client_ip)
 
