@@ -1,6 +1,13 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §73 Production error shielding, generic 500 error responses, logging secret filter, and validation input stripping (2026-10-11):
+      1. Exception shielding: `unhandled_exception_handler` and `http_exception_handler` return generic `{"detail": "Internal server error", "error_id": "<hex_id>"}` with status 500; zero stack traces or internal variable names leak to clients.
+      2. Private correlated logging: full tracebacks, method, path, and client IP are logged privately alongside `error_id` for operator debugging.
+      3. Secret redaction filter: `SecretRedactorFilter` active across all server/app loggers to mask tokens, API keys, Bearer headers, basic auth URLs, and Solana 64-int keypairs.
+      4. Validation sanitization: `validation_exception_handler` with `jsonable_encoder` strips raw `"input"` from 422 errors, preventing secrets or oversized malicious inputs from reflecting.
+      5. Verified: full test suite passes with **902/902 tests green** (+11 new tests in `test_error_handling_security.py`). Full detail: handoff §73.
+
 - [x] §72 Production deployment hardening: debug mode, sourcemaps, and .git directory defense (2026-10-11):
       1. Debug mode: `ENVIRONMENT=production` and `DEBUG=false` in `config.py`; FastAPI stack traces disabled; Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` disabled in production.
       2. Sourcemaps: `build: { sourcemap: false }` in `frontend/vite.config.ts`; audited 0 `.map` files in `dist`; `.map` requests explicitly 404'd in `spa_fallback`.

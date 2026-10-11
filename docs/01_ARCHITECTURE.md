@@ -521,3 +521,9 @@ Defense-in-depth principles implemented across all layers of the application:
     - FastAPI debug flag (`DEBUG=false`) disables Python exception tracebacks in error responses; Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` are disabled in production to eliminate schema/endpoint discovery.
     - Client build (`vite.config.ts`) strictly sets `build.sourcemap = false` to guarantee no `.map` files are generated. Application static fallback explicitly rejects any request ending in `.map` with 404 Not Found.
     - Repository `.git` directory and environment files (`.env*`) are excluded from Docker builds via `.dockerignore`, blocked by edge reverse proxies (Caddy `@blocked` / Nginx `location ~ /\. { deny all; return 404; }`), and rejected with 404 by the SPA handler.
+12. **Production Error Handling & Secret Redaction**:
+    - Centralized exception middleware (`backend/api/error_handler.py`) captures unhandled 500 exceptions and 5xx HTTPExceptions, returning a generic `{"detail": "Internal server error", "error_id": "<hex_id>"}` JSON response with zero internal stack traces, file paths, or exception details exposed to clients.
+    - An opaque hexadecimal `error_id` correlates client error reports with server logs. The full traceback, HTTP method, path, and client IP are logged privately server-side.
+    - `SecretRedactorFilter` logging filter actively sanitizes log outputs across all application and server loggers (`uvicorn`, `fastapi`, `httpx`), masking configured secrets (admin tokens, LLM API keys), Authorization Bearer headers, basic auth credentials in URLs (`user:pass@`), and 64-int Solana wallet keypairs (`[<REDACTED-KEYPAIR>]`).
+    - Pydantic RequestValidationErrors (HTTP 422) strip raw user `input` fields so passwords, session tokens, or oversized malicious payloads are never reflected back to clients.
+

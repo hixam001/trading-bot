@@ -61,6 +61,7 @@ on a React dashboard served by the backend itself.
   - File upload and knowledge ingestion secured with strict extension whitelisting (`.md`, `.txt`, `.json`, `.csv`), binary executable magic signature and script shebang inspection, path containment guards, and `0o600` non-executable storage outside the web root.
   - HTTPS everywhere enforcement with HTTP 308 permanent redirects (preserving POST/PUT methods and bodies), HSTS preload (`max-age=63072000; includeSubDomains; preload`), CSP `upgrade-insecure-requests`, and Uvicorn reverse-proxy header support.
   - Production hardening: FastAPI debug mode, stack traces, and Swagger UI/OpenAPI disabled in production (`DEBUG=false`), source map generation disabled (`sourcemap: false`), and edge + application blocking for `.git`, `.env`, and sensitive dotfiles.
+  - Production error shielding & secret redaction: generic 500 error messages with opaque `error_id` correlation tokens, complete suppression of stack traces and internal variables, `SecretRedactorFilter` scrubbing tokens/keys/passwords/keypairs from logs, and Pydantic 422 raw input stripping.
 
 ---
 
@@ -179,7 +180,7 @@ risk budget × calibration, thesis restatement, the live-execution safety
 model, cookie session authentication, access control and RLS, mass assignment
 prevention, server-side rate limiting, bot protection, parameterized SQL queries,
 input validation, XSS prevention, file upload security, HTTPS/TLS enforcement,
-and production deployment hardening (debug mode, sourcemaps, dotfile blocking).
+production deployment hardening, and production error shielding / secret redaction (902 tests in total).
 
 ```bash
 .venv/bin/python -m pytest -q                            # full suite (~34s)

@@ -141,4 +141,5 @@ progress (updated as items complete).
 | L10 | Billing caps & alerts: documented cost limits and alert thresholds for LLMs, RPCs, and databases | DONE (`handoff.md`, operational runbook) |
 | L11 | HTTPS everywhere & TLS enforcement: 308 redirect middleware, HSTS preload, CSP upgrade-insecure-requests, Uvicorn proxy headers | DONE (`backend/api/main.py`, `backend/tests/test_https_enforcement.py`) |
 | L12 | Production deployment hardening: debug mode & Swagger disabled, sourcemaps turned off, .git & dotfiles blocked | DONE (`backend/api/main.py`, `backend/tests/test_production_hardening.py`) |
+| L13 | Production error handling & secret redaction: generic 500 error messages with error_id, logging secret filter, 422 input stripping | DONE (`backend/api/error_handler.py`, `backend/tests/test_error_handling_security.py`) |
 

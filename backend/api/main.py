@@ -72,6 +72,11 @@ app = FastAPI(
     redoc_url="/redoc" if config.DEBUG else None,
     openapi_url="/openapi.json" if config.DEBUG else None,
 )
+from api.error_handler import install_secret_redactor, register_error_handlers
+
+install_secret_redactor()
+register_error_handlers(app)
+
 from api.rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 

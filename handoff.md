@@ -1,3 +1,32 @@
+## §73 — Production error shielding, generic 500 error responses, logging secret filter, and validation input stripping (2026-10-11)
+
+Comprehensive production error handling and secret containment ensuring users receive generic, safe error messages while server logs retain full diagnostic fidelity without leaking secrets:
+
+1. **Production Exception Shielding (`backend/api/error_handler.py`, `backend/api/main.py`)**:
+   - `unhandled_exception_handler`: Intercepts unhandled 500 exceptions (e.g. `ZeroDivisionError`, `KeyError`, unexpected database failures). Generates an opaque 16-hex `error_id`, logs the complete traceback privately to server logs alongside the `error_id`, and returns `{"detail": "Internal server error", "error_id": error_id}` with HTTP status 500. Zero Python stack traces, internal variables, or file paths leak to the client.
+   - `http_exception_handler`: Handles Starlette/FastAPI `HTTPException` instances. For 5xx status codes, converts internal messages to `{"detail": "Internal server error", "error_id": error_id}` while logging the underlying error privately. For 4xx client errors (400, 401, 403, 404, 429), preserves the client error detail while running it through `sanitize_error_detail` to guarantee no accidental secrets are echoed.
+   - Debug mode separation: When `DEBUG=True` (local development), `debug_message` and `exception_type` are appended to the response payload for rapid developer diagnosis; in production (`DEBUG=False`), they are strictly omitted.
+
+2. **Request Validation Error (422) Sanitization (`validation_exception_handler`)**:
+   - Intercepts Pydantic `RequestValidationError` (HTTP 422).
+   - Serializes validation errors using `fastapi.encoders.jsonable_encoder` to prevent non-serializable exception types (such as `ValueError` from custom validators) from crashing JSON responses.
+   - Strips the raw user `"input"` field from all error objects, preventing submitted passwords, session tokens, or oversized malicious payloads from echoing back to clients.
+
+3. **Log Sanitization & Secret Redactor (`SecretRedactorFilter`)**:
+   - `SecretRedactorFilter(logging.Filter)` attached to root, `uvicorn`, `uvicorn.error`, `uvicorn.access`, `fastapi`, `httpx`, and `api` loggers.
+   - Automatically scrubs:
+     - Configured API keys and secrets: `ADMIN_TOKEN`, `DEEPSEEK_API_KEY`, `GROQ_API_KEY`, `SOCIAL_LLM_API_KEY`, `BRAVE_SEARCH_API_KEY`, `FIRECRAWL_API_KEY`, `SCRAPINGBEE_API_KEY`, `SCRAPINGDOG_API_KEY`, `ZENROWS_API_KEY`, `SCRAPEOPS_API_KEY`, `FOMO_PRIVY_REFRESH_TOKEN`, and `SECRET_STORE_KEY`.
+     - `Authorization: Bearer <token>` headers -> `Bearer <REDACTED>`.
+     - Embedded basic auth credentials in URLs (`https://user:pass@host`) -> `https://***:***@host`.
+     - 64-integer Solana wallet keypairs -> `[<REDACTED-KEYPAIR>]`.
+     - Sensitive URL query parameters and headers (`token=`, `api_key=`, `secret=`, `password=`, `keypair=`).
+
+4. **Verification**:
+   - Created dedicated test suite `backend/tests/test_error_handling_security.py` (11 tests covering 500 shielding, KeyError shielding, 500 HTTPException masking, 404 preservation, 422 input stripping, debug mode toggle, and log secret redaction).
+   - Full regression suite passes: **902 passed** (0 failures).
+
+---
+
 ## §72 — Production deployment hardening: debug mode & Swagger disabled, sourcemaps turned off, .git & dotfiles blocked (2026-10-11)
 
 Comprehensive production environment hardening addressing debug exposure, source map leakage, and `.git` repository access:

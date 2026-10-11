@@ -1,6 +1,16 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-11 (§72):** Production Deployment Hardening (Debug Mode, Sourcemaps, Dotfiles):
+**Current — 2026-10-11 (§73):** Production Error Shielding, Generic 500 Responses, and Secret Redaction:
+1. **Production Exception Shielding**: Centralized handler in `backend/api/error_handler.py` catches all unhandled 500 exceptions and 5xx HTTPExceptions, returning a generic `{"detail": "Internal server error", "error_id": "<hex_id>"}`. Zero Python tracebacks, variables, or file paths are exposed to clients.
+2. **Private Error Correlation**: Logs full tracebacks, request methods, paths, and client IPs privately server-side with an opaque 16-hex `error_id` for operator troubleshooting.
+3. **Secret Redactor Filter**: `SecretRedactorFilter(logging.Filter)` installed across root, uvicorn, fastapi, httpx, and api loggers to scrub configured API keys/tokens, Authorization Bearer headers, basic auth URLs (`user:pass@`), and 64-int Solana wallet keypairs before writing to disk.
+4. **Validation Error (422) Sanitization**: `validation_exception_handler` strips raw user `input` fields from Pydantic validation errors, preventing passwords, tokens, or malicious payloads from echoing back to clients. Uses `jsonable_encoder` to prevent non-serializable validator exceptions.
+5. **Debug Mode Toggle**: When `DEBUG=true`, debug message and exception type are included for local developer ergonomics; when `DEBUG=false` (production default), internal details are strictly omitted.
+6. **Test Suite**: Dedicated tests in `backend/tests/test_error_handling_security.py` (11 tests passing). Full test suite: **902 passed** (0 failed).
+
+**PREVIOUS:**
+
+**As of 2026-10-11 (§72):** Production Deployment Hardening (Debug Mode, Sourcemaps, Dotfiles):
 1. **Debug Mode & Stack Traces**: Added `ENVIRONMENT=production` and `DEBUG=false` in `config.py`. FastAPI initialized with `debug=config.DEBUG`, disabling tracebacks in error responses. Interactive Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` are completely disabled in production.
 2. **Sourcemaps Disablement**: Configured `build: { sourcemap: false }` in `frontend/vite.config.ts`. Verified 0 `.map` files exist in `frontend/dist`. Added application-level rejection in `spa_fallback` returning 404 for any `.map` request.
 3. **.git Folder and Dotfiles Protection**: Confirmed `.dockerignore` excludes `.git` and `.env*`. Added `_is_blocked_static_path` in `backend/api/main.py` rejecting dotfiles (`/.git`, `/.env`) with HTTP 404. Added reverse proxy edge blocking in `docs/13_ORACLE_DEPLOY_GUIDE.md` for Caddy and Nginx.
