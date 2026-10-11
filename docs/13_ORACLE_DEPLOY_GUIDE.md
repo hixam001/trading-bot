@@ -146,6 +146,13 @@ endpoints and any future auth should go over TLS. Free + automatic:
 sudo apt-get install -y caddy
 # /etc/caddy/Caddyfile:
 #   bot.example.com {
+#       # Block dotfiles (.git, .env) and sourcemaps (.map) at the edge
+#       @blocked {
+#           path */.*
+#           path *.map
+#       }
+#       respond @blocked 404
+#
 #       header_up X-Admin-Token {env.ADMIN_TOKEN}
 #       reverse_proxy 127.0.0.1:8000
 #   }
@@ -187,6 +194,18 @@ server {
     ssl_certificate_key /etc/letsencrypt/live/bot.example.com/privkey.pem;
     ssl_protocols TLSv1.2 TLSv1.3;
     ssl_ciphers HIGH:!aNULL:!MD5;
+
+    # Deny access to .git, .env, and all hidden files/directories
+    location ~ /\. {
+        deny all;
+        return 404;
+    }
+
+    # Deny access to source maps in production
+    location ~* \.map$ {
+        deny all;
+        return 404;
+    }
 
     location / {
         proxy_pass http://127.0.0.1:8000;

@@ -474,6 +474,12 @@ FRONTEND_ORIGINS: list = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.str
 LIVE_BOOK_PUBLIC: bool = os.getenv("LIVE_BOOK_PUBLIC", "false").strip().lower() == "true"
 # HTTPS enforcement: when True (default), non-loopback and proxied HTTP requests are redirected to HTTPS.
 FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "true").strip().lower() == "true"
+# Environment and Debug settings (PROD-01):
+# In production, DEBUG must remain False. Setting DEBUG=False disables FastAPI
+# tracebacks in error responses, turns off Swagger /docs, ReDoc /redoc, and the
+# /openapi.json schema route to prevent information disclosure.
+ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production").strip().lower()
+DEBUG: bool = os.getenv("DEBUG", "false").strip().lower() == "true"
 
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0

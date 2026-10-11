@@ -1,6 +1,14 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-11 (§71):** Rule 19 HTTPS Enforcement Everywhere and Hosting Verification completed:
+**Current — 2026-10-11 (§72):** Production Deployment Hardening (Debug Mode, Sourcemaps, Dotfiles):
+1. **Debug Mode & Stack Traces**: Added `ENVIRONMENT=production` and `DEBUG=false` in `config.py`. FastAPI initialized with `debug=config.DEBUG`, disabling tracebacks in error responses. Interactive Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` are completely disabled in production.
+2. **Sourcemaps Disablement**: Configured `build: { sourcemap: false }` in `frontend/vite.config.ts`. Verified 0 `.map` files exist in `frontend/dist`. Added application-level rejection in `spa_fallback` returning 404 for any `.map` request.
+3. **.git Folder and Dotfiles Protection**: Confirmed `.dockerignore` excludes `.git` and `.env*`. Added `_is_blocked_static_path` in `backend/api/main.py` rejecting dotfiles (`/.git`, `/.env`) with HTTP 404. Added reverse proxy edge blocking in `docs/13_ORACLE_DEPLOY_GUIDE.md` for Caddy and Nginx.
+4. **Test Suite**: Dedicated tests in `backend/tests/test_production_hardening.py` (9 tests passing). Full test suite: **891 passed** (0 failed).
+
+**PREVIOUS:**
+
+**As of 2026-10-11 (§71):** Rule 19 HTTPS Enforcement Everywhere and Hosting Verification completed:
 1. **Force HTTPS Middleware**: FastAPI middleware forces HTTPS via HTTP 308 Permanent Redirect (preserving POST/PUT/DELETE methods and request bodies). Detects direct HTTP and proxy headers (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, RFC 7239 `Forwarded: proto=http`).
 2. **Port Stripping & Loopback Exemption**: Canonical redirect URL strips internal backend ports (`:80`, `:8000`, `:8080`). Loopback hosts (`localhost`, `127.0.0.1`, `::1`) exempted when no proxy header indicates HTTP, preserving developer ergonomics and test suites.
 3. **Security Headers**: Emits `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and CSP `upgrade-insecure-requests` on TLS responses.

@@ -517,3 +517,7 @@ Defense-in-depth principles implemented across all layers of the application:
     - Local loopback connections (`localhost`, `127.0.0.1`, `::1`) are exempted for development ease-of-use and hermetic test runs.
     - Security headers enforce HTTP Strict Transport Security (`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`) and CSP `upgrade-insecure-requests` to automatically upgrade legacy mixed-content subresources to HTTPS and WSS.
     - Container entrypoint specifies `--proxy-headers --forwarded-allow-ips='*'` to trust upstream reverse-proxy TLS termination.
+11. **Production Deployment Hardening (Debug Mode, Sourcemaps, Dotfiles)**:
+    - FastAPI debug flag (`DEBUG=false`) disables Python exception tracebacks in error responses; Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` are disabled in production to eliminate schema/endpoint discovery.
+    - Client build (`vite.config.ts`) strictly sets `build.sourcemap = false` to guarantee no `.map` files are generated. Application static fallback explicitly rejects any request ending in `.map` with 404 Not Found.
+    - Repository `.git` directory and environment files (`.env*`) are excluded from Docker builds via `.dockerignore`, blocked by edge reverse proxies (Caddy `@blocked` / Nginx `location ~ /\. { deny all; return 404; }`), and rejected with 404 by the SPA handler.

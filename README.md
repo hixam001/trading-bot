@@ -60,6 +60,7 @@ on a React dashboard served by the backend itself.
   - Content Security Policy (CSP) headers and safe React JSX rendering preventing Cross-Site Scripting (XSS).
   - File upload and knowledge ingestion secured with strict extension whitelisting (`.md`, `.txt`, `.json`, `.csv`), binary executable magic signature and script shebang inspection, path containment guards, and `0o600` non-executable storage outside the web root.
   - HTTPS everywhere enforcement with HTTP 308 permanent redirects (preserving POST/PUT methods and bodies), HSTS preload (`max-age=63072000; includeSubDomains; preload`), CSP `upgrade-insecure-requests`, and Uvicorn reverse-proxy header support.
+  - Production hardening: FastAPI debug mode, stack traces, and Swagger UI/OpenAPI disabled in production (`DEBUG=false`), source map generation disabled (`sourcemap: false`), and edge + application blocking for `.git`, `.env`, and sensitive dotfiles.
 
 ---
 
@@ -172,12 +173,13 @@ feeds (no endpoint can change trading state):
 
 ## Tests
 
-882 tests cover the rule engine, exit engine, money math (hand-computed
+891 tests cover the rule engine, exit engine, money math (hand-computed
 expectations), the atomic open/close journal, LLM provider swap, crowd feed,
 risk budget × calibration, thesis restatement, the live-execution safety
 model, cookie session authentication, access control and RLS, mass assignment
 prevention, server-side rate limiting, bot protection, parameterized SQL queries,
-input validation, XSS prevention, file upload security, and HTTPS/TLS enforcement.
+input validation, XSS prevention, file upload security, HTTPS/TLS enforcement,
+and production deployment hardening (debug mode, sourcemaps, dotfile blocking).
 
 ```bash
 .venv/bin/python -m pytest -q                            # full suite (~34s)

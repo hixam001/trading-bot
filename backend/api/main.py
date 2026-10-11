@@ -63,7 +63,15 @@ async def lifespan(app: FastAPI):
     await broadcaster.stop()
 
 
-app = FastAPI(title="trading-bot", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="trading-bot",
+    version="1.0.0",
+    lifespan=lifespan,
+    debug=config.DEBUG,
+    docs_url="/docs" if config.DEBUG else None,
+    redoc_url="/redoc" if config.DEBUG else None,
+    openapi_url="/openapi.json" if config.DEBUG else None,
+)
 from api.rate_limiter import RateLimitMiddleware
 app.add_middleware(RateLimitMiddleware)
 
@@ -282,10 +290,45 @@ async def unknown_api_path(full_path: str = ""):
         content={"detail": f"Unknown API path: /api/{safe_path}"},
     )
 
+_BLOCKED_STATIC_EXTENSIONS = frozenset({
+    ".map", ".git", ".env", ".py", ".db", ".key", ".pem", ".cert",
+    ".bak", ".log", ".yml", ".yaml", ".toml", ".sh", ".ini", ".conf",
+    ".sql", ".sqlite",
+})
+
+_DISABLED_DEBUG_PATHS = frozenset({"docs", "redoc", "openapi.json"})
+
+
+def _is_blocked_static_path(path: str) -> bool:
+    """Check if a path requests dotfiles, sourcemaps, or sensitive system files."""
+    cleaned = path.strip().replace("\\", "/").lower()
+    # When debug is off, suppress interactive documentation routes from falling through to SPA
+    if not getattr(config, "DEBUG", False):
+        if cleaned in _DISABLED_DEBUG_PATHS or cleaned.startswith("docs/") or cleaned.startswith("redoc/"):
+            return True
+
+    # Check for dotfiles/directories (.git, .env, etc.) anywhere in the path
+    segments = [seg for seg in cleaned.split("/") if seg]
+    for seg in segments:
+        if seg.startswith("."):
+            return True
+    # Check for blocked extensions (sourcemaps, secrets, server files)
+    p = Path(cleaned)
+    if p.suffix in _BLOCKED_STATIC_EXTENSIONS:
+        return True
+    return False
+
+
 if FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
     async def spa_fallback(full_path: str):
+        # Explicit 404 for dotfiles (.git, .env) and sourcemaps (.map)
+        if _is_blocked_static_path(full_path):
+            return JSONResponse(
+                status_code=404,
+                content={"detail": "Not found"},
+            )
         # §55: containment via _safe_dist_file — never a raw path join.
         candidate = _safe_dist_file(full_path)
         if candidate is not None:

@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §72 Production deployment hardening: debug mode, sourcemaps, and .git directory defense (2026-10-11):
+      1. Debug mode: `ENVIRONMENT=production` and `DEBUG=false` in `config.py`; FastAPI stack traces disabled; Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` disabled in production.
+      2. Sourcemaps: `build: { sourcemap: false }` in `frontend/vite.config.ts`; audited 0 `.map` files in `dist`; `.map` requests explicitly 404'd in `spa_fallback`.
+      3. .git directory defense: excluded in `.dockerignore`; `_is_blocked_static_path` in FastAPI blocks dotfiles and hidden folders with 404; edge blocking documented for Caddy and Nginx.
+      4. Verified: full test suite passes with **891/891 tests green** (+9 new tests in `test_production_hardening.py`). Full detail: handoff §72.
+
 - [x] §71 Rule 19: HTTPS enforcement everywhere and hosting setup verification (2026-10-11):
       1. Force HTTPS middleware: HTTP 308 Permanent Redirects on non-loopback connections and reverse proxies (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, RFC 7239 `Forwarded: proto=http`).
       2. Security headers: HSTS preload (`max-age=63072000; includeSubDomains; preload`) and CSP `upgrade-insecure-requests`.

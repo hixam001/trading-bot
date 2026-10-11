@@ -1,3 +1,30 @@
+## §72 — Production deployment hardening: debug mode & Swagger disabled, sourcemaps turned off, .git & dotfiles blocked (2026-10-11)
+
+Comprehensive production environment hardening addressing debug exposure, source map leakage, and `.git` repository access:
+
+1. **Debug Mode & Interactive Docs Disablement (`backend/config.py`, `backend/api/main.py`)**:
+   - Introduced `ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production")` and `DEBUG: bool = os.getenv("DEBUG", "false") == "true"` in `backend/config.py`.
+   - FastAPI initialized with `debug=config.DEBUG`. When `DEBUG=false` (production default), FastAPI error handlers omit internal Python stack traces, and Swagger UI (`docs_url=None`), ReDoc (`redoc_url=None`), and the OpenAPI schema (`openapi_url=None`) are completely disabled.
+   - `_is_blocked_static_path` blocks `docs`, `redoc`, and `openapi.json` from falling through to the SPA shell with 200, returning explicit 404 Not Found.
+
+2. **Source Map Elimination (`frontend/vite.config.ts`, `backend/api/main.py`)**:
+   - Configured `build: { sourcemap: false }` explicitly in `frontend/vite.config.ts` to prevent `.map` files from being generated in production builds.
+   - Audited `frontend/dist/` confirming zero `.map` files exist.
+   - Hardened `spa_fallback` in `backend/api/main.py` with `_BLOCKED_STATIC_EXTENSIONS` (`.map`), returning 404 for any sourcemap request rather than falling through to the SPA HTML shell.
+
+3. **.git Folder and Dotfiles Protection (`.dockerignore`, `backend/api/main.py`, `docs/13_ORACLE_DEPLOY_GUIDE.md`)**:
+   - Verified `.dockerignore` explicitly excludes `.git`, `.env`, and `.env.*`, ensuring repository files are never baked into container images.
+   - Added `_is_blocked_static_path` in `backend/api/main.py` that rejects any request containing hidden segments (`/.git`, `/.env`, etc.) with HTTP 404.
+   - Hardened reverse proxy configurations in `docs/13_ORACLE_DEPLOY_GUIDE.md`:
+     - Caddy: Added `@blocked { path */.* path *.map } respond @blocked 404`.
+     - Nginx: Added `location ~ /\. { deny all; return 404; }` and `location ~* \.map$ { deny all; return 404; }`.
+
+4. **Verification**:
+   - Created dedicated test suite `backend/tests/test_production_hardening.py` (9 tests passing).
+   - Full test suite passes: **891 passed** (0 failures).
+
+---
+
 ## §71 — Rule 19: HTTPS enforcement everywhere, 308 redirects, HSTS preload, CSP upgrade-insecure-requests, hosting reverse-proxy configuration, and zero-insecure-assets audit (2026-10-11)
 
 Comprehensive HTTPS-everywhere enforcement, transport security hardening, and hosting verification across the full application surface:
