@@ -25,7 +25,7 @@ from api.auth import (
 )
 from api.main import app
 
-TOKEN = "test-operator-secret-987"
+TOKEN = "test-operator-secret-987-32-chars-long"
 
 
 @pytest_asyncio.fixture

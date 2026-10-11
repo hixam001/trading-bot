@@ -33,7 +33,7 @@ import config
 from api import db
 from api.main import app, _safe_dist_file
 
-TOKEN = "test-admin-token-xyz"
+TOKEN = "test-admin-token-xyz-32-chars-long"
 
 
 @pytest_asyncio.fixture

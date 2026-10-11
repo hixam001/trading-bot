@@ -72,6 +72,7 @@ else
     nohup setsid \
       "$ROOT/.venv/bin/python" -m uvicorn \
       api.main:app --host 127.0.0.1 --port "$API_PORT" \
+      --proxy-headers --forwarded-allow-ips=127.0.0.1 \
       >"$LOGS/backend.log" 2>&1 </dev/null &
     echo $! >"$RUN/backend.pid"
   )

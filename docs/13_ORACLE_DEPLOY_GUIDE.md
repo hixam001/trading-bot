@@ -56,14 +56,13 @@ Oracle VMs have TWO firewalls. Opening only one gets you timeouts.
    Security List → **Add Ingress Rules**:
    - `0.0.0.0/0`, TCP **80** (HTTP — required for Caddy automatic HTTPS redirect and ACME challenges)
    - `0.0.0.0/0`, TCP **443** (HTTPS — encrypted dashboard & API)
-   - `0.0.0.0/0`, TCP **8000** (direct engine testing; close after Step 7 Caddy setup)
    - (22 should already exist for SSH)
+   *(Note: Do NOT open port 8000 to 0.0.0.0/0. Port 8000 binds to loopback only and is reverse-proxied by Caddy/Nginx over TLS).*
 2. **VM side (Ubuntu images ship blocking iptables rules):**
 
 ```bash
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8000 -j ACCEPT
 sudo netfilter-persistent save
 ```
 
@@ -153,27 +152,22 @@ sudo apt-get install -y caddy
 #       }
 #       respond @blocked 404
 #
-#       header_up X-Admin-Token {env.ADMIN_TOKEN}
 #       reverse_proxy 127.0.0.1:8000
 #   }
-#   # ensure ADMIN_TOKEN is exported in the service environment, e.g.
-#   # EnvironmentFile=/etc/default/caddy
+#
+# WARNING: Never configure the proxy to add X-Admin-Token. Operators sign in via POST /api/auth/login (HttpOnly cookie).
 #
 sudo systemctl reload caddy
 ```
 
-Point a DNS A record at the VM first. Set `ADMIN_TOKEN` in the Caddy service
-environment (or `/etc/default/caddy` via `EnvironmentFile`) and set
-`FRONTEND_ORIGIN=https://bot.example.com` in `.env`, then `docker compose up -d`
-again.
+Point a DNS A record at the VM first. Set `FRONTEND_ORIGIN=https://bot.example.com` in `.env`, then `docker compose up -d` again.
 
-**Lock down network ports:**
-1. Once Caddy fronts it, remove the public 8000 ingress rule from the Oracle
-   Security List and iptables. Keep ONLY ports 80 and 443 open.
+**Network port lock-down (default):**
+1. By default, keep ONLY ports 80 and 443 open in the Oracle Security List and iptables.
    - **Port 80 (HTTP)**: Caddy automatically receives HTTP requests on port 80
      and issues a 308 permanent redirect to HTTPS on port 443.
    - **Port 443 (HTTPS)**: Encrypted traffic with TLS 1.3 / 1.2 and automated Let's Encrypt certificates.
-2. In `docker-compose.yml`, change the port mapping to bind only to loopback:
+2. In `docker-compose.yml`, the port mapping binds only to loopback by default:
    `- "127.0.0.1:${API_PORT:-8000}:8000"`
    This prevents external clients from bypassing TLS by connecting directly to port 8000.
 
@@ -220,18 +214,19 @@ server {
 ```
 
 Do not add a `VITE_ADMIN_TOKEN` value; the dashboard is public JS and must not
-contain the operator secret. The proxy injects the admin token server-side.
+contain the operator secret. Operators sign in via the dashboard login form
+(`POST /api/auth/login`), which issues a secure HttpOnly session cookie.
 
 **§55 — what Caddy changes about authorization.** Once traffic arrives
 through the reverse proxy, every visitor's socket address is loopback
 (`127.0.0.1`), so "loopback-only" no longer means "just me". The engine
 handles this automatically: any request carrying a forwarding header
 (`X-Forwarded-*` / `Forwarded`) is treated as PROXIED, and the real-wallet
-surfaces — `/api/live/*`, `/api/holdings`, `/api/stats` — then require the
-`X-Admin-Token` header (fail-closed if `ADMIN_TOKEN` is unset; the panels
-render empty until the token is sent). The public research surface
-(feed/proof/disclosure) is unaffected. To deliberately serve the live book
-publicly instead, set `LIVE_BOOK_PUBLIC=true` in `.env`.
+surfaces — `/api/live/*`, `/api/holdings`, `/api/stats` — then require logging in
+via the dashboard (HttpOnly cookie) or sending the `X-Admin-Token` header (fail-closed
+if `ADMIN_TOKEN` is unset or shorter than 32 characters; the panels render empty until authenticated).
+The public research surface (feed/proof/disclosure) is unaffected. To deliberately
+serve the live book publicly instead, set `LIVE_BOOK_PUBLIC=true` in `.env`.
 
 ## Step 8 — Where the FRONTEND lives
 

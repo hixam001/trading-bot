@@ -18,7 +18,7 @@ from api import db
 from api.main import app
 from api.rate_limiter import limiter
 
-TOKEN = "test-token-rate-limit"
+TOKEN = "test-token-rate-limit-32-chars-long"
 
 
 @pytest_asyncio.fixture

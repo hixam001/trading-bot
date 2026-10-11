@@ -16,7 +16,7 @@ import config
 from api import db
 from api.main import app
 
-TOKEN = "test-token-operator-secret"
+TOKEN = "test-token-operator-secret-32-chars-long"
 
 
 @pytest_asyncio.fixture

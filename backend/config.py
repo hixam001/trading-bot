@@ -139,7 +139,15 @@ INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 # an empty/unset token DISABLES those endpoints entirely (403) — a destructive
 # endpoint must never be open without a credential, even on loopback.
 # ---------------------------------------------------------------------------
-ADMIN_TOKEN: str = os.getenv("ADMIN_TOKEN", "")
+_raw_admin_token = os.getenv("ADMIN_TOKEN", "")
+if _raw_admin_token and len(_raw_admin_token) < 32:
+    import logging
+    logging.getLogger("config").critical(
+        "ADMIN_TOKEN is shorter than 32 characters — operator auth DISABLED. Run 'openssl rand -hex 32' to generate a secure token."
+    )
+    ADMIN_TOKEN: str = ""
+else:
+    ADMIN_TOKEN: str = _raw_admin_token
 
 # Secure session cookie configuration (Rule 9: http-only cookie session auth).
 SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "admin_session")

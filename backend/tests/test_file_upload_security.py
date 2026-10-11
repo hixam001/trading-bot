@@ -26,7 +26,7 @@ from api import db
 from api.main import app
 from knowledge_base import loader
 
-TOKEN = "test-operator-token-rule16"
+TOKEN = "test-operator-token-rule16-32-chars-long"
 
 
 @pytest_asyncio.fixture

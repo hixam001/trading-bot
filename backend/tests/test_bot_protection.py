@@ -19,7 +19,7 @@ from api import db
 from api.bot_protection import create_bot_challenge
 from api.main import app
 
-TOKEN = "test-token-bot-protection"
+TOKEN = "test-token-bot-protection-32-chars-long"
 
 
 @pytest_asyncio.fixture

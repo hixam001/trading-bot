@@ -30,9 +30,9 @@ services:
     depends_on:
       - searxng
     ports:
-      # For production behind Caddy/Nginx reverse proxy, bind to loopback:
-      #   - "127.0.0.1:${API_PORT:-8000}:8000"
-      - "${API_PORT:-8000}:8000"
+      # Default: bind only to loopback so direct connections are restricted to local reverse proxy (Caddy/Nginx) or SSH tunnels.
+      # To deliberately expose publicly on all interfaces (not recommended), set: "${API_PORT:-8000}:8000"
+      - "127.0.0.1:${API_PORT:-8000}:8000"
     env_file:
       - .env
     volumes:

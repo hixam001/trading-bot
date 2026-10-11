@@ -24,6 +24,7 @@ from api.auth import (
     verify_session_token,
 )
 from api.bot_protection import create_bot_challenge, verify_bot_protection
+from api.rate_limiter import get_client_ip
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
@@ -110,25 +111,40 @@ async def login(req: LoginRequest, request: Request, response: Response):
     Brute-force defended: throttles repeated failed attempts per IP (429).
     Constant-time comparison protects against timing attacks.
     """
-    client_ip = getattr(getattr(request, "client", None), "host", "unknown")
+    client_ip = get_client_ip(request)
 
     # 1. Server-side Bot Protection check (executes BEFORE checking credentials)
     await verify_bot_protection(
         token=req.captcha_token,
         client_ip=client_ip,
         honeypot=req.honeypot,
+        request=request,
     )
 
     now = time.time()
     attempts = _prune_failures(client_ip, now)
 
     configured = config.ADMIN_TOKEN
-    if not configured:
+    if not configured or len(configured) < 32:
         raise HTTPException(
             status_code=403,
             detail="operator login is disabled (ADMIN_TOKEN not set)",
         )
 
+    # Credential check first (mirroring §70 A7):
+    # A valid credential always authenticates and clears lockout history.
+    valid = bool(req.token) and hmac.compare_digest(req.token, configured)
+    if valid:
+        # Clear lockout history on successful login
+        _FAILED_ATTEMPTS.pop(client_ip, None)
+        session_token = create_session_token()
+        set_session_cookie(response, session_token, request=request)
+        return {
+            "status": "authenticated",
+            "expires_in": config.SESSION_MAX_AGE_SECONDS,
+        }
+
+    # Wrong credential: check if host is already over the lockout threshold
     if len(attempts) >= _MAX_FAILED_ATTEMPTS:
         try:
             from api.security_monitor import SecurityEventType, record_security_event
@@ -147,43 +163,32 @@ async def login(req: LoginRequest, request: Request, response: Response):
             detail="too many failed authentication attempts — rate limited",
         )
 
-    valid = bool(req.token) and hmac.compare_digest(req.token, configured)
-    if not valid:
-        _FAILED_ATTEMPTS[client_ip].append(now)
-        try:
-            from api.security_monitor import SecurityEventType, record_security_event
-            record_security_event(
-                SecurityEventType.AUTH_FAILURE,
-                client_ip=client_ip,
-                path="/api/auth/login",
-                method="POST",
-                detail="Operator login failed: invalid credentials",
-                severity="WARNING",
-            )
-        except Exception:
-            pass
-        raise HTTPException(status_code=403, detail="invalid credentials")
-
-    # Clear lockout history on successful login
-    _FAILED_ATTEMPTS.pop(client_ip, None)
-
-    session_token = create_session_token()
-    set_session_cookie(response, session_token, request=request)
-    return {
-        "status": "authenticated",
-        "expires_in": config.SESSION_MAX_AGE_SECONDS,
-    }
+    _FAILED_ATTEMPTS[client_ip].append(now)
+    try:
+        from api.security_monitor import SecurityEventType, record_security_event
+        record_security_event(
+            SecurityEventType.AUTH_FAILURE,
+            client_ip=client_ip,
+            path="/api/auth/login",
+            method="POST",
+            detail="Operator login failed: invalid credentials",
+            severity="WARNING",
+        )
+    except Exception:
+        pass
+    raise HTTPException(status_code=403, detail="invalid credentials")
 
 
 @router.post("/signup")
 async def signup(req: SignupRequest, request: Request):
     """Registration endpoint protected with server-side bot challenge and honeypot."""
-    client_ip = getattr(getattr(request, "client", None), "host", "unknown")
+    client_ip = get_client_ip(request)
     # 1. Server-side Bot Protection check executes BEFORE anything else
     await verify_bot_protection(
         token=req.captcha_token,
         client_ip=client_ip,
         honeypot=req.honeypot,
+        request=request,
     )
     # Single-operator bot architecture: public signups are disabled by default
     raise HTTPException(
@@ -203,7 +208,7 @@ async def logout(response: Response, request: Request):
 async def get_session(request: Request):
     """Check current session validity and report remaining session lifetime."""
     configured = config.ADMIN_TOKEN
-    if not configured:
+    if not configured or len(configured) < 32:
         return {"authenticated": False, "reason": "auth_disabled"}
 
     # 1. Check header

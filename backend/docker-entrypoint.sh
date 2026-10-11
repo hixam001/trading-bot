@@ -53,8 +53,8 @@ trap cleanup TERM INT
 
 # Port resolution: honours $PORT (platforms) and $API_PORT (.env default 8000)
 PORT="$(echo "${PORT:-${API_PORT:-8000}}" | tr -d "[:space:]'\"")"
-PORT="${PORT:-8000}"
-uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips='*' &
+FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}"
+uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" &
 API_PID=$!
 
 # Supervise BOTH processes. `wait -n` returns as soon as either exits, so a

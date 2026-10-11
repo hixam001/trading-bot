@@ -20,9 +20,10 @@ import time
 from typing import Any
 
 import httpx
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
 
 import config
+from api.rate_limiter import get_client_ip
 
 log = logging.getLogger(__name__)
 
@@ -82,12 +83,16 @@ async def verify_bot_protection(
     token: str | None,
     client_ip: str | None = None,
     honeypot: str | None = None,
+    request: Request | None = None,
 ) -> None:
     """Server-side verification of bot challenges and CAPTCHA tokens.
 
     Raises:
         HTTPException(400): If bot behavior is detected or CAPTCHA token is invalid.
     """
+    if request is not None and not client_ip:
+        client_ip = get_client_ip(request)
+
     # 1. Honeypot check: Hidden field in HTML that humans don't see.
     # If bots populate it, immediately block with 400.
     if honeypot and honeypot.strip():
@@ -111,10 +116,6 @@ async def verify_bot_protection(
 
     # If CAPTCHA enforcement is turned off in config, pass.
     if not getattr(config, "CAPTCHA_ENABLED", False):
-        return
-
-    # Test bypass token for hermetic unit testing
-    if token == "test-captcha-pass":
         return
 
     if not token or not token.strip():

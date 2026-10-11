@@ -71,8 +71,9 @@ def test_sec01_blind_signing_accepts_jupiter_v6():
 def test_sec02_live_book_requires_auth_when_not_public(monkeypatch):
     from api.routes.live_book import _check_access
 
+    token = "secret-token-32-chars-long-for-tests-ok"
     monkeypatch.setattr(config, "LIVE_BOOK_PUBLIC", False)
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "secret-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", token)
 
     # 1. External client without token -> 403
     req_external = MagicMock()
@@ -85,7 +86,7 @@ def test_sec02_live_book_requires_auth_when_not_public(monkeypatch):
     # 2. External client with valid X-Admin-Token -> pass
     req_with_token = MagicMock()
     req_with_token.client.host = "203.0.113.195"
-    req_with_token.headers = {"X-Admin-Token": "secret-token"}
+    req_with_token.headers = {"X-Admin-Token": token}
     _check_access(req_with_token)  # should not raise
 
     # 3. Loopback client -> pass

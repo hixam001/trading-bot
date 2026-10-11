@@ -46,14 +46,18 @@ async def client(fresh_db):
 
 # ------------------------------------------------------------------ F3: admin
 
+SEKRIT_TOKEN = "sekrit-token-32-chars-long-for-tests-ok"
+VALID_TOKEN = "valid-token-32-chars-long-for-tests-ok"
+
+
 async def test_admin_reset_refused_without_token(client, monkeypatch):
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", SEKRIT_TOKEN)
     r = await client.post("/api/admin/reset", params={"confirm": "yes"})
     assert r.status_code == 403
 
 
 async def test_admin_reset_refused_with_wrong_token(client, monkeypatch):
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", SEKRIT_TOKEN)
     r = await client.post("/api/admin/reset", params={"confirm": "yes"},
                           headers={"X-Admin-Token": "wrong"})
     assert r.status_code == 403
@@ -69,27 +73,27 @@ async def test_admin_reset_disabled_when_token_unset(client, monkeypatch):
 
 
 async def test_admin_reset_prune_works_with_token(client, monkeypatch):
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", SEKRIT_TOKEN)
     r = await client.post(
         "/api/admin/reset",
         params={"confirm": "yes", "mode": "prune_only"},
-        headers={"X-Admin-Token": "sekrit-token"},
+        headers={"X-Admin-Token": SEKRIT_TOKEN},
     )
     assert r.status_code == 200
     assert r.json()["prune_only"] is True
 
 
 async def test_admin_reset_token_ok_but_missing_confirm(client, monkeypatch):
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", SEKRIT_TOKEN)
     r = await client.post("/api/admin/reset",
-                          headers={"X-Admin-Token": "sekrit-token"})
+                          headers={"X-Admin-Token": SEKRIT_TOKEN})
     assert r.status_code == 400          # token passed, confirm still required
 
 
 # ------------------------------------------------------------- F3: kb ingest
 
 async def test_kb_ingest_refused_without_token(client, monkeypatch):
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "sekrit-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", SEKRIT_TOKEN)
     r = await client.post("/api/knowledge-base/ingest",
                           json={"documents": [{"filename": "a.md", "content": "x"}]})
     assert r.status_code == 403
@@ -166,7 +170,7 @@ def test_cors_includes_backend_same_origin():
 
 async def test_auth_rate_limiting_lockout(client, monkeypatch):
     from api import auth
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "valid-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", VALID_TOKEN)
     auth._FAILED_ATTEMPTS.clear()
 
     # 4 bad attempts should get 403
@@ -195,7 +199,7 @@ async def test_lockout_never_blocks_a_valid_token(client, monkeypatch):
     still throttled exactly as before; a valid credential always wins.
     """
     from api import auth
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "valid-token")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", VALID_TOKEN)
     auth._FAILED_ATTEMPTS.clear()
 
     for _ in range(5):
@@ -209,7 +213,7 @@ async def test_lockout_never_blocks_a_valid_token(client, monkeypatch):
     # ...but the correct token authenticates despite the lockout (it passes
     # the token gate; the endpoint then demands ?confirm — hence 400, not
     # 403/429).
-    r_ok = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": "valid-token"})
+    r_ok = await client.post("/api/admin/reset?confirm=yes", headers={"X-Admin-Token": VALID_TOKEN})
     assert r_ok.status_code == 200
 
     # And a successful auth clears the recorded failures again.

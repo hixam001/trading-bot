@@ -25,6 +25,7 @@ from collections import defaultdict
 from fastapi import HTTPException, Request, Response
 
 import config
+from api.rate_limiter import get_client_ip
 
 ADMIN_TOKEN_HEADER = "X-Admin-Token"
 
@@ -52,8 +53,8 @@ def create_session_token(secret: str | None = None) -> str:
     Tamper-evident, stateless, and verifiable server-side without database queries.
     """
     configured = secret if secret is not None else config.ADMIN_TOKEN
-    if not configured:
-        raise ValueError("Cannot create session token: ADMIN_TOKEN is not configured")
+    if not configured or len(configured) < 32:
+        raise ValueError("Cannot create session token: ADMIN_TOKEN is not configured or shorter than 32 characters")
     now = int(time.time())
     nonce = secrets.token_hex(16)
     payload = f"{now}.{nonce}"
@@ -72,7 +73,7 @@ def verify_session_token(
 ) -> bool:
     """Verify session token HMAC signature and age. Fail-closed on any error."""
     configured = secret if secret is not None else config.ADMIN_TOKEN
-    if not configured or not token:
+    if not configured or len(configured) < 32 or not token:
         return False
     parts = token.split(".")
     if len(parts) != 3:
@@ -112,7 +113,7 @@ def _is_request_https(request: Request | None) -> bool:
     if is_https:
         return True
 
-    client_host = getattr(getattr(request, "client", None), "host", "") or ""
+    client_host = get_client_ip(request) if request else ""
     request_host = getattr(request.url, "hostname", "") or ""
     loopback_hosts = {"127.0.0.1", "::1", "localhost", "testclient", "test", "testserver", "app"}
     is_loopback = (
@@ -200,7 +201,7 @@ def require_admin_token(request: Request) -> None:
     wrong attempts only — a valid credential always authenticates, while
     guessers are still throttled exactly as before.
     """
-    client_ip = getattr(getattr(request, "client", None), "host", "unknown")
+    client_ip = get_client_ip(request)
     now = time.time()
 
     # Prune expired attempts outside the sliding window (A6: map stays bounded)
@@ -210,7 +211,7 @@ def require_admin_token(request: Request) -> None:
 
     # 1. Header authentication (API, CLI, scripts)
     supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
-    token_ok = bool(configured) and bool(supplied) and hmac.compare_digest(
+    token_ok = bool(configured and len(configured) >= 32) and bool(supplied) and hmac.compare_digest(
         supplied, configured)
     if token_ok:
         # Clear recorded failures on successful authentication
@@ -224,8 +225,8 @@ def require_admin_token(request: Request) -> None:
         _FAILED_ATTEMPTS.pop(client_ip, None)
         return
 
-    if not configured:
-        # Fail closed: no token configured -> endpoint disabled.
+    if not configured or len(configured) < 32:
+        # Fail closed: no token configured or too short -> endpoint disabled.
         raise HTTPException(
             status_code=403,
             detail="operator endpoints are disabled (ADMIN_TOKEN not set)",
@@ -292,7 +293,7 @@ def require_local_or_admin(request: Request) -> None:
       loopback shortcut does NOT apply and require_admin_token governs
       (fail-closed when unset, constant-time compare, brute-force lockout).
     """
-    client_ip = getattr(getattr(request, "client", None), "host", "unknown")
+    client_ip = get_client_ip(request)
     proxied = any(
         request.headers.get(h) is not None for h in _FORWARDING_HEADERS)
     if not proxied and client_ip in (
