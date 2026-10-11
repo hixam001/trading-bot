@@ -8,6 +8,9 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$ROOT/.run"
 
+API_PORT="$(grep -E '^API_PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
+API_PORT="${API_PORT:-${PORT:-8000}}"
+
 stop_pidfile() {
   local file="$1" name="$2"
   if [ -f "$file" ]; then
@@ -16,11 +19,17 @@ stop_pidfile() {
     if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       echo "[stop] stopping $name (pid $pid)..."
       kill "$pid" 2>/dev/null
+      local stopped=0
       for _ in $(seq 1 10); do
-        kill -0 "$pid" 2>/dev/null || break
+        if ! kill -0 "$pid" 2>/dev/null; then
+          stopped=1
+          break
+        fi
         sleep 0.5
       done
-      kill -9 "$pid" 2>/dev/null || true
+      if [ "$stopped" -ne 1 ]; then
+        kill -9 "$pid" 2>/dev/null || true
+      fi
     else
       echo "[stop] $name not running"
     fi
@@ -28,7 +37,7 @@ stop_pidfile() {
   fi
 }
 
-stop_pidfile "$RUN/backend.pid" "backend + tick loop"
+stop_pidfile "$RUN/backend.pid" "backend API"
 stop_pidfile "$RUN/live_cycle.pid" "live decision cycle"
 
 # Sweep any stray backend of ours (e.g. after an unclean reboot).
@@ -43,4 +52,4 @@ if pgrep -f "run_live_cycle.py" >/dev/null 2>&1; then
   pkill -f "run_live_cycle.py"
 fi
 
-echo "[stop] done — dashboard at http://localhost:8000 is now offline."
+echo "[stop] done — dashboard at http://localhost:${API_PORT} is now offline."

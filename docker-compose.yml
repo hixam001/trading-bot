@@ -1,10 +1,10 @@
 # ============================================================================
 # trading-bot — local parity / VM deployment (same image as prod).
 #   docker compose up -d --build
-# The engine state (kill switch, breakers, idempotency ledger, commit log)
-# and the SQLite book live on NAMED VOLUMES: a container restart must NEVER
-# reset real-money safety state. For managed Postgres instead of SQLite set
-# USE_SUPABASE_DB=1 + SUPABASE_DB_URL in .env and drop the engine_data mount.
+# The engine state (kill switch, breakers, idempotency ledger, commit log),
+# the SQLite book, and rotating logs live on NAMED VOLUMES: a container restart
+# must NEVER reset real-money safety state or wipe audit logs. For managed
+# Postgres instead of SQLite set USE_SUPABASE_DB=1 + SUPABASE_DB_URL in .env.
 # ============================================================================
 services:
   # §51 — FREE web-search transport hop 2 (keyless, unlimited). Self-hosted
@@ -27,6 +27,8 @@ services:
     image: trading-bot:latest
     container_name: trading-bot-engine
     restart: unless-stopped
+    depends_on:
+      - searxng
     ports:
       # For production behind Caddy/Nginx reverse proxy, bind to loopback:
       #   - "127.0.0.1:${API_PORT:-8000}:8000"
@@ -38,8 +40,11 @@ services:
       - engine_state:/app/backend/live_execution/state
       # SQLite book (only used when USE_SUPABASE_DB is not 1).
       - engine_data:/app/data
+      # Rotating application, error, and security audit logs (§74).
+      - engine_logs:/app/logs
     environment:
       - DB_PATH=/app/data/trading_bot.db
+      - LOG_DIR=/app/logs
       # Alternative secret channel (preferred on a VM): bind-mount a chmod-600
       # keypair file read-only and point WALLET_KEYPAIR_PATH at it:
       #   - ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro
@@ -49,3 +54,4 @@ services:
 volumes:
   engine_state:
   engine_data:
+  engine_logs:

@@ -102,7 +102,7 @@ progress (updated as items complete).
 
 | # | Requirement | Status |
 |---|---|---|
-| I1–I9 | All panels: live feed (WS, expandable rule breakdown), holdings (live price + color P&L), journal (thesis+reflection+outcome, filter/sort), stats dashboard (equity curve), regime panel, promotion gate (display only), knowledge base, system status, persistent "PAPER TRADING — NO REAL FUNDS" banner | BUILT (tsc + vite build pass; not yet exercised in a browser) |
+| I1–I9 | All panels: live feed (WS, expandable rule breakdown), holdings (live price + color P&L), journal (thesis+reflection+outcome, filter/sort), stats dashboard (equity curve), regime panel, promotion gate (display only), knowledge base, system status, persistent status banner ("DISARMED — NO LIVE TRADING" / "● LIVE · real money") | DONE (vite build clean, Playwright E2E suites passing) |
 | I10 | Graceful degraded state if the API is unreachable | DONE (explicit offline banner + auto-retry) |
 
 ## J. Testing
@@ -143,4 +143,19 @@ progress (updated as items complete).
 | L12 | Production deployment hardening: debug mode & Swagger disabled, sourcemaps turned off, .git & dotfiles blocked | DONE (`backend/api/main.py`, `backend/tests/test_production_hardening.py`) |
 | L13 | Production error handling & secret redaction: generic 500 error messages with error_id, logging secret filter, 422 input stripping | DONE (`backend/api/error_handler.py`, `backend/tests/test_error_handling_security.py`) |
 | L14 | Centralized logging & security monitoring: rotating file logs (app.log, error.log, security.log), secret scrubbing, security event ring buffer | DONE (`backend/api/logging_config.py`, `backend/api/security_monitor.py`, `test_logging_and_monitoring.py`) |
+
+## M. Code quality, performance & container infrastructure (§75–§76)
+
+| # | Requirement | Status |
+|---|---|---|
+| M1 | Dead code & unused module elimination: removed retired paper-era modules (`backend/llm/reuse.py`, `backend/tests/test_narration_reuse.py`), experimental spike (`scripts/scrapling_spike.py`), and cleaned 55 unused imports | DONE |
+| M2 | WebSocket feed optimization: incremental delta query (`get_feed_events_since`) eliminating full 100-row deserialization loops | DONE (`backend/api/websocket.py`, `backend/api/db.py`, `backend/api/db_pg.py`) |
+| M3 | Refusal funnel projection: lightweight verdict query (`get_feed_verdicts`) skipping heavy JSON text columns | DONE (`backend/api/routes/funnel.py`) |
+| M4 | Jupiter pricing cache: short-TTL (2.0s) price caching in `JupiterProvider.get_current_price` reducing redundant RPC calls | DONE (`backend/data_providers/jupiter.py`, `backend/tests/test_jupiter_decimals.py`) |
+| M5 | Single-book UI primitive unification: standardized `App.tsx` and `LiveBook.tsx` on shared `Panel` and `Empty` primitives | DONE (`frontend/src/App.tsx`, `frontend/src/components/LiveBook.tsx`) |
+| M6 | Sizing logic consolidation: unified inline portfolio sizing math in `stats.py` to `sizing.compute_entry_cost` | DONE (`backend/api/routes/stats.py`) |
+| M7 | Operational launcher parity: `start.sh` & `stop.sh` dynamic `API_PORT` resolution (default 8000), `0o750` logs directory enforcement, paper-era flag removal | DONE (`start.sh`, `stop.sh`) |
+| M8 | Container entrypoint & Docker parity: audit A8 safety regex for `LIVE_TRADING_ENABLED`, unprivileged `0o750` `/app/logs` volume, diagnostic CLI tools in image, updated `.dockerignore` | DONE (`backend/docker-entrypoint.sh`, `Dockerfile`, `docker-compose.yml`, `test_docker_entrypoint.py`) |
+
+
 

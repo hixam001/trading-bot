@@ -454,11 +454,12 @@ React dashboard, dark theme, dense/terminal-style layout:
   quiet for an hour" is answerable from the dashboard itself.
 - **Promotion gate panel** — a status display, never a control.
 - **Knowledge base panel** — static + ingested content, dynamic stats.
-- **System status** — Ollama connectivity, active model, provider call
-  budgets — so a disconnected LLM or an exhausted free tier is visible
-  immediately, not a silent failure discovered later.
-- A persistent, unmissable "PAPER TRADING — NO REAL FUNDS" indicator,
-  present on every view.
+- **System status** — LLM connectivity (DeepSeek / Groq), active model,
+  provider call budgets — so a disconnected LLM or an exhausted free tier
+  is visible immediately, not a silent failure discovered later.
+- A persistent, unmissable indicator present on every view: dynamically
+  showing "DISARMED — NO LIVE TRADING" (unarmed) or "● LIVE · real money"
+  (when operator-armed).
 
 ## 9. Testing and verification strategy
 
@@ -531,5 +532,15 @@ Defense-in-depth principles implemented across all layers of the application:
     - All log handlers are equipped with `SecretRedactorFilter` to ensure passwords, tokens, API keys, basic auth URLs, and wallet keypairs are never persisted to disk or emitted to stdout.
     - Real-time `SecurityMonitor` tracks suspicious activity across multiple attack vectors: authentication failures (`AUTH_FAILURE`), brute-force threshold breaches (`AUTH_LOCKOUT`), rate limit violations (`RATE_LIMIT_EXCEEDED`), bot honeypot/challenge trips (`BOT_DETECTED`), blocked file/dotfile probes (`BLOCKED_PATH_PROBE`), and internal 500 exceptions (`INTERNAL_ERROR`).
     - Operator-facing monitoring endpoints (`/api/admin/monitoring/security-events` and `/api/admin/monitoring/logs`) provide instant visibility into security events, attacker IPs, and log file metrics.
+14. **Code Quality, Performance Optimization & Container Parity (§75–§76)**:
+    - **Dead Code Elimination & Modularity**: Removed retired paper-era modules (`backend/llm/reuse.py`, `backend/tests/test_narration_reuse.py`) and experimental spikes (`scripts/scrapling_spike.py`). Cleaned 55 unused imports across 16 core files. Diagnostic scripts relocated under `scripts/`.
+    - **WebSocket Feed Delta Query**: Implemented `get_feed_events_since(conn, since_id, limit)` in both SQLite and PostgreSQL. The feed broadcaster queries only new arrivals since the highest seen event ID, eliminating full 100-row table queries and the repeated deserialization of 300 JSON fields every 2 seconds.
+    - **Refusal Funnel Projection**: Added lightweight `get_feed_verdicts(conn, limit)` projection in both DB backends, selecting only `(id, failed_rules, llm_verdict)` and bypassing heavy narrative JSON columns.
+    - **In-Memory Pricing Cache**: Integrated short-TTL (2.0s) price caching into `JupiterProvider.get_current_price()` to coalesce redundant RPC quotes across concurrent reads (`/api/live/portfolio`, `/api/stats`) and background exit loops.
+    - **Operational Launchers & Container Parity**:
+      - `start.sh` and `stop.sh`: Dynamic `API_PORT` resolution (honoring `.env` with fallback to `PORT` and default `8000`), `0o750` permissions enforcement on `logs/`, and removal of obsolete paper-era `TICK_LOOP_IN_PROCESS=0` residue.
+      - `backend/docker-entrypoint.sh`: Hardened Audit A8 regex (`grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b'`) guaranteeing commented flags cannot arm live execution; dynamic `PORT` / `API_PORT` binding.
+      - `Dockerfile` & `docker-compose.yml`: Pre-created unprivileged `0o750` `/app/logs` volume, persistent `engine_logs` compose volume mapped to `/app/logs`, and diagnostic tools copied to container image.
+
 
 

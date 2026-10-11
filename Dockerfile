@@ -18,7 +18,7 @@ COPY frontend/ ./
 RUN npm run build
 
 FROM python:3.14-slim
-ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
 COPY backend/requirements.txt /app/backend/requirements.txt
@@ -28,25 +28,31 @@ RUN pip install --no-cache-dir -r /app/backend/requirements.txt
 # + its system deps install as ROOT, before USER bot, or Chromium cannot
 # write its profile. ~+1.5 GB image. On linux/arm64: if patchright's patched
 # build is missing, fall back to `playwright install chromium` (official
-# arm64 build) — verify with scripts/scrapling_spike.py on the target host.
+# arm64 build).
 RUN python -m patchright install --with-deps chromium \
     || python -m patchright install chromium
 
 COPY backend/ /app/backend/
+COPY scripts/ /app/scripts/
 COPY --from=frontend-build /build/dist/ /app/frontend/dist/
 COPY backend/docker-entrypoint.sh /app/docker-entrypoint.sh
 
-# Non-root runtime; the operator mounts state/secrets readable by uid 10001.
+# Non-root runtime; pre-create runtime directories with secure permissions (§70, §74).
+# The operator mounts state/secrets readable by uid 10001.
 RUN useradd --uid 10001 --create-home bot \
+    && mkdir -p /app/logs /app/data /app/backend/live_execution/state /app/backend/knowledge_base/ingested \
     && chmod +x /app/docker-entrypoint.sh \
+    && chmod 750 /app/logs \
+    && (chmod -R 755 /ms-playwright 2>/dev/null || true) \
     && chown -R bot:bot /app
 USER bot
 
 EXPOSE 8000
-# Health check honours $PORT (platforms often inject their own).
+# Health check honours $PORT and $API_PORT (platforms often inject their own).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,sys,urllib.request; \
-url='http://127.0.0.1:%s/api/system-status' % os.getenv('PORT','8000'); \
+port = os.getenv('PORT') or os.getenv('API_PORT') or '8000'; \
+url = f'http://127.0.0.1:{port}/api/system-status'; \
 sys.exit(0 if urllib.request.urlopen(url, timeout=4).status == 200 else 1)"
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

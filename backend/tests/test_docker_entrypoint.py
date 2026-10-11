@@ -109,6 +109,50 @@ def test_api_port_follows_the_port_env(tmp_path, monkeypatch):
     assert "--port 9123" in calls
 
 
+def test_api_port_follows_api_port_env_when_port_unset(tmp_path, monkeypatch):
+    monkeypatch.delenv("PORT", raising=False)
+    monkeypatch.setenv("API_PORT", "9456")
+    _, _, calls = _run(tmp_path, armed=False)
+    assert "--port 9456" in calls
+
+
+def test_api_port_strips_quotes_from_env(tmp_path, monkeypatch):
+    monkeypatch.setenv("PORT", '"9876"')
+    _, _, calls = _run(tmp_path, armed=False)
+    assert "--port 9876" in calls
+
+
+def test_disarmed_with_true_in_comment_does_not_start_live_cycle(tmp_path):
+    """Audit A8: '# was True' comment must not trick the parser into arming."""
+    app = tmp_path / "app"
+    (app / "live_execution").mkdir(parents=True)
+    (app / "live_execution" / "config.py").write_text(
+        "LIVE_TRADING_ENABLED: bool = False # was True\n"
+    )
+    binp = tmp_path / "bin"
+    binp.mkdir()
+    for name, body in (("python", _PY_STUB), ("uvicorn", _UVICORN_STUB)):
+        p = binp / name
+        p.write_text(body)
+        p.chmod(0o755)
+
+    calls = tmp_path / "calls.txt"
+    calls.write_text("")
+    env = {
+        **os.environ,
+        "APP_DIR": str(app),
+        "WALLET_KEYPAIR_JSON": "[1,2,3]",
+        "CALLS": str(calls),
+        "PATH": f"{binp}{os.pathsep}{os.environ.get('PATH', '')}",
+    }
+    proc = subprocess.run(
+        ["bash", str(ENTRYPOINT)], env=env, capture_output=True,
+        text=True, timeout=30,
+    )
+    assert "PYTHON_CALLED" not in calls.read_text()
+    assert "NOT started" in proc.stdout + proc.stderr
+
+
 # --- THE live-money gate ------------------------------------------------------
 
 def test_armed_without_wallet_does_not_start_the_live_cycle(tmp_path):

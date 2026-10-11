@@ -1,6 +1,20 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §76 Operational Launchers & Docker Container Infrastructure Alignment (2026-10-11):
+      1. Local launchers (`start.sh`, `stop.sh`): Dynamic `API_PORT` resolution honoring `.env` with fallback to `PORT` and default `8000`; eliminated paper-era `TICK_LOOP_IN_PROCESS=0` residue; enforced `0o750` permissions on `logs/` directory; `stop.sh` dynamically reports offline port.
+      2. Container entrypoint hardening (`backend/docker-entrypoint.sh`, `backend/tests/test_docker_entrypoint.py`): Audit A8 safety regex fix for `LIVE_TRADING_ENABLED` extraction (`grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b'`) preventing comments from enabling live execution; dynamic `PORT` / `API_PORT` fallback. Added regression tests (15/15 green).
+      3. Production container image (`Dockerfile`, `.dockerignore`): `COPY scripts/ /app/scripts/` to ensure diagnostic CLI tools are available in image; pre-created unprivileged `0o750` `/app/logs` volume chowned to `bot:bot`; `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` configured; healthcheck tests `PORT` or `API_PORT`.
+      4. Docker compose parity (`docker-compose.yml`): `depends_on: [searxng]`; added persistent `engine_logs` named volume mapped to `/app/logs` and configured `LOG_DIR=/app/logs`.
+      5. Verified: full test suite passes with **904/904 tests green** and frontend build passes cleanly in <1s. Full detail: handoff §76.
+
+- [x] §75 Code quality review cleanups, dead code elimination, query optimizations, and price caching (2026-10-11):
+      1. Dead code & unused modules: deleted retired paper-era modules `backend/llm/reuse.py` and `backend/tests/test_narration_reuse.py`; deleted experimental spike `scripts/scrapling_spike.py`; removed dead helper `_i()` in `research.py`; relocated CLI diagnostic `test_llm.py` -> `scripts/check_llm_health.py`; cleaned 55 unused imports across 16 files.
+      2. Query optimizations: added `get_feed_events_since` to SQLite and Postgres, cutting full 100-row deserialization in WebSocket broadcaster; added lightweight `get_feed_verdicts` projection for refusal funnel route.
+      3. Price caching: added short-TTL (2.0s) in-memory price caching in `JupiterProvider.get_current_price` coalescing redundant RPC quotes across concurrent reads and exit loops.
+      4. Sizing consolidation & bug fixes: unified inline position sizing in `stats.py` to `sizing.compute_entry_cost`; restored masked on-chain security fallback in `LiveProviderStack.get_security_info`; standardized `App.tsx` and `LiveBook.tsx` on shared `Panel` and `Empty` primitives.
+      5. Verified: test suite passed with **901/901 tests green** (now 903 with §76 entrypoint tests). Full detail: handoff §75.
+
 - [x] §74 Centralized rotating logging, security monitoring, and automated threat event tracking (2026-10-11):
       1. Rotating file logging: `logs/` directory (mode `0o750`) with `logs/app.log`, `logs/error.log`, and `logs/security.log` capped at 10MB per file with 5 backups.
       2. Universal secret redactor: `SecretRedactorFilter` active on all handlers and console, scrubbing admin tokens, API keys, basic auth URLs, Bearer tokens, and Solana keypairs before write.

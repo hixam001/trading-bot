@@ -22,7 +22,8 @@ if ! cd "$APP_DIR"; then
   exit 1
 fi
 
-ARMED="$(grep -E '^LIVE_TRADING_ENABLED' live_execution/config.py 2>/dev/null | grep -c 'True' || true)"
+# Audit A8: anchor regex on actual assignment value, ignoring comments like '# was True'.
+ARMED="$(grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b' live_execution/config.py 2>/dev/null || true)"
 
 WALLET_OK=0
 if [ -n "${WALLET_KEYPAIR_JSON:-}" ]; then
@@ -50,7 +51,10 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-uvicorn api.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*' &
+# Port resolution: honours $PORT (platforms) and $API_PORT (.env default 8000)
+PORT="$(echo "${PORT:-${API_PORT:-8000}}" | tr -d "[:space:]'\"")"
+PORT="${PORT:-8000}"
+uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips='*' &
 API_PID=$!
 
 # Supervise BOTH processes. `wait -n` returns as soon as either exits, so a

@@ -1,3 +1,55 @@
+## §76 — Operational Launchers & Docker Container Infrastructure Alignment (2026-10-11)
+
+Comprehensive update and alignment of local launchers (`start.sh`, `stop.sh`) and container deployment assets (`Dockerfile`, `docker-compose.yml`, `.dockerignore`, `docker-entrypoint.sh`):
+
+1. **Local Launchers (`start.sh`, `stop.sh`)**:
+   - Dynamic port resolution: parses `API_PORT` from `.env` with fallback to `PORT` and default `8000`, updating backend status checks, uvicorn binds, and dashboard browser URL.
+   - Paper-era residue elimination: removed legacy `TICK_LOOP_IN_PROCESS=0` flag and comments; aligned documentation to §52 single-book live execution.
+   - Log directory security: enforced `0o750` permissions on `logs/` on startup (§74).
+   - Clean shutdown reporting: `stop.sh` cleanly labels "backend API" and dynamically reports offline port.
+
+2. **Container Entrypoint Hardening (`backend/docker-entrypoint.sh`, `backend/tests/test_docker_entrypoint.py`)**:
+   - Audit A8 safety regex fix: upgraded `ARMED` extraction to `grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b'` ensuring comment annotations (e.g. `# was True`) cannot trick the entrypoint into starting live money execution.
+   - Flexible port binding: supports both platform-provided `PORT` and `.env`-provided `API_PORT` (default `8000`).
+   - Regression test suite: added `test_api_port_follows_api_port_env_when_port_unset`, `test_api_port_strips_quotes_from_env`, and `test_disarmed_with_true_in_comment_does_not_start_live_cycle` to `test_docker_entrypoint.py` (15/15 tests green).
+
+3. **Production Container Image (`Dockerfile`, `.dockerignore`)**:
+   - Operational tooling: added `COPY scripts/ /app/scripts/` to ensure CLI diagnostic tools (`perf_report.py`, `check_llm_health.py`, `backfill_trades_mirror.py`) are present in the image.
+   - Permission provisioning: pre-creates `/app/logs` (`0o750`), `/app/data`, and `/app/backend/live_execution/state` owned by `bot:bot` (uid 10001) for unprivileged runtime operation.
+   - Healthcheck robustness: evaluates `PORT` or `API_PORT` dynamically.
+   - Clean build context: updated `.dockerignore` to exclude `*.log`, `.coverage`, `htmlcov`, `.vscode`, `.idea`.
+
+4. **Docker Compose Parity (`docker-compose.yml`)**:
+   - Service ordering: added `depends_on: [searxng]` to the `engine` service.
+   - Persistent logging: added `engine_logs` named volume mapped to `/app/logs` and configured `LOG_DIR=/app/logs` so audit logs survive container recreation.
+
+---
+
+## §75 — Code quality review cleanups, dead code elimination, query optimizations, and price caching (2026-10-11)
+
+Comprehensive code quality and maintainability remediation across the full stack:
+
+1. **Dead Code & Unused Modules**:
+   - Deleted retired paper-era modules `backend/llm/reuse.py` and `backend/tests/test_narration_reuse.py`.
+   - Deleted obsolete experimental spike `scripts/scrapling_spike.py`.
+   - Removed dead helper `_i()` in `backend/data_providers/research.py`.
+   - Relocated CLI diagnostic `backend/test_llm.py` -> `scripts/check_llm_health.py`.
+   - Cleaned 55 unused imports across 16 core files.
+
+2. **Query Optimization & Redundancy Reduction**:
+   - WebSocket feed: added `get_feed_events_since(conn, since_id, limit)` to `db.py` and `db_pg.py`; updated `websocket.py` to query only new arrivals, eliminating the deserialization of 100 events / 300 JSON fields every 2 seconds.
+   - Refusal funnel: added lightweight projection `get_feed_verdicts(conn, limit)` skipping heavy JSON text columns.
+   - Sizing: consolidated inline position math in `stats.py` to `sizing.compute_entry_cost`.
+   - Jupiter pricing cache: added short-TTL (2.0s) price caching to `JupiterProvider.get_current_price()` to coalesce redundant RPC quotes across `/api/live/portfolio`, `/api/stats`, and exit loops.
+
+3. **Bug Fixes & UI Primitives**:
+   - Restored masked on-chain security fallback in `LiveProviderStack.get_security_info` by eliminating premature return.
+   - Standardized `App.tsx` and `LiveBook.tsx` on shared `Panel` and `Empty` UI primitives.
+   - Updated `backend/models.py` docstrings to align with single-book live architecture.
+   - Normalized CLI script paths for `outcome_labels.py` and `shadow_replay.py`.
+
+---
+
 ## §74 — Centralized rotating logging, security monitoring, and automated threat event tracking (2026-10-11)
 
 Comprehensive logging infrastructure and security monitoring with zero-secret leakage:
@@ -1689,16 +1741,16 @@ docker compose up -d --build                             # with persistent state
 | `backend/api/db.py` | schema + repository (SQLite default); when `USE_SUPABASE_DB=1` + `SUPABASE_DB_URL` set, transparently delegates every public function to `db_pg.py`; pytest forces SQLite |
 | `backend/api/db_pg.py` | asyncpg/Supabase Postgres twin of db.py — identical surface incl. §5.1 atomicity (rowcount from execute status); TLS via SHA-256 cert-fingerprint pinning (TOFU, `.supabase_fp.txt` gitignored); `init_db()` self-heals schema drift via `_SCHEMA_SYNC_SQL` (§17) |
 | `migrations/supabase/001_init.sql` | run ONCE in Supabase SQL editor: 12 tables, JSONB/TIMESTAMPTZ, one-open-position exclusion constraint, RLS locked. `002_llm_usage.sql` adds `llm_call_usage` + versioning columns; `db_pg.init_db()` auto-heals older books so neither has to be re-run manually (§17) |
-| `backend/api/main.py` | FastAPI app; serves built frontend; TICK_LOOP_IN_PROCESS env runs tick loop in-process |
+| `backend/api/main.py` | FastAPI app; serves built frontend; SPA catch-all and API routes; live cycle runs as separate process |
 | `backend/data_providers/` | base(protocol,retry,counters), birdeye, dexscreener, jupiter, live(stack), mock |
 | `backend/llm/` | narrator.py (prompt, Ollama client, template fallback, reflection), grounding.py |
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
 | `backend/live_execution/` | REAL-MONEY execution package (moved INSIDE backend/ 2026-08-30 so the engine deploys as one module; the paper pipeline still never imports it — test-pinned). Fully wired: `backend/run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Wallet secrets: `WALLET_KEYPAIR_PATH` (file, preferred) or `WALLET_KEYPAIR_JSON` (env, in-memory) — deployment parity, still infrastructure-not-safety-flag. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI (from backend/): `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Deployment: `docs/11_DEPLOYMENT.md` + root `Dockerfile`. |
-| `Dockerfile` (root) | Multi-stage image for the WHOLE engine: Node stage builds the SPA → python-slim runtime, non-root user, `$PORT`-aware healthcheck, SPA baked at `/app/frontend/dist` (single-origin serving still works). Contains NO secrets/state (`.dockerignore`) |
-| `backend/docker-entrypoint.sh` | Container entrypoint: uvicorn ALWAYS; live cycle ONLY when the hardcoded ARM flag is True AND a wallet secret is configured (same double-gate as start.sh). Supervises both with `wait -n` and exits non-zero if either dies — an ARMED deployment must never serve a green dashboard over a dead decision cycle. Aborts if `APP_DIR` is missing. Pinned by `backend/tests/test_docker_entrypoint.py` (12 tests) |
-| `docker-compose.yml` | Local/VM parity run: named volumes for `backend/live_execution/state` (real-money state MUST persist) + the SQLite book, `env_file` for secrets |
+| `Dockerfile` (root) | Multi-stage image for the WHOLE engine: Node stage builds the SPA → python-slim runtime, non-root user, `$PORT`/`$API_PORT`-aware healthcheck, diagnostic tools in `/app/scripts`, SPA baked at `/app/frontend/dist` (single-origin serving still works). Contains NO secrets/state (`.dockerignore`) |
+| `backend/docker-entrypoint.sh` | Container entrypoint: uvicorn ALWAYS; live cycle ONLY when the hardcoded ARM flag is True AND a wallet secret is configured (same double-gate as start.sh). Supervises both with `wait -n` and exits non-zero if either dies — an ARMED deployment must never serve a green dashboard over a dead decision cycle. Aborts if `APP_DIR` is missing. Pinned by `backend/tests/test_docker_entrypoint.py` (15 tests) |
+| `docker-compose.yml` | Local/VM parity run: named volumes for `backend/live_execution/state` (real-money state MUST persist), SQLite book, `engine_logs` (`/app/logs`), `searxng` dependency, `env_file` for secrets |
 | `docs/11_DEPLOYMENT.md` | THE deployment runbook: hosting verdict (always-on VM + persistent disk for the engine; Vercel/CF Pages for the SPA; SQLite-on-volume or Supabase Free), secret runbook for both wallet channels, persistence rules, pre-flight checklist |
 | `backend/live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
 | `frontend/DESIGN.md` | the frontend design system: tokens, component anatomy, five required states, a11y criteria, anti-patterns, QA checklist. All UI work must conform |

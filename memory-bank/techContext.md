@@ -22,7 +22,7 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 ## Commands
 - One click: ./start.sh | ./stop.sh
 - Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- All suites from repo root: .venv/bin/python -m pytest -q  (870 = backend + live_execution;
+- All suites from repo root: .venv/bin/python -m pytest -q  (904 = backend + live_execution;
   root pytest.ini sets asyncio_mode=auto)
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
 - Deploy (Docker/VM): docker build -t trading-bot . && see docs/11_DEPLOYMENT.md
@@ -35,6 +35,10 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 - Mass Assignment: Pydantic schemas configured with `extra="ignore"` strip sensitive fields.
 - Content Security: CSP headers in `main.py`; React JSX text rendering and URI scheme sanitization.
 - File Ingestion: `.md`, `.txt`, `.json`, `.csv` extension whitelist, binary magic bytes / shebang inspection, `0o600` permissions outside web root.
+- HTTPS Enforcement: HTTP 308 Permanent Redirects for non-loopback traffic, HSTS preload, CSP upgrade-insecure-requests, TLS reverse proxy headers trust (`backend/api/main.py`).
+- Production Hardening: Debug mode & OpenAPI docs disabled in production, sourcemap generation suppressed, SPA dotfile & `.map` blocking.
+- Production Error Shielding: Generic 500 error responses with correlated `error_id`, Pydantic 422 user input stripping (`backend/api/error_handler.py`).
+- Centralized Rotating Logging: 10MB rotating file logs (`app.log`, `error.log`, `security.log`), universal `SecretRedactorFilter`, in-memory `SecurityMonitor` ring buffer.
 
 ## External services & keys (in .env)
 - Birdeye (BIRDEYE_API_KEY, X-API-KEY header) — REQUIRED for DATA_BACKEND=live;

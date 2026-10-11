@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================================
 # trading-bot one-click launcher.
-# Starts (in order): venv setup -> frontend build -> backend + tick loop
-# -> dashboard served by the backend on http://localhost:8000 -> the live
+# Starts (in order): venv setup -> frontend build -> backend API
+# -> dashboard served by the backend on http://localhost:8000 (or $API_PORT) -> the live
 # decision cycle (ONLY when live_execution is armed AND a wallet is
 # configured in .env), then opens the browser. Idempotent: safe to click
 # twice; already-running parts are reused. Use ./stop.sh to stop what this
@@ -19,6 +19,10 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 RUN="$ROOT/.run"
 LOGS="$ROOT/logs"
 mkdir -p "$RUN" "$LOGS"
+chmod 750 "$LOGS" 2>/dev/null || true
+
+API_PORT="$(grep -E '^API_PORT=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
+API_PORT="${API_PORT:-${PORT:-8000}}"
 
 up() { curl -s -o /dev/null --max-time 2 "$1"; }
 
@@ -30,12 +34,12 @@ if [ ! -x "$ROOT/.venv/bin/python" ]; then
 fi
 
 # --- 2) Verify the MAIN LLM provider key is set ------------------------------
-MAIN_PROVIDER="$(grep -E '^MAIN_LLM_PROVIDER=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+MAIN_PROVIDER="$(grep -E '^MAIN_LLM_PROVIDER=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
 MAIN_PROVIDER="${MAIN_PROVIDER:-deepseek}"
 if [ "$MAIN_PROVIDER" = "deepseek" ]; then
-  MAIN_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  MAIN_KEY="$(grep -E '^DEEPSEEK_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
 else
-  MAIN_KEY="$(grep -E '^GROQ_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  MAIN_KEY="$(grep -E '^GROQ_API_KEY=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
 fi
 if [ -z "$MAIN_KEY" ]; then
   echo "[WARNING] main LLM provider '$MAIN_PROVIDER' has no API key in .env — Thinker/Narrator will fall back to templates (fail-closed)."
@@ -52,28 +56,32 @@ if ! (cd "$ROOT/frontend" && npm run build --silent >"$LOGS/frontend-build.log" 
   echo "[frontend] continuing with the last successful build if present."
 fi
 
-# --- 4) Backend (API + dashboard; paper tick loop OFF — live-only) -----------
-# The in-process PAPER tick loop is deliberately DISABLED (TICK_LOOP_IN_PROCESS=0):
-# this system trades LIVE only (see step 5). The backend still serves the API,
-# the WebSocket, and the dashboard; it just no longer runs the simulated book.
-if up http://localhost:8000/api/system-status; then
-  echo "[backend] already running on :8000 — reusing"
+# --- 4) Backend (API + WebSocket + dashboard) --------------------------------
+# In the §52 single-book architecture, the backend serves the API, the
+# WebSocket feed, and the static dashboard. The live decision cycle runs
+# separately in step 5 (guarded by arming flags and wallet configuration).
+if up "http://127.0.0.1:${API_PORT}/api/system-status"; then
+  echo "[backend] already running on :${API_PORT} — reusing"
 else
-  echo "[backend] starting uvicorn (API + dashboard, no paper tick)..."
+  echo "[backend] starting uvicorn (API + WebSocket + dashboard)..."
   (
     cd "$ROOT/backend"
     # setsid detaches uvicorn into its own session: closing the terminal
     # tab or Ctrl+C-ing the script can never take the backend down with it
     # (nohup alone only blocks SIGHUP — SIGINT still killed it).
-    TICK_LOOP_IN_PROCESS=0 nohup setsid \
+    nohup setsid \
       "$ROOT/.venv/bin/python" -m uvicorn \
-      api.main:app --host 127.0.0.1 --port 8000 \
+      api.main:app --host 127.0.0.1 --port "$API_PORT" \
       >"$LOGS/backend.log" 2>&1 </dev/null &
     echo $! >"$RUN/backend.pid"
   )
+  backend_pid="$(cat "$RUN/backend.pid" 2>/dev/null || true)"
   ok=0
   for _ in $(seq 1 60); do
-    if up http://localhost:8000/api/system-status; then ok=1; break; fi
+    if up "http://127.0.0.1:${API_PORT}/api/system-status"; then ok=1; break; fi
+    if [ -n "$backend_pid" ] && ! kill -0 "$backend_pid" 2>/dev/null; then
+      break
+    fi
     sleep 1
   done
   if [ "$ok" -ne 1 ]; then
@@ -84,11 +92,11 @@ else
 fi
 
 # --- 5) Live execution cycle (ARMED repo) ------------------------------------
-# The live runner is a SEPARATE process from the paper tick loop (two books,
-# one brain). It starts here only when BOTH are true:
+# The live runner drives the autonomous decision cycle (single-book live execution).
+# It starts here only when BOTH are true:
 #   a) live_execution/config.py carries LIVE_TRADING_ENABLED = True (the
 #      committed armed state — human-edit-only, never env), and
-#   b) .env points WALLET_KEYPAIR_PATH at a wallet file that exists.
+#   b) .env points WALLET_KEYPAIR_PATH at a wallet file that exists (or WALLET_KEYPAIR_JSON).
 # Without a funded wallet configured, nothing real-money ever starts.
 # A8 (repo audit): parse the FLAG'S VALUE, not "True anywhere in the line".
 # The old `grep -c 'True'` counted `LIVE_TRADING_ENABLED = False # was True`
@@ -97,8 +105,8 @@ fi
 # ([^=]* tolerates the ": bool" type annotation; the FIRST "=" is the
 # assignment, and True must be the value on its right).
 ARMED="$(grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b' "$ROOT/backend/live_execution/config.py" 2>/dev/null)"
-KP="$(grep -E '^WALLET_KEYPAIR_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
-KPJ="$(grep -E '^WALLET_KEYPAIR_JSON=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d '[:space:]')"
+KP="$(grep -E '^WALLET_KEYPAIR_PATH=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
+KPJ="$(grep -E '^WALLET_KEYPAIR_JSON=' "$ROOT/.env" 2>/dev/null | cut -d= -f2- | tr -d "[:space:]'\"")"
 # Wallet configured = secret file exists (preferred channel) OR the env JSON
 # channel is set (deployment parity with file-less hosts).
 WALLET_OK=0
@@ -131,7 +139,7 @@ if [ "$ARMED" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
 else
   echo " trading-bot is live   (DISARMED — NO LIVE TRADING)"
 fi
-echo " dashboard : http://localhost:8000"
+echo " dashboard : http://localhost:${API_PORT}"
 echo " live cycle: $LIVE_STATE"
 echo " LLM main  : $MAIN_PROVIDER (social: SOCIAL_LLM_*)"
 echo " logs      : $LOGS/"
@@ -139,4 +147,4 @@ echo " stop      : $ROOT/stop.sh"
 echo "==========================================================="
 echo ""
 
-xdg-open http://localhost:8000 >/dev/null 2>&1 || true
+xdg-open "http://localhost:${API_PORT}" >/dev/null 2>&1 || true

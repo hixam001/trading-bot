@@ -29,3 +29,8 @@ backend/knowledge_base/ingested
 backend/blocklist_state.json
 **/*.corrupt
 **/*.bak-dust
+*.log
+.coverage
+htmlcov
+.vscode
+.idea

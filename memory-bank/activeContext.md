@@ -1,6 +1,21 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-11 (§74):** Centralized Rotating Logging, Security Monitoring, and Threat Event Tracking:
+**Current — 2026-10-11 (§76):** Operational Launchers & Docker Container Infrastructure Alignment:
+1. **Local Launchers**: `start.sh` and `stop.sh` updated with dynamic `API_PORT` resolution (default `8000`, honoring `.env`), removed paper-era `TICK_LOOP_IN_PROCESS=0` residue, updated architecture description to single-book live execution, and enforced `0o750` permissions on `logs/`.
+2. **Container Entrypoint Hardening**: `backend/docker-entrypoint.sh` upgraded with Audit A8 regex safety fix (`grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b'`) preventing comments from enabling live execution; added fallback for `API_PORT` / `PORT` with quote stripping. 15/15 tests passing in `backend/tests/test_docker_entrypoint.py`.
+3. **Docker Image & Compose**: `Dockerfile` copies `scripts/`, sets `PLAYWRIGHT_BROWSERS_PATH=/ms-playwright` with read/exec permissions for `bot:bot`, pre-provisions runtime directories (`/app/logs` 0750, `/app/data`, `/app/backend/live_execution/state`) owned by `bot:bot`, and updates healthcheck. `docker-compose.yml` adds `depends_on: [searxng]`, persistent `engine_logs` volume, and `LOG_DIR=/app/logs`. `.dockerignore` excludes `*.log`, `.coverage`, `htmlcov`, and IDE folders.
+
+**PREVIOUS:**
+
+**As of 2026-10-11 (§75):** Code Quality Review Cleanups, Dead Code Elimination, Query Optimizations, and Price Caching:
+1. **Dead Code Removed**: `backend/llm/reuse.py`, `backend/tests/test_narration_reuse.py`, `scripts/scrapling_spike.py`, dead helper `_i()`, and 55 unused imports across 16 core files cleaned.
+2. **Query Optimization**: Delta-only WebSocket queries (`get_feed_events_since`), lightweight refusal funnel projection (`get_feed_verdicts`), and sizing math consolidation (`sizing.compute_entry_cost`).
+3. **Price Caching & Bug Fixes**: Added 2.0s TTL in-memory price cache to `JupiterProvider.get_current_price()`; restored on-chain security fallback in `LiveProviderStack.get_security_info`; standardized UI primitives (`Panel`, `Empty`) in `App.tsx` and `LiveBook.tsx`.
+4. **Verification**: 901/901 tests passing; DB parity maintained.
+
+**PREVIOUS:**
+
+**As of 2026-10-11 (§74):** Centralized Rotating Logging, Security Monitoring, and Threat Event Tracking:
 1. **Rotating File Logging**: `backend/api/logging_config.py` provisions `logs/` directory (mode `0o750`) with dedicated rotating logs (`logs/app.log`, `logs/error.log`, `logs/security.log`) capped at 10MB per file with 5 backups.
 2. **Universal Secret Redaction**: `SecretRedactorFilter` active across all file and console handlers; scrubs admin tokens, API keys, basic auth URLs, Bearer tokens, and Solana keypairs before write.
 3. **Security Event Monitor**: `SecurityMonitor` (`backend/api/security_monitor.py`) tracks `AUTH_FAILURE`, `AUTH_LOCKOUT`, `RATE_LIMIT_EXCEEDED`, `BOT_DETECTED`, `BLOCKED_PATH_PROBE`, `SUSPICIOUS_UPLOAD`, and `INTERNAL_ERROR` in a thread-safe 300-event ring buffer.

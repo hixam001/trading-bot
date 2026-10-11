@@ -18,15 +18,17 @@ Single-origin alternative: skip Vercel and let the engine serve the built SPA
 ```bash
 docker build -t trading-bot .
 
-# State volume is NOT optional for the live engine:
-docker volume create bot_state bot_data
+# State, data, and log volumes are NOT optional for the live engine:
+docker volume create bot_state bot_data bot_logs
 
 docker run -d --name trading-bot \
   --env-file .env \
   -p 8000:8000 \
   -v bot_state:/app/backend/live_execution/state \
   -v bot_data:/app/data \
+  -v bot_logs:/app/logs \
   -e DB_PATH=/app/data/trading_bot.db \
+  -e LOG_DIR=/app/logs \
   trading-bot
 ```
 
@@ -105,6 +107,7 @@ On ANY host, these must survive restarts or the engine must not be armed:
   idempotency ledger, commit log, operator break. A vanished kill-switch file
   reads as "clear"; a vanished idempotency ledger weakens replay protection.
 - The SQLite book (or Supabase).
+- `logs/` — rotating runtime, error, and security logs (`app.log`, `error.log`, `security.log`). Persistent volume retains threat audit trails across container rebuilds.
 Free PaaS filesystems are ephemeral — that is exactly why the recommendation
 is an always-on VM with a persistent disk/volume.
 
@@ -128,6 +131,7 @@ never keep serving a green dashboard while the decision cycle is dead.
 - [ ] Image contains no `.env`, no keypair, no `state/` (check `.dockerignore`)
 - [ ] `EXPECTED_WALLET_ADDRESS` set and matching the funded keypair
 - [ ] State dir on a persistent volume
+- [ ] Log dir on a persistent volume (audit trail preservation)
 - [ ] `ADMIN_TOKEN` set (mutating endpoints disabled without it — by design)
 - [ ] `FRONTEND_ORIGIN` = the actual dashboard origin (CORS fail-closed)
 - [ ] Dashboard reachable; `/api/live/portfolio` shows `enabled` only if armed

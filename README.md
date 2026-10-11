@@ -91,7 +91,7 @@ cp .env.example .env
 #      DEEPSEEK_API_KEY=<your key>
 
 # 2. One click: creates .venv + installs deps, builds the dashboard,
-#    starts the backend + tick loop on :8000, opens your browser.
+#    starts the backend API on :8000 (or $API_PORT), opens your browser.
 ./start.sh
 
 # 3. Stop everything
@@ -264,7 +264,7 @@ migrations/supabase/     one-time SQL for the optional Postgres book
 docs/                    00 blueprint → 11 DEPLOYMENT runbook
 memory-bank/             structured context for future sessions
 handoff.md               complete state/decisions/invariants — READ FIRST
-logs/                    backend.log, frontend-build.log
+logs/                    app.log, error.log, security.log, live_cycle.log, backend.log
 .run/                    pid files for start.sh/stop.sh
 ```
 
@@ -283,7 +283,11 @@ python run_live_cycle.py --once
 
 ## Logs & state
 
-- `logs/backend.log` — tick loop, LLM calls, exits, refusals (keys redacted)
+- `logs/app.log` — application runtime events (rotating 10MB × 5)
+- `logs/error.log` — dedicated error and critical events (rotating 10MB × 5)
+- `logs/security.log` — dedicated security audit and threat monitoring log (rotating 10MB × 5)
+- `logs/live_cycle.log` — live decision cycle stdout/stderr
+- `logs/backend.log` — backend API launcher stdout/stderr
 - `.run/backend.pid` — used by `./stop.sh`
 - `backend/trading_bot.db` (or `DB_PATH`) — the decision journal + the
   live book's mirrored trades (the ExecutionLedger in
