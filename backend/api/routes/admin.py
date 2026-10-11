@@ -161,3 +161,42 @@ async def admin_reset(
         "paper_trading_only": False,
         **result,
     }
+
+
+@router.get("/api/admin/monitoring/security-events", include_in_schema=False)
+async def get_security_events(
+    request: Request,
+    limit: int = Query(default=50, ge=1, le=200, description="Max events to return"),
+    event_type: str | None = Query(default=None, max_length=50, description="Filter by event type"),
+):
+    """Retrieve recent security audit events and aggregates.
+
+    Requires operator authentication (X-Admin-Token or HttpOnly session cookie).
+    """
+    require_admin_token(request)
+    from api.security_monitor import security_monitor
+
+    summary = security_monitor.get_summary()
+    events = security_monitor.get_recent_events(limit=limit, event_type=event_type)
+    return {
+        "status": "ok",
+        "summary": summary,
+        "events": events,
+    }
+
+
+@router.get("/api/admin/monitoring/logs", include_in_schema=False)
+async def get_logs_status(request: Request):
+    """Retrieve log file locations, sizes, and operational statuses.
+
+    Requires operator authentication (X-Admin-Token or HttpOnly session cookie).
+    """
+    require_admin_token(request)
+    from api.security_monitor import security_monitor
+
+    summary = security_monitor.get_summary()
+    return {
+        "status": "ok",
+        "log_directory": summary.get("log_directory"),
+        "log_files": summary.get("log_files"),
+    }

@@ -1,6 +1,15 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-11 (§73):** Production Error Shielding, Generic 500 Responses, and Secret Redaction:
+**Current — 2026-10-11 (§74):** Centralized Rotating Logging, Security Monitoring, and Threat Event Tracking:
+1. **Rotating File Logging**: `backend/api/logging_config.py` provisions `logs/` directory (mode `0o750`) with dedicated rotating logs (`logs/app.log`, `logs/error.log`, `logs/security.log`) capped at 10MB per file with 5 backups.
+2. **Universal Secret Redaction**: `SecretRedactorFilter` active across all file and console handlers; scrubs admin tokens, API keys, basic auth URLs, Bearer tokens, and Solana keypairs before write.
+3. **Security Event Monitor**: `SecurityMonitor` (`backend/api/security_monitor.py`) tracks `AUTH_FAILURE`, `AUTH_LOCKOUT`, `RATE_LIMIT_EXCEEDED`, `BOT_DETECTED`, `BLOCKED_PATH_PROBE`, `SUSPICIOUS_UPLOAD`, and `INTERNAL_ERROR` in a thread-safe 300-event ring buffer.
+4. **Operator Monitoring Endpoints**: `GET /api/admin/monitoring/security-events` (summary, metrics, top attacker IPs, recent events) and `GET /api/admin/monitoring/logs` (log file locations, sizes, timestamps). Both gated by operator token.
+5. **Test Suite**: Dedicated tests in `backend/tests/test_logging_and_monitoring.py` (11 tests passing). Full test suite: **913 passed** (0 failed).
+
+**PREVIOUS:**
+
+**As of 2026-10-11 (§73):** Production Error Shielding, Generic 500 Responses, and Secret Redaction:
 1. **Production Exception Shielding**: Centralized handler in `backend/api/error_handler.py` catches all unhandled 500 exceptions and 5xx HTTPExceptions, returning a generic `{"detail": "Internal server error", "error_id": "<hex_id>"}`. Zero Python tracebacks, variables, or file paths are exposed to clients.
 2. **Private Error Correlation**: Logs full tracebacks, request methods, paths, and client IPs privately server-side with an opaque 16-hex `error_id` for operator troubleshooting.
 3. **Secret Redactor Filter**: `SecretRedactorFilter(logging.Filter)` installed across root, uvicorn, fastapi, httpx, and api loggers to scrub configured API keys/tokens, Authorization Bearer headers, basic auth URLs (`user:pass@`), and 64-int Solana wallet keypairs before writing to disk.

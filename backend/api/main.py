@@ -18,7 +18,7 @@ import html
 import logging
 from pathlib import Path
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -72,8 +72,10 @@ app = FastAPI(
     redoc_url="/redoc" if config.DEBUG else None,
     openapi_url="/openapi.json" if config.DEBUG else None,
 )
+from api.logging_config import setup_logging
 from api.error_handler import install_secret_redactor, register_error_handlers
 
+setup_logging()
 install_secret_redactor()
 register_error_handlers(app)
 
@@ -327,9 +329,22 @@ def _is_blocked_static_path(path: str) -> bool:
 if FRONTEND_DIST.exists():
 
     @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str):
+    async def spa_fallback(full_path: str, request: Request):
         # Explicit 404 for dotfiles (.git, .env) and sourcemaps (.map)
         if _is_blocked_static_path(full_path):
+            try:
+                from api.security_monitor import SecurityEventType, record_security_event
+                client_ip = getattr(getattr(request, "client", None), "host", "unknown") or "unknown"
+                record_security_event(
+                    SecurityEventType.BLOCKED_PATH_PROBE,
+                    client_ip=client_ip,
+                    path=f"/{full_path}",
+                    method="GET",
+                    detail=f"Blocked static path probe: {html.escape(full_path[:100])}",
+                    severity="WARNING",
+                )
+            except Exception:
+                pass
             return JSONResponse(
                 status_code=404,
                 content={"detail": "Not found"},

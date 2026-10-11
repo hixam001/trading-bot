@@ -165,6 +165,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "rate limit exceeded: tier=%s ip=%s path=%s retry_after=%ds",
                 tier, client_ip, request.url.path, retry_or_reset,
             )
+            try:
+                from api.security_monitor import SecurityEventType, record_security_event
+                record_security_event(
+                    SecurityEventType.RATE_LIMIT_EXCEEDED,
+                    client_ip=client_ip,
+                    path=request.url.path,
+                    method=request.method,
+                    detail=f"Rate limit exceeded for tier '{tier}' (limit {limit_val}/min)",
+                    severity="WARNING",
+                )
+            except Exception:
+                pass
             return JSONResponse(
                 status_code=429,
                 content={

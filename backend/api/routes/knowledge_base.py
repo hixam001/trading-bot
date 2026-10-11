@@ -109,5 +109,18 @@ async def ingest_documents(req: IngestRequest, request: Request):
             r = await loader.ingest_file(doc.filename, doc.content)
             results.append(r)
         except (ValueError, TypeError) as exc:
+            try:
+                from api.security_monitor import SecurityEventType, record_security_event
+                client_ip = getattr(getattr(request, "client", None), "host", "unknown") or "unknown"
+                record_security_event(
+                    SecurityEventType.SUSPICIOUS_UPLOAD,
+                    client_ip=client_ip,
+                    path="/api/knowledge-base/ingest",
+                    method="POST",
+                    detail=f"Rejected file '{loader.sanitize_filename(doc.filename)}': {str(exc)}",
+                    severity="WARNING",
+                )
+            except Exception:
+                pass
             errors.append({"filename": doc.filename, "error": str(exc)})
     return {"ingested": results, "errors": errors}

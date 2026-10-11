@@ -142,4 +142,5 @@ progress (updated as items complete).
 | L11 | HTTPS everywhere & TLS enforcement: 308 redirect middleware, HSTS preload, CSP upgrade-insecure-requests, Uvicorn proxy headers | DONE (`backend/api/main.py`, `backend/tests/test_https_enforcement.py`) |
 | L12 | Production deployment hardening: debug mode & Swagger disabled, sourcemaps turned off, .git & dotfiles blocked | DONE (`backend/api/main.py`, `backend/tests/test_production_hardening.py`) |
 | L13 | Production error handling & secret redaction: generic 500 error messages with error_id, logging secret filter, 422 input stripping | DONE (`backend/api/error_handler.py`, `backend/tests/test_error_handling_security.py`) |
+| L14 | Centralized logging & security monitoring: rotating file logs (app.log, error.log, security.log), secret scrubbing, security event ring buffer | DONE (`backend/api/logging_config.py`, `backend/api/security_monitor.py`, `test_logging_and_monitoring.py`) |
 

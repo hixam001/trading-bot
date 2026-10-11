@@ -62,6 +62,7 @@ on a React dashboard served by the backend itself.
   - HTTPS everywhere enforcement with HTTP 308 permanent redirects (preserving POST/PUT methods and bodies), HSTS preload (`max-age=63072000; includeSubDomains; preload`), CSP `upgrade-insecure-requests`, and Uvicorn reverse-proxy header support.
   - Production hardening: FastAPI debug mode, stack traces, and Swagger UI/OpenAPI disabled in production (`DEBUG=false`), source map generation disabled (`sourcemap: false`), and edge + application blocking for `.git`, `.env`, and sensitive dotfiles.
   - Production error shielding & secret redaction: generic 500 error messages with opaque `error_id` correlation tokens, complete suppression of stack traces and internal variables, `SecretRedactorFilter` scrubbing tokens/keys/passwords/keypairs from logs, and Pydantic 422 raw input stripping.
+  - Basic logging & security monitoring: rotating file logs (`logs/app.log`, `logs/error.log`, `logs/security.log`) with automatic secret scrubbing (`SecretRedactorFilter`), real-time security event tracking for auth failures, bot honeypots, rate-limit hits, and path probes, plus operator monitoring endpoints (`/api/admin/monitoring/security-events` and `/api/admin/monitoring/logs`).
 
 ---
 
@@ -180,7 +181,8 @@ risk budget × calibration, thesis restatement, the live-execution safety
 model, cookie session authentication, access control and RLS, mass assignment
 prevention, server-side rate limiting, bot protection, parameterized SQL queries,
 input validation, XSS prevention, file upload security, HTTPS/TLS enforcement,
-production deployment hardening, and production error shielding / secret redaction (902 tests in total).
+production deployment hardening, production error shielding / secret redaction,
+and rotating logging / security monitoring (913 tests in total).
 
 ```bash
 .venv/bin/python -m pytest -q                            # full suite (~34s)

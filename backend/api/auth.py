@@ -231,11 +231,35 @@ def require_admin_token(request: Request) -> None:
             detail="operator endpoints are disabled (ADMIN_TOKEN not set)",
         )
     if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+        try:
+            from api.security_monitor import SecurityEventType, record_security_event
+            record_security_event(
+                SecurityEventType.AUTH_LOCKOUT,
+                client_ip=client_ip,
+                path=request.url.path,
+                method=request.method,
+                detail=f"Operator auth lockout threshold reached ({len(attempts)} failed attempts)",
+                severity="ERROR",
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=429,
             detail="too many failed authentication attempts — rate limited",
         )
     _FAILED_ATTEMPTS[client_ip].append(now)
+    try:
+        from api.security_monitor import SecurityEventType, record_security_event
+        record_security_event(
+            SecurityEventType.AUTH_FAILURE,
+            client_ip=client_ip,
+            path=request.url.path,
+            method=request.method,
+            detail="Operator auth failed: invalid operator token or expired session cookie",
+            severity="WARNING",
+        )
+    except Exception:
+        pass
     raise HTTPException(status_code=403, detail="invalid operator token")
 
 

@@ -93,6 +93,18 @@ async def verify_bot_protection(
     # If bots populate it, immediately block with 400.
     if honeypot and honeypot.strip():
         log.warning("bot detected: honeypot field filled from IP %s", client_ip)
+        try:
+            from api.security_monitor import SecurityEventType, record_security_event
+            record_security_event(
+                SecurityEventType.BOT_DETECTED,
+                client_ip=client_ip or "unknown",
+                path="/api/auth",
+                method="POST",
+                detail="Bot honeypot field populated",
+                severity="WARNING",
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=400,
             detail="Bot activity detected (honeypot triggered)",
@@ -131,6 +143,18 @@ async def verify_bot_protection(
                 detail="Invalid challenge timestamp",
             )
         if not verify_proof_of_work(nonce, ts, sig, solution):
+            try:
+                from api.security_monitor import SecurityEventType, record_security_event
+                record_security_event(
+                    SecurityEventType.BOT_DETECTED,
+                    client_ip=client_ip or "unknown",
+                    path="/api/auth",
+                    method="POST",
+                    detail="Bot proof-of-work challenge failed or expired",
+                    severity="WARNING",
+                )
+            except Exception:
+                pass
             raise HTTPException(
                 status_code=400,
                 detail="Bot challenge failed: invalid or expired proof-of-work",
@@ -140,6 +164,18 @@ async def verify_bot_protection(
     # 3. Third-party CAPTCHA provider (Cloudflare Turnstile or hCaptcha)
     ok = await _verify_external_captcha(token, client_ip=client_ip)
     if not ok:
+        try:
+            from api.security_monitor import SecurityEventType, record_security_event
+            record_security_event(
+                SecurityEventType.BOT_DETECTED,
+                client_ip=client_ip or "unknown",
+                path="/api/auth",
+                method="POST",
+                detail="External CAPTCHA verification failed",
+                severity="WARNING",
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=400,
             detail="Bot challenge failed: invalid or expired CAPTCHA token",

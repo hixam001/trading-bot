@@ -37,7 +37,7 @@ class LoginRequest(BaseModel):
     captcha_token: str | None = Field(default=None, max_length=1024, description="Optional CAPTCHA or PoW token")
     honeypot: str | None = Field(default="", max_length=256, alias="_hp_website")
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
 
     @field_validator("token")
     @classmethod
@@ -130,6 +130,18 @@ async def login(req: LoginRequest, request: Request, response: Response):
         )
 
     if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+        try:
+            from api.security_monitor import SecurityEventType, record_security_event
+            record_security_event(
+                SecurityEventType.AUTH_LOCKOUT,
+                client_ip=client_ip,
+                path="/api/auth/login",
+                method="POST",
+                detail=f"Login lockout triggered: {len(attempts)} failed attempts",
+                severity="ERROR",
+            )
+        except Exception:
+            pass
         raise HTTPException(
             status_code=429,
             detail="too many failed authentication attempts — rate limited",
@@ -138,6 +150,18 @@ async def login(req: LoginRequest, request: Request, response: Response):
     valid = bool(req.token) and hmac.compare_digest(req.token, configured)
     if not valid:
         _FAILED_ATTEMPTS[client_ip].append(now)
+        try:
+            from api.security_monitor import SecurityEventType, record_security_event
+            record_security_event(
+                SecurityEventType.AUTH_FAILURE,
+                client_ip=client_ip,
+                path="/api/auth/login",
+                method="POST",
+                detail="Operator login failed: invalid credentials",
+                severity="WARNING",
+            )
+        except Exception:
+            pass
         raise HTTPException(status_code=403, detail="invalid credentials")
 
     # Clear lockout history on successful login

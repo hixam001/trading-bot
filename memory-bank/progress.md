@@ -1,6 +1,13 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §74 Centralized rotating logging, security monitoring, and automated threat event tracking (2026-10-11):
+      1. Rotating file logging: `logs/` directory (mode `0o750`) with `logs/app.log`, `logs/error.log`, and `logs/security.log` capped at 10MB per file with 5 backups.
+      2. Universal secret redactor: `SecretRedactorFilter` active on all handlers and console, scrubbing admin tokens, API keys, basic auth URLs, Bearer tokens, and Solana keypairs before write.
+      3. Security event monitor: `SecurityMonitor` tracks `AUTH_FAILURE`, `AUTH_LOCKOUT`, `RATE_LIMIT_EXCEEDED`, `BOT_DETECTED`, `BLOCKED_PATH_PROBE`, `SUSPICIOUS_UPLOAD`, and `INTERNAL_ERROR` in a thread-safe 300-event ring buffer.
+      4. Operator monitoring endpoints: `GET /api/admin/monitoring/security-events` and `GET /api/admin/monitoring/logs` gated by admin token.
+      5. Verified: full test suite passes with **913/913 tests green** (+11 new tests in `test_logging_and_monitoring.py`). Full detail: handoff §74.
+
 - [x] §73 Production error shielding, generic 500 error responses, logging secret filter, and validation input stripping (2026-10-11):
       1. Exception shielding: `unhandled_exception_handler` and `http_exception_handler` return generic `{"detail": "Internal server error", "error_id": "<hex_id>"}` with status 500; zero stack traces or internal variable names leak to clients.
       2. Private correlated logging: full tracebacks, method, path, and client IP are logged privately alongside `error_id` for operator debugging.

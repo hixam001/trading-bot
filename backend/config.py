@@ -107,7 +107,19 @@ PAPER_TRADING_ONLY: bool = True
 # Paths
 # ---------------------------------------------------------------------------
 BASE_DIR: Path = Path(__file__).parent
+PROJECT_ROOT: Path = BASE_DIR.parent
 DB_PATH: Path = BASE_DIR / os.getenv("DB_PATH", "trading_bot.db")
+
+# ---------------------------------------------------------------------------
+# Logging & Security Monitoring Paths (§74)
+# ---------------------------------------------------------------------------
+LOG_DIR: Path = Path(os.getenv("LOG_DIR") or str(PROJECT_ROOT / "logs"))
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").strip().upper()
+LOG_FILE: str = os.getenv("LOG_FILE", "app.log")
+ERROR_LOG_FILE: str = os.getenv("ERROR_LOG_FILE", "error.log")
+SECURITY_LOG_FILE: str = os.getenv("SECURITY_LOG_FILE", "security.log")
+LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", str(10 * 1024 * 1024)))
+LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 
 # ---------------------------------------------------------------------------
 # Supabase (Postgres) — optional remote DB backend. Empty USE_SUPABASE_DB

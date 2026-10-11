@@ -1,3 +1,38 @@
+## §74 — Centralized rotating logging, security monitoring, and automated threat event tracking (2026-10-11)
+
+Comprehensive logging infrastructure and security monitoring with zero-secret leakage:
+
+1. **Centralized Rotating Logging (`backend/api/logging_config.py`, `backend/config.py`)**:
+   - Configurable log directory `logs/` (default: `<project_root>/logs`) created with restricted `0o750` permissions.
+   - Dedicated log channels with 10MB file rotation and 5 backup archives (`RotatingFileHandler`):
+     - `logs/app.log`: Application runtime records (INFO, WARNING, ERROR, CRITICAL).
+     - `logs/error.log`: Dedicated error log (ERROR and CRITICAL only).
+     - `logs/security.log`: Dedicated security audit log capturing all security-relevant events.
+     - Console stdout: Formatted output for container and terminal visibility.
+   - All log handlers are equipped with `SecretRedactorFilter` to ensure passwords, tokens, API keys, basic auth URLs, and Solana private keypairs are never persisted to disk or stdout.
+
+2. **Real-Time Security Event Tracking (`backend/api/security_monitor.py`)**:
+   - `SecurityMonitor`: Thread-safe in-memory ring buffer (300 events) and real-time aggregate metrics.
+   - Categorized security events:
+     - `AUTH_FAILURE`: Failed logins or invalid operator tokens.
+     - `AUTH_LOCKOUT`: Brute-force lockout threshold reached (e.g. 5 consecutive failures).
+     - `RATE_LIMIT_EXCEEDED`: Tiered rate limit violations (auth, paid_service, general).
+     - `BOT_DETECTED`: Honeypot trips, timing violations, or failed proof-of-work/CAPTCHA.
+     - `BLOCKED_PATH_PROBE`: Requests probing `.git`, `.env`, `.map`, `/docs`, or directory traversal.
+     - `SUSPICIOUS_UPLOAD`: Executable binary magic signatures or script shebangs in uploads.
+     - `INTERNAL_ERROR`: Unhandled 500 exceptions and 5xx server errors with correlated `error_id`.
+   - All event details are sanitized with `sanitize_error_detail` prior to storage and logging.
+
+3. **Operator Monitoring API Endpoints (`backend/api/routes/admin.py`)**:
+   - `GET /api/admin/monitoring/security-events`: Returns real-time summary (total events, breakdown by type, top suspicious IPs) and recent events. Protected by `require_admin_token(request)`.
+   - `GET /api/admin/monitoring/logs`: Returns log file locations, sizes, and operational statuses. Protected by `require_admin_token(request)`.
+
+4. **Verification**:
+   - Dedicated test suite `backend/tests/test_logging_and_monitoring.py` (11 tests covering log separation, rotation, secret scrubbing, security monitor aggregation, admin endpoints, and end-to-end event triggers).
+   - Full test suite passes: **913 passed** (0 failures).
+
+---
+
 ## §73 — Production error shielding, generic 500 error responses, logging secret filter, and validation input stripping (2026-10-11)
 
 Comprehensive production error handling and secret containment ensuring users receive generic, safe error messages while server logs retain full diagnostic fidelity without leaking secrets:

@@ -526,4 +526,10 @@ Defense-in-depth principles implemented across all layers of the application:
     - An opaque hexadecimal `error_id` correlates client error reports with server logs. The full traceback, HTTP method, path, and client IP are logged privately server-side.
     - `SecretRedactorFilter` logging filter actively sanitizes log outputs across all application and server loggers (`uvicorn`, `fastapi`, `httpx`), masking configured secrets (admin tokens, LLM API keys), Authorization Bearer headers, basic auth credentials in URLs (`user:pass@`), and 64-int Solana wallet keypairs (`[<REDACTED-KEYPAIR>]`).
     - Pydantic RequestValidationErrors (HTTP 422) strip raw user `input` fields so passwords, session tokens, or oversized malicious payloads are never reflected back to clients.
+13. **Centralized Logging & Security Monitoring**:
+    - Designated rotating log files in `logs/` directory (`logs/app.log`, `logs/error.log`, `logs/security.log`) with 10MB file rotation and 5 backup archives.
+    - All log handlers are equipped with `SecretRedactorFilter` to ensure passwords, tokens, API keys, basic auth URLs, and wallet keypairs are never persisted to disk or emitted to stdout.
+    - Real-time `SecurityMonitor` tracks suspicious activity across multiple attack vectors: authentication failures (`AUTH_FAILURE`), brute-force threshold breaches (`AUTH_LOCKOUT`), rate limit violations (`RATE_LIMIT_EXCEEDED`), bot honeypot/challenge trips (`BOT_DETECTED`), blocked file/dotfile probes (`BLOCKED_PATH_PROBE`), and internal 500 exceptions (`INTERNAL_ERROR`).
+    - Operator-facing monitoring endpoints (`/api/admin/monitoring/security-events` and `/api/admin/monitoring/logs`) provide instant visibility into security events, attacker IPs, and log file metrics.
+
 

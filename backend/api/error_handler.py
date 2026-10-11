@@ -44,7 +44,7 @@ _SENSITIVE_PARAM_NAMES = (
 )
 
 _SENSITIVE_PARAM_RE = re.compile(
-    rf"(?i)\b({'|'.join(_SENSITIVE_PARAM_NAMES)})\b\s*[:=]\s*(?!\[?<REDACTED)([^\s,;&\"']+)",
+    rf"(?i)\b({'|'.join(_SENSITIVE_PARAM_NAMES)})\b\s*[:=]\s*(?!Bearer\s|\[?<REDACTED)([^\s,;&\"']+)",
 )
 
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9_\-\.~+/]+=*")
@@ -63,7 +63,7 @@ class SecretRedactorFilter(logging.Filter):
     def _refresh_secrets(self) -> None:
         patterns = []
         # Dynamic known secret values from config (only non-trivial strings >= 6 chars)
-        configured_secrets = [
+        configured_secrets: list[str] = [
             getattr(config, "ADMIN_TOKEN", None),
             getattr(config, "DEEPSEEK_API_KEY", None),
             getattr(config, "GROQ_API_KEY", None),
@@ -76,10 +76,26 @@ class SecretRedactorFilter(logging.Filter):
             getattr(config, "SCRAPEOPS_API_KEY", None),
             getattr(config, "FOMO_PRIVY_REFRESH_TOKEN", None),
             getattr(config, "SECRET_STORE_KEY", None),
+            getattr(config, "CAPTCHA_SECRET_KEY", None),
+            getattr(config, "BIRDEYE_API_KEY", None),
+            getattr(config, "DEXSCREENER_API_KEY", None),
+            getattr(config, "JUPITER_API_KEY", None),
+            getattr(config, "SUPABASE_DB_URL", None),
         ]
+        # Dynamically include any other config attributes ending in secret keywords
+        for attr in dir(config):
+            if any(attr.endswith(suffix) for suffix in ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")) and not attr.startswith("_"):
+                val = getattr(config, attr, None)
+                if val and isinstance(val, str) and len(val.strip()) >= 6:
+                    configured_secrets.append(val)
+
+        seen = set()
         for sec in configured_secrets:
-            if sec and isinstance(sec, str) and len(sec.strip()) >= 6:
-                patterns.append(re.compile(re.escape(sec.strip())))
+            if sec and isinstance(sec, str):
+                s = sec.strip()
+                if len(s) >= 6 and s not in seen:
+                    seen.add(s)
+                    patterns.append(re.compile(re.escape(s)))
         self._compiled_secrets = patterns
 
     def filter(self, record: logging.LogRecord) -> bool:
@@ -115,7 +131,7 @@ class SecretRedactorFilter(logging.Filter):
 def install_secret_redactor() -> None:
     """Install SecretRedactorFilter across all primary application and server loggers."""
     redactor = SecretRedactorFilter()
-    target_loggers = ("", "uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "httpx", "api")
+    target_loggers = ("", "uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "httpx", "api", "security")
     for name in target_loggers:
         lg = logging.getLogger(name)
         if not any(isinstance(f, SecretRedactorFilter) for f in lg.filters):
@@ -128,20 +144,18 @@ def sanitize_error_detail(detail: Any) -> Any:
         return detail
 
     sanitized = detail
-    # Mask known secrets
-    configured = getattr(config, "ADMIN_TOKEN", "")
-    if configured and len(configured) >= 6:
-        sanitized = sanitized.replace(configured, "<REDACTED>")
-
-    for attr in ("DEEPSEEK_API_KEY", "GROQ_API_KEY", "FIRECRAWL_API_KEY", "BRAVE_SEARCH_API_KEY"):
-        val = getattr(config, attr, "")
-        if val and isinstance(val, str) and len(val) >= 6:
-            sanitized = sanitized.replace(val, "<REDACTED>")
+    # Dynamically scan configured secrets
+    for attr in dir(config):
+        if any(attr.endswith(suffix) for suffix in ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")) and not attr.startswith("_"):
+            val = getattr(config, attr, None)
+            if val and isinstance(val, str) and len(val.strip()) >= 6:
+                sanitized = sanitized.replace(val.strip(), "<REDACTED>")
 
     # Mask keypair patterns
     sanitized = _SOLANA_KEYPAIR_RE.sub("[<REDACTED-KEYPAIR>]", sanitized)
     sanitized = _BEARER_RE.sub("Bearer <REDACTED>", sanitized)
     sanitized = _BASIC_AUTH_URL_RE.sub(r"\1***:***@", sanitized)
+    sanitized = _SENSITIVE_PARAM_RE.sub(r"\1=<REDACTED>", sanitized)
     return sanitized
 
 
@@ -177,6 +191,20 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         content["debug_message"] = str(exc)
         content["exception_type"] = type(exc).__name__
 
+    try:
+        from api.security_monitor import SecurityEventType, record_security_event
+        record_security_event(
+            SecurityEventType.INTERNAL_ERROR,
+            client_ip=client_ip,
+            path=request.url.path,
+            method=request.method,
+            detail=f"Unhandled 500 error: {type(exc).__name__}",
+            severity="ERROR",
+            error_id=error_id,
+        )
+    except Exception:
+        pass
+
     return JSONResponse(
         status_code=500,
         content=content,
@@ -204,6 +232,19 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             exc.detail,
             exc_info=True,
         )
+        try:
+            from api.security_monitor import SecurityEventType, record_security_event
+            record_security_event(
+                SecurityEventType.INTERNAL_ERROR,
+                client_ip=client_ip,
+                path=request.url.path,
+                method=request.method,
+                detail=f"HTTP {exc.status_code} server error",
+                severity="ERROR",
+                error_id=error_id,
+            )
+        except Exception:
+            pass
         is_debug = getattr(config, "DEBUG", False)
         content: dict[str, Any] = {
             "detail": GENERIC_500_MESSAGE,
