@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request
 import config
 from api import db
 from api.auth import require_local_or_admin
-from sizing import compute_unrealized_pnl
+from sizing import compute_entry_cost, compute_unrealized_pnl
 from promotion_gate import _max_drawdown_pct, _profit_factor
 
 router = APIRouter()
@@ -67,10 +67,7 @@ async def get_stats(request: Request):
     total_spend_usd = 0.0
     for t in open_trades:
         # Entry cost incl. simulated fees/slippage — what was deducted from
-        # cash when the position opened (compute_position_size cost basis).
-        total_spend_usd += t.position_size_usd * (1.0 + config.FEE_PCT) * (
-            1.0 + config.SLIPPAGE_PCT
-        )
+        total_spend_usd += compute_entry_cost(t.position_size_usd)
         try:
             decimals = (t.candidate_snapshot or {}).get("decimals")
             price = await provider.get_current_price(t.mint_address, decimals)

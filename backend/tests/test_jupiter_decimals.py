@@ -50,3 +50,50 @@ async def test_get_current_price_fails_closed_without_decimals():
     j = JupiterProvider()
     with pytest.raises(ProviderError, match="decimals unknown"):
         await j.get_current_price("SomeMint1111111111111111111111111111111111", None)
+
+
+async def test_get_current_price_uses_in_memory_cache(monkeypatch):
+    """Subsequent requests within cache TTL return cached price without network fetch."""
+    from data_providers import jupiter as jup_mod
+    j = jup_mod.JupiterProvider(cache_ttl_seconds=2.0)
+    calls = []
+
+    async def fake_fetch_json(*args, **kwargs):
+        calls.append(len(calls) + 1)
+        return {"outAmount": "1000000"}  # 1 USDC for 1 token
+
+    monkeypatch.setattr(jup_mod, "fetch_json", fake_fetch_json)
+
+    p1 = await j.get_current_price("TestMint1111111111111111111111111111111111", 6)
+    assert p1 == 1.0
+    assert len(calls) == 1
+
+    # Second call immediately should hit cache
+    p2 = await j.get_current_price("TestMint1111111111111111111111111111111111", 6)
+    assert p2 == 1.0
+    assert len(calls) == 1
+
+
+async def test_get_current_price_cache_expires(monkeypatch):
+    """Requests after TTL expires re-fetch from network."""
+    from data_providers import jupiter as jup_mod
+    j = jup_mod.JupiterProvider(cache_ttl_seconds=0.05)
+    calls = []
+
+    async def fake_fetch_json(*args, **kwargs):
+        calls.append(len(calls) + 1)
+        return {"outAmount": "1000000"}
+
+    monkeypatch.setattr(jup_mod, "fetch_json", fake_fetch_json)
+
+    p1 = await j.get_current_price("TestMint1111111111111111111111111111111111", 6)
+    assert p1 == 1.0
+    assert len(calls) == 1
+
+    import asyncio
+    await asyncio.sleep(0.06)
+
+    p2 = await j.get_current_price("TestMint1111111111111111111111111111111111", 6)
+    assert p2 == 1.0
+    assert len(calls) == 2
+

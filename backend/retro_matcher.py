@@ -30,7 +30,7 @@ SAFEGUARDS (beyond the reference):
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any
 
 from api import db

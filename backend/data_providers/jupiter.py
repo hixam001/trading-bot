@@ -12,6 +12,7 @@ every mint once fabricated 1000× prices on 6-decimal tokens.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Optional
 
 import httpx
@@ -47,8 +48,10 @@ def price_from_quote(out_amount_raw: str | int, decimals: int) -> float:
 
 
 class JupiterProvider:
-    def __init__(self, client: Optional[httpx.AsyncClient] = None) -> None:
+    def __init__(self, client: Optional[httpx.AsyncClient] = None, cache_ttl_seconds: float = 2.0) -> None:
         self._client = client
+        self._cache_ttl = cache_ttl_seconds
+        self._price_cache: dict[tuple[str, int], tuple[float, float]] = {}
 
     async def get_current_price(self, mint_address: str,
                                 decimals: Optional[int] = None) -> float:
@@ -67,6 +70,14 @@ class JupiterProvider:
                 f"refusing to quote (a wrong decimals value would fabricate "
                 f"the price)"
             )
+
+        now = time.monotonic()
+        cache_key = (mint_address, decimals)
+        if self._cache_ttl > 0 and cache_key in self._price_cache:
+            cached_price, cached_at = self._price_cache[cache_key]
+            if now - cached_at < self._cache_ttl:
+                return cached_price
+
         own_client = self._client is None
         client = self._client or httpx.AsyncClient()
         # Quote API v6 is keyless; a Jupiter Pro key rides as x-api-key.
@@ -97,4 +108,6 @@ class JupiterProvider:
         price = price_from_quote(out_amount, decimals)
         if price <= 0:
             raise ProviderError(f"jupiter: non-positive quote for {mint_address}")
+        if self._cache_ttl > 0:
+            self._price_cache[cache_key] = (price, now)
         return price

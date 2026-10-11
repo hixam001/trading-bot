@@ -350,6 +350,32 @@ async def get_feed_events(
     return [_row_to_feed_dict(r) for r in rows]
 
 
+async def get_feed_events_since(
+    conn: aiosqlite.Connection, since_id: int, limit: int = 50
+) -> list[dict[str, Any]]:
+    cursor = await conn.execute(
+        "SELECT * FROM feed_events WHERE id > ? ORDER BY id ASC LIMIT ?",
+        (since_id, limit),
+    )
+    rows = await cursor.fetchall()
+    return [_row_to_feed_dict(r) for r in rows]
+
+
+async def get_feed_verdicts(
+    conn: aiosqlite.Connection, limit: int = 1000
+) -> list[dict[str, Any]]:
+    """Lightweight projection for the refusal funnel: skips large JSON blobs."""
+    cursor = await conn.execute(
+        "SELECT verdict, failed_rule_ids FROM feed_events ORDER BY id DESC LIMIT ?",
+        (limit,),
+    )
+    rows = await cursor.fetchall()
+    return [
+        {"verdict": r["verdict"], "failed_rule_ids": json.loads(r["failed_rule_ids"] or "[]")}
+        for r in rows
+    ]
+
+
 async def count_feed_events(conn: aiosqlite.Connection) -> int:
     cursor = await conn.execute("SELECT COUNT(*) FROM feed_events")
     return int((await cursor.fetchone())[0])

@@ -14,9 +14,13 @@ token/cost accounting lands in llm_call_usage automatically.
 """
 import asyncio
 import logging
+import sys
 from datetime import datetime
+from pathlib import Path
 
 import click
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api.db import get_db, get_feed_events, get_recent_decision_commits
 from models import Candidate

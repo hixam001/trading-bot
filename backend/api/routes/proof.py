@@ -30,7 +30,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Query
-import config
 from api import db
 
 router = APIRouter()

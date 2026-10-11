@@ -21,10 +21,8 @@ from __future__ import annotations
 
 import logging
 from logging.handlers import RotatingFileHandler
-import os
 from pathlib import Path
 import sys
-from typing import Any
 
 import config
 from api.error_handler import SecretRedactorFilter

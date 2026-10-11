@@ -75,7 +75,7 @@ def compute_funnel(feed: list, commits: list, total: int, limit: int) -> dict:
 async def _funnel_window(limit: int) -> tuple[list, list, int]:
     async with db.get_db() as conn:
         total = await db.count_feed_events(conn)
-        feed = await db.get_feed_events(conn, limit=limit)
+        feed = await db.get_feed_verdicts(conn, limit=limit)
         commits = await db.get_recent_decision_commits(conn, limit=limit)
     return feed, commits, total
 

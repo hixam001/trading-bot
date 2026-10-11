@@ -1,15 +1,15 @@
 """
 models.py — Core domain dataclasses for trading-bot.
 
-Plain Python dataclasses; SQLite persistence lives entirely in api/db.py.
-No file I/O happens here.
+Plain Python dataclasses; database persistence lives entirely in api/db.py (SQLite)
+and api/db_pg.py (Postgres). No file I/O happens here.
 
 None semantics (non-negotiable): a field a data source did not actually
 return is None. None means UNKNOWN — it is never coerced to False/0, which
 would fabricate a safety claim ("checked and fine") that was never made.
 
-PAPER TRADING ONLY: nothing in this file moves real funds. Trade represents
-a simulated position exclusively.
+In the single-book architecture (§52), Trade records mirror the live execution
+ledger (`ExecutionLedger`).
 """
 from __future__ import annotations
 
@@ -211,7 +211,7 @@ class GateDecision:
 
 
 # ---------------------------------------------------------------------------
-# Trade — a simulated (paper) position
+# Trade — a position record mirroring the live execution ledger (§52)
 # ---------------------------------------------------------------------------
 
 @dataclass

@@ -144,7 +144,6 @@ class LiveProviderStack:
             return await self.birdeye.get_current_price(mint_address)
 
     async def get_security_info(self, mint_address: str) -> SecurityInfo:
-        return await self.birdeye.get_security_info(mint_address)
         if config.BIRDEYE_API_KEY:
             try:
                 return await self.birdeye.get_security_info(mint_address)
@@ -152,7 +151,10 @@ class LiveProviderStack:
                 pass
         from data_providers.onchain_security import get_authority_flags
         flags = await get_authority_flags(mint_address)
-        return SecurityInfo(mint_authority_revoked=flags.get("mint_authority_revoked"), freeze_authority_revoked=flags.get("freeze_authority_revoked"))
+        return SecurityInfo(
+            mint_authority_revoked=flags.get("mint_authority_revoked"),
+            freeze_authority_revoked=flags.get("freeze_authority_revoked"),
+        )
 
     async def aclose(self) -> None:
         await self.new_listings.stop()

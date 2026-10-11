@@ -38,7 +38,6 @@ import time
 import httpx
 
 import config
-from models import Candidate
 
 log = logging.getLogger(__name__)
 

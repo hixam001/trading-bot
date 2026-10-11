@@ -1,9 +1,13 @@
 import asyncio
-import os
+from pathlib import Path
 import sys
 
+BACKEND = Path(__file__).resolve().parent.parent / "backend"
+if str(BACKEND) not in sys.path:
+    sys.path.insert(0, str(BACKEND))
+
 import config
-from llm.client import build_main_client, MainGroqClient, DeepSeekClient, GroqClient
+from llm.client import build_main_client, DeepSeekClient, GroqClient
 
 
 async def ping(label: str, client) -> None:
@@ -57,6 +61,4 @@ async def check():
         print("Social Groq skipped: no API key configured")
 
 if __name__ == "__main__":
-    # Add the current dir to sys.path so we can import from backend if running from project root
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     asyncio.run(check())

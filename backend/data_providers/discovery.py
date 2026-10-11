@@ -14,16 +14,12 @@ and the fake-chart filter (wash-traded pairs whose 1h volume their liquidity
 could never absorb never reach the reasoning layer).
 """
 from __future__ import annotations
-
-import asyncio
 import logging
 import re
 import time
 from typing import Optional
 
 import httpx
-
-import config
 
 from models import Candidate
 

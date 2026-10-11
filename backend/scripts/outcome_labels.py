@@ -3,8 +3,13 @@ Outcome Labels script for evaluating LLM predictive performance.
 Retroactively joins decision_commits (thinker verdicts) to trade outcomes (realized PnL).
 """
 import asyncio
-import click
 import logging
+import sys
+from pathlib import Path
+
+import click
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from api.db import get_db
 

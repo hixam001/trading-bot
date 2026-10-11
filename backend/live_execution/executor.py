@@ -24,7 +24,6 @@ exercise the full flow on devnet with a throwaway keypair BEFORE mainnet.
 from __future__ import annotations
 
 import logging
-import time
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 

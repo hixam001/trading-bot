@@ -19,7 +19,7 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from live_execution import config
 from live_execution.models import PendingConfirmation, new_id

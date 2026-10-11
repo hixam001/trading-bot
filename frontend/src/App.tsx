@@ -10,7 +10,7 @@ import Performance from './components/Performance'
 import RefusalFunnel from './components/RefusalFunnel'
 import ShortcutOverlay from './components/ShortcutOverlay'
 import MintHistory from './components/MintHistory'
-import { ErrorPanel, LoadingPanel } from './components/ui'
+import { Empty, ErrorPanel, LoadingPanel, Panel } from './components/ui'
 import Hero from './components/Hero'
 import AlertStrip from './components/AlertStrip'
 import { useApi } from './hooks/useApi'
@@ -318,15 +318,12 @@ export default function App() {
                   <LiveBook book={liveBook.data} onMintHistory={setHistoryMint} />
                 ) : (
                   <div className="m-3">
-                    <div className="panel">
-                      <div className="panel-header">
-                        <h2 className="panel-title">positions</h2>
-                      </div>
-                      <div className="empty">
+                    <Panel title="positions">
+                      <Empty>
                         Live book not available:{' '}
                         {liveBook.data?.reason ?? 'waiting for the first poll'}.
-                      </div>
-                    </div>
+                      </Empty>
+                    </Panel>
                   </div>
                 )}
               </div>

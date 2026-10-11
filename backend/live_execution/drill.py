@@ -11,9 +11,7 @@ funds even in principle. Run BEFORE mainnet is ever considered:
 """
 from __future__ import annotations
 
-import asyncio
 import logging
-import time
 
 from live_execution import config, wallet
 from live_execution.solana import (  # noqa: F401

@@ -1,5 +1,5 @@
 import type { LivePortfolioResponse } from '../types'
-import { CopyText, Empty, HistoryButton } from './ui'
+import { CopyText, Empty, HistoryButton, Panel } from './ui'
 import { clock, num, pnlClass, price, shortAddr, signedUsd, usd } from '../lib/format'
 
 /**
@@ -24,11 +24,12 @@ export default function LiveBook({
   const hidden = book.chain_excluded ?? []
 
   return (
-    <section data-testid="live-book" className="panel flex flex-col flex-1 min-h-0 m-3">
-      <div className="panel-header">
-        <h2 className="panel-title">positions</h2>
-        <span className="font-mono text-[10px] text-faint tnum">{positions.length} open</span>
-      </div>
+    <Panel
+      testId="live-book"
+      className="flex flex-col flex-1 min-h-0 m-3"
+      title="positions"
+      right={<span className="font-mono text-[10px] text-faint tnum">{positions.length} open</span>}
+    >
 
       <div className="grid grid-cols-2 gap-2 mb-2">
         <div className="stat-card">
@@ -93,6 +94,6 @@ export default function LiveBook({
       <div className="mt-2 text-[10.5px] text-faint" title={book.wallet ?? undefined}>
         wallet {shortAddr(book.wallet)}
       </div>
-    </section>
+    </Panel>
   )
 }

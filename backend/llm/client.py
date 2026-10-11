@@ -12,8 +12,8 @@ from __future__ import annotations
 import hashlib
 import logging
 import time
-from dataclasses import dataclass, field
-from typing import Any, Optional, Dict
+from dataclasses import dataclass
+from typing import Any, Optional
 from datetime import datetime, timezone
 
 import httpx

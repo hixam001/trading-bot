@@ -12,7 +12,6 @@ import logging
 
 from fastapi import APIRouter, Request
 
-import config
 from api import db
 from api.auth import require_local_or_admin
 from sizing import compute_unrealized_pnl

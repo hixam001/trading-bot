@@ -16,7 +16,6 @@ import hashlib
 import hmac
 import logging
 import secrets
-import sys
 import time
 from typing import Any
 

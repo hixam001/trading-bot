@@ -30,11 +30,6 @@ def _f(v) -> float:
         return 0.0
 
 
-def _i(v) -> int:
-    try:
-        return int(v or 0)
-    except (TypeError, ValueError):
-        return 0
 
 
 def _parse_count(v) -> Optional[int]:

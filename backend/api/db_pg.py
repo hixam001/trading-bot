@@ -416,6 +416,37 @@ async def get_feed_events(
     return [_row_to_feed_dict(r) for r in rows]
 
 
+async def get_feed_events_since(
+    conn: asyncpg.Connection, since_id: int, limit: int = 50
+) -> list[dict[str, Any]]:
+    rows = await conn.fetch(
+        f"SELECT {_FEED_COLS} FROM feed_events WHERE id > $1 ORDER BY id ASC LIMIT $2",
+        since_id, limit,
+    )
+    return [_row_to_feed_dict(r) for r in rows]
+
+
+async def get_feed_verdicts(
+    conn: asyncpg.Connection, limit: int = 1000
+) -> list[dict[str, Any]]:
+    """Lightweight projection for the refusal funnel: skips large JSON blobs."""
+    rows = await conn.fetch(
+        "SELECT verdict, failed_rule_ids FROM feed_events ORDER BY id DESC LIMIT $1",
+        limit,
+    )
+    return [
+        {
+            "verdict": r["verdict"],
+            "failed_rule_ids": (
+                json.loads(r["failed_rule_ids"])
+                if isinstance(r["failed_rule_ids"], str)
+                else (r["failed_rule_ids"] or [])
+            ),
+        }
+        for r in rows
+    ]
+
+
 async def count_feed_events(conn: asyncpg.Connection) -> int:
     return int(await conn.fetchval("SELECT COUNT(*) FROM feed_events"))
 

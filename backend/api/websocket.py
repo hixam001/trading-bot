@@ -46,10 +46,13 @@ class FeedBroadcaster:
                 try:
                     if self._clients:
                         async with db.get_db() as conn:
-                            events = await db.get_feed_events(
-                                conn, limit=100, offset=0
+                            if self._last_id == 0:
+                                recent = await db.get_feed_events(conn, limit=1, offset=0)
+                                if recent:
+                                    self._last_id = recent[0]["id"]
+                            fresh = await db.get_feed_events_since(
+                                conn, since_id=self._last_id, limit=50
                             )
-                        fresh = [e for e in reversed(events) if e["id"] > self._last_id]
                         for e in fresh:
                             self._last_id = max(self._last_id, e["id"])
                             await self._broadcast(e)

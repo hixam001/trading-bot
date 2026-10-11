@@ -41,7 +41,7 @@ from blocklist import filter_candidates
 from models import Candidate, GateDecision, PortfolioState
 from rule_engine.fake_chart import is_fake_candidate
 from rule_engine.gate import decision_from_results, evaluate_gate
-from rule_engine.regime import MarketRegime, compute_market_regime
+from rule_engine.regime import MarketRegime
 
 log = logging.getLogger(__name__)
 

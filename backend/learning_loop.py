@@ -12,7 +12,6 @@ import logging
 from collections import Counter
 from datetime import datetime, timezone
 
-import config
 from api import db
 from models import DailyStats
 from promotion_gate import _max_drawdown_pct, _profit_factor
