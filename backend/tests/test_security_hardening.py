@@ -125,6 +125,8 @@ async def test_security_headers_present(client):
     assert r.headers["x-content-type-options"] == "nosniff"
     assert r.headers["x-frame-options"] == "DENY"
     assert r.headers["referrer-policy"] == "no-referrer"
+    assert r.headers["cross-origin-opener-policy"] == "same-origin"
+    assert r.headers["x-permitted-cross-domain-policies"] == "none"
     assert "content-security-policy" in r.headers
     assert "default-src 'self'" in r.headers["content-security-policy"]
 

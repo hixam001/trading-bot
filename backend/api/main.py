@@ -141,6 +141,8 @@ async def security_headers(request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
+    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
+    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
 
     forwarded_proto = (request.headers.get("x-forwarded-proto") or "").lower()
     forwarded_hdr = (request.headers.get("forwarded") or "").lower()
