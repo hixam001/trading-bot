@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §77 Security Audit Remediation (Phases A–E) (2026-10-11):
+      1. Phase A (Edge Exposure & Auth): Removed admin-token proxy injection from deploy docs (`test_docs_security.py`); bound uvicorn/compose to loopback and trusted subnets; unified `get_client_ip()` defeating forged proxy IP rotation; enforced 32+ char `ADMIN_TOKEN` minimum entropy; eliminated `test-captcha-pass` bypass; fixed login lockout precedence to prevent operator DoS.
+      2. Phase B (Wallet Secret Isolation): Added `wallet.public_address()`; removed `load_keypair()` from all `backend/api/` modules; split `docker-compose.yml` into `api` (no keypair mount) and `live` (read-only keypair mount) services with `ROLE=api|live`; enforced `0o600`/`0o400` POSIX permissions on keypair file.
+      3. Phase C (Signing Guard & Deny-By-Default): Added `_verify_transaction_safety(tx)` inspecting versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture in `docs/14_SIGNING_GUARD.md`.
+      4. Phase D (Hermetic Tests & CI): Hardened tests to pass hermetically with zero network, no `.env`, and unbuilt frontend; created GitHub Actions CI workflow (`.github/workflows/tests.yml`); generated `backend/requirements.lock`; pinned SearXNG image to `searxng/searxng:2024.12.30-d3e758a` with mandatory `SEARXNG_SECRET`.
+      5. Phase E (Defense-in-Depth): Added `register_secret()` for runtime token scrubbing (Privy OAuth refresh tokens) and JSON-quoted field scrubbing; wrapped Postgres `reset_book` in atomic transaction; capped WebSocket connections per IP (`MAX_WS_PER_IP = 4`) with 30s timeout harvest; guarded against CORS wildcard with credentials; added session revocation on logout; corrected ARIA role in live feed.
+      6. Verified: full test suite passes with **934/934 tests green** (0 failures). Full detail: handoff §77.
+
 - [x] §76 Operational Launchers & Docker Container Infrastructure Alignment (2026-10-11):
       1. Local launchers (`start.sh`, `stop.sh`): Dynamic `API_PORT` resolution honoring `.env` with fallback to `PORT` and default `8000`; eliminated paper-era `TICK_LOOP_IN_PROCESS=0` residue; enforced `0o750` permissions on `logs/` directory; `stop.sh` dynamically reports offline port.
       2. Container entrypoint hardening (`backend/docker-entrypoint.sh`, `backend/tests/test_docker_entrypoint.py`): Audit A8 safety regex fix for `LIVE_TRADING_ENABLED` extraction (`grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b'`) preventing comments from enabling live execution; dynamic `PORT` / `API_PORT` fallback. Added regression tests (15/15 green).

@@ -1,3 +1,39 @@
+## Memory-bank update — 2026-10-11 (§77 Security Audit Remediation: Phases A–E)
+
+- **Task**: Address and close all findings of an independent security audit across commits §70–§76 across 5 phases:
+  - **Phase A (Edge Exposure & Auth)**:
+    - A1: Deleted `header_up X-Admin-Token` proxy injection from `docs/13_ORACLE_DEPLOY_GUIDE.md` and added `backend/tests/test_docs_security.py`.
+    - A2: Restricted default Docker Compose port to `127.0.0.1:${API_PORT:-8000}:8000`, changed Uvicorn `--forwarded-allow-ips` to `${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}`, added `--proxy-headers --forwarded-allow-ips=127.0.0.1` to `start.sh`, unified `get_client_ip()` calls.
+    - A3: Enforced fail-closed behavior when `ADMIN_TOKEN` is < 32 characters, disabling operator endpoints with a CRITICAL log.
+    - A4: Deleted backdoor `test-captcha-pass` token from `backend/api/bot_protection.py`.
+    - A5: Fixed login lockout order in `backend/api/routes/auth.py` so valid credentials authenticate before lockout checks.
+  - **Phase B (Wallet Secret Isolation)**:
+    - B1: Added `wallet.public_address() -> str | None` reading `EXPECTED_WALLET_ADDRESS` or `state/wallet_pubkey.txt`. Removed all `load_keypair()` calls from `backend/api/`.
+    - B2: Split `docker-compose.yml` into `api` and `live` services with read-only keypair volume mount for `live` only. Updated `docker-entrypoint.sh` for `ROLE=api|live`.
+    - B3: Enforced POSIX file permissions check in `wallet.load_keypair()` rejecting keypairs with permissions looser than `0o600` or `0o400`.
+  - **Phase C (Signing Guard & Deny-by-Default)**:
+    - C1: Implemented `_verify_transaction_safety(tx)` in `backend/live_execution/jupiter_executor.py` verifying all instructions in versioned and legacy transactions against strict allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`).
+    - C2: Validated all allowlist pubkeys and removed unverified Moonshot ID.
+    - C3: Authored architectural specification `docs/14_SIGNING_GUARD.md`.
+  - **Phase D (Hermetic Tests & CI Infrastructure)**:
+    - D1: Fixed unhermetic test fixtures in `test_error_handling_security.py` and `test_logging_and_monitoring.py`, and made `spa_fallback` in `api/main.py` unconditionally active.
+    - D2: Created GitHub Actions CI pipeline `.github/workflows/tests.yml` (Python 3.13, Node 20, lockfile/requirements, hermetic pytest without `.env`, `npm run build`, `pip-audit`, `npm audit --omit=dev`).
+    - D3: Generated `backend/requirements.lock`, pinned SearXNG image to `searxng/searxng:2024.12.30-d3e758a`, mandated `SEARXNG_SECRET`.
+  - **Phase E (Defense-in-Depth Hardening)**:
+    - E1: Implemented `register_secret(value)` in `backend/api/error_handler.py` for runtime tokens (Privy OAuth refresh tokens) and added JSON-quoted field scrubbing (`_JSON_SENSITIVE_RE`).
+    - E2: Wrapped Postgres `reset_book` in atomic transaction (`async with conn.transaction():`) with `_now_iso()` helper.
+    - E3: Bounded WebSocket connections per IP (`MAX_WS_PER_IP = 4`) with 30s timeout liveness harvest.
+    - E4: Stripped CORS wildcard `*` from `allow_origins` when `allow_credentials=True`.
+    - E5: Added session signature revocation registry on logout (`POST /api/auth/logout`).
+    - E6: Changed LiveFeed unread arrival divider from `role="separator"` to `role="presentation"`.
+- **Tests**:
+  - Full test suite: **934 passed** (0 failures).
+  - Frontend build: passes cleanly.
+- **Constraints & Invariants Preserved**:
+  - `LIVE_TRADING_ENABLED` / `REQUIRE_MANUAL_CONFIRMATION` untouched.
+  - Zero modifications to `rule_engine/`.
+  - No secret leakage, fail-closed design throughout.
+
 ## Memory-bank update — 2026-10-10 (§70 comprehensive 10-rule security audit & platform hardening)
 
 - **Task**: Audit and harden the entire application across the 10 rules:

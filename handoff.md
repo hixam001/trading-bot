@@ -1,3 +1,110 @@
+## §77 — Security Audit Remediation (Phases A–E) (2026-10-11)
+
+Comprehensive resolution of findings from the independent security audit of commits §70–§76:
+
+### Baseline vs. Post-Remediation Test Metrics
+- **Baseline on clean checkout**: `899 passed, 2 skipped, 3 failed` (the 3 failures were unhermetic test fixtures dependent on `.env` / `frontend/dist`).
+- **Post-remediation**: `934 passed, 1 warning` (Starlette deprecation), `0 failures`. Full test suite hermetic without `.env`, without built frontend, and without network.
+
+---
+
+### Mandatory Operator Pre-Flight Checklist
+Before deploying or arming this build on mainnet, the operator MUST complete:
+1. **Devnet Signing Drill**: Re-drill live execution on devnet with a throwaway keypair before any mainnet redeployment:
+   ```bash
+   python run_live_cycle.py --drill
+   ```
+2. **Generate Strong Operator Admin Token**: Generate a cryptographically secure token of at least 32 characters (tokens < 32 characters fail-closed and disable operator endpoints):
+   ```bash
+   openssl rand -hex 32
+   ```
+   Set this in `.env` as `ADMIN_TOKEN=<generated_token>`.
+3. **Generate SearXNG Secret**:
+   ```bash
+   openssl rand -hex 32
+   ```
+   Set this in `.env` as `SEARXNG_SECRET=<generated_token>`.
+4. **Keypair File Permissions**: Ensure the production Solana keypair file is restricted to owner read/write only:
+   ```bash
+   chmod 600 backend/live_execution/wallet_keypair.json
+   ```
+
+---
+
+### Phase A: Edge Exposure, Authentication, and Threat Containment
+1. **A1 — Removed Admin Token Injection from Deployment Guides (`docs/13_ORACLE_DEPLOY_GUIDE.md`, `backend/tests/test_docs_security.py`)**:
+   - Deleted obsolete `header_up X-Admin-Token` Caddy directive and systemd environment overrides that previously compromised the proxy.
+   - Added explicit documentation warnings instructing operators to authenticate solely via `POST /api/auth/login` (HttpOnly cookie).
+   - Added automated doc-security scan testing all markdown docs for forbidden injection patterns or exposed `VITE_ADMIN_TOKEN` values.
+2. **A2 — Unified Client IP Resolution and Proxy Header Spoof Protection (`api/rate_limiter.py`, `api/auth.py`, `api/routes/auth.py`, `api/bot_protection.py`, `docker-compose.yml`, `backend/docker-entrypoint.sh`, `start.sh`)**:
+   - Bound default compose port to `127.0.0.1:${API_PORT:-8000}:8000`.
+   - Replaced wildcard `--forwarded-allow-ips='*'` with `${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}`.
+   - Configured `start.sh` with `--proxy-headers --forwarded-allow-ips=127.0.0.1`.
+   - Unified all client IP extraction to `get_client_ip()` across rate limiters, auth decorators, and bot protection. Spoofed `X-Forwarded-For` headers from untrusted peers are ignored, defeating rotating-IP brute-force bypasses.
+3. **A3 — Enforced ADMIN_TOKEN Minimum Entropy (`backend/config.py`, `backend/api/auth.py`, `backend/api/routes/auth.py`)**:
+   - Enforced fail-closed behavior if `ADMIN_TOKEN` is non-empty but shorter than 32 characters: operator endpoints are disabled and a CRITICAL warning is logged.
+4. **A4 — Eliminated Hardcoded CAPTCHA Bypass (`backend/api/bot_protection.py`, `backend/tests/test_audit_77_a.py`)**:
+   - Removed backdoor literal `test-captcha-pass`. Unit tests now explicitly monkeypatch or toggle `CAPTCHA_ENABLED=false`. Added repo-wide test ensuring bypass strings do not re-enter codebase.
+5. **A5 — Corrected Login Lockout Precedence (`backend/api/routes/auth.py`)**:
+   - Reordered login verification to check token credentials first before triggering lockout rejection: legitimate operator credentials authenticate and reset failure counters, while wrong attempts are throttled with 429, preventing operator lock-out DoS.
+
+---
+
+### Phase B: Wallet Secret Isolation and Permissions
+1. **B1 — API Process Wallet Secret Isolation (`backend/live_execution/wallet.py`, `backend/api/routes/stats.py`, `backend/api/routes/holdings.py`, `backend/api/routes/live_book.py`)**:
+   - Added `wallet.public_address() -> str | None` reading `EXPECTED_WALLET_ADDRESS` or `state/wallet_pubkey.txt` (written by `run_live_cycle.py`).
+   - Completely purged all `load_keypair()` references from `backend/api/`. Added AST scan asserting no API module touches `load_keypair`.
+2. **B2 — Process Separation in Docker Compose (`docker-compose.yml`, `backend/docker-entrypoint.sh`)**:
+   - Split `docker-compose.yml` into distinct `api` and `live` services. The `live` service mounts the secret keypair read-only (`:ro`); the `api` service has zero volume access to keypair secrets.
+   - Updated `docker-entrypoint.sh` to support `ROLE=api` and `ROLE=live`.
+3. **B3 — Enforced POSIX Keypair File Permissions (`backend/live_execution/wallet.py`)**:
+   - `load_keypair()` inspects file permissions and refuses to load keypairs if group or others have read/write/execute permissions (must be `0o600` or `0o400`).
+
+---
+
+### Phase C: Instruction-Level Signing Guard & Allowlist
+1. **C1 — Instruction-Level Pre-Signing Inspection (`backend/live_execution/jupiter_executor.py`)**:
+   - Added `_verify_transaction_safety(tx)` enforcing strict deny-by-default instruction inspection for both versioned and legacy Solana transactions prior to signing.
+   - Resolves instruction program IDs via static keys and address lookup tables (ALTs). Rejects transactions calling unapproved programs (only System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS` permitted).
+2. **C2 — Allowlist Hygiene (`backend/live_execution/config.py`)**:
+   - Validated all entries in `APPROVED_SWAP_PROGRAM_IDS` as base58 Solana Pubkeys.
+   - Removed unverified Moonshot program ID (`MSPC8t9vL7iQc4JzJjS9KqR7vC8bZpUuJ9G7r5vB2pD`) pending official verification.
+3. **C3 — Signing Guard Architecture Specification (`docs/14_SIGNING_GUARD.md`)**:
+   - Documented instruction allowlisting principles, Address Lookup Table (ALT) resolution mechanics, balance drain risks, pre-flight simulation vs pre-signing invariant checks, and prohibition of `skipPreflight=true`.
+
+---
+
+### Phase D: Hermetic Security Tests & CI Infrastructure
+1. **D1 — Hermetic Test Suite Hardening (`backend/tests/test_error_handling_security.py`, `backend/tests/test_logging_and_monitoring.py`, `backend/api/main.py`)**:
+   - Replaced short admin tokens in test fixtures with 32+ character tokens.
+   - Hardened `spa_fallback` in `api/main.py` to be unconditionally active, returning clean 404s for unhandled routes when `frontend/dist` is not built.
+2. **D2 — CI Workflow (`.github/workflows/tests.yml`)**:
+   - Implemented GitHub Actions CI pipeline running on Ubuntu 24.04 with Python 3.13 and Node.js 20.
+   - Validates lockfiles, executes hermetic pytest suite with zero network access and no `.env`, builds frontend, and runs dependency vulnerability audits (`pip-audit`, `npm audit --omit=dev`).
+3. **D3 — Lockfiles & Image Pinning (`backend/requirements.lock`, `docker-compose.yml`, `deploy/searxng/settings.yml`)**:
+   - Generated locked dependencies in `backend/requirements.lock`.
+   - Pinned SearXNG image to explicit tag `searxng/searxng:2024.12.30-d3e758a` and mandated `SEARXNG_SECRET`.
+
+---
+
+### Phase E: Defense-in-Depth Hardening
+1. **E1 — Runtime Secret Registration & Expanded Redaction (`backend/api/error_handler.py`, `backend/data_providers/crowd.py`)**:
+   - Implemented `register_secret(value: str)` dynamically registering runtime secrets (e.g. rotated Privy OAuth refresh tokens) into `SecretRedactorFilter` and `sanitize_error_detail`.
+   - Added regex scrubbing for JSON-quoted fields (`"api_key": "..."`, `"authorization": "..."`, etc.).
+2. **E2 — Atomic Postgres Reset (`backend/api/db_pg.py`)**:
+   - Wrapped `reset_book` in an atomic database transaction (`async with conn.transaction():`) and added `_now_iso()` helper.
+3. **E3 — Bounded WebSocket Connections Per IP (`backend/api/websocket.py`)**:
+   - Bounded concurrent WebSocket connections per IP to `MAX_WS_PER_IP = 4` (HTTP 1008 rejection on excess).
+   - Added 30s timeout socket liveness verification to harvest dead half-open connections.
+4. **E4 — CORS Wildcard Guard (`backend/api/main.py`)**:
+   - Stripped wildcard `*` from `allow_origins` when `allow_credentials=True` and logged error.
+5. **E5 — Session Revocation on Logout (`backend/api/auth.py`, `backend/api/routes/auth.py`)**:
+   - Added session token signature revocation registry; verified during HMAC validation and updated `POST /api/auth/logout` to revoke tokens upon exit.
+6. **E6 — Accessibility Divider Correction (`frontend/src/components/LiveFeed.tsx`)**:
+   - Corrected divider role inside `role="list"` from `role="separator"` to `role="presentation"`.
+
+---
+
 ## §76 — Operational Launchers & Docker Container Infrastructure Alignment (2026-10-11)
 
 Comprehensive update and alignment of local launchers (`start.sh`, `stop.sh`) and container deployment assets (`Dockerfile`, `docker-compose.yml`, `.dockerignore`, `docker-entrypoint.sh`):
