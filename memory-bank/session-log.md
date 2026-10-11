@@ -26,9 +26,11 @@
     - E4: Stripped CORS wildcard `*` from `allow_origins` when `allow_credentials=True`.
     - E5: Added session signature revocation registry on logout (`POST /api/auth/logout`).
     - E6: Changed LiveFeed unread arrival divider from `role="separator"` to `role="presentation"`.
+    - E7: Configured `.gitleaksignore` with exact commit fingerprints and `.gitleaks.toml` (`[extend] useDefault = true`) with regex allowlists for synthetic test credentials (`test-operator-secret`, `my-secret-api-key`, `test-operator-admin-token`), plus inline `# gitleaks:allow` markers.
 - **Tests**:
   - Full test suite: **934 passed** (0 failures).
   - Frontend build: passes cleanly.
+  - Gitleaks scan: passes cleanly across all commits in repository history (0 leaks).
 - **Constraints & Invariants Preserved**:
   - `LIVE_TRADING_ENABLED` / `REQUIRE_MANUAL_CONFIRMATION` untouched.
   - Zero modifications to `rule_engine/`.

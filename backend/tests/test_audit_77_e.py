@@ -53,7 +53,7 @@ def test_runtime_secret_registration():
 def test_json_quoted_secret_redaction():
     """JSON-quoted secret keys like {"api_key": "secret"} are masked in logs."""
     redactor = SecretRedactorFilter()
-    json_msg = 'Payload received: {"api_key": "my-secret-api-key-12345", "status": "ok"}'
+    json_msg = 'Payload received: {"api_key": "my-secret-api-key-12345", "status": "ok"}'  # gitleaks:allow
     record = logging.LogRecord(
         name="test",
         level=logging.INFO,

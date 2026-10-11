@@ -102,6 +102,10 @@ Before deploying or arming this build on mainnet, the operator MUST complete:
    - Added session token signature revocation registry; verified during HMAC validation and updated `POST /api/auth/logout` to revoke tokens upon exit.
 6. **E6 — Accessibility Divider Correction (`frontend/src/components/LiveFeed.tsx`)**:
    - Corrected divider role inside `role="list"` from `role="separator"` to `role="presentation"`.
+7. **E7 — Gitleaks False-Positive Allowlist (`.gitleaks.toml`, `.gitleaksignore`)**:
+   - Added `.gitleaksignore` capturing historical commit fingerprints for test dummy strings.
+   - Added `.gitleaks.toml` (`[extend] useDefault = true`) allowlisting synthetic test patterns (`test-operator-secret`, `my-secret-api-key`, `test-operator-admin-token`), and added inline `# gitleaks:allow` comments in test files.
+
 
 ---
 

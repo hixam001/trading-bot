@@ -1,0 +1,13 @@
+# Gitleaks configuration
+# Extends default rules while allowlisting test dummy tokens and fixtures
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Allowlist for test dummy credentials and synthetic payloads"
+regexes = [
+    '''(?i)test-operator-secret''',
+    '''(?i)my-secret-api-key''',
+    '''(?i)test-operator-admin-token''',
+]

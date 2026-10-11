@@ -1,0 +1,3 @@
+# Gitleaks ignore list for test fixture false positives
+1d2d624cbd24b534222613181bb34c56b45c1f82:backend/tests/test_cookie_auth.py:generic-api-key:28
+ce0ad76522df5593807096f41bb4cd28719fbff0:backend/tests/test_audit_77_e.py:generic-api-key:56
