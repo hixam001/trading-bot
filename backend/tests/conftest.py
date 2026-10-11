@@ -25,7 +25,8 @@ def _isolate_rate_limits():
 
 @pytest.fixture(autouse=True)
 def _ensure_long_admin_token(monkeypatch):
-    """Ensure any non-empty config.ADMIN_TOKEN is at least 32 characters in tests by default."""
-    if config.ADMIN_TOKEN and len(config.ADMIN_TOKEN) < 32:
+    """Ensure config.ADMIN_TOKEN has a valid 32+ character test token by default for hermetic runs."""
+    if not config.ADMIN_TOKEN or len(config.ADMIN_TOKEN) < 32:
         monkeypatch.setattr(config, "ADMIN_TOKEN", TEST_ADMIN_TOKEN)
+
 

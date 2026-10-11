@@ -47,6 +47,7 @@ def test_path_wins_when_both_channels_set(clean_wallet_env, tmp_path):
     file_kp, env_kp = Keypair(), Keypair()
     p = tmp_path / "kp.json"
     p.write_text(_kp_material(file_kp))
+    p.chmod(0o600)
     le_config.WALLET_KEYPAIR_PATH = str(p)
     le_config.WALLET_KEYPAIR_JSON = _kp_material(env_kp)
     loaded = wallet.load_keypair()

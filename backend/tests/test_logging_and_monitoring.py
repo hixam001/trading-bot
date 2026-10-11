@@ -43,7 +43,7 @@ def isolated_logging_env(tmp_path, monkeypatch):
     original_log_dir = getattr(config, "LOG_DIR", Path(__file__).parent.parent.parent / "logs")
     log_dir = tmp_path / "test_logs"
     monkeypatch.setattr(config, "LOG_DIR", log_dir)
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "super-secret-admin-token-789012")
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "super-secret-admin-token-789012-valid-32")
     monkeypatch.setattr(config, "DEEPSEEK_API_KEY", "sk-deepseek-test-key-345678")
     monkeypatch.setattr(config, "DEBUG", False)
     config.DB_PATH = tmp_path / "test_monitor.db"

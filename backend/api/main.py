@@ -332,31 +332,37 @@ def _is_blocked_static_path(path: str) -> bool:
     return False
 
 
-if FRONTEND_DIST.exists():
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def spa_fallback(full_path: str, request: Request):
-        # Explicit 404 for dotfiles (.git, .env) and sourcemaps (.map)
-        if _is_blocked_static_path(full_path):
-            try:
-                from api.security_monitor import SecurityEventType, record_security_event
-                client_ip = getattr(getattr(request, "client", None), "host", "unknown") or "unknown"
-                record_security_event(
-                    SecurityEventType.BLOCKED_PATH_PROBE,
-                    client_ip=client_ip,
-                    path=f"/{full_path}",
-                    method="GET",
-                    detail=f"Blocked static path probe: {html.escape(full_path[:100])}",
-                    severity="WARNING",
-                )
-            except Exception:
-                pass
-            return JSONResponse(
-                status_code=404,
-                content={"detail": "Not found"},
+@app.get("/{full_path:path}", include_in_schema=False)
+async def spa_fallback(full_path: str, request: Request):
+    # Explicit 404 for dotfiles (.git, .env) and sourcemaps (.map) — always active (§77 D1)
+    if _is_blocked_static_path(full_path):
+        try:
+            from api.rate_limiter import get_client_ip
+            from api.security_monitor import SecurityEventType, record_security_event
+            client_ip = get_client_ip(request)
+            record_security_event(
+                SecurityEventType.BLOCKED_PATH_PROBE,
+                client_ip=client_ip,
+                path=f"/{full_path}",
+                method="GET",
+                detail=f"Blocked static path probe: {html.escape(full_path[:100])}",
+                severity="WARNING",
             )
+        except Exception:
+            pass
+        return JSONResponse(
+            status_code=404,
+            content={"detail": "Not found"},
+        )
+
+    if FRONTEND_DIST.exists():
         # §55: containment via _safe_dist_file — never a raw path join.
         candidate = _safe_dist_file(full_path)
         if candidate is not None:
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html")
+
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Not found"},
+    )

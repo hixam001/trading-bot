@@ -241,6 +241,7 @@ def test_wallet_missing_path_refuses(state):
 def test_wallet_garbage_json_refuses(state):
     p = state / "kp.json"
     p.write_text("{not a byte array")
+    p.chmod(0o600)
     # 2026-08-30 secret-resolution refactor: JSON syntax errors now surface
     # as "not valid JSON" (shared _parse_material for file AND env channels)
     # — same fail-closed refusal, more precise message.
@@ -251,6 +252,7 @@ def test_wallet_garbage_json_refuses(state):
 def test_wallet_non_byte_array_refuses(state):
     p = state / "kp.json"
     p.write_text('{"hello": true}')
+    p.chmod(0o600)
     with pytest.raises(wallet.WalletError, match="byte array"):
         wallet.load_keypair(str(p))
 
@@ -258,6 +260,7 @@ def test_wallet_non_byte_array_refuses(state):
 def test_wallet_wrong_length_refuses(state):
     p = state / "kp.json"
     p.write_text(json.dumps([1, 2, 3]))          # valid u8s, wrong length
+    p.chmod(0o600)
     with pytest.raises(wallet.WalletError, match="64"):
         wallet.load_keypair(str(p))
 
@@ -273,6 +276,7 @@ def test_wallet_loads_real_keypair_file(state):
     kp = Keypair()
     p = state / "kp.json"
     p.write_text(json.dumps(list(bytes(kp))))
+    p.chmod(0o600)
     loaded = wallet.load_keypair(str(p))
     assert wallet.pubkey_string(loaded) == str(kp.pubkey())
 
@@ -283,6 +287,7 @@ def test_wallet_verify_expected_address_mismatch_refuses(state):
     kp = Keypair()
     p = state / "kp.json"
     p.write_text(json.dumps(list(bytes(kp))))
+    p.chmod(0o600)
     loaded = wallet.load_keypair(str(p))
     wrong = str(Keypair().pubkey())              # some OTHER account
     import live_execution.config as cfg
@@ -301,6 +306,7 @@ def test_wallet_verify_expected_address_match_passes(state):
     kp = Keypair()
     p = state / "kp.json"
     p.write_text(json.dumps(list(bytes(kp))))
+    p.chmod(0o600)
     loaded = wallet.load_keypair(str(p))
     import live_execution.config as cfg
     original = cfg.EXPECTED_WALLET_ADDRESS

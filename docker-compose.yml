@@ -14,9 +14,13 @@ services:
   # .env accordingly). Public instances disable format=json — only our own
   # instance works, which is why this sidecar exists.
   searxng:
-    image: searxng/searxng:latest
+    # Pin to a stable tagged release (§77 D3)
+    # TODO(operator): pin digest from Docker Hub once confirmed
+    image: searxng/searxng:2024.12.30-d3e758a
     container_name: trading-bot-searxng
     restart: unless-stopped
+    environment:
+      - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET must be set in .env to a non-default secret (run openssl rand -hex 32)}
     volumes:
       - ./deploy/searxng/settings.yml:/etc/searxng/settings.yml:ro
     # Resource note: fits trivially in the Oracle Always Free shape

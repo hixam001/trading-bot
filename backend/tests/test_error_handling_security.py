@@ -195,11 +195,13 @@ def test_main_app_has_error_handlers_registered():
 
 
 @pytest.mark.asyncio
-async def test_sanitize_error_detail_strips_secrets():
+async def test_sanitize_error_detail_strips_secrets(monkeypatch):
     """sanitize_error_detail scrubs configured admin tokens and keys."""
-    raw = f"Failed to authenticate with token: {config.ADMIN_TOKEN}"
+    fake_token = "admin_super_secret_token_1234567890"
+    monkeypatch.setattr(config, "ADMIN_TOKEN", fake_token)
+    raw = f"Failed to authenticate with token: {fake_token}"
     scrubbed = sanitize_error_detail(raw)
-    assert config.ADMIN_TOKEN not in scrubbed
+    assert fake_token not in scrubbed
     assert "<REDACTED>" in scrubbed
 
 
@@ -230,20 +232,22 @@ async def test_validation_error_strips_raw_sensitive_input(client):
 # 5. Secret Redactor Filter in Logging
 # ---------------------------------------------------------------------------
 
-def test_secret_redactor_masks_admin_token():
+def test_secret_redactor_masks_admin_token(monkeypatch):
     """SecretRedactorFilter masks the configured ADMIN_TOKEN in log records."""
+    fake_token = "admin_super_secret_token_1234567890"
+    monkeypatch.setattr(config, "ADMIN_TOKEN", fake_token)
     redactor = SecretRedactorFilter()
     record = logging.LogRecord(
         name="test",
         level=logging.ERROR,
         pathname="test.py",
         lineno=10,
-        msg=f"Operator token {config.ADMIN_TOKEN} rejected during auth",
+        msg=f"Operator token {fake_token} rejected during auth",
         args=(),
         exc_info=None,
     )
     assert redactor.filter(record) is True
-    assert config.ADMIN_TOKEN not in record.getMessage()
+    assert fake_token not in record.getMessage()
     assert "<REDACTED-SECRET>" in record.getMessage()
 
 

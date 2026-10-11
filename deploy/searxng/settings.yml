@@ -15,7 +15,7 @@ use_default_settings: true
 
 server:
   # The engine reaches it inside the compose network; no public exposure.
-  secret_key: "trading-bot-searxng-sidecar"   # not security-sensitive: private net
+  secret_key: "${SEARXNG_SECRET}"
   limiter: false
   image_proxy: false
 
