@@ -114,22 +114,23 @@ docker compose up -d --build
 ```
 
 - The image builds ON the VM (ARM). Expect 5–10 min the first time.
-- The keypair must be bind-mounted read-only into the container — under the
-  engine service in `docker-compose.yml`, add:
+- `docker-compose.yml` splits the system into two isolated services from the same image (§77 B2):
+  - **`api`**: Runs the dashboard and REST API. Mounts state `:ro` and has **zero wallet secrets**. The dashboard process can run on an unprivileged host with zero key material.
+  - **`live`**: Autonomous trade execution engine (`run_live_cycle.py`). Mounts state `rw` and holds the signing key. No ports exposed.
+- The keypair must be bind-mounted read-only into the `live` container — under the
+  `live` service in `docker-compose.yml`, add:
     `- ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro`
-  (the commented block in the compose file already shows this exact mount).
-- The entrypoint starts the API always, and the live cycle because the repo
+  (the commented block in the compose file already shows this exact mount). Ensure `chmod 600 ./secrets/wallet_keypair.json` (loose permissions are rejected at startup).
+- The entrypoint starts the API under `ROLE=api`, and the live cycle under `ROLE=live` because the repo
   is ARMED and the wallet is configured — same double-gate as `start.sh`.
 
 **Verify:**
 
 ```bash
-docker compose ps                    # both healthy
-docker compose logs -f --tail=50     # watch the first tick: ARMED banner, cycle lines
-curl http://127.0.0.1:8000/api/system-status | head -c 400
+docker compose ps                    # api, live, and searxng all healthy
+docker compose logs -f live --tail=50     # watch the live cycle: ARMED banner, cycle lines
+curl http://127.0.0.1:8000/api/health      # returns {"status":"ok"}
 ```
-
-Then from your laptop: `http://<PUBLIC_IP>:8000/` — the dashboard.
 
 > If pip fails compiling `uvloop`/`httptools` (cp314 aarch64 wheels can
 > lag), edit the Dockerfile base `FROM python:3.14-slim` →

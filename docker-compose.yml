@@ -22,10 +22,12 @@ services:
     # Resource note: fits trivially in the Oracle Always Free shape
     # (2 OCPU / 12 GB) alongside the engine (~150-300 MB typical).
 
-  engine:
+  # API service: web server and dashboard ONLY. Mounts state volume read-only (:ro).
+  # NEVER receives wallet secret key material (WALLET_KEYPAIR_* are stripped).
+  api:
     build: .
     image: trading-bot:latest
-    container_name: trading-bot-engine
+    container_name: trading-bot-api
     restart: unless-stopped
     depends_on:
       - searxng
@@ -36,20 +38,58 @@ services:
     env_file:
       - .env
     volumes:
-      # Real-money state — MUST be persistent (see docs/11_DEPLOYMENT.md).
-      - engine_state:/app/backend/live_execution/state
+      # Real-money state — READ-ONLY for the web API process (§77 B2)
+      - engine_state:/app/backend/live_execution/state:ro
       # SQLite book (only used when USE_SUPABASE_DB is not 1).
       - engine_data:/app/data
       # Rotating application, error, and security audit logs (§74).
       - engine_logs:/app/logs
     environment:
+      - ROLE=api
       - DB_PATH=/app/data/trading_bot.db
       - LOG_DIR=/app/logs
+      # Strip wallet key material so the internet-facing API process NEVER holds the signing key:
+      - WALLET_KEYPAIR_PATH=
+      - WALLET_KEYPAIR_JSON=
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').getcode() == 200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  # Live execution service: runs the autonomous decision cycle (run_live_cycle.py).
+  # Mounts state volume read-write (rw). Holds the signing key. Not exposed to the internet.
+  live:
+    build: .
+    image: trading-bot:latest
+    container_name: trading-bot-live
+    restart: unless-stopped
+    depends_on:
+      - searxng
+    env_file:
+      - .env
+    volumes:
+      # Real-money state — READ-WRITE for the execution runner
+      - engine_state:/app/backend/live_execution/state
+      # SQLite book (only used when USE_SUPABASE_DB is not 1).
+      - engine_data:/app/data
+      # Rotating application, error, and security audit logs (§74).
+      - engine_logs:/app/logs
       # Alternative secret channel (preferred on a VM): bind-mount a chmod-600
       # keypair file read-only and point WALLET_KEYPAIR_PATH at it:
       #   - ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro
       #   WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair
-      # File-less hosts (PaaS) use WALLET_KEYPAIR_JSON in env_file instead.
+    environment:
+      - ROLE=live
+      - DB_PATH=/app/data/trading_bot.db
+      - LOG_DIR=/app/logs
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import time, os, sys; p = '/app/backend/live_execution/state/heartbeat.txt'; sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 300 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
 
 volumes:
   engine_state:

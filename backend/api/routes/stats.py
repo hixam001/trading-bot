@@ -27,8 +27,10 @@ async def _chain_cash() -> float:
     same discipline as the live cycle's own cash read)."""
     try:
         from live_execution import solana, wallet
-        payer = wallet.load_keypair()
-        bal = await solana.get_usdc_balance(wallet.pubkey_string(payer))
+        pubkey = wallet.public_address()
+        if not pubkey:
+            return 0.0
+        bal = await solana.get_usdc_balance(pubkey)
         return max(bal, 0.0) if bal is not None else 0.0
     except Exception:
         return 0.0

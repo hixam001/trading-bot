@@ -32,6 +32,30 @@ elif [ -n "${WALLET_KEYPAIR_PATH:-}" ] && [ -f "${WALLET_KEYPAIR_PATH}" ]; then
   WALLET_OK=1
 fi
 
+# Port resolution: honours $PORT (platforms) and $API_PORT (.env default 8000)
+PORT="$(echo "${PORT:-${API_PORT:-8000}}" | tr -d "[:space:]'\"")"
+PORT="${PORT:-8000}"
+FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}"
+
+ROLE="${ROLE:-}"
+
+if [ "$ROLE" = "api" ]; then
+  echo "[entrypoint] starting in API-only role (web process has no signing key access)"
+  exec uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"
+elif [ "$ROLE" = "live" ]; then
+  echo "[entrypoint] starting in LIVE-only role"
+  if [ "${ARMED:-0}" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
+    echo "[entrypoint] ARMED + wallet configured — starting live decision cycle"
+    exec python run_live_cycle.py
+  else
+    echo "[entrypoint] live cycle NOT started (disarmed or no wallet configured)"
+    exit 0
+  fi
+fi
+
+# Fallback: single-container behaviour when ROLE is unset (with explicit security warning)
+echo "[entrypoint] WARNING: ROLE unset — running unified api + live in single container (wallet key shares process space with web server)"
+
 LIVE_PID=""
 API_PID=""
 if [ "${ARMED:-0}" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
@@ -51,9 +75,6 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-# Port resolution: honours $PORT (platforms) and $API_PORT (.env default 8000)
-PORT="$(echo "${PORT:-${API_PORT:-8000}}" | tr -d "[:space:]'\"")"
-FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}"
 uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" &
 API_PID=$!
 

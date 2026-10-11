@@ -43,7 +43,8 @@ pytestmark = pytest.mark.skipif(
 
 def _run(tmp_path, *, armed: bool, kp_path: str = "", kp_json: str = "",
          live_rc: int = 0, live_sleep: int = 0,
-         api_rc: int = 0, api_sleep: int = 0):
+         api_rc: int = 0, api_sleep: int = 0,
+         role: str = ""):
     """Run the entrypoint in a sandbox; return (exit_status, output, calls)."""
     app = tmp_path / "app"
     (app / "live_execution").mkdir(parents=True)
@@ -64,6 +65,7 @@ def _run(tmp_path, *, armed: bool, kp_path: str = "", kp_json: str = "",
         "APP_DIR": str(app),
         "WALLET_KEYPAIR_PATH": kp_path,
         "WALLET_KEYPAIR_JSON": kp_json,
+        "ROLE": role,
         "CALLS": str(calls),
         "STUB_LIVE_RC": str(live_rc),
         "STUB_LIVE_SLEEP": str(live_sleep),
@@ -218,3 +220,30 @@ def test_missing_app_dir_aborts_instead_of_starting_in_the_wrong_cwd(tmp_path):
                           capture_output=True, text=True, timeout=30)
     assert proc.returncode != 0
     assert "FATAL" in (proc.stdout + proc.stderr)
+
+
+# --- ROLE separation (§77 B2) -------------------------------------------------
+
+def test_role_api_starts_only_uvicorn(tmp_path):
+    """ROLE=api starts uvicorn and never touches the live cycle even when armed with wallet."""
+    status, out, calls = _run(tmp_path, armed=True, kp_json="[1,2,3]", role="api")
+    assert status == 0
+    assert "API-only role" in out
+    assert "UVICORN_CALLED" in calls
+    assert "PYTHON_CALLED" not in calls
+
+
+def test_role_live_starts_only_live_cycle(tmp_path):
+    """ROLE=live starts run_live_cycle.py and never starts uvicorn."""
+    status, out, calls = _run(tmp_path, armed=True, kp_json="[1,2,3]", role="live")
+    assert status == 0
+    assert "LIVE-only role" in out
+    assert "PYTHON_CALLED: run_live_cycle.py" in calls
+    assert "UVICORN_CALLED" not in calls
+
+
+def test_role_unset_warns_about_shared_process_space(tmp_path):
+    """Unset ROLE outputs a prominent security warning about sharing process space."""
+    status, out, calls = _run(tmp_path, armed=False, role="")
+    assert "WARNING: ROLE unset" in out
+    assert "shares process space" in out

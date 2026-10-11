@@ -91,6 +91,15 @@ def _read_file_material(kp_path: Path) -> str:
         raise WalletError(
             f"WALLET_KEYPAIR_PATH not set or file missing ({str(kp_path)!r})"
         )
+    # B3: refuse loose permissions on POSIX (must be 0600 or 0400, no group/world access)
+    import os
+    import stat
+    if os.name == "posix":
+        st_mode = kp_path.stat().st_mode
+        if stat.S_IMODE(st_mode) & 0o077:
+            raise WalletError(
+                "keypair file permissions too open (must be 0600/0400) — refusing"
+            )
     try:
         content = kp_path.read_text()
         stripped = content.strip()
@@ -183,3 +192,36 @@ def verify_expected_address(keypair) -> str:
             f"{expected} - refusing to trade from an unpublished account"
         )
     return actual
+
+
+def public_address() -> str | None:
+    """Return the wallet's public address (Base58 string) without loading the signing key.
+
+    Safe for internet-facing processes (FastAPI).
+    Priority:
+      1. config.EXPECTED_WALLET_ADDRESS if set and valid Base58 Solana pubkey.
+      2. STATE_DIR/wallet_pubkey.txt written by run_live_cycle.py after verifying keypair.
+      3. None (fail closed).
+    """
+    expected = getattr(config, "EXPECTED_WALLET_ADDRESS", "").strip()
+    if expected:
+        try:
+            from solders.pubkey import Pubkey
+            Pubkey.from_string(expected)
+            return expected
+        except Exception:
+            pass
+
+    pubkey_path = getattr(config, "STATE_DIR", Path(__file__).parent / "state") / "wallet_pubkey.txt"
+    try:
+        if pubkey_path.is_file():
+            val = pubkey_path.read_text(encoding="utf-8").strip()
+            if val:
+                from solders.pubkey import Pubkey
+                Pubkey.from_string(val)
+                return val
+    except Exception:
+        pass
+
+    return None
+

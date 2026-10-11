@@ -40,9 +40,15 @@ standalone `docker run` above simply leaves the SearXNG hop unconfigured
 and the chain degrades to Brave → Firecrawl — fail-soft either way. See
 `docs/12_FREE_SEARCH_STACK.md`).
 
-The entrypoint starts the API always, and the live cycle **only if** the
-hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True
-AND a wallet secret is configured — the same double-gate as `start.sh`.
+### Process Separation (ROLE=api vs ROLE=live)
+
+Per §77 B2 security architecture, `docker-compose.yml` splits the engine into two isolated services from the same image:
+- **`api` service (`ROLE=api`)**: Serves the web dashboard and REST/WebSocket API. It mounts the state directory **read-only** (`:ro`) and **never receives any wallet secrets** (`WALLET_KEYPAIR_*` are explicitly stripped). The dashboard process can now run on an unprivileged host with zero key material. Health check: `GET /api/health`.
+- **`live` service (`ROLE=live`)**: Runs the autonomous execution cycle (`run_live_cycle.py`). It mounts the state directory read-write (`rw`), loads the wallet signing key, and exposes **no ports** to the host or internet. Health check: verifies `heartbeat.txt` freshness (< 300s).
+
+If running a single container without `ROLE`, both run in the same container, emitting a prominent warning that process separation is violated.
+
+The entrypoint starts the API always (under `ROLE=api`), and the live cycle **only if** `ROLE=live` (or single-container fallback), the hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True, AND a wallet secret is configured — the same double-gate as `start.sh`.
 
 ## 2. Secrets runbook (read before arming on any host)
 
@@ -56,6 +62,7 @@ The image contains **zero secrets**; everything arrives at runtime.
    `-v /opt/trading-bot/secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro`
    `-e WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair`
    The material never appears in `docker inspect` or process env.
+   **Permission check:** `wallet.load_keypair()` enforces strict file permissions (`st_mode & 0o077 == 0`). Group- or world-accessible files (e.g. 0644) are rejected with a fatal error.
 2. `WALLET_KEYPAIR_JSON` — the keypair JSON **directly in the environment**,
    for hosts that cannot mount files (Render/Koyeb/Railway). Parsed in-memory
    by `live_execution/wallet.py`; never written to disk, never logged (a log

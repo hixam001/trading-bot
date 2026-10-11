@@ -219,6 +219,12 @@ from api.routes.live_book import router as live_book_router  # noqa: E402
 app.include_router(live_book_router)
 
 
+@app.get("/api/health")
+async def health_check():
+    """Lightweight health check endpoint for container orchestrators (§77 B2)."""
+    return {"status": "ok"}
+
+
 @app.websocket("/ws/feed")
 async def ws_feed(ws: WebSocket):
     await websocket_endpoint(ws, broadcaster)

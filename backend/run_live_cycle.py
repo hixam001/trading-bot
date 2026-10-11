@@ -1142,6 +1142,20 @@ def main() -> None:
     else:
         log.warning("UNARMED: LIVE_TRADING_ENABLED=False - reads/think/gate run; every order returns unarmed")
 
+    # B1: write public wallet address to STATE_DIR/wallet_pubkey.txt
+    try:
+        from live_execution import wallet
+        payer = wallet.load_keypair()
+        verified_pubkey = wallet.verify_expected_address(payer)
+        pubkey_file = live_config.STATE_DIR / "wallet_pubkey.txt"
+        tmp_pubkey_file = live_config.STATE_DIR / "wallet_pubkey.txt.tmp"
+        live_config.STATE_DIR.mkdir(parents=True, exist_ok=True)
+        tmp_pubkey_file.write_text(verified_pubkey, encoding="utf-8")
+        tmp_pubkey_file.replace(pubkey_file)
+        log.info("wallet public address verified and recorded: %s", verified_pubkey)
+    except Exception as exc:
+        log.warning("wallet not loaded or pubkey unverified: %s", exc)
+
     async def loop() -> None:
         # §52 Phase B: the daily learning loop (G1–G3 + REF-R9 calibration
         # persistence) — ported from the paper tick so the LIVE book keeps
@@ -1177,6 +1191,15 @@ def main() -> None:
                      paper_config.EXIT_SCAN_INTERVAL_SECONDS)
         try:
             while True:
+                # Update heartbeat file for process/container health checks (§77 B2)
+                try:
+                    hb_file = live_config.STATE_DIR / "heartbeat.txt"
+                    tmp_hb = live_config.STATE_DIR / "heartbeat.txt.tmp"
+                    tmp_hb.write_text(f"{int(time.time())}\n", encoding="utf-8")
+                    tmp_hb.replace(hb_file)
+                except Exception:
+                    pass
+
                 try:
                     await run_cycle(once=args.once)
                 except Exception:

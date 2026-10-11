@@ -109,8 +109,9 @@ async def _build(request: Request) -> dict:
 
     try:
         from live_execution import solana, wallet
-        payer = wallet.load_keypair()
-        pubkey = wallet.pubkey_string(payer)
+        pubkey = wallet.public_address()
+        if not pubkey:
+            return _disabled("wallet unreadable (no public address available)")
     except Exception as exc:
         return _disabled(f"wallet unreadable: {exc}")
 
