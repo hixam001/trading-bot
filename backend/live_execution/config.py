@@ -121,7 +121,7 @@ APPROVED_SWAP_PROGRAM_IDS: frozenset[str] = frozenset({
     "Eo7WjKq67rjJQSZxS6z3YkapzY3eMj6Xy8X5EQVn5UaB",           # Meteora Dynamic Pools
     "pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA",           # Pump.fun AMM
     "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P",           # Pump.fun Bonding Curve
-    "MSPC8t9vL7iQc4JzJjS9KqR7vC8bZpUuJ9G7r5vB2pD",           # Moonshot
+    # Moonshot removed in §77: ID unverified — re-add only with an ID copied from the program's official docs/Solscan
     "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",           # Phoenix
     "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",           # OpenBook
     "EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S",           # Lifinity

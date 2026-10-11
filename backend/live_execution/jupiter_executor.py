@@ -305,24 +305,68 @@ async def _build_swap_transaction(quote: dict, user_public_key: str) -> str:
     return b64
 
 
+_SYSTEM_PROGRAM_ID = "11111111111111111111111111111111"
+_SPL_TOKEN_PROGRAM_ID = "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"
+_TOKEN_2022_PROGRAM_ID = "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"
+_ATA_PROGRAM_ID = "ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL"
+_COMPUTE_BUDGET_PROGRAM_ID = "ComputeBudget111111111111111111111111111111"
+_MEMO_PROGRAM_IDS = frozenset({
+    "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+    "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
+})
+_WSOL_MINT = "So11111111111111111111111111111111111111112"
+
+
+def _is_wallet_owned(dest: str, payer_pubkey: str, account_keys: list[str], known_owned: set[str]) -> bool:
+    """Verify whether dest is the payer's wallet or an ATA owned by the payer."""
+    if dest == payer_pubkey or dest in known_owned:
+        return True
+    try:
+        from solders.pubkey import Pubkey
+        payer_pk = Pubkey.from_string(payer_pubkey)
+        ata_pid = Pubkey.from_string(_ATA_PROGRAM_ID)
+        token_pid = Pubkey.from_string(_SPL_TOKEN_PROGRAM_ID)
+        token_2022_pid = Pubkey.from_string(_TOKEN_2022_PROGRAM_ID)
+
+        mints_to_check = set(account_keys)
+        mints_to_check.add(_WSOL_MINT)
+        for mint_str in mints_to_check:
+            try:
+                mint_pk = Pubkey.from_string(mint_str)
+            except Exception:
+                continue
+            ata_spl, _ = Pubkey.find_program_address([bytes(payer_pk), bytes(token_pid), bytes(mint_pk)], ata_pid)
+            if dest == str(ata_spl):
+                return True
+            ata_2022, _ = Pubkey.find_program_address([bytes(payer_pk), bytes(token_2022_pid), bytes(mint_pk)], ata_pid)
+            if dest == str(ata_2022):
+                return True
+    except Exception:
+        pass
+    return False
+
+
 def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
-    """Validate transaction safety before signing (SEC-01).
+    """Validate transaction safety before signing (SEC-01 / §77 C1).
 
     Ensures:
       1. Fee payer matches our loaded keypair.
       2. All invoked program IDs are in APPROVED_SWAP_PROGRAM_IDS.
+      3. Instruction-level deny-by-default guard:
+         - System Program: only allow wrap/unwrap and account creation for approved programs,
+           and transfers strictly to the wallet itself or wallet-owned ATAs.
+         - SPL Token / Token-2022: refuse Transfer, TransferChecked, Approve, ApproveChecked,
+           SetAuthority, MintTo, Burn, BurnChecked at the top level. Only allow InitializeAccount*,
+           SyncNative, and CloseAccount strictly when destination == wallet.
+         - ATA Program: allow Create / CreateIdempotent only when wallet owner == payer.
+         - Compute Budget & Memo: allowed.
+         - Other DEX programs in APPROVED_SWAP_PROGRAM_IDS: allowed at top level.
 
-    A7 (repo audit) — FAIL CLOSED on anything unresolvable:
-      * A v0 message with address-lookup tables cannot be statically
-        verified (program IDs may live in the lookup region, which
-        account_keys does not contain). The old guard SILENTLY SKIPPED
-        such instructions (`if prog_idx < len(account_keys)`) — a
-        fail-open hole in the anti-drainer check. Refuse instead.
-        _build_swap_transaction requests a legacy transaction precisely
-        so this situation never arises for a well-formed Jupiter swap.
-      * Any instruction whose program index falls outside the static
-        account keys is refused, never skipped.
+    Fail closed on anything unresolvable or unknown.
     """
+    import struct
+    from solders.pubkey import Pubkey
+
     account_keys = [str(k) for k in getattr(tx.message, "account_keys", [])]
     if not account_keys:
         raise ExecutionError("swap transaction has empty accountKeys")
@@ -340,6 +384,22 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
             f"swap transaction fee payer mismatch: expected {payer_pubkey}, got {fee_payer}"
         )
 
+    wallet_owned_accounts: set[str] = {payer_pubkey}
+
+    # Pass 1: register any ATAs created for our wallet in this transaction
+    for i, ix in enumerate(tx.message.instructions):
+        prog_idx = ix.program_id_index
+        if prog_idx < len(account_keys):
+            prog_id = account_keys[prog_idx]
+            if prog_id == _ATA_PROGRAM_ID:
+                data = bytes(getattr(ix, "data", b""))
+                tag = data[0] if data else 0
+                if tag in (0, 1) and len(ix.accounts) >= 3:
+                    if ix.accounts[2] < len(account_keys) and account_keys[ix.accounts[2]] == payer_pubkey:
+                        if ix.accounts[1] < len(account_keys):
+                            wallet_owned_accounts.add(account_keys[ix.accounts[1]])
+
+    # Pass 2: strict instruction validation
     for i, ix in enumerate(tx.message.instructions):
         prog_idx = ix.program_id_index
         if prog_idx >= len(account_keys):
@@ -353,6 +413,159 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
                 f"unapproved program ID in swap instruction #{i}: {prog_id} "
                 "— refusing to sign unverified payload"
             )
+
+        data = bytes(getattr(ix, "data", b""))
+
+        # 1. System Program (11111111111111111111111111111111)
+        # solana_program::system_instruction::SystemInstruction
+        # 4-byte little-endian uint32 discriminant
+        if prog_id == _SYSTEM_PROGRAM_ID:
+            if len(data) < 4:
+                raise ExecutionError(
+                    f"System Program instruction #{i} data truncated (< 4 bytes)"
+                )
+            disc = struct.unpack("<I", data[:4])[0]
+
+            if disc == 0:
+                # CreateAccount: [0..4] u32 disc (0), [4..12] u64 lamports, [12..20] u64 space, [20..52] Pubkey owner
+                if len(data) < 52:
+                    raise ExecutionError(
+                        f"System CreateAccount instruction #{i} data truncated (< 52 bytes)"
+                    )
+                try:
+                    owner_pubkey = str(Pubkey.from_bytes(data[20:52]))
+                except Exception as exc:
+                    raise ExecutionError(
+                        f"System CreateAccount instruction #{i} has invalid owner pubkey"
+                    ) from exc
+                if owner_pubkey not in config.APPROVED_SWAP_PROGRAM_IDS:
+                    raise ExecutionError(
+                        f"System CreateAccount in instruction #{i} specifies unapproved owner program {owner_pubkey}"
+                    )
+                if len(ix.accounts) >= 2 and ix.accounts[0] < len(account_keys) and account_keys[ix.accounts[0]] == payer_pubkey:
+                    if ix.accounts[1] < len(account_keys):
+                        wallet_owned_accounts.add(account_keys[ix.accounts[1]])
+
+            elif disc in (1, 4, 8, 9):
+                disc_names = {1: "Assign", 4: "Allocate", 8: "AllocateWithSeed", 9: "AssignWithSeed"}
+                raise ExecutionError(
+                    f"System Program instruction #{i} uses forbidden operation {disc_names.get(disc, disc)}"
+                )
+
+            elif disc == 2:
+                # Transfer: [0..4] u32 disc (2), [4..12] u64 lamports
+                # accounts: [from, to]
+                if len(data) < 12:
+                    raise ExecutionError(
+                        f"System Transfer instruction #{i} data truncated (< 12 bytes)"
+                    )
+                lamports = struct.unpack("<Q", data[4:12])[0]
+                if len(ix.accounts) < 2 or ix.accounts[1] >= len(account_keys):
+                    raise ExecutionError(
+                        f"System Transfer instruction #{i} has invalid recipient account index"
+                    )
+                dest = account_keys[ix.accounts[1]]
+                if lamports > 0 and not _is_wallet_owned(dest, payer_pubkey, account_keys, wallet_owned_accounts):
+                    raise ExecutionError(
+                        f"System Transfer in instruction #{i} transfers {lamports} lamports to foreign destination {dest} "
+                        f"(not owned by wallet {payer_pubkey})"
+                    )
+
+            elif disc == 11:
+                # TransferWithSeed: [0..4] u32 disc (11), [4..12] u64 lamports
+                # accounts: [from, base, to]
+                if len(data) < 12:
+                    raise ExecutionError(
+                        f"System TransferWithSeed instruction #{i} data truncated (< 12 bytes)"
+                    )
+                lamports = struct.unpack("<Q", data[4:12])[0]
+                if len(ix.accounts) < 3 or ix.accounts[2] >= len(account_keys):
+                    raise ExecutionError(
+                        f"System TransferWithSeed instruction #{i} has invalid recipient account index"
+                    )
+                dest = account_keys[ix.accounts[2]]
+                if lamports > 0 and not _is_wallet_owned(dest, payer_pubkey, account_keys, wallet_owned_accounts):
+                    raise ExecutionError(
+                        f"System TransferWithSeed in instruction #{i} transfers {lamports} lamports to foreign destination {dest}"
+                    )
+
+            else:
+                raise ExecutionError(
+                    f"System Program instruction #{i} has unapproved discriminant {disc}"
+                )
+
+        # 2. SPL Token & Token-2022
+        # spl_token::instruction::TokenInstruction (1-byte uint8 tag)
+        elif prog_id in (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
+            if len(data) < 1:
+                raise ExecutionError(
+                    f"SPL Token instruction #{i} has empty data"
+                )
+            tag = data[0]
+
+            if tag in (3, 12):
+                tag_name = "Transfer" if tag == 3 else "TransferChecked"
+                raise ExecutionError(
+                    f"SPL Token {tag_name} instruction #{i} (tag {tag}) refused at top level "
+                    "— legitimate swaps execute CPI transfers inside the DEX program"
+                )
+            elif tag in (4, 13):
+                tag_name = "Approve" if tag == 4 else "ApproveChecked"
+                raise ExecutionError(
+                    f"SPL Token {tag_name} instruction #{i} (tag {tag}) refused at top level"
+                )
+            elif tag == 6:
+                raise ExecutionError(
+                    f"SPL Token SetAuthority instruction #{i} (tag 6) refused at top level"
+                )
+            elif tag in (7, 8, 15):
+                tag_name = "MintTo" if tag == 7 else ("Burn" if tag == 8 else "BurnChecked")
+                raise ExecutionError(
+                    f"SPL Token {tag_name} instruction #{i} (tag {tag}) refused at top level"
+                )
+            elif tag == 9:
+                # CloseAccount: accounts: [account_to_close, destination, owner]
+                if len(ix.accounts) < 2 or ix.accounts[1] >= len(account_keys):
+                    raise ExecutionError(
+                        f"SPL Token CloseAccount instruction #{i} missing destination account"
+                    )
+                dest = account_keys[ix.accounts[1]]
+                if dest != payer_pubkey:
+                    raise ExecutionError(
+                        f"SPL Token CloseAccount in instruction #{i} destination {dest} does not match wallet {payer_pubkey}"
+                    )
+            elif tag in (1, 16, 17, 18):
+                # 1=InitializeAccount, 16=InitializeAccount2, 17=SyncNative, 18=InitializeAccount3
+                pass
+            else:
+                raise ExecutionError(
+                    f"SPL Token instruction #{i} has unapproved tag {tag}"
+                )
+
+        # 3. Associated Token Account Program
+        # spl_associated_token_account::instruction::AssociatedTokenAccountInstruction
+        elif prog_id == _ATA_PROGRAM_ID:
+            tag = data[0] if len(data) > 0 else 0
+            if tag not in (0, 1):  # 0=Create, 1=CreateIdempotent
+                raise ExecutionError(
+                    f"ATA instruction #{i} has unapproved instruction tag {tag}"
+                )
+            if len(ix.accounts) < 3 or ix.accounts[2] >= len(account_keys):
+                raise ExecutionError(
+                    f"ATA instruction #{i} missing wallet owner account"
+                )
+            wallet_owner = account_keys[ix.accounts[2]]
+            if wallet_owner != payer_pubkey:
+                raise ExecutionError(
+                    f"ATA instruction #{i} wallet owner {wallet_owner} does not match payer {payer_pubkey}"
+                )
+
+        # 4. Compute Budget & Memo programs
+        elif prog_id == _COMPUTE_BUDGET_PROGRAM_ID or prog_id in _MEMO_PROGRAM_IDS:
+            pass
+
+        # 5. Other approved DEX programs (Jupiter, Raydium, Orca, etc.)
+        # Discriminants are DEX-specific and allowed at top level.
 
 
 def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
