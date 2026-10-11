@@ -1,6 +1,18 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-10 (§70):** Comprehensive 10-point security audit and platform hardening completed:
+**Current — 2026-10-11 (§71):** Rule 19 HTTPS Enforcement Everywhere and Hosting Verification completed:
+1. **Force HTTPS Middleware**: FastAPI middleware forces HTTPS via HTTP 308 Permanent Redirect (preserving POST/PUT/DELETE methods and request bodies). Detects direct HTTP and proxy headers (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, RFC 7239 `Forwarded: proto=http`).
+2. **Port Stripping & Loopback Exemption**: Canonical redirect URL strips internal backend ports (`:80`, `:8000`, `:8080`). Loopback hosts (`localhost`, `127.0.0.1`, `::1`) exempted when no proxy header indicates HTTP, preserving developer ergonomics and test suites.
+3. **Security Headers**: Emits `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and CSP `upgrade-insecure-requests` on TLS responses.
+4. **Cookie Security Alignment**: `_is_request_https` sets `Secure=True` on session login and logout cookies on TLS while keeping dev loopback accessible.
+5. **Reverse Proxy Support**: Uvicorn entrypoint equipped with `--proxy-headers --forwarded-allow-ips='*'`. `docker-compose.yml` updated with loopback binding guidance (`127.0.0.1:${API_PORT:-8000}:8000`).
+6. **Hosting Configuration**: `docs/13_ORACLE_DEPLOY_GUIDE.md` updated with TCP port 80/443 firewall ingress rules, Caddy automated TLS, and Nginx reverse-proxy configuration.
+7. **Insecure Content Audit**: Verified 0 unencrypted assets in frontend (all fonts and scripts self-hosted), WebSockets automatically upgrade to `wss://`, and all external backend APIs use HTTPS.
+8. **Test Suite**: Dedicated tests in `backend/tests/test_https_enforcement.py` (12 tests passing). Full pytest test suite: **882 passed** (0 failed).
+
+**PREVIOUS:**
+
+**As of 2026-10-10 (§70):** Comprehensive 10-point security audit and platform hardening completed:
 1. **Rule 7 (Cookie Auth)**: Moved auth tokens from `localStorage` into secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with rolling 15-minute idle expiration and 24-hour absolute session TTL (`test_cookie_auth.py`, 9 tests).
 2. **Rule 8 (Broken Access Control & RLS)**: Audited all ID-based read/update routes for operator ownership; added Supabase Row-Level Security migration `006_rls_policies.sql` (`test_authz_surface.py`, 14 tests).
 3. **Rule 14 (Mass Assignment)**: Hardened all mutating endpoints with Pydantic `extra="ignore"` and explicit field whitelists (`test_mass_assignment.py`, 4 tests).

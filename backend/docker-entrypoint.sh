@@ -50,7 +50,7 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-uvicorn api.main:app --host 0.0.0.0 --port "${PORT:-8000}" &
+uvicorn api.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*' &
 API_PID=$!
 
 # Supervise BOTH processes. `wait -n` returns as soon as either exits, so a

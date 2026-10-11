@@ -28,6 +28,8 @@ services:
     container_name: trading-bot-engine
     restart: unless-stopped
     ports:
+      # For production behind Caddy/Nginx reverse proxy, bind to loopback:
+      #   - "127.0.0.1:${API_PORT:-8000}:8000"
       - "${API_PORT:-8000}:8000"
     env_file:
       - .env

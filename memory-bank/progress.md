@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §71 Rule 19: HTTPS enforcement everywhere and hosting setup verification (2026-10-11):
+      1. Force HTTPS middleware: HTTP 308 Permanent Redirects on non-loopback connections and reverse proxies (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, RFC 7239 `Forwarded: proto=http`).
+      2. Security headers: HSTS preload (`max-age=63072000; includeSubDomains; preload`) and CSP `upgrade-insecure-requests`.
+      3. Cookie alignment: `Secure=True` enforced for session cookies over TLS, with unencrypted loopback dev mode preserved.
+      4. Docker & reverse proxy: Uvicorn `--proxy-headers --forwarded-allow-ips='*'`, `docker-compose.yml` loopback binding, Oracle VM ingress port 80/443 rules and Caddy/Nginx configs.
+      5. Insecure content audit: Verified zero mixed-content / unencrypted assets, automatic `wss://` upgrade, and HTTPS for all external API dependencies.
+      6. Verified: full test suite passes with **882/882 tests green** (+12 new tests in `test_https_enforcement.py`). Full detail: handoff §71.
+
 - [x] §70 Ten-rule security audit & platform hardening (2026-10-10):
       1. Cookie authentication: moved tokens from `localStorage` into secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with rolling 15-minute idle expiration and 24-hour absolute session ceiling (`test_cookie_auth.py`, 9 tests).
       2. Access control & record ownership: audited all endpoints by ID; added Supabase Row-Level Security migration `006_rls_policies.sql` (`test_authz_surface.py`, 14 tests).

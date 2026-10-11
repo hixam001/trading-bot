@@ -512,3 +512,8 @@ Defense-in-depth principles implemented across all layers of the application:
    - Extension whitelist restricts accepted files to `.md`, `.txt`, `.json`, `.csv`.
    - Content inspection detects binary executable magic byte signatures (ELF, PE, Mach-O, ZIP, etc.) and executable shell shebangs.
    - Files are stored outside the public web root with `0o600` non-executable permissions.
+10. **HTTPS Everywhere & TLS Enforcement (Rule 19)**:
+    - FastAPI middleware strictly forces HTTPS and issues HTTP 308 Permanent Redirects (preserving HTTP request method and body) on all non-loopback traffic and proxied HTTP requests (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, `Forwarded: proto=http`).
+    - Local loopback connections (`localhost`, `127.0.0.1`, `::1`) are exempted for development ease-of-use and hermetic test runs.
+    - Security headers enforce HTTP Strict Transport Security (`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`) and CSP `upgrade-insecure-requests` to automatically upgrade legacy mixed-content subresources to HTTPS and WSS.
+    - Container entrypoint specifies `--proxy-headers --forwarded-allow-ips='*'` to trust upstream reverse-proxy TLS termination.

@@ -80,21 +80,51 @@ app.add_middleware(
 
 
 
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient", "test", "testserver", "app"})
+
+
 @app.middleware("http")
 async def force_https_middleware(request, call_next):
-    """Force HTTPS redirect on non-loopback connections when configured."""
-    if getattr(config, "FORCE_HTTPS", False):
-        forwarded_proto = request.headers.get("x-forwarded-proto", "")
-        client_host = getattr(getattr(request, "client", None), "host", "")
-        if forwarded_proto == "http" or (
-            request.url.scheme == "http"
-            and client_host not in ("127.0.0.1", "::1", "localhost", "testclient")
-        ):
+    """Force HTTPS redirect on non-loopback connections and reverse proxies."""
+    if getattr(config, "FORCE_HTTPS", True):
+        forwarded_proto = (request.headers.get("x-forwarded-proto") or "").lower()
+        forwarded_ssl = (request.headers.get("x-forwarded-ssl") or "").lower()
+        forwarded_hdr = (request.headers.get("forwarded") or "").lower()
+        is_insecure_forwarded = (
+            forwarded_proto == "http"
+            or forwarded_ssl == "off"
+            or "proto=http" in forwarded_hdr
+        )
+
+        client_host = getattr(getattr(request, "client", None), "host", "") or ""
+        request_host = getattr(request.url, "hostname", "") or ""
+
+        # Allow local loopback and test runners when no proxy indicates HTTP
+        is_loopback = (
+            (client_host in _LOOPBACK_HOSTS or not client_host)
+            and (request_host in _LOOPBACK_HOSTS or not request_host)
+            and not is_insecure_forwarded
+        )
+
+        if is_insecure_forwarded or (request.url.scheme == "http" and not is_loopback):
             # A7 (repo audit): 308, not 301 — a 301 redirect is re-issued
             # as GET by many clients (dropping a POST body) and is cached
             # aggressively; 308 preserves the method on both counts.
-            https_url = str(request.url.replace(scheme="https"))
-            return RedirectResponse(url=https_url, status_code=308)
+            forwarded_host = (
+                request.headers.get("x-forwarded-host")
+                or request.headers.get("host")
+                or request.url.netloc
+            )
+            # Remove internal backend ports (80, 8000, 8080) if redirecting to public HTTPS
+            if is_insecure_forwarded or request.headers.get("x-forwarded-host"):
+                if ":" in forwarded_host:
+                    h, p = forwarded_host.rsplit(":", 1)
+                    if p in ("80", "8000", "8080"):
+                        forwarded_host = h
+
+            redirect_url = request.url.replace(scheme="https", netloc=forwarded_host)
+            return RedirectResponse(url=str(redirect_url), status_code=308)
+
     return await call_next(request)
 
 
@@ -104,33 +134,45 @@ async def security_headers(request, call_next):
 
     Defense-in-depth: nosniff stops MIME-confusion, DENY blocks click-
     jacking framing, no-referrer keeps local URLs out of third-party logs,
-    and no-store keeps book/wallet data out of any cache.
+    upgrade-insecure-requests automatically upgrades mixed content, and
+    no-store keeps book/wallet data out of any cache.
     """
     response = await call_next(request)
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault(
-        "Content-Security-Policy",
-        "default-src 'self'; "
-        "script-src 'self'; "
-        "style-src 'self' 'unsafe-inline'; "
-        "img-src 'self' data: https:; "
-        "font-src 'self' data:; "
-        "connect-src 'self' ws: wss:; "
-        "object-src 'none'; "
-        "base-uri 'self'; "
-        "frame-ancestors 'none'; "
-        "form-action 'self'",
+
+    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").lower()
+    forwarded_hdr = (request.headers.get("forwarded") or "").lower()
+    is_https = (
+        request.url.scheme == "https"
+        or forwarded_proto == "https"
+        or "proto=https" in forwarded_hdr
     )
+
+    csp_directives = [
+        "default-src 'self'",
+        "script-src 'self'",
+        "style-src 'self' 'unsafe-inline'",
+        "img-src 'self' data: https:",
+        "font-src 'self' data:",
+        "connect-src 'self' ws: wss:",
+        "object-src 'none'",
+        "base-uri 'self'",
+        "frame-ancestors 'none'",
+        "form-action 'self'",
+    ]
+    if is_https or getattr(config, "FORCE_HTTPS", True):
+        csp_directives.append("upgrade-insecure-requests")
+
+    response.headers.setdefault("Content-Security-Policy", "; ".join(csp_directives))
     # X-XSS-Protection intentionally NOT set: deprecated and disabled in all
     # modern browsers (it was an IE-era header that auditing flags as stale).
     response.headers.setdefault(
         "Permissions-Policy",
         "geolocation=(), microphone=(), camera=(), payment=()",
     )
-    forwarded_proto = request.headers.get("x-forwarded-proto", "")
-    if request.url.scheme == "https" or forwarded_proto == "https":
+    if is_https:
         response.headers.setdefault(
             "Strict-Transport-Security",
             "max-age=63072000; includeSubDomains; preload",

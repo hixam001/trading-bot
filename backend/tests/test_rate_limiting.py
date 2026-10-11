@@ -127,9 +127,9 @@ async def test_anti_spoofing_cannot_bypass_limit(rate_env):
     app.state.provider = MockProvider()
     app.state.narrator = Narrator()
 
-    # Simulate direct socket peer from external IP (not loopback)
+    # Simulate direct socket peer from external IP (not loopback) over HTTPS
     transport = httpx.ASGITransport(app=app, client=("198.51.100.99", 54321))
-    async with httpx.AsyncClient(transport=transport, base_url="http://app") as ext_client:
+    async with httpx.AsyncClient(transport=transport, base_url="https://app") as ext_client:
         for i in range(5):
             # Attempt to bypass by rotating fake X-Forwarded-For on every request
             r = await ext_client.post(

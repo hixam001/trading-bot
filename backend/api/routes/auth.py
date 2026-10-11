@@ -169,9 +169,9 @@ async def signup(req: SignupRequest, request: Request):
 
 
 @router.post("/logout")
-async def logout(response: Response):
+async def logout(response: Response, request: Request):
     """Clear the HttpOnly session cookie on logout."""
-    clear_session_cookie(response)
+    clear_session_cookie(response, request=request)
     return {"status": "logged_out"}
 
 

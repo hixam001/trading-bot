@@ -98,6 +98,32 @@ def verify_session_token(
     return hmac.compare_digest(sig, expected_sig)
 
 
+def _is_request_https(request: Request | None) -> bool:
+    """Check if request is HTTPS or proxied HTTPS, respecting loopback dev exemption."""
+    if request is None:
+        return getattr(config, "FORCE_HTTPS", True)
+
+    is_https = (
+        request.url.scheme == "https"
+        or request.headers.get("x-forwarded-proto") == "https"
+        or request.headers.get("x-forwarded-ssl") == "on"
+        or "proto=https" in (request.headers.get("forwarded") or "").lower()
+    )
+    if is_https:
+        return True
+
+    client_host = getattr(getattr(request, "client", None), "host", "") or ""
+    request_host = getattr(request.url, "hostname", "") or ""
+    loopback_hosts = {"127.0.0.1", "::1", "localhost", "testclient", "test", "testserver", "app"}
+    is_loopback = (
+        (client_host in loopback_hosts or not client_host)
+        and (request_host in loopback_hosts or not request_host)
+    )
+    if is_loopback:
+        return False
+    return getattr(config, "FORCE_HTTPS", True)
+
+
 def set_session_cookie(
     response: Response,
     session_token: str,
@@ -109,17 +135,11 @@ def set_session_cookie(
     Guarantees:
       - httponly=True: JavaScript cannot read the token (mitigates XSS theft).
       - samesite="lax": Browser will not send cookie on cross-site subrequests (mitigates CSRF).
-      - secure=True: Forced whenever HTTPS or proxy indicates TLS.
+      - secure=True: Forced whenever HTTPS or proxy indicates TLS (exempts unencrypted loopback dev).
       - max_age: Cookie automatically dropped by browser after expiration.
     """
     age = max_age if max_age is not None else config.SESSION_MAX_AGE_SECONDS
-    is_https = False
-    if request is not None:
-        is_https = (
-            request.url.scheme == "https"
-            or request.headers.get("x-forwarded-proto") == "https"
-        )
-    secure = is_https or getattr(config, "FORCE_HTTPS", False)
+    secure = _is_request_https(request)
     response.set_cookie(
         key=config.SESSION_COOKIE_NAME,
         value=session_token,
@@ -132,12 +152,17 @@ def set_session_cookie(
     )
 
 
-def clear_session_cookie(response: Response) -> None:
+def clear_session_cookie(
+    response: Response,
+    request: Request | None = None,
+) -> None:
     """Clear session cookie on logout."""
+    secure = _is_request_https(request)
     response.delete_cookie(
         key=config.SESSION_COOKIE_NAME,
         path="/",
         httponly=True,
+        secure=secure,
         samesite="lax",
     )
 

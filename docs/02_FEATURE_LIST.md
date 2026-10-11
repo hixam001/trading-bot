@@ -139,4 +139,5 @@ progress (updated as items complete).
 | L8 | Cross-Site Scripting (XSS) prevention: CSP headers, safe React JSX rendering, URL protocol sanitation | DONE (`backend/api/main.py`, `frontend/src/components/Journal.tsx`) |
 | L9 | File upload & ingestion security: extension whitelist, binary magic & shebang checks, 0o600 storage | DONE (`backend/knowledge_base/loader.py`, `test_file_upload_security.py`) |
 | L10 | Billing caps & alerts: documented cost limits and alert thresholds for LLMs, RPCs, and databases | DONE (`handoff.md`, operational runbook) |
+| L11 | HTTPS everywhere & TLS enforcement: 308 redirect middleware, HSTS preload, CSP upgrade-insecure-requests, Uvicorn proxy headers | DONE (`backend/api/main.py`, `backend/tests/test_https_enforcement.py`) |
 

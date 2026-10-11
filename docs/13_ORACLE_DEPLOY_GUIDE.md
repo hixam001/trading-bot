@@ -54,14 +54,16 @@ Oracle VMs have TWO firewalls. Opening only one gets you timeouts.
 
 1. **Console side:** Networking → VCN → your VCN → Security Lists → Default
    Security List → **Add Ingress Rules**:
-   - `0.0.0.0/0`, TCP **8000** (engine/dashboard)
-   - `0.0.0.0/0`, TCP **443** (for HTTPS in Step 7)
+   - `0.0.0.0/0`, TCP **80** (HTTP — required for Caddy automatic HTTPS redirect and ACME challenges)
+   - `0.0.0.0/0`, TCP **443** (HTTPS — encrypted dashboard & API)
+   - `0.0.0.0/0`, TCP **8000** (direct engine testing; close after Step 7 Caddy setup)
    - (22 should already exist for SSH)
 2. **VM side (Ubuntu images ship blocking iptables rules):**
 
 ```bash
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8000 -j ACCEPT
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
 sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
+sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 8000 -j ACCEPT
 sudo netfilter-persistent save
 ```
 
@@ -156,8 +158,47 @@ sudo systemctl reload caddy
 Point a DNS A record at the VM first. Set `ADMIN_TOKEN` in the Caddy service
 environment (or `/etc/default/caddy` via `EnvironmentFile`) and set
 `FRONTEND_ORIGIN=https://bot.example.com` in `.env`, then `docker compose up -d`
-again. (Once Caddy fronts it, remove the public 8000 ingress rule and keep
-only 443.)
+again.
+
+**Lock down network ports:**
+1. Once Caddy fronts it, remove the public 8000 ingress rule from the Oracle
+   Security List and iptables. Keep ONLY ports 80 and 443 open.
+   - **Port 80 (HTTP)**: Caddy automatically receives HTTP requests on port 80
+     and issues a 308 permanent redirect to HTTPS on port 443.
+   - **Port 443 (HTTPS)**: Encrypted traffic with TLS 1.3 / 1.2 and automated Let's Encrypt certificates.
+2. In `docker-compose.yml`, change the port mapping to bind only to loopback:
+   `- "127.0.0.1:${API_PORT:-8000}:8000"`
+   This prevents external clients from bypassing TLS by connecting directly to port 8000.
+
+**Nginx alternative (if using Nginx instead of Caddy):**
+```nginx
+# /etc/nginx/sites-available/bot.conf
+server {
+    listen 80;
+    server_name bot.example.com;
+    return 308 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name bot.example.com;
+
+    ssl_certificate /etc/letsencrypt/live/bot.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/bot.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
+    location / {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+}
+```
 
 Do not add a `VITE_ADMIN_TOKEN` value; the dashboard is public JS and must not
 contain the operator secret. The proxy injects the admin token server-side.

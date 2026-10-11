@@ -472,8 +472,8 @@ FRONTEND_ORIGINS: list = [o.strip() for o in FRONTEND_ORIGIN.split(",") if o.str
 # Live book public access (SEC-02): when False (default), live portfolio and
 # executions endpoints require the X-Admin-Token operator header or loopback.
 LIVE_BOOK_PUBLIC: bool = os.getenv("LIVE_BOOK_PUBLIC", "false").strip().lower() == "true"
-# HTTPS enforcement: when True, non-loopback HTTP requests are redirected to HTTPS.
-FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "false").strip().lower() == "true"
+# HTTPS enforcement: when True (default), non-loopback and proxied HTTP requests are redirected to HTTPS.
+FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "true").strip().lower() == "true"
 
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0

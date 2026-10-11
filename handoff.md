@@ -1,3 +1,41 @@
+## §71 — Rule 19: HTTPS enforcement everywhere, 308 redirects, HSTS preload, CSP upgrade-insecure-requests, hosting reverse-proxy configuration, and zero-insecure-assets audit (2026-10-11)
+
+Comprehensive HTTPS-everywhere enforcement, transport security hardening, and hosting verification across the full application surface:
+
+1. **FastAPI HTTPS Enforcement Middleware (`backend/api/main.py`)**:
+   - Implemented `force_https_middleware` active when `FORCE_HTTPS=True` (configured default in `backend/config.py`).
+   - Detects insecure protocol from direct socket connections and reverse-proxy headers (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, and RFC 7239 `Forwarded: proto=http`).
+   - Issues `HTTP 308 Permanent Redirect` to `https://<host><path_and_query>`, preserving HTTP methods (`POST`, `PUT`, `DELETE`) and request bodies without downgrading to `GET`.
+   - Canonical host resolution strips internal backend ports (`:80`, `:8000`, `:8080`) from the redirect target so clients are never redirected to unexposed backend ports.
+   - Loopback exemption (`127.0.0.1`, `::1`, `localhost`, `testclient`) preserves local developer workflows (`./start.sh` without local SSL certificates) and automated test suites.
+
+2. **Security Headers & Mixed-Content Elimination (`backend/api/main.py`)**:
+   - `Strict-Transport-Security`: Emits `max-age=63072000; includeSubDomains; preload` (2 years) on all TLS and proxied-TLS requests in accordance with RFC 6797 and browser HSTS preload requirements.
+   - Content Security Policy (CSP): Injects `upgrade-insecure-requests` directive into the CSP header when served over HTTPS, instructing browsers to automatically upgrade any insecure HTTP/WS subresource requests to HTTPS/WSS before fetching.
+
+3. **Cookie Security Alignment (`backend/api/auth.py`, `backend/api/routes/auth.py`)**:
+   - Refactored `_is_request_https` helper to evaluate connection scheme, reverse proxy headers, and loopback dev context.
+   - Sets `Secure=True` on both session creation (`set_session_cookie`) and session deletion (`clear_session_cookie`), preventing cookie leakage over cleartext channels while maintaining local loopback development ergonomics.
+
+4. **Container & Reverse Proxy Ingress (`backend/docker-entrypoint.sh`, `docker-compose.yml`)**:
+   - Added `--proxy-headers --forwarded-allow-ips='*'` to Uvicorn startup in `docker-entrypoint.sh` so FastAPI correctly parses `X-Forwarded-Proto`, `X-Forwarded-For`, and `X-Forwarded-Port` from upstream Caddy/Nginx reverse proxies.
+   - Added production guidance to `docker-compose.yml` to bind `127.0.0.1:${API_PORT:-8000}:8000`, preventing direct unencrypted exposure to the public internet when fronted by a reverse proxy.
+
+5. **Hosting & Deployment Guide (`docs/13_ORACLE_DEPLOY_GUIDE.md`)**:
+   - Step 3: Added port 80 (TCP) to Oracle Cloud VCN Ingress Rules and host iptables (`sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT`). Without port 80 open, Let's Encrypt HTTP-01 challenges fail and plain HTTP browser requests time out rather than redirecting to HTTPS.
+   - Step 7: Documented automatic HTTPS configuration in Caddy, lock-down of direct port 8000 access, and added a production Nginx reverse-proxy configuration snippet with HTTP 308 redirect and TLS 1.2/1.3 hardening.
+
+6. **Insecure Assets & Protocol Audit**:
+   - Frontend static assets: Zero external or unencrypted asset links. All fonts are self-hosted via `@fontsource-variable`, styles/scripts are bundled locally by Vite, and external explorer links use `https://solscan.io/tx/...`.
+   - WebSockets: `frontend/src/lib/api.ts`'s `wsUrl()` automatically detects `location.protocol === 'https:' ? 'wss' : 'ws'`, ensuring full end-to-end WSS encryption when served over HTTPS.
+   - External APIs: All backend integrations (Birdeye, Dexscreener, Jupiter, DeepSeek, Groq, Solana RPC, Supabase, Brave Search, Firecrawl) strictly communicate via HTTPS (`https://`). The only plain HTTP endpoint is internal container-to-container communication on the isolated Docker network (`http://searxng:8080`).
+
+7. **Verification**:
+   - Created dedicated test suite `backend/tests/test_https_enforcement.py` (12 tests) verifying loopback exemption, proxy header detection, 308 method preservation, internal port stripping, HSTS preload, CSP upgrade-insecure-requests, and cookie Secure flag alignment.
+   - Full test suite: **882 passed** (0 failures, 1 deprecation warning) across all 882 backend and live-execution tests.
+
+---
+
 ## §70 — 10-rule security audit & platform hardening: cookies, authz, mass assignment, rate limiting, bot protection, SQL injection, input validation, XSS, file-upload security (2026-10-10)
 
 Comprehensive end-to-end security audit and defense-in-depth hardening across the entire application stack:
