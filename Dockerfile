@@ -21,8 +21,8 @@ FROM python:3.14-slim
 ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 WORKDIR /app
-COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir -r /app/backend/requirements.txt
+COPY backend/requirements.lock /app/backend/requirements.lock
+RUN pip install --no-cache-dir --no-deps -r /app/backend/requirements.lock
 
 # §47 — Scrapling stealth-browser layer (crowd-feed free transport). Browser
 # + its system deps install as ROOT, before USER bot, or Chromium cannot
@@ -52,7 +52,7 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,sys,urllib.request; \
 port = os.getenv('PORT') or os.getenv('API_PORT') or '8000'; \
-url = f'http://127.0.0.1:{port}/api/system-status'; \
+url = f'http://127.0.0.1:{port}/api/health'; \
 sys.exit(0 if urllib.request.urlopen(url, timeout=4).status == 200 else 1)"
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]

@@ -40,6 +40,14 @@ standalone `docker run` above simply leaves the SearXNG hop unconfigured
 and the chain degrades to Brave → Firecrawl — fail-soft either way. See
 `docs/12_FREE_SEARCH_STACK.md`).
 
+#### SearXNG Image Tag Pinning & Secret Wiring (§78 D1–D2)
+- **Tag Pinning**: The sidecar is pinned in `docker-compose.yml` to verified release `searxng/searxng:2026.10.9-f4822b3fc`. To pin to the immutable sha256 manifest digest for absolute reproducibility, inspect the manifest:
+  ```bash
+  docker manifest inspect searxng/searxng:2026.10.9-f4822b3fc
+  ```
+  and configure `image: searxng/searxng@sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272`.
+- **Secret Wiring**: `SEARXNG_SECRET` is passed natively through `environment:` in `docker-compose.yml`. SearXNG's settings loader overrides any `server.secret_key` in `settings.yml` with the environment variable. `deploy/searxng/settings.yml` intentionally omits `secret_key` to rely on this native environment injection. Template available in `deploy/searxng/settings.yml.example`.
+
 ### Process Separation (ROLE=api vs ROLE=live)
 
 Per §77 B2 security architecture, `docker-compose.yml` splits the engine into two isolated services from the same image:

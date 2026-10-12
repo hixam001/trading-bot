@@ -1,0 +1,22 @@
+# §51 / §78 D2 — SearXNG settings template for trading-bot sidecar.
+#
+# Mount at /etc/searxng/settings.yml inside the searxng container.
+#
+# Secret wiring: SearXNG natively reads the secret from the SEARXNG_SECRET
+# environment variable injected via docker-compose.yml. Do NOT hardcode secrets here.
+use_default_settings: true
+
+server:
+  # The engine reaches it inside the compose network; no public exposure.
+  # SEARXNG_SECRET is read directly from environment variables passed via compose.
+  limiter: false
+  image_proxy: false
+
+search:
+  # json is REQUIRED for the /search?q=...&format=json API the engine calls.
+  formats:
+    - html
+    - json
+
+ui:
+  static_use_hash: true

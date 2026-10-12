@@ -14,9 +14,10 @@ services:
   # .env accordingly). Public instances disable format=json — only our own
   # instance works, which is why this sidecar exists.
   searxng:
-    # Pin to a stable tagged release (§77 D3)
-    # TODO(operator): pin digest from Docker Hub once confirmed
-    image: searxng/searxng:2024.12.30-d3e758a
+    # Pin to a stable tagged release (§77 D3, §78 D1)
+    # Pinned to real Docker Hub release: 2026.10.9-f4822b3fc
+    # Digest: sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272
+    image: searxng/searxng:2026.10.9-f4822b3fc
     container_name: trading-bot-searxng
     restart: unless-stopped
     environment:

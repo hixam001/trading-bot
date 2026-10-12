@@ -48,6 +48,25 @@
 4. **Security Tests**:
    - Expanded `backend/tests/test_docs_security.py` with tests asserting zero `file:///` absolute links in `docs/` and `memory-bank/`, and verifying `docs/14_SIGNING_GUARD.md` references `live_execution/sim_guard.py` whenever balance verification is discussed. All passing.
 
+### Phase D: Broken Pin & Dependency Hygiene (`docker-compose.yml`, `Dockerfile`, `tests.yml`, `dependabot.yml`, `requirements.lock`, `test_audit_78_d.py`)
+1. **SearXNG Tag & Digest Pinning (`docker-compose.yml`, `docs/11_DEPLOYMENT.md`)**:
+   - Replaced broken tag (`searxng/searxng:2024.12.30-d3e758a`) with verified release tag `searxng/searxng:2026.10.9-f4822b3fc`.
+   - Documented `docker manifest inspect` command and immutable digest `sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272` in `docs/11_DEPLOYMENT.md`.
+2. **SearXNG Secret Wiring (`deploy/searxng/settings.yml`, `deploy/searxng/settings.yml.example`)**:
+   - Clarified and aligned SearXNG secret injection to rely on native `SEARXNG_SECRET` environment variable passing via docker-compose `environment:`.
+   - Created `deploy/searxng/settings.yml.example`.
+3. **Vulnerability Remediation (`urllib3>=2.8.0`)**:
+   - Bumped `urllib3` from 2.7.0 to 2.8.0 in `backend/requirements.lock` and `backend/requirements.txt` (and added root `requirements.txt`).
+   - Ran `pip-audit -r backend/requirements.lock` verifying resolution of PYSEC-2026-4175, PYSEC-2026-4176, and PYSEC-2026-4177 (0 vulnerabilities reported).
+4. **CI & Docker Alignment**:
+   - Updated `Dockerfile` to install dependencies from `backend/requirements.lock` using `--no-deps`.
+   - Aligned Python minor version across CI (`.github/workflows/tests.yml`) and `Dockerfile` to Python 3.14.
+   - Added weekly scheduled security audit cron in CI (`0 4 * * 1`).
+   - Created `.github/dependabot.yml` configured for `pip`, `npm`, `docker`, and `github-actions`.
+5. **Dockerfile Healthcheck**:
+   - Switched Dockerfile `HEALTHCHECK` from `/api/system-status` (which executes full provider stack and burns LLM credits) to lightweight `/api/health`.
+6. **Tests**:
+   - Added 8 tests in `backend/tests/test_audit_78_d.py` verifying SearXNG tag regex format, secret wiring, urllib3 version, Python version parity, lockfile installation, scheduled CI audit, dependabot configuration, and healthcheck endpoint. Full suite: **980 passed** (0 failed).
 
 ---
 

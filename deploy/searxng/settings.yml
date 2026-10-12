@@ -15,7 +15,8 @@ use_default_settings: true
 
 server:
   # The engine reaches it inside the compose network; no public exposure.
-  secret_key: "${SEARXNG_SECRET}"
+  # SEARXNG_SECRET is read directly from environment variables passed via compose.
+  # SearXNG natively overrides secret_key with SEARXNG_SECRET from the environment.
   limiter: false
   image_proxy: false
 
