@@ -6,7 +6,7 @@ uvicorn[standard]>=0.32
 httpx>=0.28
 
 # Async SQLite (WAL mode) — default local DB backend
-aiosqlite>=0.20
+aiosqlite>=0.22.1
 
 # Async Postgres — optional Supabase backend (USE_SUPABASE_DB=1)
 asyncpg>=0.30
