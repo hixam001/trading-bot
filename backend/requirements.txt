@@ -12,7 +12,7 @@ aiosqlite>=0.20
 asyncpg>=0.30
 
 # Environment config (operator-facing settings only)
-python-dotenv>=1.0
+python-dotenv>=1.2.4
 
 # Solana primitives — live_execution signing/wallet/RPC (keypair, tx build)
 solders>=0.29
