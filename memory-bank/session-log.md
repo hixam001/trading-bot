@@ -30,7 +30,7 @@
 - **Tests**:
   - Full test suite: **934 passed** (0 failures).
   - Frontend build: passes cleanly.
-  - Gitleaks scan: passes cleanly across all commits in repository history (0 leaks).
+  - Gitleaks configuration: .gitleaks.toml and .gitleaksignore configured for synthetic test fixtures.
 - **Constraints & Invariants Preserved**:
   - `LIVE_TRADING_ENABLED` / `REQUIRE_MANUAL_CONFIRMATION` untouched.
   - Zero modifications to `rule_engine/`.

@@ -48,3 +48,30 @@ def test_docs_do_not_contain_vite_admin_token_value():
             violations.append((str(doc.relative_to(REPO_ROOT)), non_empty))
 
     assert not violations, f"Documentation contains VITE_ADMIN_TOKEN with a value in: {violations}"
+
+
+def test_docs_do_not_contain_file_scheme_links():
+    """Verify no documentation in docs/ or memory-bank/ contains file:/// absolute links."""
+    doc_files = list((REPO_ROOT / "docs").rglob("*.md")) + list((REPO_ROOT / "memory-bank").rglob("*.md"))
+    violations = []
+    for doc in doc_files:
+        if not doc.exists():
+            continue
+        content = doc.read_text(encoding="utf-8")
+        if "file:///" in content:
+            violations.append(str(doc.relative_to(REPO_ROOT)))
+
+    assert not violations, f"Documentation contains absolute file:/// links in: {violations}"
+
+
+def test_signing_guard_doc_truthful_balance_claims():
+    """Verify docs/14_SIGNING_GUARD.md does not claim RPC preflight verifies balances without sim_guard."""
+    guard_doc = REPO_ROOT / "docs" / "14_SIGNING_GUARD.md"
+    assert guard_doc.exists(), "docs/14_SIGNING_GUARD.md must exist"
+    content = guard_doc.read_text(encoding="utf-8")
+    if re.search(r"verif(ies|y)\s+balances", content, re.IGNORECASE):
+        assert "live_execution/sim_guard.py" in content or "backend/live_execution/sim_guard.py" in content, (
+            "docs/14_SIGNING_GUARD.md mentions 'verifies balances' without referencing live_execution/sim_guard.py"
+        )
+
+

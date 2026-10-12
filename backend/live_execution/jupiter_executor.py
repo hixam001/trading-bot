@@ -750,7 +750,8 @@ def _sign_transaction(swap_b64: str, payer, quote: dict | None = None):
 # `_confirm_signature` poll (maxRetries=0, one RPC_URL, no failover) are
 # GONE. Broadcast + confirm now go through the SAME helpers the automated
 # executor uses — solana.send_raw_transaction (rotating RPC_URLS,
-# skipPreflight stays ON, maxRetries=3, preflight commitment=confirmed) and
+# skipPreflight: False — preflight is performed so RPC checks program status before broadcast,
+# maxRetries=3, preflight commitment=confirmed) and
 # solana.confirm_signature — so both money paths carry ONE broadcast policy.
 # ---------------------------------------------------------------------------
 

@@ -34,6 +34,21 @@
 5. **Tests**:
    - Added 12 tests in `backend/tests/test_audit_78_b.py` covering pass case, on-chain err, SOL over cap, third token drained, output below threshold, foreign output ATA, owner change, RPC down, malformed layout, A1 attack simulation refusal, AST proof, and monkeypatch proof. Full suite: **970 passed** (0 failed).
 
+### Phase C: Truthful Docs & Comments (`docs/14_SIGNING_GUARD.md`, `jupiter_executor.py`, `solana.py`, `test_docs_security.py`)
+1. **Accurate Defense-in-Depth Architecture (`docs/14_SIGNING_GUARD.md`)**:
+   - Rewrote §3 to truthfully delineate Layer 1 (static inspection), Layer 2 (pre-sign simulation & balance-delta assertions in `sim_guard.py`), and Layer 3 (RPC preflight on broadcast).
+   - Removed false claim that preflight simulation verifies balances (preflight only verifies program execution status; Layer 2 `sim_guard.py` enforces balance deltas).
+   - Explicitly documented residual risks: mutable on-chain DEX upgrades, simulation vs. landing-time state drift, and compromised RPC endpoints (partially mitigated by dual-RPC consensus).
+   - Converted all `file:///home/hixam/...` absolute links to repo-relative paths (`backend/...`, `docs/...`).
+   - Documented the offline inspection tool `scripts/inspect_live_quote.py`.
+2. **Comment Disambiguation**:
+   - Corrected inverted `skipPreflight stays ON` comments in `jupiter_executor.py` and `solana.py` to state `skipPreflight: False — preflight is performed so RPC checks program status before broadcast`.
+3. **Memory-Bank Cleanliness**:
+   - Removed unverified "gitleaks clean" claims across `session-log.md` and `decisionLog.md`, accurately describing configuration of `.gitleaks.toml` and `.gitleaksignore`.
+4. **Security Tests**:
+   - Expanded `backend/tests/test_docs_security.py` with tests asserting zero `file:///` absolute links in `docs/` and `memory-bank/`, and verifying `docs/14_SIGNING_GUARD.md` references `live_execution/sim_guard.py` whenever balance verification is discussed. All passing.
+
+
 ---
 
 ## §77 — Security Audit Remediation (Phases A–E) (2026-10-11)

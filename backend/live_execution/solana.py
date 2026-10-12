@@ -3,8 +3,8 @@ live_execution/solana.py - Solana RPC plumbing with rotating failover.
 
 the reference solana.server.ts parity: try every configured endpoint in order until
 one answers; a send is only journalled AFTER on-chain confirmation; nothing
-here holds or logs secrets. Preflight stays ON (deliberately stricter than
-the reference's skipPreflight=True - a rejected tx costs nothing, a surprise fill does).
+here holds or logs secrets. Preflight is enabled (skipPreflight=False, deliberately stricter
+than the reference's skipPreflight=True - a rejected tx costs nothing, a surprise fill does).
 """
 from __future__ import annotations
 
