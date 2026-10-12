@@ -143,10 +143,26 @@ def test_admin_token_entropy_verification():
 
 def test_pyflakes_clean_run_live_cycle_and_db_pg():
     """F6: pyflakes must report 0 undefined names or linter errors on touched files."""
-    cmd = [
-        str(REPO_ROOT / ".venv" / "bin" / "pyflakes"),
-        str(REPO_ROOT / "backend" / "run_live_cycle.py"),
-        str(REPO_ROOT / "backend" / "api" / "db_pg.py"),
-    ]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    assert proc.returncode == 0, f"Pyflakes reported warnings:\n{proc.stdout}\n{proc.stderr}"
+    import sys
+    try:
+        from pyflakes.api import checkPath
+        from pyflakes.reporter import Reporter
+        import io
+
+        for rel in ["backend/run_live_cycle.py", "backend/api/db_pg.py"]:
+            out = io.StringIO()
+            err = io.StringIO()
+            rep = Reporter(out, err)
+            file_path = REPO_ROOT / rel
+            warnings = checkPath(str(file_path), rep)
+            assert warnings == 0, f"Pyflakes reported warnings on {rel}:\n{out.getvalue()}\n{err.getvalue()}"
+    except ImportError:
+        cmd = [
+            sys.executable,
+            "-m",
+            "pyflakes",
+            str(REPO_ROOT / "backend" / "run_live_cycle.py"),
+            str(REPO_ROOT / "backend" / "api" / "db_pg.py"),
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        assert proc.returncode == 0, f"Pyflakes reported warnings:\n{proc.stdout}\n{proc.stderr}"
