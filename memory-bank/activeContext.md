@@ -1,12 +1,17 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-11 (§77):** Security Audit Remediation (Phases A–E):
+**Current — 2026-10-12 (§78):** Post-Audit Hardening (Phases A–F):
+- **Phase A (Signing Guard Bypass Remediation)**: Closed reproduced drain/sink/owner bypasses (A1, A2, A3) in `jupiter_executor.py`. Enforced owner checks for Token/Token-2022 tags 1, 16, 18 against payer; proved wallet ownership in execution order; restricted CreateAccount owner to Token/Token-2022, space <= 165 bytes, and lamports <= 2_500_000; enforced 10_000_000 lamports (0.01 SOL) aggregate top-level SOL outflow cap (`MAX_SYSTEM_OUTFLOW_LAMPORTS`). Created no-key diagnostic tool `scripts/inspect_live_quote.py`. Added 24 tests in `test_audit_78_a.py`. Full suite: **958 passed**, 0 failed.
+
+**PREVIOUS:**
+
+**As of 2026-10-11 (§77):** Security Audit Remediation (Phases A–E):
 1. **Phase A (Edge Exposure & Auth)**: Removed admin-token proxy injection from Caddy deploy docs (`test_docs_security.py`); bound uvicorn/compose to loopback and trusted bridge CIDRs (`FORWARDED_ALLOW_IPS`); unified client IP resolution across auth and bot protection to `get_client_ip()`; enforced 32+ character minimum entropy on `ADMIN_TOKEN`; purged `test-captcha-pass` bypass; inverted login lockout order to authenticate before rate-limiting failed attempts.
 2. **Phase B (Wallet Secret Isolation)**: Isolated wallet secret by introducing `wallet.public_address()`; removed all `load_keypair()` calls from `backend/api/` (enforced via AST test); split `docker-compose.yml` into distinct `api` and `live` services with read-only keypair mount on `live` only; enforced `0o600`/`0o400` POSIX permissions on keypair file.
-3. **Phase C (Signing Guard & Deny-By-Default)**: Added `_verify_transaction_safety(tx)` inspecting instructions in both versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture and balance safety in `docs/14_SIGNING_GUARD.md`.
+3. **Phase C (Signing Guard & Deny-By-Default)**: Added `inspect_swap_transaction(tx, payer_pubkey)` inspecting instructions in both versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture and balance safety in `docs/14_SIGNING_GUARD.md`.
 4. **Phase D (Hermetic Tests & CI Infrastructure)**: Hardened test fixtures to pass hermetically with zero network, no `.env`, and unbuilt frontend; created GitHub Actions CI pipeline (`.github/workflows/tests.yml`); generated `backend/requirements.lock`; pinned SearXNG container image to `searxng/searxng:2024.12.30-d3e758a` with mandatory `SEARXNG_SECRET`.
 5. **Phase E (Defense-in-Depth Hardening)**: Added `register_secret()` for dynamic runtime secret redaction (Privy OAuth tokens) and JSON-quoted sensitive field masking; wrapped Postgres `reset_book` in atomic transaction; capped WebSocket connections per IP (`MAX_WS_PER_IP = 4`) with 30s timeout liveness harvest; guarded against CORS wildcard with credentials; implemented session revocation on logout; corrected LiveFeed accessibility divider role; configured `.gitleaksignore` and `.gitleaks.toml` for test dummy credential false-positives.
-6. **Verification & Status**: Full test suite passes hermetically: **934 passed** (0 failures). Frontend builds cleanly. Gitleaks passes clean across entire repository history.
+6. **Verification & Status**: Full test suite passes hermetically: **934 passed** (0 failures). Frontend builds cleanly. Gitleaks allowlist configured for test fixtures.
 
 **PREVIOUS:**
 

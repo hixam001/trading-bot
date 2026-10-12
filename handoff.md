@@ -1,3 +1,24 @@
+## §78 — Post-Audit Hardening (Phases A–F) (2026-10-12)
+
+### Phase A: Signing Guard Bypass Remediation (`jupiter_executor.py`, `config.py`, `scripts/inspect_live_quote.py`, `test_audit_78_a.py`)
+1. **Reproduced & Refused §78 Bypasses**:
+   - **A1 (Drain)**: `System.CreateAccount` -> `Token.InitializeAccount3(attacker)` -> `System.Transfer(5 SOL)` -> `SyncNative`. Refused by owner check on initialize, unproven wallet ownership, and outflow cap.
+   - **A2 (Sink/Grief)**: `System.CreateAccount(payer -> N, 50 SOL, space 0, owner = Jupiter v6)`. Refused by restricting owner to Token/Token-2022 only, space cap (165 bytes), and lamport outflow caps.
+   - **A3 (Attacker Init)**: `Token.InitializeAccount` (tag 1) with `accounts[2] = attacker`. Refused by strict owner verification against fee payer.
+2. **Owner Verification & Wallet Ownership Proofs**:
+   - Enforced owner check across all Token / Token-2022 initialize tags: Tag 1 (`accounts[2]`), Tag 16 (`data[1:33]`), Tag 18 (`data[1:33]`). All must match `payer_pubkey`.
+   - "Wallet-owned" accounts are strictly proven, not inferred: `wallet_owned_accounts` tracks payer and ATAs, and only admits `CreateAccount`'d accounts once successfully initialized with owner == payer in execution order. Transfers before initialization or to uninitialized created accounts are refused.
+3. **Caps on Account Creation & SOL Outflow**:
+   - `MAX_CREATE_ACCOUNT_LAMPORTS = 2_500_000` (0.0025 SOL) cap per created account; owner restricted to SPL Token and Token-2022; space capped at <= 165 bytes.
+   - `MAX_SYSTEM_OUTFLOW_LAMPORTS = 10_000_000` (0.01 SOL) aggregate top-level SOL outflow cap across CreateAccount, Transfer, and TransferWithSeed.
+4. **No-Key Inspection Diagnostic Tool**:
+   - Added `scripts/inspect_live_quote.py` to inspect real live quotes from Jupiter, decode instruction tables, and verify against `inspect_swap_transaction` without loading any private key material.
+   - Included `"asLegacyTransaction": "true"` parameter in `get_jupiter_quote` and inspection queries for Jupiter API compatibility.
+5. **Tests**:
+   - Added 24 tests in `backend/tests/test_audit_78_a.py` covering bypasses A1, A2, A3, Token/Token-2022 tags, caps, ordering, truncated data, and mutation checks. All passing. Full suite: **958 passed** (0 failed).
+
+---
+
 ## §77 — Security Audit Remediation (Phases A–E) (2026-10-11)
 
 Comprehensive resolution of findings from the independent security audit of commits §70–§76:

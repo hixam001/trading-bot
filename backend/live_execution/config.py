@@ -124,8 +124,14 @@ APPROVED_SWAP_PROGRAM_IDS: frozenset[str] = frozenset({
     # Moonshot removed in §77: ID unverified — re-add only with an ID copied from the program's official docs/Solscan
     "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",           # Phoenix
     "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",           # OpenBook
-    "EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S",           # Lifinity
 })
+
+# Maximum lamports allowed in a single System CreateAccount instruction (roughly rent-exempt for 165 bytes with slack)
+MAX_CREATE_ACCOUNT_LAMPORTS: int = 2_500_000
+
+# Maximum total SOL outflow from payer across top-level System instructions (0.01 SOL)
+MAX_SYSTEM_OUTFLOW_LAMPORTS: int = 10_000_000
+
 
 
 # ---------------------------------------------------------------------------

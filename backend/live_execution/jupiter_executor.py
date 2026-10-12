@@ -235,6 +235,7 @@ async def get_jupiter_quote(
             "outputMint": output_mint,
             "amount": str(amount_raw),
             "slippageBps": str(config.SLIPPAGE_BPS),
+            "asLegacyTransaction": "true",
         },
     )
     out_raw = data.get("outAmount")
@@ -385,21 +386,10 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
         )
 
     wallet_owned_accounts: set[str] = {payer_pubkey}
+    created_token_accounts: set[str] = set()
+    total_system_outflow_lamports: int = 0
 
-    # Pass 1: register any ATAs created for our wallet in this transaction
-    for i, ix in enumerate(tx.message.instructions):
-        prog_idx = ix.program_id_index
-        if prog_idx < len(account_keys):
-            prog_id = account_keys[prog_idx]
-            if prog_id == _ATA_PROGRAM_ID:
-                data = bytes(getattr(ix, "data", b""))
-                tag = data[0] if data else 0
-                if tag in (0, 1) and len(ix.accounts) >= 3:
-                    if ix.accounts[2] < len(account_keys) and account_keys[ix.accounts[2]] == payer_pubkey:
-                        if ix.accounts[1] < len(account_keys):
-                            wallet_owned_accounts.add(account_keys[ix.accounts[1]])
-
-    # Pass 2: strict instruction validation
+    # Strict instruction validation in order
     for i, ix in enumerate(tx.message.instructions):
         prog_idx = ix.program_id_index
         if prog_idx >= len(account_keys):
@@ -432,19 +422,54 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
                     raise ExecutionError(
                         f"System CreateAccount instruction #{i} data truncated (< 52 bytes)"
                     )
+                lamports = struct.unpack("<Q", data[4:12])[0]
+                space = struct.unpack("<Q", data[12:20])[0]
                 try:
                     owner_pubkey = str(Pubkey.from_bytes(data[20:52]))
                 except Exception as exc:
                     raise ExecutionError(
                         f"System CreateAccount instruction #{i} has invalid owner pubkey"
                     ) from exc
-                if owner_pubkey not in config.APPROVED_SWAP_PROGRAM_IDS:
+
+                # A3: owner must be SPL Token or Token-2022 program only
+                if owner_pubkey not in (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
                     raise ExecutionError(
-                        f"System CreateAccount in instruction #{i} specifies unapproved owner program {owner_pubkey}"
+                        f"System CreateAccount in instruction #{i} specifies forbidden owner program {owner_pubkey} "
+                        f"(must be Token or Token-2022 only)"
                     )
-                if len(ix.accounts) >= 2 and ix.accounts[0] < len(account_keys) and account_keys[ix.accounts[0]] == payer_pubkey:
-                    if ix.accounts[1] < len(account_keys):
-                        wallet_owned_accounts.add(account_keys[ix.accounts[1]])
+
+                # A3: space <= 165
+                if space > 165:
+                    raise ExecutionError(
+                        f"System CreateAccount in instruction #{i} specifies space {space} > 165"
+                    )
+
+                # A3: lamports <= MAX_CREATE_ACCOUNT_LAMPORTS
+                if lamports > config.MAX_CREATE_ACCOUNT_LAMPORTS:
+                    raise ExecutionError(
+                        f"System CreateAccount in instruction #{i} lamports {lamports} exceeds "
+                        f"MAX_CREATE_ACCOUNT_LAMPORTS ({config.MAX_CREATE_ACCOUNT_LAMPORTS})"
+                    )
+
+                if len(ix.accounts) < 2 or ix.accounts[0] >= len(account_keys) or ix.accounts[1] >= len(account_keys):
+                    raise ExecutionError(
+                        f"System CreateAccount instruction #{i} has invalid account indices"
+                    )
+
+                funding_account = account_keys[ix.accounts[0]]
+                new_account = account_keys[ix.accounts[1]]
+
+                # A4: Cap total top-level SOL outflow
+                if funding_account == payer_pubkey:
+                    total_system_outflow_lamports += lamports
+                    if total_system_outflow_lamports > config.MAX_SYSTEM_OUTFLOW_LAMPORTS:
+                        raise ExecutionError(
+                            f"Total top-level SOL outflow {total_system_outflow_lamports} lamports exceeds "
+                            f"MAX_SYSTEM_OUTFLOW_LAMPORTS ({config.MAX_SYSTEM_OUTFLOW_LAMPORTS})"
+                        )
+                    # A2: "Wallet-owned" must be proven, not inferred.
+                    # Do NOT add to wallet_owned_accounts here! Only track in created_token_accounts.
+                    created_token_accounts.add(new_account)
 
             elif disc in (1, 4, 8, 9):
                 disc_names = {1: "Assign", 4: "Allocate", 8: "AllocateWithSeed", 9: "AssignWithSeed"}
@@ -460,14 +485,24 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
                         f"System Transfer instruction #{i} data truncated (< 12 bytes)"
                     )
                 lamports = struct.unpack("<Q", data[4:12])[0]
-                if len(ix.accounts) < 2 or ix.accounts[1] >= len(account_keys):
+                if len(ix.accounts) < 2 or ix.accounts[0] >= len(account_keys) or ix.accounts[1] >= len(account_keys):
                     raise ExecutionError(
                         f"System Transfer instruction #{i} has invalid recipient account index"
                     )
+                from_acc = account_keys[ix.accounts[0]]
                 dest = account_keys[ix.accounts[1]]
+
+                if from_acc == payer_pubkey or from_acc in wallet_owned_accounts:
+                    total_system_outflow_lamports += lamports
+                    if total_system_outflow_lamports > config.MAX_SYSTEM_OUTFLOW_LAMPORTS:
+                        raise ExecutionError(
+                            f"Total top-level SOL outflow {total_system_outflow_lamports} lamports exceeds "
+                            f"MAX_SYSTEM_OUTFLOW_LAMPORTS ({config.MAX_SYSTEM_OUTFLOW_LAMPORTS})"
+                        )
+
                 if lamports > 0 and not _is_wallet_owned(dest, payer_pubkey, account_keys, wallet_owned_accounts):
                     raise ExecutionError(
-                        f"System Transfer in instruction #{i} transfers {lamports} lamports to foreign destination {dest} "
+                        f"System Transfer in instruction #{i} transfers {lamports} lamports to foreign or unproven destination {dest} "
                         f"(not owned by wallet {payer_pubkey})"
                     )
 
@@ -479,14 +514,24 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
                         f"System TransferWithSeed instruction #{i} data truncated (< 12 bytes)"
                     )
                 lamports = struct.unpack("<Q", data[4:12])[0]
-                if len(ix.accounts) < 3 or ix.accounts[2] >= len(account_keys):
+                if len(ix.accounts) < 3 or ix.accounts[0] >= len(account_keys) or ix.accounts[2] >= len(account_keys):
                     raise ExecutionError(
                         f"System TransferWithSeed instruction #{i} has invalid recipient account index"
                     )
+                from_acc = account_keys[ix.accounts[0]]
                 dest = account_keys[ix.accounts[2]]
+
+                if from_acc == payer_pubkey or from_acc in wallet_owned_accounts:
+                    total_system_outflow_lamports += lamports
+                    if total_system_outflow_lamports > config.MAX_SYSTEM_OUTFLOW_LAMPORTS:
+                        raise ExecutionError(
+                            f"Total top-level SOL outflow {total_system_outflow_lamports} lamports exceeds "
+                            f"MAX_SYSTEM_OUTFLOW_LAMPORTS ({config.MAX_SYSTEM_OUTFLOW_LAMPORTS})"
+                        )
+
                 if lamports > 0 and not _is_wallet_owned(dest, payer_pubkey, account_keys, wallet_owned_accounts):
                     raise ExecutionError(
-                        f"System TransferWithSeed in instruction #{i} transfers {lamports} lamports to foreign destination {dest}"
+                        f"System TransferWithSeed in instruction #{i} transfers {lamports} lamports to foreign or unproven destination {dest}"
                     )
 
             else:
@@ -497,49 +542,123 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
         # 2. SPL Token & Token-2022
         # spl_token::instruction::TokenInstruction (1-byte uint8 tag)
         elif prog_id in (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
+            prog_name = "SPL Token" if prog_id == _SPL_TOKEN_PROGRAM_ID else "Token-2022"
             if len(data) < 1:
                 raise ExecutionError(
-                    f"SPL Token instruction #{i} has empty data"
+                    f"{prog_name} instruction #{i} has empty data"
                 )
             tag = data[0]
 
             if tag in (3, 12):
                 tag_name = "Transfer" if tag == 3 else "TransferChecked"
                 raise ExecutionError(
-                    f"SPL Token {tag_name} instruction #{i} (tag {tag}) refused at top level "
+                    f"{prog_name} {tag_name} instruction #{i} (tag {tag}) refused at top level "
                     "— legitimate swaps execute CPI transfers inside the DEX program"
                 )
             elif tag in (4, 13):
                 tag_name = "Approve" if tag == 4 else "ApproveChecked"
                 raise ExecutionError(
-                    f"SPL Token {tag_name} instruction #{i} (tag {tag}) refused at top level"
+                    f"{prog_name} {tag_name} instruction #{i} (tag {tag}) refused at top level"
                 )
             elif tag == 6:
                 raise ExecutionError(
-                    f"SPL Token SetAuthority instruction #{i} (tag 6) refused at top level"
+                    f"{prog_name} SetAuthority instruction #{i} (tag 6) refused at top level"
                 )
             elif tag in (7, 8, 15):
                 tag_name = "MintTo" if tag == 7 else ("Burn" if tag == 8 else "BurnChecked")
                 raise ExecutionError(
-                    f"SPL Token {tag_name} instruction #{i} (tag {tag}) refused at top level"
+                    f"{prog_name} {tag_name} instruction #{i} (tag {tag}) refused at top level"
                 )
             elif tag == 9:
                 # CloseAccount: accounts: [account_to_close, destination, owner]
-                if len(ix.accounts) < 2 or ix.accounts[1] >= len(account_keys):
+                if len(ix.accounts) < 2 or ix.accounts[0] >= len(account_keys) or ix.accounts[1] >= len(account_keys):
                     raise ExecutionError(
-                        f"SPL Token CloseAccount instruction #{i} missing destination account"
+                        f"{prog_name} CloseAccount instruction #{i} missing destination account"
                     )
                 dest = account_keys[ix.accounts[1]]
                 if dest != payer_pubkey:
                     raise ExecutionError(
-                        f"SPL Token CloseAccount in instruction #{i} destination {dest} does not match wallet {payer_pubkey}"
+                        f"{prog_name} CloseAccount in instruction #{i} destination {dest} does not match wallet {payer_pubkey}"
                     )
-            elif tag in (1, 16, 17, 18):
-                # 1=InitializeAccount, 16=InitializeAccount2, 17=SyncNative, 18=InitializeAccount3
-                pass
+                if len(ix.accounts) >= 3 and ix.accounts[2] < len(account_keys):
+                    owner = account_keys[ix.accounts[2]]
+                    if owner != payer_pubkey:
+                        raise ExecutionError(
+                            f"{prog_name} CloseAccount in instruction #{i} owner {owner} does not match wallet {payer_pubkey}"
+                        )
+            elif tag == 1:
+                # InitializeAccount: accounts: [account, mint, owner, rent_sysvar (optional)]
+                if len(ix.accounts) < 3 or ix.accounts[0] >= len(account_keys) or ix.accounts[2] >= len(account_keys):
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount instruction #{i} missing required accounts (< 3 accounts)"
+                    )
+                acc = account_keys[ix.accounts[0]]
+                owner = account_keys[ix.accounts[2]]
+                if owner != payer_pubkey:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount instruction #{i} owner {owner} does not match payer {payer_pubkey}"
+                    )
+                if acc in created_token_accounts:
+                    wallet_owned_accounts.add(acc)
+
+            elif tag == 16:
+                # InitializeAccount2: accounts: [account, mint, rent_sysvar], data: [16, owner(32)]
+                if len(data) < 33:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount2 instruction #{i} data truncated (< 33 bytes)"
+                    )
+                if len(ix.accounts) < 1 or ix.accounts[0] >= len(account_keys):
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount2 instruction #{i} missing account to initialize"
+                    )
+                acc = account_keys[ix.accounts[0]]
+                try:
+                    owner = str(Pubkey.from_bytes(data[1:33]))
+                except Exception as exc:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount2 instruction #{i} has invalid owner pubkey"
+                    ) from exc
+                if owner != payer_pubkey:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount2 instruction #{i} owner {owner} does not match payer {payer_pubkey}"
+                    )
+                if acc in created_token_accounts:
+                    wallet_owned_accounts.add(acc)
+
+            elif tag == 17:
+                # SyncNative: accounts: [account]
+                if len(ix.accounts) < 1 or ix.accounts[0] >= len(account_keys):
+                    raise ExecutionError(
+                        f"{prog_name} SyncNative instruction #{i} missing account"
+                    )
+
+            elif tag == 18:
+                # InitializeAccount3: accounts: [account, mint], data: [18, owner(32)]
+                if len(data) < 33:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount3 instruction #{i} data truncated (< 33 bytes)"
+                    )
+                if len(ix.accounts) < 1 or ix.accounts[0] >= len(account_keys):
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount3 instruction #{i} missing account to initialize"
+                    )
+                acc = account_keys[ix.accounts[0]]
+                try:
+                    owner = str(Pubkey.from_bytes(data[1:33]))
+                except Exception as exc:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount3 instruction #{i} has invalid owner pubkey"
+                    ) from exc
+                if owner != payer_pubkey:
+                    raise ExecutionError(
+                        f"{prog_name} InitializeAccount3 instruction #{i} owner {owner} does not match payer {payer_pubkey}"
+                    )
+                if acc in created_token_accounts:
+                    wallet_owned_accounts.add(acc)
+
             else:
                 raise ExecutionError(
-                    f"SPL Token instruction #{i} has unapproved tag {tag}"
+                    f"{prog_name} instruction #{i} has unapproved tag {tag}"
                 )
 
         # 3. Associated Token Account Program
@@ -550,15 +669,17 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
                 raise ExecutionError(
                     f"ATA instruction #{i} has unapproved instruction tag {tag}"
                 )
-            if len(ix.accounts) < 3 or ix.accounts[2] >= len(account_keys):
+            if len(ix.accounts) < 3 or ix.accounts[1] >= len(account_keys) or ix.accounts[2] >= len(account_keys):
                 raise ExecutionError(
-                    f"ATA instruction #{i} missing wallet owner account"
+                    f"ATA instruction #{i} missing required accounts"
                 )
             wallet_owner = account_keys[ix.accounts[2]]
             if wallet_owner != payer_pubkey:
                 raise ExecutionError(
                     f"ATA instruction #{i} wallet owner {wallet_owner} does not match payer {payer_pubkey}"
                 )
+            ata_account = account_keys[ix.accounts[1]]
+            wallet_owned_accounts.add(ata_account)
 
         # 4. Compute Budget & Memo programs
         elif prog_id == _COMPUTE_BUDGET_PROGRAM_ID or prog_id in _MEMO_PROGRAM_IDS:
