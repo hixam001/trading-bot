@@ -19,7 +19,7 @@ solders>=0.29
 
 # §54 — encrypted-at-rest persistence for runtime-rotated secrets (the fomo
 # Privy refresh-token sidecar; backend/secret_store.py, Fernet/AES+HMAC).
-cryptography>=42
+cryptography>=50.0.2
 
 # Testing
 pytest>=8.3
