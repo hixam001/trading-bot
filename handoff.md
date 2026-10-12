@@ -68,6 +68,19 @@
 6. **Tests**:
    - Added 8 tests in `backend/tests/test_audit_78_d.py` verifying SearXNG tag regex format, secret wiring, urllib3 version, Python version parity, lockfile installation, scheduled CI audit, dependabot configuration, and healthcheck endpoint. Full suite: **980 passed** (0 failed).
 
+### Phase E: Session Revocation Memory Growth Remediation (`api/auth.py`, `docs/11_DEPLOYMENT.md`, `test_audit_78_e.py`)
+1. **Pre-Storage HMAC & Timestamp Validation (`backend/api/auth.py`)**:
+   - `revoke_session_token` now validates that the token HMAC signature matches `ADMIN_TOKEN` and that the creation timestamp is strictly within `SESSION_MAX_AGE_SECONDS` before storing.
+   - Forged, corrupted, or already-expired cookies sent to `POST /api/auth/logout` return HTTP 200 (avoiding oracle leaks) but add nothing to the revocation registry, defeating unauthenticated memory growth DoS.
+2. **Bounded Capacity & O(1) Eviction**:
+   - Stored in an `OrderedDict[str, float]` mapping signature to expiry timestamp.
+   - Bounded to `MAX_REVOKED_SESSIONS = 10_000` entries.
+   - On each insertion, expired entries are pruned; if still at capacity, the oldest entry is evicted ($O(1)$ LRU via `popitem(last=False)`).
+3. **Durability Limitation Documented**:
+   - Documented in `revoke_session_token` docstring and `docs/11_DEPLOYMENT.md`: revocations are in-memory and reset on restart; immediate cross-restart revocation is achieved by rotating `ADMIN_TOKEN`.
+4. **Tests**:
+   - Added 6 tests in `backend/tests/test_audit_78_e.py` verifying forged cookie spam rejection, legitimate logout revocation and subsequent 401, expired cookie rejection, registry capacity cap, pruning of expired entries, and mutation checks. Full suite: **986 passed** (0 failed).
+
 ---
 
 ## §77 — Security Audit Remediation (Phases A–E) (2026-10-11)

@@ -20,7 +20,7 @@ import hashlib
 import hmac
 import secrets
 import time
-from collections import defaultdict
+from collections import OrderedDict, defaultdict
 
 from fastapi import HTTPException, Request, Response
 
@@ -66,24 +66,64 @@ def create_session_token(secret: str | None = None) -> str:
     return f"{payload}.{sig}"
 
 
-_REVOKED_SESSION_SIGS: dict[str, float] = {}
+MAX_REVOKED_SESSIONS: int = 10_000
+_REVOKED_SESSION_SIGS: OrderedDict[str, float] = OrderedDict()
 
 
-def revoke_session_token(token: str) -> None:
-    """Record token signature as revoked and prune expired entries (§77 E5)."""
+def revoke_session_token(token: str, secret: str | None = None) -> None:
+    """Record token signature as revoked and prune expired entries (§77 E5, §78 E1–E3).
+
+    Revocations are stored in memory and reset on process restart. An operator who
+    needs immediate cluster-wide revocation across restarts should rotate
+    ADMIN_TOKEN / SESSION_SECRET.
+
+    Validates HMAC signature and timestamp before storing to prevent memory-growth
+    attacks from unauthenticated forged cookies.
+    """
     if not token or not isinstance(token, str):
         return
+    configured = secret if secret is not None else config.ADMIN_TOKEN
+    if not configured or len(configured) < 32:
+        return
+
     parts = token.split(".")
     if len(parts) != 3:
         return
-    sig = parts[2]
-    now = time.time()
-    _REVOKED_SESSION_SIGS[sig] = now
+    ts_str, nonce, sig = parts
+    try:
+        created_at = int(ts_str)
+    except ValueError:
+        return
 
-    max_age = getattr(config, "SESSION_MAX_AGE_SECONDS", 86400)
-    for s, t in list(_REVOKED_SESSION_SIGS.items()):
-        if now - t > max_age:
+    now = time.time()
+    max_age = getattr(config, "SESSION_MAX_AGE_SECONDS", 3600)
+    # If the token has already expired or has invalid future timestamp, discard without storing
+    if now - created_at > max_age or created_at > now + 5:
+        return
+
+    # Verify cryptographic HMAC signature
+    payload = f"{created_at}.{nonce}"
+    expected_sig = hmac.new(
+        _derive_session_key(configured),
+        payload.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(sig, expected_sig):
+        return  # Forged or corrupted cookie; ignore silently without storing
+
+    expiry_timestamp = created_at + max_age
+
+    # Prune expired entries
+    for s, exp in list(_REVOKED_SESSION_SIGS.items()):
+        if now >= exp:
             _REVOKED_SESSION_SIGS.pop(s, None)
+
+    # Evict oldest if at capacity
+    cap = getattr(config, "MAX_REVOKED_SESSIONS", MAX_REVOKED_SESSIONS)
+    while len(_REVOKED_SESSION_SIGS) >= cap:
+        _REVOKED_SESSION_SIGS.popitem(last=False)
+
+    _REVOKED_SESSION_SIGS[sig] = expiry_timestamp
 
 
 def is_session_revoked(token: str) -> bool:
@@ -93,7 +133,14 @@ def is_session_revoked(token: str) -> bool:
     parts = token.split(".")
     if len(parts) != 3:
         return False
-    return parts[2] in _REVOKED_SESSION_SIGS
+    sig = parts[2]
+    if sig in _REVOKED_SESSION_SIGS:
+        exp = _REVOKED_SESSION_SIGS[sig]
+        if time.time() >= exp:
+            _REVOKED_SESSION_SIGS.pop(sig, None)
+            return False
+        return True
+    return False
 
 
 def verify_session_token(

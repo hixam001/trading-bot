@@ -94,6 +94,11 @@ those are inlined into the public JS bundle.
 **Rotation:** generate a fresh keypair, fund it, update
 `EXPECTED_WALLET_ADDRESS`, restart the container. Revoke/sweep the old wallet.
 
+**Session Revocation Durability (§78 E3):**
+Revocations are stored in memory and reset on process restart. An operator who needs immediate
+cluster-wide revocation across restarts should rotate `ADMIN_TOKEN` / `SESSION_SECRET`.
+
+
 ## 3. Dashboard on Vercel (split mode)
 
 1. Import the repo; set Root Directory = `frontend`.
