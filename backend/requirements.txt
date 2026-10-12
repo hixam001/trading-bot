@@ -9,7 +9,7 @@ httpx>=0.28
 aiosqlite>=0.20
 
 # Async Postgres — optional Supabase backend (USE_SUPABASE_DB=1)
-asyncpg>=0.30
+asyncpg>=0.32.0
 
 # Environment config (operator-facing settings only)
 python-dotenv>=1.0
