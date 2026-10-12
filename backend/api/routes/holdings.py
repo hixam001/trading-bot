@@ -17,19 +17,9 @@ from api.auth import require_local_or_admin
 from sizing import compute_unrealized_pnl
 
 log = logging.getLogger(__name__)
+from live_execution.wallet import get_wallet_cash_usd
+
 router = APIRouter()
-
-
-async def _chain_cash() -> float:
-    try:
-        from live_execution import solana, wallet
-        pubkey = wallet.public_address()
-        if not pubkey:
-            return 0.0
-        bal = await solana.get_usdc_balance(pubkey)
-        return max(bal, 0.0) if bal is not None else 0.0
-    except Exception:
-        return 0.0
 
 
 @router.get("/api/holdings")
@@ -40,7 +30,7 @@ async def get_holdings(request: Request):
     provider = request.app.state.provider
     async with db.get_db() as conn:
         trades = await db.get_open_trades(conn)
-    cash = await _chain_cash()
+    cash = await get_wallet_cash_usd()
 
     holdings = []
     for t in trades:
@@ -72,6 +62,10 @@ async def get_holdings(request: Request):
             "unrealized_pnl_usd": round(pnl_usd, 4) if pnl_usd is not None else None,
             "unrealized_pnl_pct": round(pnl_pct, 2) if pnl_pct is not None else None,
         })
-    return {"cash_usd": cash, "open_positions": holdings,
-            "count": len(holdings),
-            "paper_trading_only": False}
+    return {
+        "cash_usd": round(cash, 2) if cash is not None else None,
+        "cash_status": "live" if cash is not None else "unavailable",
+        "open_positions": holdings,
+        "count": len(holdings),
+        "paper_trading_only": False,
+    }

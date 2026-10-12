@@ -47,30 +47,16 @@ _SENSITIVE_PARAM_RE = re.compile(
     rf"(?i)\b({'|'.join(_SENSITIVE_PARAM_NAMES)})\b\s*[:=]\s*(?!Bearer\s|\[?<REDACTED)([^\s,;&\"']+)",
 )
 
-_JSON_SENSITIVE_RE = re.compile(
-    rf'(?i)("({"|".join(_SENSITIVE_PARAM_NAMES)}|api[_-]?key)"\s*:\s*)"([^"]+)"',
+_DICT_SENSITIVE_RE = re.compile(
+    rf"""(?i)(['"]({"|".join(_SENSITIVE_PARAM_NAMES)}|api[_-]?key)['"]\s*:\s*)['"]([^'"]+)['"]""",
 )
+_JSON_SENSITIVE_RE = _DICT_SENSITIVE_RE
 
 _BEARER_RE = re.compile(r"(?i)\bBearer\s+[A-Za-z0-9_\-\.~+/]+=*")
 _BASIC_AUTH_URL_RE = re.compile(r"(https?://)([^:\s/]+):([^@\s/]+)@")
 _SOLANA_KEYPAIR_RE = re.compile(r"\[\s*\d+(?:\s*,\s*\d+){40,}\s*\]")
 
-_RUNTIME_SECRETS: set[str] = set()
-
-
-def register_secret(value: str) -> None:
-    """Register a runtime secret string (e.g. rotated Privy refresh token) for log and error redaction."""
-    if not value or not isinstance(value, str):
-        return
-    s = value.strip()
-    if len(s) >= 6 and s not in _RUNTIME_SECRETS:
-        _RUNTIME_SECRETS.add(s)
-        # Notify active filters to compile new regex patterns
-        for name in ("", "uvicorn", "uvicorn.error", "uvicorn.access", "fastapi", "httpx", "api", "security"):
-            lg = logging.getLogger(name)
-            for f in lg.filters:
-                if isinstance(f, SecretRedactorFilter):
-                    f._refresh_secrets()
+from secret_registry import get_runtime_secrets, register_secret  # noqa: F401
 
 
 class SecretRedactorFilter(logging.Filter):
@@ -104,7 +90,7 @@ class SecretRedactorFilter(logging.Filter):
             getattr(config, "SUPABASE_DB_URL", None),
         ]
         # Include runtime-registered secrets
-        configured_secrets.extend(_RUNTIME_SECRETS)
+        configured_secrets.extend(get_runtime_secrets())
 
         # Dynamically include any other config attributes ending in secret keywords
         for attr in dir(config):
@@ -172,7 +158,7 @@ def sanitize_error_detail(detail: Any) -> Any:
 
     sanitized = detail
     # Dynamically scan configured and runtime secrets
-    for val in list(_RUNTIME_SECRETS):
+    for val in get_runtime_secrets():
         sanitized = sanitized.replace(val, "<REDACTED>")
 
     for attr in dir(config):

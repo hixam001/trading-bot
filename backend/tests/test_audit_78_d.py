@@ -119,3 +119,4 @@ def test_dockerfile_healthcheck_endpoint():
     df_content = dockerfile_path.read_text(encoding="utf-8")
     assert "/api/health" in df_content, "Dockerfile HEALTHCHECK must target /api/health"
     assert "/api/system-status" not in df_content, "Dockerfile HEALTHCHECK must not target /api/system-status"
+

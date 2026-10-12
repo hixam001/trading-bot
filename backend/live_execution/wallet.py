@@ -167,7 +167,16 @@ def load_keypair(path: str | None = None):
         # parse the path itself and fail-closed with "expected value at line
         # 1 column 1"; bug found by the first real keypair load, 2026-08-28).
         # Reusing `raw` also avoids re-reading the material after validation.
-        return Keypair.from_bytes(bytes(raw))
+        kp = Keypair.from_bytes(bytes(raw))
+        try:
+            from secret_registry import register_secret
+            register_secret(json.dumps(raw))
+            register_secret(str(kp))
+            register_secret(bytes(raw).hex())
+            register_secret(bytes(raw[:32]).hex())
+        except Exception:
+            pass
+        return kp
     except Exception as exc:  # solders raises assorted types
         raise WalletError(f"keypair rejected by solders: {exc}") from exc
 
@@ -224,4 +233,25 @@ def public_address() -> str | None:
         pass
 
     return None
+
+
+async def get_wallet_cash_usd() -> float | None:
+    """Fetch wallet's live on-chain USDC cash balance (§78 F3).
+
+    Returns float >= 0.0 when readable.
+    Returns None when wallet is unreadable, pubkey is unknown, or RPC is unreachable.
+    Fail-closed: never return 0.0 for unknown states (0.0 means broke, None means unknown).
+    """
+    try:
+        from live_execution import solana
+        pubkey = public_address()
+        if not pubkey:
+            return None
+        bal = await solana.get_usdc_balance(pubkey)
+        if bal is None:
+            return None
+        return max(bal, 0.0)
+    except Exception:
+        return None
+
 

@@ -48,7 +48,7 @@ elif [ "$ROLE" = "live" ]; then
     echo "[entrypoint] ARMED + wallet configured — starting live decision cycle"
     exec python run_live_cycle.py
   else
-    echo "[entrypoint] live cycle NOT started (disarmed or no wallet configured)"
+    echo "[entrypoint] live cycle NOT started (disarmed or no wallet configured) — shutting down cleanly"
     exit 0
   fi
 fi

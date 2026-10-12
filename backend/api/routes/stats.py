@@ -19,21 +19,9 @@ from api.auth import require_local_or_admin
 from sizing import compute_entry_cost, compute_unrealized_pnl
 from promotion_gate import _max_drawdown_pct, _profit_factor
 
+from live_execution.wallet import get_wallet_cash_usd
+
 router = APIRouter()
-
-
-async def _chain_cash() -> float:
-    """Wallet's real USDC balance; 0.0 when unreadable (fail closed —
-    same discipline as the live cycle's own cash read)."""
-    try:
-        from live_execution import solana, wallet
-        pubkey = wallet.public_address()
-        if not pubkey:
-            return 0.0
-        bal = await solana.get_usdc_balance(pubkey)
-        return max(bal, 0.0) if bal is not None else 0.0
-    except Exception:
-        return 0.0
 
 
 @router.get("/api/stats")
@@ -45,7 +33,7 @@ async def get_stats(request: Request):
     async with db.get_db() as conn:
         closed = await db.get_all_closed_trades(conn)
         open_trades = await db.get_open_trades(conn)
-    cash = await _chain_cash()
+    cash = await get_wallet_cash_usd()
 
     chronological = sorted(
         [t for t in closed if t.closed_at], key=lambda t: t.closed_at
@@ -81,7 +69,8 @@ async def get_stats(request: Request):
 
     return {
         "initial_cash_usd": config.INITIAL_CASH_USD,
-        "cash_usd": round(cash, 2),
+        "cash_usd": round(cash, 2) if cash is not None else None,
+        "cash_status": "live" if cash is not None else "unavailable",
         "equity_usd": round(equity, 2),
         "open_positions": len(open_trades),
         "closed_trades": n,

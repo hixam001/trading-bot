@@ -125,3 +125,4 @@ def test_mutation_check_forged_tokens_rejected(monkeypatch):
     fake_token = "1700000000.nonce.invalidsig"
     revoke_session_token(fake_token)
     assert "invalidsig" not in _REVOKED_SESSION_SIGS
+

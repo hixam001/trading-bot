@@ -81,6 +81,33 @@
 4. **Tests**:
    - Added 6 tests in `backend/tests/test_audit_78_e.py` verifying forged cookie spam rejection, legitimate logout revocation and subsequent 401, expired cookie rejection, registry capacity cap, pruning of expired entries, and mutation checks. Full suite: **986 passed** (0 failed).
 
+### Phase F: Minor Hardening Leftovers Remediation (`docker-compose.yml`, `docker-entrypoint.sh`, `wallet.py`, `secret_registry.py`, `error_handler.py`, `stats.py`, `holdings.py`, `rate_limiter.py`, `config.py`, `config_helpers.py`, `run_live_cycle.py`, `db_pg.py`, `Holdings.tsx`, `test_audit_78_f.py`)
+1. **Docker Compose Restart Policy & Entrypoint Shutdown (F1)**:
+   - Changed `live` service restart policy to `restart: on-failure` in `docker-compose.yml`.
+   - Updated `backend/docker-entrypoint.sh` so the no-wallet case prints a clear shutdown message and exits 0 cleanly without triggering compose reboot loops. Documented in `docs/11_DEPLOYMENT.md`.
+2. **Secret Redaction Coverage (F2)**:
+   - Created centralized `backend/secret_registry.py` to decouple runtime secret registration and prevent circular imports.
+   - In `backend/live_execution/wallet.py` (`load_keypair`), registered raw keypair JSON string, base58 string, and hex forms with `register_secret()`.
+   - Extended sensitive dict regex in `backend/api/error_handler.py` to mask single-quoted Python dict representations (`{'Authorization': ...}`, `'api_key': ...`).
+3. **Portfolio Cash Null-Safety (F3)**:
+   - Merged duplicate `_chain_cash` logic into `get_wallet_cash_usd()` in `backend/live_execution/wallet.py`.
+   - Returns `None` (fail-closed, never 0.0) when wallet is unreadable or RPC is unreachable.
+   - Updated `/api/stats` and `/api/holdings` to return `cash_usd: null` and `cash_status: "unavailable"` when cash cannot be determined.
+   - Updated `frontend/src/components/Holdings.tsx` and types to render "unavailable" instead of "$0.00" when cash is null.
+4. **`get_client_ip` Trust Model & Rightmost Untrusted IP (F4)**:
+   - Added `TRUSTED_PROXY_CIDRS` (default: `127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8`).
+   - In `backend/api/rate_limiter.py`, XFF is honored only when socket peer is inside trusted CIDRs.
+   - Standard proxy defense: walks backwards through XFF chain to select the rightmost untrusted IP, preventing client spoofing.
+5. **`ADMIN_TOKEN` Entropy Verification (F5)**:
+   - Added `validate_admin_token_entropy` in `backend/config_helpers.py` requiring length >= 32 and >= 12 distinct characters.
+   - Startup fails closed and disables operator auth with a critical log on trivial tokens (e.g. repeated characters or patterns).
+6. **Linter & Warning Cleanup (F6)**:
+   - Resolved undefined names (`LLMVerdict`, `LLMBrainResult`) in `backend/run_live_cycle.py`.
+   - Removed empty f-string prefix in `backend/api/db_pg.py` (L590).
+   - Pyflakes reports 0 errors or warnings on touched modules.
+7. **Tests**:
+   - Added 7 tests in `backend/tests/test_audit_78_f.py`. Full suite: **993 passed** (0 failed).
+
 ---
 
 ## §77 — Security Audit Remediation (Phases A–E) (2026-10-11)

@@ -587,7 +587,7 @@ async def try_insert_open_trade(conn: asyncpg.Connection, trade: Trade) -> int:
     makes duplicate attempts affect zero rows.
     """
     status = await conn.execute(
-        f"""
+        """
         INSERT INTO trades (
             trade_id, symbol, mint_address, opened_at, entry_price_usd,
             position_size_usd, quantity, candidate_snapshot, thesis, is_open,

@@ -61,7 +61,7 @@ export default function Holdings({
         </div>
         <div className="stat-card">
           <div className="stat-label">Cash</div>
-          <div className="stat-value">{usd(book.cash_usd)}</div>
+          <div className="stat-value">{book.cash_usd == null ? 'unavailable' : usd(book.cash_usd)}</div>
         </div>
         <div className="stat-card">
           <div className="stat-label">Deployed today</div>

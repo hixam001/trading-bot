@@ -11,6 +11,7 @@ Implements Rule 11:
 """
 from __future__ import annotations
 
+import ipaddress
 import logging
 import time
 from collections import defaultdict
@@ -24,23 +25,68 @@ import config
 log = logging.getLogger(__name__)
 
 
+def _get_trusted_proxy_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
+    raw = getattr(config, "TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8")
+    networks = []
+    for item in raw.split(","):
+        item = item.strip()
+        if item:
+            try:
+                networks.append(ipaddress.ip_network(item, strict=False))
+            except ValueError:
+                pass
+    return networks
+
+
 def get_client_ip(request: Request) -> str:
-    """Extract real client IP with anti-spoofing enforcement (§55 / Rule 11).
+    """Extract real client IP with anti-spoofing enforcement (§55 / Rule 11 / §78 F4).
 
     Security guarantee:
-      - If socket connection is direct (non-loopback external IP), we NEVER trust
-        client-provided X-Forwarded-For headers, preventing spoofing / bypass.
-      - If socket is loopback (behind our local reverse proxy, e.g. Caddy),
-        we take the leftmost IP injected by the trusted proxy.
+      - We honor X-Forwarded-For ONLY when the direct socket peer (request.client.host)
+        falls inside one of TRUSTED_PROXY_CIDRS (loopback or trusted Docker bridge).
+      - In the XFF chain, we take the rightmost untrusted IP (standard proxy defense),
+        preventing client-injected spoofed headers from forging IP identities.
+      - If socket connection is direct untrusted peer, we return request.client.host
+        and NEVER trust client-provided headers.
     """
     client_host = getattr(getattr(request, "client", None), "host", "unknown") or "unknown"
-    if client_host in ("127.0.0.1", "::1", "localhost", "testclient"):
-        forwarded = request.headers.get("x-forwarded-for")
-        if forwarded:
-            first_ip = forwarded.split(",")[0].strip()
-            if first_ip:
-                return first_ip
-    return client_host
+    if client_host == "unknown":
+        return "unknown"
+
+    trusted_networks = _get_trusted_proxy_networks()
+    is_trusted_peer = False
+    if client_host in ("127.0.0.1", "::1", "localhost", "testclient", "testserver"):
+        is_trusted_peer = True
+    else:
+        try:
+            peer_ip = ipaddress.ip_address(client_host)
+            is_trusted_peer = any(peer_ip in net for net in trusted_networks)
+        except ValueError:
+            is_trusted_peer = False
+
+    if not is_trusted_peer:
+        return client_host
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if not forwarded:
+        return client_host
+
+    # Parse XFF chain from right to left
+    ips = [ip.strip() for ip in forwarded.split(",") if ip.strip()]
+    if not ips:
+        return client_host
+
+    # Walk backwards from rightmost entry: rightmost untrusted IP is the real client IP
+    for ip_str in reversed(ips):
+        try:
+            ip_obj = ipaddress.ip_address(ip_str)
+            if not any(ip_obj in net for net in trusted_networks):
+                return ip_str
+        except ValueError:
+            return ip_str
+
+    # If all IPs in chain are in trusted networks, return the leftmost
+    return ips[0]
 
 
 def classify_tier(path: str, method: str) -> tuple[str, int]:

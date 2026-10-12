@@ -52,11 +52,16 @@ and the chain degrades to Brave → Firecrawl — fail-soft either way. See
 
 Per §77 B2 security architecture, `docker-compose.yml` splits the engine into two isolated services from the same image:
 - **`api` service (`ROLE=api`)**: Serves the web dashboard and REST/WebSocket API. It mounts the state directory **read-only** (`:ro`) and **never receives any wallet secrets** (`WALLET_KEYPAIR_*` are explicitly stripped). The dashboard process can now run on an unprivileged host with zero key material. Health check: `GET /api/health`.
-- **`live` service (`ROLE=live`)**: Runs the autonomous execution cycle (`run_live_cycle.py`). It mounts the state directory read-write (`rw`), loads the wallet signing key, and exposes **no ports** to the host or internet. Health check: verifies `heartbeat.txt` freshness (< 300s).
+- **`live` service (`ROLE=live`)**: Runs the autonomous execution cycle (`run_live_cycle.py`). It mounts the state directory read-write (`rw`), loads the wallet signing key, and exposes **no ports** to the host or internet. Restart policy: `on-failure` (§78 F1). If armed without a wallet, the container outputs a clear message and exits cleanly (`exit 0`), preventing Compose restart loops. Health check: verifies `heartbeat.txt` freshness (< 300s).
 
 If running a single container without `ROLE`, both run in the same container, emitting a prominent warning that process separation is violated.
 
 The entrypoint starts the API always (under `ROLE=api`), and the live cycle **only if** `ROLE=live` (or single-container fallback), the hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True, AND a wallet secret is configured — the same double-gate as `start.sh`.
+
+#### Reverse Proxy & Trusted Subnets (`TRUSTED_PROXY_CIDRS`) (§78 F4)
+When running behind a reverse proxy (e.g. Caddy, Traefik, Nginx) on a Docker bridge network, configure `TRUSTED_PROXY_CIDRS` (default: `127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8`).
+- The API only trusts `X-Forwarded-For` when the direct socket peer is inside these trusted CIDRs. Direct untrusted connections ignore XFF to defeat header spoofing.
+- In multi-hop XFF chains, the API selects the rightmost untrusted IP (standard proxy defense) to resolve real client identities for rate limiting and threat tracking.
 
 ## 2. Secrets runbook (read before arming on any host)
 

@@ -49,6 +49,7 @@ from llm.thinker import (                        # noqa: E402
     ThinkResult,
     template_think,
 )
+from llm.llm_brain import LLMBrainResult, LLMVerdict  # noqa: E402
 from models import Candidate, FeedEvent, PortfolioState, RuleResult, Trade  # noqa: E402
 from rule_engine.exits import ExitInput, evaluate_exits, sell_risk_gate  # noqa: E402
 from rule_engine.regime import MarketRegime, compute_market_regime  # noqa: E402

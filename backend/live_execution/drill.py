@@ -65,7 +65,6 @@ async def run_drill() -> list:
     if bal is None or bal * LAMPORTS_PER_SOL < config.DRILL_TRANSFER_LAMPORTS + 5000:
         step(False, "funds", "airdrop devnet SOL first: solana airdrop 1 %s" % addr)
         return steps
-    from solders.pubkey import Pubkey as _PK
     from solders.system_program import TransferParams, transfer
     from solders.message import Message
     from solders.transaction import VersionedTransaction
@@ -81,6 +80,12 @@ async def run_drill() -> list:
         msg = Message.new_with_blockhash([ix], payer.pubkey(),
                                          _Hash.from_string(blockhash))
         vtx = VersionedTransaction(msg, [payer])
+        raw = bytes(vtx)
+        step(True, "build", "signed %d-byte v0 tx" % len(raw))
+    except Exception as exc:
+        step(False, "build", str(exc))
+        return steps
+
     # 4b. Pre-broadcast simulation step (§78 Phase B)
     import base64 as _base64
     from live_execution.solana import simulate_transaction as _simulate_tx

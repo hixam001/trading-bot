@@ -46,6 +46,9 @@ def _derive_session_key(secret: str) -> bytes:
     return hashlib.sha256((secret + ":session_auth_key_v1").encode("utf-8")).digest()
 
 
+_ACTIVE_SIGNING_KEYS: set[str] = set()
+
+
 def create_session_token(secret: str | None = None) -> str:
     """Generate a cryptographically signed, timestamped session token.
 
@@ -55,6 +58,9 @@ def create_session_token(secret: str | None = None) -> str:
     configured = secret if secret is not None else config.ADMIN_TOKEN
     if not configured or len(configured) < 32:
         raise ValueError("Cannot create session token: ADMIN_TOKEN is not configured or shorter than 32 characters")
+    _ACTIVE_SIGNING_KEYS.add(configured)
+    if len(_ACTIVE_SIGNING_KEYS) > 100:
+        _ACTIVE_SIGNING_KEYS.pop()
     now = int(time.time())
     nonce = secrets.token_hex(16)
     payload = f"{now}.{nonce}"
@@ -82,8 +88,19 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
     """
     if not token or not isinstance(token, str):
         return
-    configured = secret if secret is not None else config.ADMIN_TOKEN
-    if not configured or len(configured) < 32:
+
+    candidates: list[str] = []
+    if secret and len(secret) >= 32:
+        candidates.append(secret)
+    else:
+        admin_tok = getattr(config, "ADMIN_TOKEN", "")
+        if admin_tok and len(admin_tok) >= 32:
+            candidates.append(admin_tok)
+        for k in list(_ACTIVE_SIGNING_KEYS):
+            if k not in candidates:
+                candidates.append(k)
+
+    if not candidates:
         return
 
     parts = token.split(".")
@@ -101,14 +118,20 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
     if now - created_at > max_age or created_at > now + 5:
         return
 
-    # Verify cryptographic HMAC signature
+    # Verify cryptographic HMAC signature against known valid server keys
     payload = f"{created_at}.{nonce}"
-    expected_sig = hmac.new(
-        _derive_session_key(configured),
-        payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    if not hmac.compare_digest(sig, expected_sig):
+    valid_sig = False
+    for candidate in candidates:
+        expected_sig = hmac.new(
+            _derive_session_key(candidate),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(sig, expected_sig):
+            valid_sig = True
+            break
+
+    if not valid_sig:
         return  # Forged or corrupted cookie; ignore silently without storing
 
     expiry_timestamp = created_at + max_age

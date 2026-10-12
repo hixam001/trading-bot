@@ -135,7 +135,7 @@ class LiveProviderStack:
         return merged
 
     async def get_current_price(self, mint_address: str,
-                                decimals: Optional[int] = None) -> float:
+                                decimals: int | None = None) -> float:
         try:
             return await self.jupiter.get_current_price(mint_address, decimals)
         except ProviderError:

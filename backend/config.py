@@ -139,15 +139,25 @@ INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
 # an empty/unset token DISABLES those endpoints entirely (403) — a destructive
 # endpoint must never be open without a credential, even on loopback.
 # ---------------------------------------------------------------------------
+from config_helpers import validate_admin_token_entropy
+
 _raw_admin_token = os.getenv("ADMIN_TOKEN", "")
-if _raw_admin_token and len(_raw_admin_token) < 32:
-    import logging
-    logging.getLogger("config").critical(
-        "ADMIN_TOKEN is shorter than 32 characters — operator auth DISABLED. Run 'openssl rand -hex 32' to generate a secure token."
-    )
-    ADMIN_TOKEN: str = ""
+if _raw_admin_token:
+    if not validate_admin_token_entropy(_raw_admin_token):
+        import logging
+        logging.getLogger("config").critical(
+            "ADMIN_TOKEN has insufficient entropy (must be >= 32 characters and >= 12 distinct characters) — operator auth DISABLED. Run 'openssl rand -hex 32' to generate a secure token."
+        )
+        ADMIN_TOKEN: str = ""
+    else:
+        ADMIN_TOKEN: str = _raw_admin_token
 else:
-    ADMIN_TOKEN: str = _raw_admin_token
+    ADMIN_TOKEN: str = ""
+
+TRUSTED_PROXY_CIDRS: str = os.getenv(
+    "TRUSTED_PROXY_CIDRS",
+    "127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8",
+)
 
 # Secure session cookie configuration (Rule 9: http-only cookie session auth).
 SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "admin_session")
@@ -481,7 +491,7 @@ _LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 FRONTEND_ORIGIN: str = os.getenv(
     "FRONTEND_ORIGIN",
     ",".join(f"http://{h}:{API_PORT}" for h in _LOOPBACK_HOSTS)
-    + f",http://localhost:5173",
+    + ",http://localhost:5173",
 )
 # Split deployments (dashboard on Vercel/CF Pages, API elsewhere) may need
 # more than one allowed origin: FRONTEND_ORIGIN accepts a comma-separated

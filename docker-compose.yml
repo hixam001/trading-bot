@@ -69,7 +69,7 @@ services:
     build: .
     image: trading-bot:latest
     container_name: trading-bot-live
-    restart: unless-stopped
+    restart: on-failure
     depends_on:
       - searxng
     env_file:

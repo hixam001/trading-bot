@@ -76,7 +76,8 @@ export interface SystemStatusResponse {
  *  the Performance panel; every value verbatim, null stays `—`). */
 export interface StatsResponse {
   initial_cash_usd: number
-  cash_usd: number
+  cash_usd: number | null
+  cash_status?: 'unavailable' | 'live'
   equity_usd: number
   open_positions: number
   closed_trades: number

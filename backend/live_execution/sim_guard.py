@@ -103,8 +103,6 @@ async def simulate_and_assert(
     Execute pre-sign simulation and verify balance-delta assertions.
     Raises ExecutionError on any failure. Returns simulation summary on success.
     """
-    global _SIMULATION_REFUSAL_COUNT
-
     def _refuse(reason: str) -> None:
         global _SIMULATION_REFUSAL_COUNT
         _SIMULATION_REFUSAL_COUNT += 1
