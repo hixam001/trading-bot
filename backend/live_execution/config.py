@@ -31,6 +31,7 @@ from pathlib import Path
 # ---------------------------------------------------------------------------
 LIVE_TRADING_ENABLED: bool = True
 REQUIRE_MANUAL_CONFIRMATION: bool = False
+SIMULATION_REQUIRED: bool = True
 
 # ---------------------------------------------------------------------------
 # Operator infrastructure (NOT safety flags — arming still requires the
@@ -131,6 +132,11 @@ MAX_CREATE_ACCOUNT_LAMPORTS: int = 2_500_000
 
 # Maximum total SOL outflow from payer across top-level System instructions (0.01 SOL)
 MAX_SYSTEM_OUTFLOW_LAMPORTS: int = 10_000_000
+
+# Simulation balance-delta assertion limits (§78 Phase B)
+SIM_MAX_SOL_DECREASE_LAMPORTS: int = 10_000_000
+SIM_INPUT_TOLERANCE: float = 0.01
+
 
 
 

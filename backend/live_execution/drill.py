@@ -81,10 +81,20 @@ async def run_drill() -> list:
         msg = Message.new_with_blockhash([ix], payer.pubkey(),
                                          _Hash.from_string(blockhash))
         vtx = VersionedTransaction(msg, [payer])
-        raw = bytes(vtx)
+    # 4b. Pre-broadcast simulation step (§78 Phase B)
+    import base64 as _base64
+    from live_execution.solana import simulate_transaction as _simulate_tx
+    tx_b64 = _base64.b64encode(raw).decode()
+    try:
+        sim_res = await _simulate_tx(tx_b64, [str(payer.pubkey())], endpoints=[config.DRILL_RPC_URL], require_dual_rpc=False)
+        sim_ok = sim_res.get("err") is None
+        step(sim_ok, "simulate", "units=%s err=%s" % (sim_res.get("units"), sim_res.get("err")))
+        if not sim_ok:
+            return steps
     except Exception as exc:
-        step(False, "build/sign", str(exc))
+        step(False, "simulate", str(exc))
         return steps
+
     sig = await send_raw_transaction(raw, endpoints=[config.DRILL_RPC_URL])
     if not sig:
         step(False, "broadcast", "every rpc refused")

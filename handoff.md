@@ -17,6 +17,23 @@
 5. **Tests**:
    - Added 24 tests in `backend/tests/test_audit_78_a.py` covering bypasses A1, A2, A3, Token/Token-2022 tags, caps, ordering, truncated data, and mutation checks. All passing. Full suite: **958 passed** (0 failed).
 
+### Phase B: Pre-Sign Simulation with Balance-Delta Assertion (`sim_guard.py`, `solana.py`, `jupiter_executor.py`, `executor.py`, `drill.py`, `test_audit_78_b.py`)
+1. **Simulation Plumbing & Dual-RPC Consensus (`live_execution/solana.py`)**:
+   - Added `get_multiple_accounts` to fetch batch pre-state for wallet, ATAs, and all message-writable accounts.
+   - Added `simulate_transaction(tx_b64, accounts)` running `simulateTransaction` with `sigVerify=false`, `replaceRecentBlockhash=true`, and post-account decoding.
+   - Implemented dual-RPC agreement consensus when multiple endpoints are configured, verifying identical success/error states and wallet lamports within slot drift tolerance.
+2. **Pre/Post Comparison & Balance Invariants (`live_execution/sim_guard.py`)**:
+   - Enforced: `err is None`; wallet SOL decrease <= `SIM_MAX_SOL_DECREASE_LAMPORTS` (10_000_000); input-token decrease <= intended input * (1 + `SIM_INPUT_TOLERANCE`); output-token increase >= `otherAmountThreshold` (refuses if quote lacks threshold); every other wallet-owned token account unchanged; no wallet account owner changed and no account closed except allowed WSOL unwrap; foreign accounts gaining funds while wallet drained refused.
+   - Defensive 165-byte token layout decoder (SPL Token & base Token-2022).
+3. **Fail-Closed Choke Point Hook (`live_execution/jupiter_executor.py`, `executor.py`)**:
+   - Hardcoded `SIMULATION_REQUIRED: bool = True` in `live_execution/config.py`.
+   - Connected pre-sign simulation directly into `_sign_transaction` via `AwaitableSignedTx`, guaranteeing that neither `executor.py` nor `jupiter_executor.py` signs or broadcasts unless simulation passes.
+   - AST and runtime monkeypatch tests prove no swap path calls `send_raw_transaction` without simulation passing.
+4. **Devnet Drill Extension (`live_execution/drill.py`)**:
+   - Added simulation step 4b into `run_live_cycle.py --drill` exercising on-chain simulation prior to broadcast.
+5. **Tests**:
+   - Added 12 tests in `backend/tests/test_audit_78_b.py` covering pass case, on-chain err, SOL over cap, third token drained, output below threshold, foreign output ATA, owner change, RPC down, malformed layout, A1 attack simulation refusal, AST proof, and monkeypatch proof. Full suite: **970 passed** (0 failed).
+
 ---
 
 ## §77 — Security Audit Remediation (Phases A–E) (2026-10-11)

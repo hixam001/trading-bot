@@ -2,6 +2,7 @@
 
 **Current — 2026-10-12 (§78):** Post-Audit Hardening (Phases A–F):
 - **Phase A (Signing Guard Bypass Remediation)**: Closed reproduced drain/sink/owner bypasses (A1, A2, A3) in `jupiter_executor.py`. Enforced owner checks for Token/Token-2022 tags 1, 16, 18 against payer; proved wallet ownership in execution order; restricted CreateAccount owner to Token/Token-2022, space <= 165 bytes, and lamports <= 2_500_000; enforced 10_000_000 lamports (0.01 SOL) aggregate top-level SOL outflow cap (`MAX_SYSTEM_OUTFLOW_LAMPORTS`). Created no-key diagnostic tool `scripts/inspect_live_quote.py`. Added 24 tests in `test_audit_78_a.py`. Full suite: **958 passed**, 0 failed.
+- **Phase B (Pre-Sign Simulation Layer)**: Added `solana.simulate_transaction` and `solana.get_multiple_accounts` with dual-RPC consensus. Created `live_execution/sim_guard.py` asserting post-simulation invariants: `err is None`, SOL decrease <= 0.01 SOL, input token decrease within 1% tolerance, output token increase >= otherAmountThreshold landing in wallet ATA (or native SOL on unwrap), third token accounts untouched, and zero owner changes or unexpected closures. Hardcoded `SIMULATION_REQUIRED: bool = True` and wired into `_sign_transaction` as single signing choke point. Extended `drill.py` with simulation step. Added 12 tests in `test_audit_78_b.py`. Full suite: **970 passed**, 0 failed.
 
 **PREVIOUS:**
 

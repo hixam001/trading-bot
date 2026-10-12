@@ -137,13 +137,21 @@ def quote_impact_pct(quote: dict) -> float:
         return 0.0
 
 
-async def _broadcast_and_confirm(swap_b64: str, payer, logc=None, sealed=None) -> OrderResult:
+async def _broadcast_and_confirm(swap_b64: str, payer, logc=None, sealed=None, quote: Optional[dict] = None) -> OrderResult:
     """Sign locally, broadcast across RPCs, confirm. Journal is the CALLER job.
 
     REF-R11: sealing + memo publication already happened in the caller
     BEFORE this runs; on confirmation the fill signature is bound to the
     sealed (and already on-chain) commit."""
-    signature, raw_signed = _sign_transaction(swap_b64, payer)
+    try:
+        sign_res = _sign_transaction(swap_b64, payer, quote=quote)
+    except TypeError:
+        sign_res = _sign_transaction(swap_b64, payer)
+    import inspect
+    if inspect.isawaitable(sign_res):
+        signature, raw_signed = await sign_res
+    else:
+        signature, raw_signed = sign_res
     sent = await solana.send_raw_transaction(raw_signed)
     if not sent:
         return OrderResult(status="failed", reason="every rpc refused the transaction", signature=signature)
@@ -285,7 +293,7 @@ async def place_buy(
 
     try:
         swap_b64 = await _build_swap_transaction(q["quote"], addr)
-        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed)
+        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed, quote=q["quote"])
     except Exception as exc:
         # ANY build/sign/broadcast error (ExecutionError or not) fails closed
         # and lands in the journal. The first real armed order died on an
@@ -454,7 +462,7 @@ async def place_sell(
 
     try:
         swap_b64 = await _build_swap_transaction(quote, addr)
-        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed)
+        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed, quote=quote)
     except Exception as exc:
         # Same fail-closed contract as the buy path (see comment there).
         logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")

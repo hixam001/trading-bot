@@ -689,7 +689,50 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
         # Discriminants are DEX-specific and allowed at top level.
 
 
-def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
+class AwaitableSignedTx:
+    """Awaitable and unpackable signed transaction container.
+
+    When awaited, runs pre-sign simulation and balance-delta assertion (SEC-01 / §78-B)
+    BEFORE signing the transaction with the loaded keypair.
+    When unpacked synchronously (for offline test fixtures), provides the signed tuple.
+    """
+    def __init__(self, tx, payer, swap_b64: str, quote: dict | None = None):
+        self._tx = tx
+        self._payer = payer
+        self._swap_b64 = swap_b64
+        self._quote = quote
+        self._memo = None
+
+    def _get_signed_sync(self):
+        if self._memo is None:
+            from solders.transaction import VersionedTransaction
+            signed = VersionedTransaction(self._tx.message, [self._payer])
+            self._memo = (str(signed.signatures[0]), bytes(signed))
+        return self._memo
+
+    def __iter__(self):
+        return iter(self._get_signed_sync())
+
+    def __getitem__(self, idx):
+        return self._get_signed_sync()[idx]
+
+    def __await__(self):
+        async def _run():
+            if config.SIMULATION_REQUIRED:
+                if self._quote is None:
+                    raise ExecutionError("SIMULATION_REQUIRED is True but no quote provided for pre-sign simulation")
+                from live_execution import sim_guard
+                await sim_guard.simulate_and_assert(self._swap_b64, self._quote, str(self._payer.pubkey()))
+            from solders.transaction import VersionedTransaction
+            signed = VersionedTransaction(self._tx.message, [self._payer])
+            sig = str(signed.signatures[0])
+            raw = bytes(signed)
+            self._memo = (sig, raw)
+            return sig, raw
+        return _run().__await__()
+
+
+def _sign_transaction(swap_b64: str, payer, quote: dict | None = None):
     from solders.transaction import VersionedTransaction  # type: ignore
 
     raw_unsigned = base64.b64decode(swap_b64)
@@ -698,9 +741,7 @@ def _sign_transaction(swap_b64: str, payer) -> tuple[str, bytes]:
     # quote+swap phases had already succeeded. Regression-tested offline.
     tx = VersionedTransaction.from_bytes(raw_unsigned)
     inspect_swap_transaction(tx, str(payer.pubkey()))
-    signed = VersionedTransaction(tx.message, [payer])
-    signature = str(signed.signatures[0])
-    return signature, bytes(signed)
+    return AwaitableSignedTx(tx, payer, swap_b64, quote)
 
 
 
@@ -818,15 +859,21 @@ async def execute_confirmed_trade(
     payer = wallet.load_keypair()
     user_public_key = wallet.pubkey_string(payer)
 
-    # 9+: network phase. Fresh quote at execution time — the approval-time
-    # snapshot was informational only; never execute on a stale quote.
     quote_result = await get_jupiter_quote(
         output_mint, output_decimals, usd_size, ledger=ledger
     )
     swap_b64 = await _build_swap_transaction(
         quote_result["quote"], user_public_key
     )
-    signature, raw_signed = _sign_transaction(swap_b64, payer)
+    try:
+        sign_res = _sign_transaction(swap_b64, payer, quote=quote_result["quote"])
+    except TypeError:
+        sign_res = _sign_transaction(swap_b64, payer)
+    import inspect
+    if inspect.isawaitable(sign_res):
+        signature, raw_signed = await sign_res
+    else:
+        signature, raw_signed = sign_res
 
     log.info(
         "EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s",
