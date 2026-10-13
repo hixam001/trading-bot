@@ -212,3 +212,38 @@ python scripts/send_test_alert.py --channel ntfy
 python scripts/send_test_alert.py --channel telegram
 ```
 The script outputs HTTP status codes (`HTTP 200 — SUCCESS`) without ever printing secret tokens or keys.
+
+---
+
+## 8. Diagnostic & Performance Reporting
+
+### Gate Funnel Diagnostic Report (`scripts/gate_funnel_report.py`)
+
+Answers why the bot has had zero gate-passers or closed trades by analyzing candidate attrition through the rule engine and thinker:
+
+```bash
+# Analyze candidate decisions from a specific date:
+python scripts/gate_funnel_report.py --since 2026-09-01
+
+# Analyze an explicit SQLite database file:
+python scripts/gate_funnel_report.py --db backend/trading_bot.db --since 2026-09-01
+
+# Output machine-readable JSON:
+python scripts/gate_funnel_report.py --since 2026-09-01 --json
+```
+
+The diagnostic computes:
+- **Daily candidate funnel**: candidates seen, gate-passed, think-passed, and entered.
+- **Per-rule failure rates & sole blockers**: candidates that failed *only* that rule.
+- **Counterfactual analysis**: "if rule X were removed, N candidates would have passed the gate".
+- **Top 3 blocking rules distribution**: min, median, and p90 of failing metrics vs configured thresholds.
+- **Thinker / LLM refusal rate & verdict mix**: proportion of gate-passers declined by the LLM.
+
+### Performance Scorecard (`scripts/perf_report.py`)
+
+Computes track record against reference disclosures from closed trades and decision commits:
+
+```bash
+python scripts/perf_report.py --since 2026-09-06
+```
+
