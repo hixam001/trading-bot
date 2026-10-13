@@ -1,5 +1,70 @@
 ## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
 
+### Phase G: Gate Funnel Diagnostic Report (`scripts/gate_funnel_report.py`, `backend/tests/test_audit_79_g.py`, `docs/11_DEPLOYMENT.md`)
+1. **Diagnostic Funnel Engine (`scripts/gate_funnel_report.py`)**:
+   - Read-only analysis tool diagnosing why the bot has had zero gate-passers or closed trades since §57.
+   - Evaluates verbatim `feed_events` (`rule_breakdown` and `failed_rule_ids`) and `trades`.
+   - CLI flags: `--since YYYY-MM-DD`, `--db <path>`, `--json`.
+   - Metrics computed:
+     * **Daily candidate funnel**: candidates seen, gate-passed (`failed_rule_ids == []`), think-passed (`verdict == 'pass'`), and entered (`led_to_trade_id` or trade recorded).
+     * **Per-rule failure rates & sole blockers**: candidates failing each rule, and candidates failing *only* that rule.
+     * **Counterfactual analysis**: "if rule X were removed, N candidates would have passed the gate" (total would pass + incremental gain) for every rule.
+     * **Failing metric distributions for top 3 blocking rules**: min, median, and p90 vs threshold (parsed dynamically from candidate detail and rule definitions).
+     * **Thinker / LLM refusal rate & verdict mix**: proportion of gate-passers declined by the LLM, and feed verdict distribution.
+2. **Database Support**:
+   - Seamlessly queries SQLite database (`--db` or `config.DB_PATH`) and Postgres/Supabase via `api.db_pg.get_db()`.
+   - Fails soft to SQLite fallback if Postgres is offline in non-network environments.
+3. **Tests**:
+   - Added 4 comprehensive tests in `backend/tests/test_audit_79_g.py` testing hand-calculated properties on seeded SQLite DB, date filtering, empty DB handling, and subprocess CLI text/JSON modes.
+   - Full test suite: **1066 passed** (0 failed).
+
+### Phase F: Honest Observability and Configuration Consistency (`backend/live_execution/safety_counters.py`, `api/routes/{safety.py,stats.py}`, `backend/config.py`, `frontend/`, CI)
+1. **Refusal Counter Persistence (`backend/live_execution/safety_counters.py`)**:
+   - Real-time safety refusal tracking across 4 refusal reasons: `quote_mismatch`, `sim_refused`, `guard_refused`, `quorum_failed`.
+   - Atomic persistence to `STATE_DIR/safety_counters.json`. Rolling 24h decay. Returns `null` when uninitialized (never fake 0s).
+   - Exposed on `GET /api/safety` in `safety_counters`.
+2. **Real Equity Metric & Honesty on `GET /api/stats`**:
+   - Added `wallet_equity_usd`: computes real wallet equity ($USDC + SOL \times price + \sum open\ positions$).
+   - Returns status: `'complete'`, `'partial'`, or `'unavailable'`.
+   - Transparently reports `missing: ["usdc" | "sol" | "sol_price" | "positions"]` when any components are unreadable or unpriced.
+   - Fixed AST test by accessing public address via `wallet.public_address()` without touching signing keypair.
+3. **Proxy CIDR Parity**:
+   - Standardized `FORWARDED_ALLOW_IPS` in `backend/docker-entrypoint.sh` to `"127.0.0.1,172.16.0.0/12,::1/128"`.
+   - Removed overly broad `10.0.0.0/8` default; documented Oracle Cloud 10.x requirement in `docs/13_ORACLE_DEPLOY_GUIDE.md`.
+4. **SearXNG Digest Honesty**:
+   - Removed unverified sha256 digest comment from `docker-compose.yml`.
+5. **Frontend Honesty & E2E Stability**:
+   - Updated TypeScript interfaces in `frontend/src/types/index.ts`.
+   - Split equity display in `frontend/src/components/Performance.tsx` into "Booked P&L equity" vs "Wallet equity".
+   - Rendered safety refusal counters in `frontend/src/components/SystemStatus.tsx` (displaying `unavailable` when null).
+   - Fixed E2E race conditions in `frontend/e2e/dashboard.spec.ts` and `operator.spec.ts` using `firstRow.or(emptyState)`.
+   - Hardened CI workflow in `.github/workflows/tests.yml` with `permissions: contents: read`, `pip check`, TypeScript check, and Playwright e2e run against mock backend with rate limit relaxed for testing.
+6. **Tests**:
+   - Added 4 tests in `backend/tests/test_audit_79_f.py`.
+   - Full test suite: **1062 passed** (0 failed).
+
+### Phase E: Backups and Restore (`scripts/{backup_state.py,restore_state.py}`, `deploy/backup.sh`, `docs/15_BACKUP_RESTORE.md`, compose, `.env.example`, `test_audit_79_e.py`)
+1. **Encrypted State Backup Script (`scripts/backup_state.py`)**:
+   - Atomically packages state and journal files: `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.txt`, `operator_break.txt`.
+   - Encrypted with AES-256-GCM via `cryptography.hazmat.primitives.ciphers.aead.AESGCM` using `BACKUP_ENCRYPTION_KEY` (sha256-derived).
+   - Excludes secret material: `.env`, `keypair*.json`, `*secret*`, `*wallet*`, `*.key`.
+   - File format: `MAGIC = b"AGYBKP01"`, 12-byte random nonce, ciphertext with GCM auth tag, `.agybkp` extension.
+   - Manifest header recorded: version, timestamp, file list with byte sizes and sha256 hashes.
+   - Rotates local backups keeping newest 14 daily archives; exits 0 and prints JSON metadata without secrets.
+2. **State Restore Script (`scripts/restore_state.py`)**:
+   - Restores state archives with fail-closed safety pre-checks: refuses overwrite if active process running (`run_live_cycle.py`, `uvicorn`, `trading-bot`) unless `--force` passed.
+   - Creates a timestamped `.pre_restore_<ts>` rollback backup of existing state directory before applying changes.
+   - Validates manifest hashes after unpacking; verifies SQLite integrity check (`PRAGMA integrity_check`).
+3. **Backup Shell Script & Cron (`deploy/backup.sh`)**:
+   - Executable wrapper (`deploy/backup.sh`) running `scripts/backup_state.py` from repository root with `.env` loading and error logging.
+4. **Volume & Documentation**:
+   - Added `engine_backups` volume in `docker-compose.yml` mounted at `/app/backups`.
+   - Added `BACKUP_ENCRYPTION_KEY` in `.env.example`.
+   - Created `docs/15_BACKUP_RESTORE.md` documenting backup procedures, restore instructions, disaster recovery drills, and cron configuration.
+5. **Tests**:
+   - Added 8 tests in `backend/tests/test_audit_79_e.py`.
+   - Full test suite: **1058 passed** (0 failed).
+
 ### Phase D: Outbound Alerting (`backend/alerts.py`, `scripts/send_test_alert.py`, hooks in `live_execution/`, `api/`, `test_audit_79_d.py`)
 1. **Outbound Push Alerting Subsystem (`backend/alerts.py`)**:
    - Implemented non-blocking, fail-safe async/sync alert dispatching (`alert`, `alert_nowait`) via an in-process `asyncio.Queue(maxsize=100)` drained by a dedicated background worker task with per-call 5s timeout. Drops oldest when full and tracks drop count. Never raises and never blocks trading (<50ms caller return).

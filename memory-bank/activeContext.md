@@ -1,13 +1,34 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-13 (§79 Phase D complete):**
+**Current — 2026-10-13 (§79 Complete — Phases A through G Merged, 1066 tests green):**
+- **Phase G (Gate Funnel Diagnostic Report)**:
+  1. Created `scripts/gate_funnel_report.py`: read-only diagnostic analyzing why the bot has had zero gate-passers or closed trades since §57.
+  2. Evaluates verbatim `feed_events` (`rule_breakdown`, `failed_rule_ids`) and `trades`.
+  3. Computes: daily candidate funnel (seen, gate-passed, think-passed, entered), per-rule fail rate & sole-blocker count, counterfactual analysis ("if rule X were removed, N candidates would have passed"), top-3 blocking rules failing metric distribution (min, median, p90 vs threshold), and LLM refusal rate among gate-passers with feed verdict mix.
+  4. Supports both SQLite (`--db` or default) and Postgres/Supabase (`api.db_pg.get_db()`). Fails soft to SQLite fallback when offline.
+  5. Added `backend/tests/test_audit_79_g.py` (4 tests) and documented in `docs/11_DEPLOYMENT.md`.
+
+- **Phase F (Honest Observability & Config Consistency)**:
+  1. Refusal counter persistence: `backend/live_execution/safety_counters.py` tracks rolling 24h refusals (`quote_mismatch`, `sim_refused`, `guard_refused`, `quorum_failed`), atomically stored to `STATE_DIR/safety_counters.json`, exposed via `GET /api/safety`. Displays `null` (unavailable) when uninitialized.
+  2. Real equity metric & transparency on `GET /api/stats`: added `wallet_equity_usd` ($USDC + SOL \times price + open\ positions$) with status (`complete`/`partial`/`unavailable`) and `missing: [...]` list. Preserved API/live boundary via `wallet.public_address()`.
+  3. Proxy CIDR parity: standardized `FORWARDED_ALLOW_IPS` to `"127.0.0.1,172.16.0.0/12,::1/128"`; removed broad `10.0.0.0/8` default.
+  4. SearXNG honesty: deleted unverified digest comment from `docker-compose.yml`.
+  5. Frontend & CI: distinct equity labels ("Booked P&L equity" vs "Wallet equity"), refusal counters row, Playwright e2e race-free selectors (`firstRow.or(emptyState)`), and hardened `.github/workflows/tests.yml` with permissions, pip check, tsc, and Playwright execution against mock backend.
+  6. Added `backend/tests/test_audit_79_f.py` (4 tests).
+
+- **Phase E (Backups and Restore)**:
+  1. Created `scripts/backup_state.py`: packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.txt`, `operator_break.txt` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
+  2. Created `scripts/restore_state.py`: pre-restore safety checks (refuses if engine running without `--force`), creates automatic `.pre_restore_<ts>` rollback backup, verifies manifest hashes and SQLite integrity.
+  3. Added `deploy/backup.sh` executable wrapper, `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/15_BACKUP_RESTORE.md`.
+  4. Added `backend/tests/test_audit_79_e.py` (8 tests).
+
 - **Phase D (Outbound Alerting)**:
   1. Implemented `backend/alerts.py` with multi-channel outbound alerts (**ntfy** and **Telegram**) and fail-safe, non-blocking queue architecture (`asyncio.Queue(maxsize=100)` drained by worker task with 5s timeout, dropping oldest when full, caller returning <50ms).
   2. Automatic secret registration for channel tokens and deep message sanitization (runtime secrets, config secrets, Solana keypairs, Bearer tokens, basic auth credentials).
   3. Deduplication and flood control: per-key cooldown (5m CRITICAL, 15m default), global flood cap (20/hr) with suppression tracking, and refusal aggregation (first immediately, then 30m aggregate digest).
   4. Wired comprehensive hooks: `KILL_SWITCH_ENGAGED`, `DAILY_LOSS_BREAKER`, `SIM_REFUSAL`, `GUARD_REFUSAL`, `EXIT_UNRESOLVED`, `SELL_NO_REF_PRICE`, `RPC_NOT_DIVERSE`, `SIM_SINGLE_RPC_SELL`, `LIVE_BOOT`, `LOW_SOL`, `LOW_USDC`, `WALLET_DROP`, `LOGIN_FAILURE_BURST`, `HEARTBEAT_STALE`/`RECOVERED`.
   5. Added `scripts/send_test_alert.py`, documented setup in `docs/11_DEPLOYMENT.md`, and surfaced `outbound_alerts` on `GET /api/safety`.
-  6. 1050 tests passing (0 failures).
+  6. Added `backend/tests/test_audit_79_d.py` (16 tests).
 
 - **Phase C (Token-safety gate improvements)**:
   1. Freeze authority known-bad check: `freeze_authority_revoked is False` blocks in `security_clear` (`freeze authority NOT revoked`); `None` still passes (preserving B10).

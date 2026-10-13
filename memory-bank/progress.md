@@ -1,6 +1,25 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §79 Phase G: Gate funnel diagnostic report (2026-10-13):
+      1. Diagnostic script (`scripts/gate_funnel_report.py`) diagnosing why the bot has had zero gate-passers / closed trades since §57.
+      2. Reads verbatim `feed_events` (`rule_breakdown`, `failed_rule_ids`) and `trades`.
+      3. Computes: daily candidate funnel (seen, gate-passed, think-passed, entered), per-rule fail rate & sole-blocker count, counterfactuals ("if rule X were removed, N candidates would have passed the gate"), top 3 blocking rules failing metric distribution (min, median, p90 vs threshold), and LLM refusal rate among gate-passers with feed verdict mix.
+      4. Database support: SQLite (`--db` or default) and Postgres/Supabase via `api.db_pg.get_db()`.
+      5. Full test suite: **1066 passed**, 0 failed (+4 new tests in `test_audit_79_g.py`).
+- [x] §79 Phase F: Honest observability and configuration consistency (2026-10-13):
+      1. Refusal counters (`backend/live_execution/safety_counters.py`): tracks rolling 24h safety refusals (`quote_mismatch`, `sim_refused`, `guard_refused`, `quorum_failed`), atomically stored to `STATE_DIR/safety_counters.json`, surfaced on `GET /api/safety`. Displays `null` (unavailable) when uninitialized.
+      2. Real equity metric & honesty on `GET /api/stats`: added `wallet_equity_usd` ($USDC + SOL \times price + open\ positions$) with status (`complete`/`partial`/`unavailable`) and `missing: [...]` list. Preserved API/live boundary via `wallet.public_address()`.
+      3. Proxy CIDR parity: standardized `FORWARDED_ALLOW_IPS` to `"127.0.0.1,172.16.0.0/12,::1/128"`; removed broad `10.0.0.0/8` default.
+      4. SearXNG digest honesty: deleted unverified digest comment from `docker-compose.yml`.
+      5. Frontend & CI: distinct equity labels ("Booked P&L equity" vs "Wallet equity"), refusal counters row, Playwright e2e race-free selectors (`firstRow.or(emptyState)`), and hardened `.github/workflows/tests.yml`.
+      6. Full test suite: **1062 passed**, 0 failed (+4 new tests in `test_audit_79_f.py`).
+- [x] §79 Phase E: Backups and restore (2026-10-13):
+      1. Encrypted state backup script (`scripts/backup_state.py`): packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.txt`, `operator_break.txt` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
+      2. State restore script (`scripts/restore_state.py`): pre-restore safety checks (refuses if engine running without `--force`), creates automatic `.pre_restore_<ts>` rollback backup, verifies manifest hashes and SQLite integrity.
+      3. Backup shell script & cron (`deploy/backup.sh`): executable wrapper loading `.env` and executing backup.
+      4. Added `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/15_BACKUP_RESTORE.md`.
+      5. Full test suite: **1058 passed**, 0 failed (+8 new tests in `test_audit_79_e.py`).
 - [x] §79 Phase D: Outbound alerting (2026-10-13):
       1. Outbound push alerting subsystem (`backend/alerts.py`) supporting ntfy and Telegram channels with non-blocking, fail-safe async/sync dispatch via in-process `asyncio.Queue(maxsize=100)` drained by a background worker task with per-call 5s timeout.
       2. Automated secret registration and payload sanitization (masking registered tokens, config secrets, Solana keypairs, Bearer tokens, basic auth credentials).
