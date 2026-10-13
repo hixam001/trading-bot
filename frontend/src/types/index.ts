@@ -79,6 +79,9 @@ export interface StatsResponse {
   cash_usd: number | null
   cash_status?: 'unavailable' | 'live'
   equity_usd: number
+  wallet_equity_usd: number | null
+  equity_status?: 'complete' | 'partial' | 'unavailable'
+  missing?: string[]
   open_positions: number
   closed_trades: number
   win_rate: number | null
@@ -229,6 +232,20 @@ export interface SafetyResponse {
   llm: { main_reachable: boolean; provider: string }
   crowd_chain: { configured: string[]; benched: string[]; exhausted: boolean | null; stale: boolean; observed_at: number | null }
   alerts: SafetyAlert[]
+  safety_counters?: {
+    sim_refused: number
+    guard_refused: number
+    quorum_failed: number
+    quote_mismatch: number
+    rolling_24h?: {
+      sim_refused: number
+      guard_refused: number
+      quorum_failed: number
+      quote_mismatch: number
+    }
+    last_reason?: string | null
+    last_at?: string | null
+  } | null
   thresholds: { no_fills_hours: number; no_fills_min_candidates: number }
 }
 

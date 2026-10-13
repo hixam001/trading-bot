@@ -133,53 +133,61 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
     Validate that the untrusted quote from Jupiter matches our locally computed TradeIntent.
     Enforces each rule with a specific error message, failing closed on any discrepancy.
     """
+    def _fail(msg: str):
+        try:
+            from live_execution.safety_counters import record_safety_refusal
+            record_safety_refusal("quote_mismatch", msg)
+        except Exception:
+            pass
+        raise ExecutionError(msg)
+
     if not quote or not isinstance(quote, dict):
-        raise ExecutionError("quote is missing or invalid")
+        _fail("quote is missing or invalid")
 
     if quote.get("inputMint") != intent.input_mint:
-        raise ExecutionError(f"quote inputMint mismatch: got {quote.get('inputMint')} != expected {intent.input_mint}")
+        _fail(f"quote inputMint mismatch: got {quote.get('inputMint')} != expected {intent.input_mint}")
 
     if quote.get("outputMint") != intent.output_mint:
-        raise ExecutionError(f"quote outputMint mismatch: got {quote.get('outputMint')} != expected {intent.output_mint}")
+        _fail(f"quote outputMint mismatch: got {quote.get('outputMint')} != expected {intent.output_mint}")
 
     try:
         quote_in_amount = int(quote.get("inAmount", -1))
     except (TypeError, ValueError) as exc:
-        raise ExecutionError(f"quote inAmount invalid: {quote.get('inAmount')}") from exc
+        _fail(f"quote inAmount invalid: {quote.get('inAmount')}")
 
     if quote_in_amount != intent.in_amount_raw:
-        raise ExecutionError(f"quote inAmount mismatch: got {quote_in_amount} != expected {intent.in_amount_raw}")
+        _fail(f"quote inAmount mismatch: got {quote_in_amount} != expected {intent.in_amount_raw}")
 
     swap_mode = quote.get("swapMode", "ExactIn")
     if swap_mode != "ExactIn":
-        raise ExecutionError(f"quote swapMode mismatch: got {swap_mode} != ExactIn")
+        _fail(f"quote swapMode mismatch: got {swap_mode} != ExactIn")
 
     try:
         quote_slippage = int(quote.get("slippageBps", -1))
     except (TypeError, ValueError) as exc:
-        raise ExecutionError(f"quote slippageBps invalid: {quote.get('slippageBps')}") from exc
+        _fail(f"quote slippageBps invalid: {quote.get('slippageBps')}")
 
     if quote_slippage != intent.slippage_bps:
-        raise ExecutionError(f"quote slippageBps mismatch: got {quote_slippage} != expected {intent.slippage_bps}")
+        _fail(f"quote slippageBps mismatch: got {quote_slippage} != expected {intent.slippage_bps}")
 
     try:
         out_amount = int(quote.get("outAmount", 0))
     except (TypeError, ValueError) as exc:
-        raise ExecutionError(f"quote outAmount invalid: {quote.get('outAmount')}") from exc
+        _fail(f"quote outAmount invalid: {quote.get('outAmount')}")
 
     if out_amount <= 0:
-        raise ExecutionError(f"quote outAmount must be positive: got {out_amount}")
+        _fail(f"quote outAmount must be positive: got {out_amount}")
 
     try:
         other_threshold = int(quote.get("otherAmountThreshold", -1))
     except (TypeError, ValueError) as exc:
-        raise ExecutionError(f"quote otherAmountThreshold invalid: {quote.get('otherAmountThreshold')}") from exc
+        _fail(f"quote otherAmountThreshold invalid: {quote.get('otherAmountThreshold')}")
 
     # Self-consistency check:
     # otherAmountThreshold >= floor(outAmount * (10000 - slippageBps) / 10000) - 1
     expected_threshold_floor = (out_amount * (10000 - quote_slippage)) // 10000 - 1
     if other_threshold < expected_threshold_floor:
-        raise ExecutionError(
+        _fail(
             f"quote otherAmountThreshold inconsistent ({other_threshold} < floor {expected_threshold_floor})"
         )
 
@@ -192,14 +200,14 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
             except (TypeError, ValueError):
                 fee_amt = 1
             if fee_amt != 0:
-                raise ExecutionError(f"quote contains platformFee skim: {platform_fee}")
+                _fail(f"quote contains platformFee skim: {platform_fee}")
         else:
-            raise ExecutionError(f"quote contains invalid platformFee: {platform_fee}")
+            _fail(f"quote contains invalid platformFee: {platform_fee}")
 
     # Independent price floor check
     if intent.min_out_raw is not None:
         if other_threshold < intent.min_out_raw:
-            raise ExecutionError(
+            _fail(
                 f"quote otherAmountThreshold {other_threshold} below independent price floor {intent.min_out_raw}"
             )
 
@@ -215,10 +223,15 @@ async def simulate_and_assert(
     Execute pre-sign simulation and verify balance-delta assertions.
     Raises ExecutionError on any failure. Returns simulation summary on success.
     """
-    def _refuse(reason: str) -> None:
+    def _refuse(reason: str, category: str = "sim_refused") -> None:
         global _SIMULATION_REFUSAL_COUNT
         _SIMULATION_REFUSAL_COUNT += 1
         log.error("PRE-SIGN SIMULATION REFUSED (#%d): %s", _SIMULATION_REFUSAL_COUNT, reason)
+        try:
+            from live_execution.safety_counters import record_safety_refusal
+            record_safety_refusal(category, reason)
+        except Exception:
+            pass
         try:
             from alerts import alert_nowait, AlertEvent
             alert_nowait(AlertEvent.SIM_REFUSAL, f"Pre-sign simulation refused: {reason}", key=f"sim_refusal:{reason[:40]}")
@@ -305,10 +318,11 @@ async def simulate_and_assert(
             wallet_owned_addresses=wallet_owned_set,
         )
     except Exception as exc:
-        _refuse(f"pre-state fetch failed: {exc}")
+        cat = "quorum_failed" if any(w in str(exc).lower() for w in ("diverge", "quorum", "rpc", "consensus")) else "sim_refused"
+        _refuse(f"pre-state fetch failed: {exc}", category=cat)
 
     if not pre_accounts or len(pre_accounts) != len(all_addresses):
-        _refuse("pre-state returned invalid account count")
+        _refuse("pre-state returned invalid account count", category="quorum_failed")
 
     pre_state: dict[str, dict | None] = dict(zip(all_addresses, pre_accounts))
 
@@ -346,7 +360,8 @@ async def simulate_and_assert(
             wallet_owned_addresses=wallet_owned_set,
         )
     except Exception as exc:
-        _refuse(f"RPC simulation failed: {exc}")
+        cat = "quorum_failed" if any(w in str(exc).lower() for w in ("diverge", "quorum", "rpc", "consensus")) else "sim_refused"
+        _refuse(f"RPC simulation failed: {exc}", category=cat)
 
     if sim_res.get("err") is not None:
         _refuse(f"simulation failed on-chain with err: {sim_res['err']}")

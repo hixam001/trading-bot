@@ -157,9 +157,11 @@ if _raw_admin_token:
 else:
     ADMIN_TOKEN: str = ""
 
+DEFAULT_FORWARDED_ALLOW_IPS: str = "127.0.0.1,172.16.0.0/12,::1/128"
+
 TRUSTED_PROXY_CIDRS: str = os.getenv(
     "TRUSTED_PROXY_CIDRS",
-    "127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8",
+    os.getenv("FORWARDED_ALLOW_IPS", DEFAULT_FORWARDED_ALLOW_IPS),
 )
 
 # Secure session cookie configuration (Rule 9: http-only cookie session auth).

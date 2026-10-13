@@ -71,7 +71,7 @@ test.describe('refusal funnel (§63.2)', () => {
     if (await stages.isVisible()) {
       // All four stages present, in order, with the model-refusal rate line.
       await expect(stages.getByText('candidates seen')).toBeVisible()
-      await expect(stages.getByText('gate passed')).toBeVisible()
+      await expect(stages.getByTestId('funnel-stage-gate_passed')).toBeVisible()
       await expect(stages.getByText('model approved')).toBeVisible()
       await expect(stages.getByText('filled')).toBeVisible()
       await expect(stages.getByText('model refusal · share of gate-passers')).toBeVisible()
@@ -86,14 +86,12 @@ test.describe('feed keyboard navigation (§63.4)', () => {
     const list = page.getByTestId('feed-list')
     await expect(feed).toBeVisible({ timeout: 15_000 })
 
-    const firstRow = feed.locator('button[aria-expanded]').first()
+    const rows = feed.locator('button[aria-expanded]')
+    const firstRow = rows.first()
     const emptyState = feed.getByText('No decisions yet', { exact: false })
-    await Promise.race([
-      firstRow.waitFor({ state: 'visible', timeout: 20_000 }),
-      emptyState.waitFor({ state: 'visible', timeout: 20_000 }),
-    ]).catch(() => undefined)
+    await firstRow.or(emptyState).first().waitFor({ state: 'visible', timeout: 20_000 })
 
-    if ((await firstRow.count()) > 1 && (await firstRow.isVisible())) {
+    if ((await rows.count()) > 1 && (await firstRow.isVisible())) {
       await list.focus()
       await page.keyboard.press('j')
       // Cursor moved to row 1 (0-indexed): it carries the selection marker.

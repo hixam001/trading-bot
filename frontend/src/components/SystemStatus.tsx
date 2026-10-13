@@ -207,6 +207,26 @@ function SafetySection({ safety }: { safety: SafetyResponse }) {
           tone={safety.crowd_chain?.stale ? 'warn' : 'dim'}
           badge={safety.crowd_chain?.exhausted == null ? 'unknown' : safety.crowd_chain.exhausted ? 'exhausted' : 'available'}
         />
+
+        <SafetyRow
+          label="refusal counters"
+          tone="dim"
+          badge={
+            safety.safety_counters == null
+              ? 'unavailable'
+              : `${(safety.safety_counters.sim_refused ?? 0) + (safety.safety_counters.guard_refused ?? 0) + (safety.safety_counters.quorum_failed ?? 0) + (safety.safety_counters.quote_mismatch ?? 0)} total`
+          }
+          value={
+            safety.safety_counters == null
+              ? undefined
+              : `sim: ${safety.safety_counters.sim_refused ?? 0} · guard: ${safety.safety_counters.guard_refused ?? 0} · quorum: ${safety.safety_counters.quorum_failed ?? 0} · quote: ${safety.safety_counters.quote_mismatch ?? 0}`
+          }
+        />
+        {safety.safety_counters?.last_reason && (
+          <div className="text-[10.5px] text-faint leading-snug" data-testid="safety-last-reason">
+            last refusal: {safety.safety_counters.last_reason}
+          </div>
+        )}
         <div className="divider" />
         <div className="text-[10.5px] text-faint leading-snug" data-testid="safety-readonly">
           read-only display · no control here can engage, clear or trip anything. The kill

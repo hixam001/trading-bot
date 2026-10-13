@@ -215,6 +215,14 @@ async def get_safety(request: Request):
     except Exception:
         log.warning("safety: failed reading alerts status (fail-soft)", exc_info=True)
 
+    safety_counters = None
+    try:
+        from live_execution.safety_counters import load_safety_counters
+        safety_counters = load_safety_counters()
+    except Exception:
+        log.warning("safety: failed loading safety counters (fail-soft)", exc_info=True)
+        safety_counters = None
+
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "armed": _armed_flag(),
@@ -237,6 +245,7 @@ async def get_safety(request: Request):
         "alerts": alerts,
         "outbound_alerts": outbound_status,
         "alert_channels": outbound_status,
+        "safety_counters": safety_counters,
         "rpc_hosts": rpc_hosts,
         "rpc_quorum_ok": rpc_quorum_ok,
         "thresholds": {

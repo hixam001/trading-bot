@@ -13,6 +13,8 @@ jobs:
   test:
     name: Backend & Frontend Tests
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -33,10 +35,18 @@ jobs:
           fi
           pip install pytest pytest-asyncio pip-audit pyflakes
 
+      - name: Check Python dependencies for conflicts
+        run: |
+          pip check
+
       - name: Run Hermetic Pytest (without .env)
         run: |
           rm -f .env backend/.env
           pytest -q
+
+      - name: Audit Python dependencies
+        run: |
+          pip-audit -r backend/requirements.lock
 
       - name: Set up Node.js 20
         uses: actions/setup-node@v4
@@ -45,10 +55,19 @@ jobs:
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
-      - name: Build frontend
+      - name: Install Frontend Dependencies
         run: |
           cd frontend
           npm ci
+
+      - name: Type check frontend
+        run: |
+          cd frontend
+          npx tsc --noEmit
+
+      - name: Build frontend
+        run: |
+          cd frontend
           npm run build
 
       - name: Audit frontend dependencies
@@ -56,6 +75,24 @@ jobs:
           cd frontend
           npm audit --omit=dev
 
-      - name: Audit Python dependencies
+      - name: Install Playwright Chromium
         run: |
-          pip-audit -r backend/requirements.lock
+          cd frontend
+          npx playwright install --with-deps chromium
+
+      - name: Start Mock Backend for E2E
+        run: |
+          DATA_BACKEND=mock DEEPSEEK_API_KEY="" GROQ_API_KEY="" RATE_LIMIT_PAID_PER_MINUTE=1000 RATE_LIMIT_GENERAL_PER_MINUTE=2000 uvicorn api.main:app --app-dir backend --host 127.0.0.1 --port 8000 &
+          for i in $(seq 1 30); do
+            if curl -s http://127.0.0.1:8000/api/health | grep -q "ok"; then
+              echo "Backend is ready on port 8000."
+              break
+            fi
+            echo "Waiting for backend..."
+            sleep 1
+          done
+
+      - name: Run Frontend E2E Tests
+        run: |
+          cd frontend
+          npm run test:e2e

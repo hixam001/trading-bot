@@ -78,12 +78,9 @@ test.describe('dashboard', () => {
     // state, then exercise expand/collapse only when rows exist.
     const firstRow = feed.locator('button[aria-expanded]').first()
     const emptyState = feed.getByText('No decisions yet', { exact: false })
-    await Promise.race([
-      firstRow.waitFor({ state: 'visible', timeout: 20_000 }),
-      emptyState.waitFor({ state: 'visible', timeout: 20_000 }),
-    ]).catch(() => undefined)
+    await firstRow.or(emptyState).first().waitFor({ state: 'visible', timeout: 20_000 })
 
-    if ((await firstRow.count()) > 0 && (await firstRow.isVisible())) {
+    if (await firstRow.isVisible()) {
       // Expand.
       await firstRow.click()
       await expect(firstRow).toHaveAttribute('aria-expanded', 'true')
@@ -108,12 +105,9 @@ test.describe('dashboard', () => {
     // exists; an empty feed must show its documented empty state.
     const firstRow = feed.locator('button[aria-expanded]').first()
     const emptyState = feed.getByText('No decisions yet', { exact: false })
-    await Promise.race([
-      firstRow.waitFor({ state: 'visible', timeout: 20_000 }),
-      emptyState.waitFor({ state: 'visible', timeout: 20_000 }),
-    ]).catch(() => undefined)
+    await firstRow.or(emptyState).first().waitFor({ state: 'visible', timeout: 20_000 })
 
-    if ((await firstRow.count()) > 0 && (await firstRow.isVisible())) {
+    if (await firstRow.isVisible()) {
       await firstRow.focus()
       await page.keyboard.press('Enter')
       await expect(firstRow).toHaveAttribute('aria-expanded', 'true')
@@ -261,7 +255,7 @@ test.describe('panel error states (DESIGN.md §3.3)', () => {
     // The four tab views: one explicit error panel each.
     for (const t of ['holdings', 'journal', 'market', 'system'] as const) {
       await page.getByTestId(`tab-${t}`).click()
-      const panel = page.getByTestId('error-panel')
+      const panel = page.getByTestId('error-panel').first()
       await expect(panel).toBeVisible({ timeout: 15_000 })
       await expect(panel).toContainText('Retrying automatically')
     }

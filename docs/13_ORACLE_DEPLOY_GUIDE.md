@@ -66,6 +66,12 @@ sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
 sudo netfilter-persistent save
 ```
 
+> [!IMPORTANT]
+> **Reverse Proxy on Oracle VCN Subnets (10.x IPs) (§79 Phase F-3):**
+> Oracle Cloud VCNs default to `10.0.0.0/16`. To prevent IP spoofing from neighboring VMs on the VCN, `10.0.0.0/8` was removed from the default `TRUSTED_PROXY_CIDRS` (`127.0.0.1,172.16.0.0/12,::1/128`).
+> If your reverse proxy (e.g. Caddy, Traefik, or an Oracle Load Balancer) connects to the bot container from an Oracle VCN private IP (e.g. `10.0.x.x`), you must explicitly configure:
+> `TRUSTED_PROXY_CIDRS=127.0.0.1,172.16.0.0/12,::1/128,10.0.0.0/16` (or `FORWARDED_ALLOW_IPS`) in your `.env`.
+
 ## Step 4 — Get the code + secrets onto the VM
 
 ```bash

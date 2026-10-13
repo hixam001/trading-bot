@@ -26,7 +26,7 @@ log = logging.getLogger(__name__)
 
 
 def _get_trusted_proxy_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
-    raw = getattr(config, "TRUSTED_PROXY_CIDRS", "127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8")
+    raw = getattr(config, "TRUSTED_PROXY_CIDRS", getattr(config, "DEFAULT_FORWARDED_ALLOW_IPS", "127.0.0.1,172.16.0.0/12,::1/128"))
     networks = []
     for item in raw.split(","):
         item = item.strip()

@@ -79,9 +79,19 @@ export default function Performance({ stats }: { stats: StatsResponse }) {
           open cost basis <span className="text-body tnum">{usd(stats.total_spend_usd)}</span>
         </span>
         <span
-          title="Track equity: the anchored book (initial cash + closed realized P&L) the track record is measured against — not the wallet. The real wallet's equity leads in the hero band."
+          title="Booked P&L equity: the anchored book (initial cash + closed realized P&L) the track record is measured against."
         >
-          track equity <span className="text-body tnum">{usd(stats.equity_usd)}</span>
+          Booked P&L equity <span className="text-body tnum" data-testid="booked-equity">{usd(stats.equity_usd)}</span>
+        </span>
+        <span
+          title="Wallet equity: USDC cash + SOL×price + open positions mark-to-market."
+        >
+          Wallet equity{' '}
+          <span className="text-body tnum" data-testid="wallet-equity">
+            {stats.wallet_equity_usd !== null && stats.wallet_equity_usd !== undefined
+              ? usd(stats.wallet_equity_usd)
+              : `— (${stats.equity_status ?? 'unavailable'})`}
+          </span>
         </span>
       </div>
     </Panel>

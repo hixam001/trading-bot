@@ -352,24 +352,8 @@ def _is_wallet_owned(dest: str, payer_pubkey: str, account_keys: list[str], know
     return False
 
 
-def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
-    """Validate transaction safety before signing (SEC-01 / §77 C1).
-
-    Ensures:
-      1. Fee payer matches our loaded keypair.
-      2. All invoked program IDs are in APPROVED_SWAP_PROGRAM_IDS.
-      3. Instruction-level deny-by-default guard:
-         - System Program: only allow wrap/unwrap and account creation for approved programs,
-           and transfers strictly to the wallet itself or wallet-owned ATAs.
-         - SPL Token / Token-2022: refuse Transfer, TransferChecked, Approve, ApproveChecked,
-           SetAuthority, MintTo, Burn, BurnChecked at the top level. Only allow InitializeAccount*,
-           SyncNative, and CloseAccount strictly when destination == wallet.
-         - ATA Program: allow Create / CreateIdempotent only when wallet owner == payer.
-         - Compute Budget & Memo: allowed.
-         - Other DEX programs in APPROVED_SWAP_PROGRAM_IDS: allowed at top level.
-
-    Fail closed on anything unresolvable or unknown.
-    """
+def _inspect_swap_transaction_inner(tx, payer_pubkey: str) -> None:
+    """Internal implementation of transaction safety inspection."""
     import struct
     from solders.pubkey import Pubkey
 
@@ -738,6 +722,21 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
                 f"ComputeBudget priority fee {priority_fee_lamports} lamports exceeds "
                 f"PRIORITY_FEE_HARD_CAP_LAMPORTS ({config.PRIORITY_FEE_HARD_CAP_LAMPORTS})"
             )
+
+
+def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
+    """Validate transaction safety before signing (SEC-01 / §77 C1).
+    Atomically records guard_refused safety metrics on refusal.
+    """
+    try:
+        _inspect_swap_transaction_inner(tx, payer_pubkey)
+    except ExecutionError as e:
+        try:
+            from live_execution.safety_counters import record_safety_refusal
+            record_safety_refusal("guard_refused", str(e))
+        except Exception:
+            pass
+        raise
 
 
 async def sign_after_checks(

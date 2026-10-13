@@ -29,7 +29,7 @@ async def get_stats(request: Request):
     # §55: real-wallet data (on-chain cash, P&L, positions) — gated like the
     # live book: DIRECT loopback or X-Admin-Token.
     require_local_or_admin(request)
-    provider = request.app.state.provider
+    provider = getattr(request.app.state, "provider", None)
     async with db.get_db() as conn:
         closed = await db.get_all_closed_trades(conn)
         open_trades = await db.get_open_trades(conn)
@@ -67,11 +67,69 @@ async def get_stats(request: Request):
             # Price unavailable / invalid inputs -> skip this mark (fail-soft).
             continue
 
+    # Real equity computation (§79 Phase F-2)
+    # wallet_equity_usd = USDC + SOL*price + sum(marks of open positions)
+    missing: list[str] = []
+    if cash is None:
+        missing.append("usdc")
+
+    sol_balance = None
+    try:
+        from live_execution import wallet, solana
+        pubkey = wallet.public_address()
+        if pubkey:
+            sol_balance = await solana.get_sol_balance(pubkey)
+    except Exception:
+        sol_balance = None
+
+    if sol_balance is None:
+        missing.append("sol")
+
+    sol_price = None
+    if provider is not None:
+        try:
+            sol_price = await provider.get_current_price("So11111111111111111111111111111111111111112", 9)
+        except Exception:
+            sol_price = None
+
+    if sol_price is None:
+        missing.append("sol_price")
+
+    open_positions_mark_usd = 0.0
+    for t in open_trades:
+        mark_price = None
+        try:
+            decimals = (t.candidate_snapshot or {}).get("decimals")
+            mark_price = await provider.get_current_price(t.mint_address, decimals)
+        except Exception:
+            mark_price = None
+
+        if mark_price is None or mark_price <= 0:
+            missing.append(f"position_mark:{t.symbol or t.mint_address}")
+        else:
+            open_positions_mark_usd += t.quantity * mark_price
+
+    if not missing:
+        equity_status = "complete"
+        wallet_equity_usd = round(
+            (cash or 0.0) + ((sol_balance or 0.0) * (sol_price or 0.0)) + open_positions_mark_usd,
+            2,
+        )
+    elif len(missing) >= (3 + len(open_trades)):
+        equity_status = "unavailable"
+        wallet_equity_usd = None
+    else:
+        equity_status = "partial"
+        wallet_equity_usd = None
+
     return {
         "initial_cash_usd": config.INITIAL_CASH_USD,
         "cash_usd": round(cash, 2) if cash is not None else None,
         "cash_status": "live" if cash is not None else "unavailable",
         "equity_usd": round(equity, 2),
+        "wallet_equity_usd": wallet_equity_usd,
+        "equity_status": equity_status,
+        "missing": missing,
         "open_positions": len(open_trades),
         "closed_trades": n,
         "win_rate": round(wins / n, 4) if n else None,

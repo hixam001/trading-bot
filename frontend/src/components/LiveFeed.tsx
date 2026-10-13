@@ -238,7 +238,7 @@ export default function LiveFeed({
                 {showMarker && i === markerAt && (
                   <div
                     className="flex items-center gap-2 px-4 py-1.5 bg-surface/60 border-y border-line-soft"
-                    role="presentation"
+                    role="separator"
                     data-testid="feed-new-marker"
                   >
                     {/* §66: lowercase mono, like every other small tracked
@@ -255,6 +255,7 @@ export default function LiveFeed({
                   data-feed-row={i}
                   role="listitem"
                   aria-current={i === cursor ? 'true' : undefined}
+                  aria-selected={i === cursor ? 'true' : 'false'}
                   className={`border-b border-line-soft ${isFresh ? 'row-flash' : ''} ${
                     i === cursor ? 'bg-surface shadow-[inset_2px_0_0_0] shadow-live' : ''
                   }`}

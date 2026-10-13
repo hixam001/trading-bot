@@ -111,7 +111,7 @@ export default function App() {
         detail: 'daily-loss breaker active · reduce risk while monitoring',
       }
     }
-    if (!connected || liveBook.error || status.error || safety.error || (!safety.loading && !safety.data)) {
+    if (!connected || liveBook.error || safety.error || (!safety.loading && !safety.data)) {
       return {
         state: 'offline' as const,
         severity: 'offline' as const,
