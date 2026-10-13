@@ -202,6 +202,19 @@ async def get_safety(request: Request):
     except Exception:
         log.warning("safety: rpc diversity check failed (fail-soft)", exc_info=True)
 
+    outbound_status = {
+        "channels": [],
+        "last_sent_at": None,
+        "queued": 0,
+        "dropped": 0,
+        "suppressed": 0,
+    }
+    try:
+        from alerts import get_alerts_status
+        outbound_status = get_alerts_status()
+    except Exception:
+        log.warning("safety: failed reading alerts status (fail-soft)", exc_info=True)
+
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "armed": _armed_flag(),
@@ -222,6 +235,8 @@ async def get_safety(request: Request):
         },
         "crowd_chain": chain,
         "alerts": alerts,
+        "outbound_alerts": outbound_status,
+        "alert_channels": outbound_status,
         "rpc_hosts": rpc_hosts,
         "rpc_quorum_ok": rpc_quorum_ok,
         "thresholds": {

@@ -219,6 +219,11 @@ async def simulate_and_assert(
         global _SIMULATION_REFUSAL_COUNT
         _SIMULATION_REFUSAL_COUNT += 1
         log.error("PRE-SIGN SIMULATION REFUSED (#%d): %s", _SIMULATION_REFUSAL_COUNT, reason)
+        try:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(AlertEvent.SIM_REFUSAL, f"Pre-sign simulation refused: {reason}", key=f"sim_refusal:{reason[:40]}")
+        except Exception:
+            pass
         raise ExecutionError(f"simulation refused: {reason}")
 
     if not quote or not isinstance(quote, dict):

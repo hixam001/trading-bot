@@ -383,12 +383,45 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
     cash = 0.0
     try:
         payer = wallet.load_keypair()
-        usdc_bal = await solana.get_usdc_balance(wallet.pubkey_string(payer))
+        payer_addr = wallet.pubkey_string(payer)
+        usdc_bal = await solana.get_usdc_balance(payer_addr)
+        sol_bal = await solana.get_sol_balance(payer_addr)
         if usdc_bal is not None:
             cash = max(usdc_bal, 0.0)
+            if cash < paper_config.MIN_TICKET_USD:
+                try:
+                    from alerts import alert_nowait, AlertEvent
+                    alert_nowait(
+                        AlertEvent.LOW_USDC,
+                        f"Wallet USDC balance ${cash:.2f} is below minimum ticket floor (${paper_config.MIN_TICKET_USD:.2f})",
+                        key="low_usdc",
+                    )
+                except Exception:
+                    pass
         else:
             log.warning("live USDC balance unreadable - cash=0 "
                         "(no entries this cycle)")
+
+        if sol_bal is not None:
+            if sol_bal < 2 * live_config.MIN_SOL_RESERVE:
+                try:
+                    from alerts import alert_nowait, AlertEvent
+                    alert_nowait(
+                        AlertEvent.LOW_SOL,
+                        f"Wallet SOL balance {sol_bal:.4f} SOL is below 2x reserve floor ({2 * live_config.MIN_SOL_RESERVE:.4f} SOL)",
+                        key="low_sol",
+                    )
+                except Exception:
+                    pass
+
+        # §79 Phase D: check unexplained wallet drop against ledger
+        try:
+            from live_execution.reconcile import check_wallet_drop
+            sol_price_usd = 150.0  # conservative reference mark
+            check_wallet_drop(cash, sol_bal or 0.0, sol_price_usd, ledger)
+        except Exception:
+            pass
+
     except Exception as exc:
         log.warning("live USDC balance unavailable (%s) - cash=0 "
                     "(no entries this cycle)", exc)
@@ -1150,6 +1183,19 @@ def main() -> None:
 
     # §79 Phase A: Check RPC diversity on startup
     solana.check_rpc_diversity()
+
+    # §79 Phase D: LIVE_BOOT alert with previous heartbeat age
+    try:
+        from alerts import alert_nowait, AlertEvent
+        hb_file = live_config.STATE_DIR / "heartbeat.txt"
+        prev_hb_age = f"{time.time() - hb_file.stat().st_mtime:.1f}s ago" if hb_file.is_file() else "none (clean start)"
+        alert_nowait(
+            AlertEvent.LIVE_BOOT,
+            f"Live trading cycle booting (previous heartbeat: {prev_hb_age})",
+            key="live_boot",
+        )
+    except Exception:
+        pass
 
     # B1: write public wallet address to STATE_DIR/wallet_pubkey.txt
     try:

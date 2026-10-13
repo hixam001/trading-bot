@@ -68,6 +68,14 @@ def trip_reason(state_dir: Optional[Path] = None) -> str:
 
 def trip(reason: str, state_dir: Optional[Path] = None) -> None:
     _write(True, reason, state_dir)
+    try:
+        from alerts import alert_nowait, AlertEvent
+        if str(reason).startswith("AUTO: realized daily loss"):
+            alert_nowait(AlertEvent.DAILY_LOSS_BREAKER, f"Daily loss circuit breaker tripped: {reason}", key="daily_loss_breaker")
+        else:
+            alert_nowait(AlertEvent.KILL_SWITCH_ENGAGED, f"Kill switch engaged: {reason}", key="kill_switch")
+    except Exception:
+        pass
 
 
 def clear(state_dir: Optional[Path] = None) -> None:

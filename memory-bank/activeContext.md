@@ -1,6 +1,14 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-13 (§79 Phase C complete):**
+**Current — 2026-10-13 (§79 Phase D complete):**
+- **Phase D (Outbound Alerting)**:
+  1. Implemented `backend/alerts.py` with multi-channel outbound alerts (**ntfy** and **Telegram**) and fail-safe, non-blocking queue architecture (`asyncio.Queue(maxsize=100)` drained by worker task with 5s timeout, dropping oldest when full, caller returning <50ms).
+  2. Automatic secret registration for channel tokens and deep message sanitization (runtime secrets, config secrets, Solana keypairs, Bearer tokens, basic auth credentials).
+  3. Deduplication and flood control: per-key cooldown (5m CRITICAL, 15m default), global flood cap (20/hr) with suppression tracking, and refusal aggregation (first immediately, then 30m aggregate digest).
+  4. Wired comprehensive hooks: `KILL_SWITCH_ENGAGED`, `DAILY_LOSS_BREAKER`, `SIM_REFUSAL`, `GUARD_REFUSAL`, `EXIT_UNRESOLVED`, `SELL_NO_REF_PRICE`, `RPC_NOT_DIVERSE`, `SIM_SINGLE_RPC_SELL`, `LIVE_BOOT`, `LOW_SOL`, `LOW_USDC`, `WALLET_DROP`, `LOGIN_FAILURE_BURST`, `HEARTBEAT_STALE`/`RECOVERED`.
+  5. Added `scripts/send_test_alert.py`, documented setup in `docs/11_DEPLOYMENT.md`, and surfaced `outbound_alerts` on `GET /api/safety`.
+  6. 1050 tests passing (0 failures).
+
 - **Phase C (Token-safety gate improvements)**:
   1. Freeze authority known-bad check: `freeze_authority_revoked is False` blocks in `security_clear` (`freeze authority NOT revoked`); `None` still passes (preserving B10).
   2. Token-2022 mint-extension screen: added `get_mint_extension_flags` and `parse_mint_extensions` in `data_providers/onchain_security.py` using `getAccountInfo(encoding="jsonParsed")`. Blocks `permanentDelegate`, `transferHook`, `nonTransferable`, `pausableConfig`, `defaultAccountState (frozen)`, and active transfer fee > `MAX_TRANSFER_FEE_BPS` (100 bps = 1.0%). Results cached per mint with 1 hour TTL.

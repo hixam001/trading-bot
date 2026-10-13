@@ -58,7 +58,24 @@ async def lifespan(app: FastAPI):
     app.state.provider = build_provider()
     app.state.narrator = Narrator()
     broadcaster.start()
+
+    # §79 Phase D: Heartbeat watcher task
+    watcher_task = None
+    try:
+        import asyncio
+        from alerts import heartbeat_watcher
+        stale_sec = float(getattr(config, "HEARTBEAT_STALE_SECONDS", 300.0))
+        watcher_task = asyncio.create_task(
+            heartbeat_watcher(check_interval=60.0, stale_threshold=stale_sec)
+        )
+    except Exception as exc:
+        log.warning("failed starting heartbeat watcher: %s", exc)
+
     yield
+    if watcher_task is not None:
+        watcher_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher_task
     await app.state.narrator.aclose()
     await broadcaster.stop()
 

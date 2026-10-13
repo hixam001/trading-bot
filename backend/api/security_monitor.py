@@ -25,6 +25,7 @@ import logging
 from pathlib import Path
 import secrets
 import threading
+import time
 from typing import Any
 
 from api.error_handler import sanitize_error_detail
@@ -103,6 +104,24 @@ class SecurityMonitor:
             self._events.append(event)
             self._type_counts[type_str] += 1
             self._ip_counts[safe_ip] += 1
+            if not hasattr(self, "_auth_failures_by_ip"):
+                self._auth_failures_by_ip = defaultdict(deque)
+            if type_str in ("auth_failure", "auth_lockout") and safe_ip != "unknown":
+                now_ts = time.time()
+                q = self._auth_failures_by_ip[safe_ip]
+                while q and q[0] < now_ts - 600.0:
+                    q.popleft()
+                q.append(now_ts)
+                if len(q) >= 5:
+                    try:
+                        from alerts import alert_nowait, AlertEvent
+                        alert_nowait(
+                            AlertEvent.LOGIN_FAILURE_BURST,
+                            f"Login failure burst detected: {len(q)} auth failures in 10m from IP {safe_ip}",
+                            key=f"login_burst:{safe_ip}",
+                        )
+                    except Exception:
+                        pass
 
         # Format and log to security logger
         log_line = f"[{type_str.upper()}] ip={safe_ip} method={safe_method} path={safe_path} - {safe_detail}"

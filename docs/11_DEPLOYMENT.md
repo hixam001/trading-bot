@@ -166,3 +166,49 @@ never keep serving a green dashboard while the decision cycle is dead.
 - [ ] `FRONTEND_ORIGIN` = the actual dashboard origin (never wildcard `*` with credentials)
 - [ ] WebSocket connections per IP bounded (`MAX_WS_PER_IP=4` default)
 - [ ] Dashboard reachable; `/api/live/portfolio` shows `enabled` only if armed
+- [ ] Outbound alerts verified with `python scripts/send_test_alert.py`
+
+---
+
+## 7. Outbound Alerting Setup (§79 Phase D)
+
+The engine supports multi-channel push notifications to ensure immediate visibility of critical operational events (kill switch trips, daily-loss breaker activation, guard/simulation refusals, low SOL/USDC reserves, stale cycle heartbeats, unexplained wallet balance drops, and brute-force auth bursts).
+
+Both channels are optional. If neither is configured, alert events are logged locally without raising errors or blocking execution.
+
+### Channel 1: ntfy (Recommended — Free & Open-Source)
+
+ntfy allows receiving push notifications on Android, iOS, and Web without account registration.
+
+1. **Choose a private topic name**: e.g., `trading-bot-alerts-<random-uuid>`.
+   *(Anyone who knows the topic name can subscribe, so use an unguessable string or self-host ntfy)*.
+2. **Configure `.env`**:
+   ```bash
+   ALERT_NTFY_URL=https://ntfy.sh           # Default; or your self-hosted URL
+   ALERT_NTFY_TOPIC=trading-bot-alerts-<random-uuid>
+   ALERT_NTFY_TOKEN=                       # Optional: if using an auth-protected instance
+   ```
+3. **Subscribe**: Install the ntfy app on your phone and subscribe to your topic name.
+
+### Channel 2: Telegram Bot
+
+1. **Create a bot**: Message `@BotFather` on Telegram, send `/newbot`, and follow prompts to obtain `ALERT_TELEGRAM_BOT_TOKEN` (format: `123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ`).
+2. **Get your chat ID**: Message your new bot, then send a message to `@userinfobot` or check `https://api.telegram.org/bot<TOKEN>/getUpdates` to find your numeric `chat_id`.
+3. **Configure `.env`**:
+   ```bash
+   ALERT_TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRsTUVwxyZ
+   ALERT_TELEGRAM_CHAT_ID=123456789
+   ```
+
+### Verifying Alert Delivery
+
+Run the verification script from the repository root:
+```bash
+python scripts/send_test_alert.py
+```
+To test an isolated channel:
+```bash
+python scripts/send_test_alert.py --channel ntfy
+python scripts/send_test_alert.py --channel telegram
+```
+The script outputs HTTP status codes (`HTTP 200 — SUCCESS`) without ever printing secret tokens or keys.

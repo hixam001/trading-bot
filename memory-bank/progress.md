@@ -1,6 +1,13 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §79 Phase D: Outbound alerting (2026-10-13):
+      1. Outbound push alerting subsystem (`backend/alerts.py`) supporting ntfy and Telegram channels with non-blocking, fail-safe async/sync dispatch via in-process `asyncio.Queue(maxsize=100)` drained by a background worker task with per-call 5s timeout.
+      2. Automated secret registration and payload sanitization (masking registered tokens, config secrets, Solana keypairs, Bearer tokens, basic auth credentials).
+      3. Deduplication and flood control: per-key cooldown (5m CRITICAL, 15m default), global cap of 20 messages/hour with suppression tracking, and refusal aggregation (first immediately, then 30m aggregate digest).
+      4. Wired event hooks: `KILL_SWITCH_ENGAGED`, `DAILY_LOSS_BREAKER`, `SIM_REFUSAL`, `GUARD_REFUSAL`, `EXIT_UNRESOLVED`, `SELL_NO_REF_PRICE`, `RPC_NOT_DIVERSE`, `SIM_SINGLE_RPC_SELL`, `LIVE_BOOT`, `LOW_SOL`, `LOW_USDC`, `WALLET_DROP`, `LOGIN_FAILURE_BURST`, `HEARTBEAT_STALE`/`RECOVERED`.
+      5. Created `scripts/send_test_alert.py`, added Section 7 to `docs/11_DEPLOYMENT.md`, and surfaced `outbound_alerts` status on `GET /api/safety`.
+      6. Full test suite: **1050 passed**, 0 failed (+16 new tests in `test_audit_79_d.py`).
 - [x] §79 Phase C: Token-safety gate improvements (2026-10-13):
       1. Freeze authority live known-bad check: `freeze_authority_revoked is False` blocks in `security_clear`; `None` still passes (preserving B10).
       2. Token-2022 mint-extension screen: added `get_mint_extension_flags` and `parse_mint_extensions` in `data_providers/onchain_security.py` using `getAccountInfo(encoding="jsonParsed")`. Blocks `permanentDelegate`, `transferHook`, `nonTransferable`, `pausableConfig`, `defaultAccountState (frozen)`, and active transfer fee > `MAX_TRANSFER_FEE_BPS` (100 bps = 1.0%). Results cached per mint with 1 hour TTL.

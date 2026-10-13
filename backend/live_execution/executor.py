@@ -529,6 +529,11 @@ async def place_sell(
             if is_valid is not False:
                 reason = f"exit_unresolved: signature {last_sig} is pending and blockhash {last_blockhash} may still be valid"
                 log.error("DOUBLE FILL SAFETY: %s", reason)
+                try:
+                    from alerts import alert_nowait, AlertEvent
+                    alert_nowait(AlertEvent.EXIT_UNRESOLVED, f"Exit unresolved for {mint[:8]}: {reason}", key=f"exit_unresolved:{mint}")
+                except Exception:
+                    pass
                 logc.note(sealed["hash"], reason)
                 logc.fail(sealed["hash"], reason)
                 return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason, "signature": last_sig, **commit_fields})
@@ -570,6 +575,11 @@ async def place_sell(
             )
         else:
             log.warning("SELL_NO_REF_PRICE: sell %s has no reference price; relying on self-consistency check", mint[:8])
+            try:
+                from alerts import alert_nowait, AlertEvent
+                alert_nowait(AlertEvent.SELL_NO_REF_PRICE, f"Sell {mint[:8]} has no reference price; relying on quote self-consistency", key=f"sell_no_ref_price:{mint}")
+            except Exception:
+                pass
 
         trade_intent = TradeIntent(
             side="sell",

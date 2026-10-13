@@ -1,5 +1,30 @@
 ## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
 
+### Phase D: Outbound Alerting (`backend/alerts.py`, `scripts/send_test_alert.py`, hooks in `live_execution/`, `api/`, `test_audit_79_d.py`)
+1. **Outbound Push Alerting Subsystem (`backend/alerts.py`)**:
+   - Implemented non-blocking, fail-safe async/sync alert dispatching (`alert`, `alert_nowait`) via an in-process `asyncio.Queue(maxsize=100)` drained by a dedicated background worker task with per-call 5s timeout. Drops oldest when full and tracks drop count. Never raises and never blocks trading (<50ms caller return).
+   - Multi-channel support: **ntfy** (`ALERT_NTFY_URL`, `ALERT_NTFY_TOPIC`, `ALERT_NTFY_TOKEN`) with `Title`, `Priority`, `Tags` headers, and **Telegram** (`ALERT_TELEGRAM_BOT_TOKEN`, `ALERT_TELEGRAM_CHAT_ID`) with Markdown parsing and plain-text fallback. Tokens automatically registered with `secret_registry.register_secret`.
+   - Comprehensive outbound payload sanitization masking all registered secrets, config secrets, Solana 64-int keypairs, Bearer tokens, basic auth URLs, and JSON keys.
+   - Deduplication and flood control: per-key cooldown (5m for CRITICAL, 15m default), global cap of 20 messages/hour with suppression tracking, and refusal aggregation (first immediately, then 30m aggregate digest).
+2. **Comprehensive Event Hooks**:
+   - `KILL_SWITCH_ENGAGED`: `kill_switch.trip()` on manual trip.
+   - `DAILY_LOSS_BREAKER`: `kill_switch.trip()` on automatic daily-loss breaker trip.
+   - `SIM_REFUSAL` & `GUARD_REFUSAL`: `sim_guard._refuse` and `sign_after_checks` inspection failure.
+   - `EXIT_UNRESOLVED` & `SELL_NO_REF_PRICE`: double-fill safety pending resolution and sells without reference marks in `executor.py`.
+   - `RPC_NOT_DIVERSE` & `SIM_SINGLE_RPC_SELL`: RPC host diversity failure and single-endpoint sell fallback in `solana.py`.
+   - `LIVE_BOOT`: `run_live_cycle.py` startup reporting previous-heartbeat age for container restart visibility.
+   - `LOW_SOL` & `LOW_USDC`: balance reads in `_live_portfolio` when SOL < 2x reserve or USDC < minimum ticket floor.
+   - `WALLET_DROP`: `check_wallet_drop` in `live_execution/reconcile.py` comparing wallet USDC+SOL(USD) against ledger fills and known fees; trips when unexplained outflow > `$5.00`.
+   - `LOGIN_FAILURE_BURST`: `api/security_monitor.py` detecting $\ge 5$ auth failures/lockouts from the same IP within 10 minutes.
+   - `HEARTBEAT_STALE` & `HEARTBEAT_RECOVERED`: watcher task in API process checking `heartbeat.txt` freshness (> 300s).
+3. **Verification Tool & Operational Docs**:
+   - Added `scripts/send_test_alert.py` verifying channel connectivity, printing HTTP status codes without leaking secrets.
+   - Added Section 7 to `docs/11_DEPLOYMENT.md` detailing operator setup for ntfy and Telegram bots.
+   - Exposed `outbound_alerts` status on `GET /api/safety` (`channels`, `last_sent_at`, `queued`, `dropped`, `suppressed`) with zero secrets.
+4. **Tests**:
+   - Added 16 tests in `backend/tests/test_audit_79_d.py`.
+   - Full test suite: **1050 passed** (0 failed).
+
 ### Phase C: Token-Safety Gate Improvements (`rule_engine/rules.py`, `data_providers/{onchain_security.py,live.py}`, `models.py`, `sizing.py`, `run_live_cycle.py`, `api/{db.py,db_pg.py}`, `scripts/perf_report.py`, `test_audit_79_c.py`)
 1. **Freeze Authority Live Check**:
    - `security_clear` now blocks on `freeze_authority_revoked is False` (reason: `freeze authority NOT revoked`).
@@ -4707,7 +4732,7 @@ says enter, yet there's no execution for it." Live-log forensics: TREE passed
 the full staged gate every cycle (`think=buy gate=PASS`, feed row journalled
 ENTER), then sizing refused it — `TREE refused: ticket $0.50 below live floor
 $0.50`. The ticket was actually $0.4962 (`cash × 0.15`, cash $3.3078) and the
-hardcoded `MIN_LIVE_TICKET_USD = 0.50` blocked it. Two defects:
+cohardcoded `MIN_LIVE_TICKET_USD = 0.50` blocked it. Two defects:
 
 1. **A fixed floor cannot adapt to book size.** With `SIZING_MODE="fixed"`,
    any live book whose cash dips under ~$3.33 is structurally frozen out of

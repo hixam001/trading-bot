@@ -36,7 +36,10 @@ outage would bleed the book) and says so in the report.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+import os
+from pathlib import Path
+import time
+from typing import Any, Callable, Optional
 
 log = logging.getLogger(__name__)
 
@@ -121,3 +124,109 @@ def reconcile(meta: dict, balances: Optional[dict],
             "mint": mint, "kind": "unjournaled", "chain": amount})
 
     return report
+
+
+UNEXPLAINED_OUTFLOW_USD: float = float(os.getenv("UNEXPLAINED_OUTFLOW_USD", "5.0"))
+
+
+def check_wallet_drop(
+    current_usdc: float,
+    current_sol: float,
+    sol_price_usd: float,
+    ledger: Any,
+    state_dir: Optional[Path] = None,
+    now_fn: Callable[[], float] = time.time,
+) -> dict[str, Any]:
+    """
+    Compare current wallet USDC + SOL(USD) against the previous snapshot and
+    the ExecutionLedger to detect unexplained balance outflows.
+
+    "Explained" outflow definition:
+      - Legitimate buy orders recorded in the ledger (cash outflow = rec.usd_size)
+      - Legitimate close/sell orders recorded in the ledger (cash inflow = rec.proceeds_usd)
+      - Known Solana transaction network & priority fees (estimated 0.001 SOL per confirmed tx)
+      - Mark-to-market valuation changes on held SOL reserve
+
+    If (actual_total_usd_change - explained_change) < -UNEXPLAINED_OUTFLOW_USD:
+      Emits AlertEvent.WALLET_DROP.
+    """
+    import json
+    try:
+        from live_execution import config as live_config
+        target_dir = Path(state_dir or live_config.STATE_DIR)
+    except Exception:
+        target_dir = Path(state_dir or "/tmp/trading_state")
+
+    snap_file = target_dir / "wallet_snapshot.json"
+    now = now_fn()
+    curr_total_usd = current_usdc + (current_sol * sol_price_usd)
+    result = {"alerted": False, "unexplained_drop_usd": 0.0}
+
+    if snap_file.is_file():
+        try:
+            prev = json.loads(snap_file.read_text())
+            prev_ts = float(prev.get("ts", 0.0))
+            prev_usdc = float(prev.get("usdc", 0.0))
+            prev_sol = float(prev.get("sol", 0.0))
+            prev_sol_price = float(prev.get("sol_price_usd", sol_price_usd))
+            prev_total_usd = prev_usdc + (prev_sol * prev_sol_price)
+
+            actual_delta_usd = curr_total_usd - prev_total_usd
+
+            records = getattr(ledger, "_load", lambda: [])()
+            period_buys_usd = 0.0
+            period_proceeds_usd = 0.0
+            tx_count = 0
+            for r in records:
+                r_ts = float(r.get("ts", 0.0))
+                if prev_ts <= r_ts <= now:
+                    tx_count += 1
+                    if r.get("kind") == "buy":
+                        period_buys_usd += float(r.get("usd_size", 0.0))
+                    elif r.get("kind") in ("close", "sell"):
+                        period_proceeds_usd += float(r.get("proceeds_usd", 0.0))
+
+            known_fees_usd = tx_count * 0.001 * sol_price_usd
+            sol_price_delta_usd = prev_sol * (sol_price_usd - prev_sol_price)
+            explained_delta_usd = period_proceeds_usd - period_buys_usd - known_fees_usd + sol_price_delta_usd
+
+            unexplained_delta_usd = actual_delta_usd - explained_delta_usd
+
+            outflow_cap = float(os.getenv("UNEXPLAINED_OUTFLOW_USD", str(UNEXPLAINED_OUTFLOW_USD)))
+            if unexplained_delta_usd < -outflow_cap:
+                drop_amount = abs(unexplained_delta_usd)
+                result["alerted"] = True
+                result["unexplained_drop_usd"] = drop_amount
+                log.critical(
+                    "WALLET_DROP: Unexplained wallet outflow of $%.2f exceeds cap $%.2f "
+                    "(actual Δ=$%.2f, explained Δ=$%.2f)",
+                    drop_amount, outflow_cap, actual_delta_usd, explained_delta_usd,
+                )
+                try:
+                    from alerts import alert_nowait, AlertEvent
+                    alert_nowait(
+                        AlertEvent.WALLET_DROP,
+                        f"Unexplained wallet outflow of ${drop_amount:.2f} (actual Δ=${actual_delta_usd:.2f}, explained Δ=${explained_delta_usd:.2f})",
+                        key="wallet_drop",
+                    )
+                except Exception:
+                    pass
+        except Exception as exc:
+            log.warning("reconcile: failed checking wallet drop: %s", exc)
+
+    # Save new snapshot atomically
+    try:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        tmp_file = snap_file.with_suffix(".tmp")
+        tmp_file.write_text(json.dumps({
+            "ts": now,
+            "usdc": current_usdc,
+            "sol": current_sol,
+            "sol_price_usd": sol_price_usd,
+            "total_usd": curr_total_usd,
+        }, indent=2))
+        tmp_file.replace(snap_file)
+    except Exception as exc:
+        log.warning("reconcile: failed saving wallet snapshot: %s", exc)
+
+    return result

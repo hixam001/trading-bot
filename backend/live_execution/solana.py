@@ -102,6 +102,15 @@ def check_rpc_diversity(endpoints: Optional[list[str]] = None) -> tuple[int, boo
     if not is_diverse:
         log.critical("RPC_NOT_DIVERSE: config.RPC_URLS has fewer than 2 distinct hosts (%d hosts: %s)",
                      distinct_count, [urlparse(e).netloc for e in eps])
+        try:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(
+                AlertEvent.RPC_NOT_DIVERSE,
+                f"RPC endpoints have fewer than 2 distinct hosts ({distinct_count} hosts: {[urlparse(e).netloc for e in eps]})",
+                key="rpc_not_diverse",
+            )
+        except Exception:
+            pass
     return distinct_count, is_diverse
 
 
@@ -267,6 +276,15 @@ async def get_multiple_accounts(
         return valid_results[0]["post_accounts"]
     elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) >= 1:
         log.warning("SIM_SINGLE_RPC_SELL: pre-state fetch proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
+        try:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(
+                AlertEvent.SIM_SINGLE_RPC_SELL,
+                f"Pre-state fetch proceeding with single RPC endpoint ({valid_results[0]['endpoint']})",
+                key="sim_single_rpc_sell",
+            )
+        except Exception:
+            pass
         return valid_results[0]["post_accounts"]
     else:
         raise SimulationError(
@@ -343,6 +361,15 @@ async def simulate_transaction(
         return valid_results[0]
     elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) >= 1:
         log.warning("SIM_SINGLE_RPC_SELL: sell proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
+        try:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(
+                AlertEvent.SIM_SINGLE_RPC_SELL,
+                f"Sell simulation proceeding with single RPC endpoint ({valid_results[0]['endpoint']})",
+                key="sim_single_rpc_sell",
+            )
+        except Exception:
+            pass
         return valid_results[0]
     else:
         raise SimulationError(

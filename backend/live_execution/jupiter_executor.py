@@ -756,7 +756,19 @@ async def sign_after_checks(
 
     raw_unsigned = base64.b64decode(swap_b64)
     tx = VersionedTransaction.from_bytes(raw_unsigned)
-    inspect_swap_transaction(tx, str(payer.pubkey()))
+    try:
+        inspect_swap_transaction(tx, str(payer.pubkey()))
+    except Exception as exc:
+        try:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(
+                AlertEvent.GUARD_REFUSAL,
+                f"Static guard refusal: {exc}",
+                key=f"guard_refusal:{str(exc)[:40]}",
+            )
+        except Exception:
+            pass
+        raise
 
     if config.SIMULATION_REQUIRED:
         if quote is None:
