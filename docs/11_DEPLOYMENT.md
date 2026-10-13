@@ -86,6 +86,11 @@ The image contains **zero secrets**; everything arrives at runtime.
 **Always also set `EXPECTED_WALLET_ADDRESS`** — the loaded keypair must
 derive exactly that pubkey or every load refuses (identity pin).
 
+**Solana RPC Configuration (Dual-RPC Consensus §79 Phase A):**
+- Configure both `SOLANA_RPC_URL` and `SOLANA_RPC_URL_2` pointing to distinct RPC providers with different hostnames (e.g., QuickNode and Helius).
+- Buys strictly require $\ge 2$ agreeing RPC endpoints on distinct hosts (`SIM_MIN_AGREEING_RPCS = 2`). If `SOLANA_RPC_URL_2` is omitted or shares the same host as `SOLANA_RPC_URL`, pre-sign simulation fails closed and buys are blocked.
+- Sells allow single-RPC fallback when `SIM_SELL_ALLOW_SINGLE_RPC = True` so position exits are not trapped by an outage of a secondary RPC provider.
+
 **Fail-closed rule:** neither channel set → `WalletError` → the live cycle
 never starts. There is deliberately NO env bypass for the ARM flags; the
 keypair channels are infrastructure, like `SOLANA_RPC_URL`.

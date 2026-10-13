@@ -507,6 +507,7 @@ async def _scan_exits_for_position(
         fraction=fraction,
         full_close=(decision.action == "close_full"),
         rule_id=decision.rule_id,
+        reference_price_usd=price,
     )
     log.info("sell -> %s %s", result.status, result.reason)
     if result.status == "filled":
@@ -1034,7 +1035,8 @@ async def run_cycle(once: bool = False) -> dict:
         result = await place_order(
             side="buy", mint=c.mint_address, symbol=c.symbol, usd=usd,
             output_decimals=c.decimals,
-            idempotency_key=f"{c.mint_address}-{datetime.now(timezone.utc).strftime("%Y%m%d-%H%M")}",
+            idempotency_key=f"{c.mint_address}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
+            reference_price_usd=c.price_usd,
         )
         log.info("buy %s $%.2f -> %s %s", c.symbol, usd, result.status, result.reason)
         if result.status == "filled":
@@ -1142,6 +1144,9 @@ def main() -> None:
         log.info("ARMED (manual confirmation %s)", "ON" if live_config.REQUIRE_MANUAL_CONFIRMATION else "OFF - fully autonomous")
     else:
         log.warning("UNARMED: LIVE_TRADING_ENABLED=False - reads/think/gate run; every order returns unarmed")
+
+    # §79 Phase A: Check RPC diversity on startup
+    solana.check_rpc_diversity()
 
     # B1: write public wallet address to STATE_DIR/wallet_pubkey.txt
     try:

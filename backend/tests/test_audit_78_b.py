@@ -24,9 +24,10 @@ from live_execution.jupiter_executor import (
     _SYSTEM_PROGRAM_ID,
     _WSOL_MINT,
     ExecutionError,
-    _sign_transaction,
+    sign_after_checks,
     execute_confirmed_trade,
 )
+from live_execution.trade_intent import TradeIntent
 from live_execution import executor
 
 SYSTEM_PROGRAM_ID = Pubkey.from_string(_SYSTEM_PROGRAM_ID)
@@ -448,14 +449,13 @@ async def test_sim_guard_reproduce_a1_drain_independently_refused(monkeypatch):
 
 def test_ast_swap_paths_must_call_sign_transaction_before_send_raw():
     """
-    AST analysis: Every module calling solana.send_raw_transaction for a swap must
-    invoke _sign_transaction beforehand in the AST.
+    AST analysis: Neither executor.py nor jupiter_executor.py may call send_raw_transaction directly;
+    they must call send_checked_swap, and sign_after_checks must precede it.
     """
     repo_root = Path(__file__).resolve().parent.parent
 
     for py_file in [repo_root / "live_execution" / "executor.py", repo_root / "live_execution" / "jupiter_executor.py"]:
         tree = ast.parse(py_file.read_text(encoding="utf-8"))
-        # Check every function definition
         for node in ast.walk(tree):
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 calls = [
@@ -463,15 +463,15 @@ def test_ast_swap_paths_must_call_sign_transaction_before_send_raw():
                     for n in ast.walk(node)
                     if isinstance(n, ast.Call)
                 ]
-                if "send_raw_transaction" in calls:
-                    # Must call _sign_transaction within the same function
-                    assert "_sign_transaction" in calls, f"{py_file.name}::{node.name} calls send_raw_transaction without _sign_transaction"
+                assert "send_raw_transaction" not in calls, f"{py_file.name}::{node.name} must not call send_raw_transaction"
+                if "send_checked_swap" in calls:
+                    assert "sign_after_checks" in calls, f"{py_file.name}::{node.name} calls send_checked_swap without sign_after_checks"
 
 
 @pytest.mark.asyncio
 async def test_monkeypatch_no_send_when_simulation_fails(monkeypatch):
     """
-    Runtime proof: If simulation fails in _sign_transaction, send_raw_transaction
+    Runtime proof: If simulation fails in sign_after_checks, send_checked_swap
     is NEVER called.
     """
     payer = Keypair()
@@ -482,24 +482,36 @@ async def test_monkeypatch_no_send_when_simulation_fails(monkeypatch):
         "inputMint": str(USDC_MINT),
         "outputMint": str(token_mint),
         "inAmount": "1000000",
+        "outAmount": "50000",
         "otherAmountThreshold": "50000",
+        "slippageBps": 50,
+        "swapMode": "ExactIn",
     }
+    intent = TradeIntent(
+        side="buy",
+        wallet=str(payer.pubkey()),
+        input_mint=str(USDC_MINT),
+        output_mint=str(token_mint),
+        in_amount_raw=1000000,
+        slippage_bps=50,
+        min_out_raw=50000,
+        reference_price_usd=20.0,
+    )
 
-    send_raw_called = False
+    send_checked_called = False
 
-    async def fake_send_raw(raw_signed, endpoints=None):
-        nonlocal send_raw_called
-        send_raw_called = True
+    async def fake_send_checked(signed, endpoints=None):
+        nonlocal send_checked_called
+        send_checked_called = True
         return "SIG_SHOULD_NEVER_HAPPEN"
 
     async def failing_sim_guard(*args, **kwargs):
         raise ExecutionError("simulation assertion failure: SOL drained")
 
-    monkeypatch.setattr(solana, "send_raw_transaction", fake_send_raw)
+    monkeypatch.setattr(solana, "send_checked_swap", fake_send_checked)
     monkeypatch.setattr(sim_guard, "simulate_and_assert", failing_sim_guard)
 
-    # When _sign_transaction is called with quote and awaited, it must raise and prevent send
     with pytest.raises(ExecutionError, match="simulation assertion failure"):
-        await _sign_transaction(tx_b64, payer, quote=quote)
+        await sign_after_checks(tx_b64, payer, intent=intent, quote=quote)
 
-    assert not send_raw_called, "send_raw_transaction MUST NOT be called if simulation fails"
+    assert not send_checked_called, "send_checked_swap MUST NOT be called if simulation fails"

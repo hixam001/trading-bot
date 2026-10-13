@@ -66,11 +66,11 @@ def _arm_fill(monkeypatch, order):
         order.append("build")
         return base64.b64encode(b"swap").decode()
 
-    def fake_sign(b64, payer):
+    async def fake_sign(b64, payer, intent=None, quote=None):
         order.append("sign")
-        return "FILLSIG", b"raw"
+        return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True)
 
-    async def fake_send(raw, endpoints=None):
+    async def fake_send(signed, endpoints=None):
         order.append("send")
         return "FILLSIG"
 
@@ -81,8 +81,8 @@ def _arm_fill(monkeypatch, order):
     monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
     monkeypatch.setattr(ex, "get_jupiter_quote", fake_quote)
     monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
-    monkeypatch.setattr(ex, "_sign_transaction", fake_sign)
-    monkeypatch.setattr(ex.solana, "send_raw_transaction", fake_send)
+    monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
+    monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send)
     monkeypatch.setattr(ex.solana, "confirm_signature", fake_confirm)
 
 
@@ -93,7 +93,7 @@ async def test_happy_path_memo_before_fill(env, monkeypatch):
     ledger = ExecutionLedger(env / "exec.json")
 
     res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
-                             idempotency_key="k1", ledger=ledger)
+                             idempotency_key="k1", ledger=ledger, reference_price_usd=1.0)
 
     assert res.status == "filled"
     # The memo is published BEFORE the quote/build/sign/send/confirm.
@@ -121,12 +121,12 @@ async def test_memo_failure_blocks_fill_entirely(env, monkeypatch):
     monkeypatch.setattr(ex.memo, "publish_commit_memo", failing_memo)
     monkeypatch.setattr(ex, "get_jupiter_quote", boom)
     monkeypatch.setattr(ex, "_build_swap_transaction", boom)
-    monkeypatch.setattr(ex, "_sign_transaction", boom)
-    monkeypatch.setattr(ex.solana, "send_raw_transaction", boom)
+    monkeypatch.setattr(ex, "sign_after_checks", boom)
+    monkeypatch.setattr(ex.solana, "send_checked_swap", boom)
     ledger = ExecutionLedger(env / "exec.json")
 
     res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
-                             idempotency_key="k2", ledger=ledger)
+                             idempotency_key="k2", ledger=ledger, reference_price_usd=1.0)
 
     assert res.status == "failed"
     assert "commit memo failed" in res.reason
@@ -237,11 +237,11 @@ def _arm_sell_network(monkeypatch, calls):
         calls.append("build")
         return base64.b64encode(b"swap").decode()
 
-    def fake_sign(b64, payer):
+    async def fake_sign(b64, payer, intent=None, quote=None):
         calls.append("sign")
-        return "FILLSIG", b"raw"
+        return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True)
 
-    async def fake_send(raw, endpoints=None):
+    async def fake_send(signed, endpoints=None):
         calls.append("send")
         return "FILLSIG"
 
@@ -255,8 +255,8 @@ def _arm_sell_network(monkeypatch, calls):
     monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
     monkeypatch.setattr(ex, "_get_json", fake_get)
     monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
-    monkeypatch.setattr(ex, "_sign_transaction", fake_sign)
-    monkeypatch.setattr(ex.solana, "send_raw_transaction", fake_send)
+    monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
+    monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send)
     monkeypatch.setattr(ex.solana, "confirm_signature", fake_confirm)
     monkeypatch.setattr(ex.solana, "get_mint_decimals", fake_decimals)
 
@@ -283,7 +283,7 @@ async def test_buy_quote_failure_returns_failed_not_nameerror(env, monkeypatch):
     ledger = ExecutionLedger(env / "exec.json")
 
     res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
-                             idempotency_key="kq1", ledger=ledger)
+                             idempotency_key="kq1", ledger=ledger, reference_price_usd=1.0)
 
     assert res.status == "failed"
     assert "giving up" in res.reason

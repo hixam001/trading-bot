@@ -57,6 +57,7 @@ from data_providers.jupiter import raw_units_for_one_token  # noqa: E402
 from config import JUPITER_QUOTE_URL as _BACKEND_QUOTE_URL  # noqa: E402
 from config import USDC_MINT as _BACKEND_USDC_MINT  # noqa: E402
 
+import math
 from live_execution import config  # noqa: E402
 from live_execution import kill_switch  # noqa: E402
 from live_execution import solana  # noqa: E402
@@ -66,14 +67,14 @@ from live_execution.confirmation_queue import (  # noqa: E402
     ConfirmationQueue,
 )
 from live_execution.models import ExecutionLedger  # noqa: E402
+from live_execution.trade_intent import TradeIntent  # noqa: E402
 
 log = logging.getLogger(__name__)
 
 USDC_DECIMALS = 6
 
 
-class ExecutionError(Exception):
-    """A trade could not be completed. Nothing was sent unless stated."""
+ExecutionError = solana.ExecutionError
 
 
 class Refusal(ExecutionError):
@@ -689,59 +690,34 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
         # Discriminants are DEX-specific and allowed at top level.
 
 
-class AwaitableSignedTx:
-    """Awaitable and unpackable signed transaction container.
-
-    When awaited, runs pre-sign simulation and balance-delta assertion (SEC-01 / §78-B)
-    BEFORE signing the transaction with the loaded keypair.
-    When unpacked synchronously (for offline test fixtures), provides the signed tuple.
+async def sign_after_checks(
+    swap_b64: str,
+    payer,
+    intent: TradeIntent,
+    quote: Optional[dict] = None,
+) -> solana.SignedSwap:
+    """Fixed sequence (§79 Phase A-2):
+    1. Decode unsigned tx from base64
+    2. inspect_swap_transaction (static instruction inspection)
+    3. (if config.SIMULATION_REQUIRED) await sim_guard.simulate_and_assert
+    4. Sign and return SignedSwap(_checked=True)
     """
-    def __init__(self, tx, payer, swap_b64: str, quote: dict | None = None):
-        self._tx = tx
-        self._payer = payer
-        self._swap_b64 = swap_b64
-        self._quote = quote
-        self._memo = None
-
-    def _get_signed_sync(self):
-        if self._memo is None:
-            from solders.transaction import VersionedTransaction
-            signed = VersionedTransaction(self._tx.message, [self._payer])
-            self._memo = (str(signed.signatures[0]), bytes(signed))
-        return self._memo
-
-    def __iter__(self):
-        return iter(self._get_signed_sync())
-
-    def __getitem__(self, idx):
-        return self._get_signed_sync()[idx]
-
-    def __await__(self):
-        async def _run():
-            if config.SIMULATION_REQUIRED:
-                if self._quote is None:
-                    raise ExecutionError("SIMULATION_REQUIRED is True but no quote provided for pre-sign simulation")
-                from live_execution import sim_guard
-                await sim_guard.simulate_and_assert(self._swap_b64, self._quote, str(self._payer.pubkey()))
-            from solders.transaction import VersionedTransaction
-            signed = VersionedTransaction(self._tx.message, [self._payer])
-            sig = str(signed.signatures[0])
-            raw = bytes(signed)
-            self._memo = (sig, raw)
-            return sig, raw
-        return _run().__await__()
-
-
-def _sign_transaction(swap_b64: str, payer, quote: dict | None = None):
     from solders.transaction import VersionedTransaction  # type: ignore
 
     raw_unsigned = base64.b64decode(swap_b64)
-    # solders 0.29 parse constructor is from_bytes — there is NO .deserialize.
-    # That call crashed the first real armed order (AttributeError) after the
-    # quote+swap phases had already succeeded. Regression-tested offline.
     tx = VersionedTransaction.from_bytes(raw_unsigned)
     inspect_swap_transaction(tx, str(payer.pubkey()))
-    return AwaitableSignedTx(tx, payer, swap_b64, quote)
+
+    if config.SIMULATION_REQUIRED:
+        if quote is None:
+            raise ExecutionError("SIMULATION_REQUIRED is True but no quote provided for pre-sign simulation")
+        from live_execution import sim_guard
+        await sim_guard.simulate_and_assert(swap_b64, quote, str(payer.pubkey()), intent=intent)
+
+    signed = VersionedTransaction(tx.message, [payer])
+    sig = str(signed.signatures[0])
+    raw = bytes(signed)
+    return solana.SignedSwap(signature=sig, raw=raw, _checked=True)
 
 
 
@@ -802,6 +778,7 @@ async def execute_confirmed_trade(
     idempotency_key: str | None = None,
     queue: ConfirmationQueue | None = None,
     ledger: ExecutionLedger | None = None,
+    reference_price_usd: float | None = None,
 ) -> dict:
     """
     Buy `usd_size` USD of `output_mint` on Jupiter, sign locally, send via
@@ -860,21 +837,37 @@ async def execute_confirmed_trade(
     payer = wallet.load_keypair()
     user_public_key = wallet.pubkey_string(payer)
 
+    # Reference price floor for buys (fail closed)
+    if reference_price_usd is None or reference_price_usd <= 0:
+        raise Refusal("no reference price available for buy (fail closed)")
+
+    min_out_raw = math.floor(
+        usd_size
+        / (reference_price_usd * (1.0 + config.BUY_MAX_PRICE_DEVIATION))
+        * (10 ** (output_decimals or 0))
+    )
+    intent = TradeIntent(
+        side="buy",
+        wallet=user_public_key,
+        input_mint=_BACKEND_USDC_MINT,
+        output_mint=output_mint,
+        in_amount_raw=int(usd_size * (10 ** USDC_DECIMALS)),
+        slippage_bps=config.SLIPPAGE_BPS,
+        min_out_raw=min_out_raw,
+        reference_price_usd=reference_price_usd,
+    )
+
     quote_result = await get_jupiter_quote(
         output_mint, output_decimals, usd_size, ledger=ledger
     )
     swap_b64 = await _build_swap_transaction(
         quote_result["quote"], user_public_key
     )
-    try:
-        sign_res = _sign_transaction(swap_b64, payer, quote=quote_result["quote"])
-    except TypeError:
-        sign_res = _sign_transaction(swap_b64, payer)
-    import inspect
-    if inspect.isawaitable(sign_res):
-        signature, raw_signed = await sign_res
-    else:
-        signature, raw_signed = sign_res
+
+    signed_swap = await sign_after_checks(
+        swap_b64, payer, intent=intent, quote=quote_result["quote"]
+    )
+    signature = signed_swap.signature
 
     log.info(
         "EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s",
@@ -882,11 +875,7 @@ async def execute_confirmed_trade(
         quote_result["price_usd"], signature,
     )
 
-    # A5: broadcast + confirm via the SAME multi-RPC failover helpers the
-    # automated executor uses. The old single-endpoint send here carried
-    # maxRetries=0 and no failover — two different broadcast policies for
-    # the same money operation.
-    sent = await solana.send_raw_transaction(raw_signed)
+    sent = await solana.send_checked_swap(signed_swap)
     if not sent:
         raise ExecutionError("every rpc refused the transaction")
     conf = await solana.confirm_signature(sent)

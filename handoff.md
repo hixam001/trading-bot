@@ -1,3 +1,29 @@
+## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
+
+### Phase A: Make the Simulation Layer Trustworthy (`live_execution/{sim_guard.py,solana.py,jupiter_executor.py,executor.py,trade_intent.py,config.py}`, `test_audit_79_a.py`)
+1. **Local Intent Binding (`TradeIntent`)**:
+   - Created `backend/live_execution/trade_intent.py` (`TradeIntent` frozen dataclass with `side`, `wallet`, `input_mint`, `output_mint`, `in_amount_raw`, `slippage_bps`, `min_out_raw`, `reference_price_usd`).
+   - Added `validate_quote_against_intent` in `sim_guard.py` enforcing exact input amount, matching mints, `ExactIn`, exact slippage, `outAmount > 0`, threshold self-consistency (`>= outAmount * (10000 - slippage) / 10000 - 1`), no hidden `platformFee`, and independent price floor.
+   - Enforced independent price floor: `BUY_MAX_PRICE_DEVIATION = 0.10` (refuses buy without DexScreener/Birdeye mark), `SELL_MAX_PRICE_DEVIATION = 0.50`.
+   - Simulation uses `intent.in_amount_raw` for input bound and `max(quote_threshold, intent.min_out_raw)` for output bound.
+2. **Sealed Signing Channel (`sign_after_checks` & `send_checked_swap`)**:
+   - Deleted `AwaitableSignedTx` and `_sign_transaction`.
+   - Replaced with `sign_after_checks(swap_b64, payer, intent)` returning frozen `SignedSwap` with private `_checked=True`.
+   - Added `solana.send_checked_swap` gating transaction broadcast; verifies `signed._checked` before delegating to `send_raw_transaction`.
+   - Swap routes in `executor.py` and `jupiter_executor.py` strictly route through `sign_after_checks` and `send_checked_swap`.
+3. **Multi-RPC Quorum & Host Deduplication**:
+   - Endpoints deduplicated by hostname to ensure genuine infrastructure diversity.
+   - Pure `responses_agree` enforces consensus on success status, matching error codes, payer lamports within 10,000 lamports, and token balances within 50 bps.
+   - Buys strictly require $\ge 2$ agreeing endpoints across distinct hosts (`SIM_MIN_AGREEING_RPCS = 2`).
+   - Sells allow single-RPC fallback when `SIM_SELL_ALLOW_SINGLE_RPC = True`.
+   - Pre-state (`get_multiple_accounts`) is fetched across quorum with identical host deduplication. Added startup verification `solana.check_rpc_diversity()`.
+4. **Token Account Control-Field Invariants**:
+   - Expanded SPL Token layout parser to extract `delegate`, `state`, `delegated_amount`, `close_authority`.
+   - Simulation asserts `delegate`, `close_authority`, and `delegated_amount` are unchanged, and `state != 2` (not frozen).
+5. **Tests**:
+   - Added 10 tests in `backend/tests/test_audit_79_a.py` verifying all 4 findings, price floor refusals, and bypass protections.
+   - Full test suite: **1003 passed** (0 failed).
+
 ## §78 — Post-Audit Hardening (Phases A–F) (2026-10-12)
 
 ### Phase A: Signing Guard Bypass Remediation (`jupiter_executor.py`, `config.py`, `scripts/inspect_live_quote.py`, `test_audit_78_a.py`)

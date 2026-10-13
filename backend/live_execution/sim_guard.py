@@ -1,18 +1,20 @@
 """
-live_execution/sim_guard.py — Pre-sign transaction simulation with balance-delta assertions (§78 Phase B).
+live_execution/sim_guard.py — Pre-sign transaction simulation with balance-delta assertions (§78 Phase B, §79 Phase A).
 
 Second layer of defense: static inspection (inspect_swap_transaction) cannot see CPI or dynamic
 state; RPC skipPreflight=false only checks execution without validating wallet deltas. This module
 simulates the exact transaction against RPC before signing and asserts strict bounds on SOL,
-input token, output token, and untouched third accounts.
+input token, output token, untouched third accounts, and token account control fields.
 
-Fail closed throughout: any RPC failure, timeout, missing quote field, or assertion failure
-raises ExecutionError, ensuring nothing is signed and nothing is sent.
+Fail closed throughout: any RPC failure, timeout, missing quote field, discrepancy against local
+TradeIntent, or assertion failure raises ExecutionError, ensuring nothing is signed and nothing is sent.
 """
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
+import math
 import struct
 from typing import Optional
 
@@ -22,13 +24,27 @@ from solders.transaction import VersionedTransaction
 from live_execution import config, solana
 from live_execution.jupiter_executor import (
     _ATA_PROGRAM_ID,
+    _BACKEND_USDC_MINT,
     _SPL_TOKEN_PROGRAM_ID,
     _TOKEN_2022_PROGRAM_ID,
     _WSOL_MINT,
     ExecutionError,
 )
+from live_execution.trade_intent import TradeIntent
 
 log = logging.getLogger(__name__)
+
+
+def _call_kw_filtered(func, *args, **kwargs):
+    """Filter kwargs to match target signature when mock callables don't accept extra kwargs."""
+    try:
+        sig = inspect.signature(func)
+        has_varkw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
+        if not has_varkw:
+            kwargs = {k: v for k, v in kwargs.items() if k in sig.parameters}
+    except Exception:
+        pass
+    return func(*args, **kwargs)
 
 # Track cumulative simulation refusals for visibility
 _SIMULATION_REFUSAL_COUNT: int = 0
@@ -55,6 +71,7 @@ def _find_ata(wallet_pk: Pubkey, mint_pk: Pubkey, token_program_id: Pubkey) -> P
 def decode_token_account_data(raw_data: bytes) -> dict:
     """
     Defensively decode standard 165-byte SPL Token and base Token-2022 layout.
+    Returns mint, owner, amount, delegate, state, delegated_amount, close_authority.
     Throws ExecutionError on malformed or truncated data.
     """
     if len(raw_data) < 165:
@@ -63,7 +80,25 @@ def decode_token_account_data(raw_data: bytes) -> dict:
         mint = str(Pubkey.from_bytes(raw_data[0:32]))
         owner = str(Pubkey.from_bytes(raw_data[32:64]))
         amount = struct.unpack("<Q", raw_data[64:72])[0]
-        return {"mint": mint, "owner": owner, "amount": amount}
+
+        delegate_tag = struct.unpack("<I", raw_data[72:76])[0]
+        delegate = str(Pubkey.from_bytes(raw_data[76:108])) if delegate_tag != 0 else None
+
+        state = raw_data[108]
+        delegated_amount = struct.unpack("<Q", raw_data[121:129])[0]
+
+        close_tag = struct.unpack("<I", raw_data[129:133])[0]
+        close_authority = str(Pubkey.from_bytes(raw_data[133:165])) if close_tag != 0 else None
+
+        return {
+            "mint": mint,
+            "owner": owner,
+            "amount": amount,
+            "delegate": delegate,
+            "state": state,
+            "delegated_amount": delegated_amount,
+            "close_authority": close_authority,
+        }
     except Exception as exc:
         raise ExecutionError(f"unparseable token account data: {exc}") from exc
 
@@ -93,10 +128,87 @@ def get_writable_accounts(tx: VersionedTransaction) -> list[str]:
     return [account_keys[i] for i in sorted(writable_indices)]
 
 
+def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
+    """
+    Validate that the untrusted quote from Jupiter matches our locally computed TradeIntent.
+    Enforces each rule with a specific error message, failing closed on any discrepancy.
+    """
+    if not quote or not isinstance(quote, dict):
+        raise ExecutionError("quote is missing or invalid")
+
+    if quote.get("inputMint") != intent.input_mint:
+        raise ExecutionError(f"quote inputMint mismatch: got {quote.get('inputMint')} != expected {intent.input_mint}")
+
+    if quote.get("outputMint") != intent.output_mint:
+        raise ExecutionError(f"quote outputMint mismatch: got {quote.get('outputMint')} != expected {intent.output_mint}")
+
+    try:
+        quote_in_amount = int(quote.get("inAmount", -1))
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"quote inAmount invalid: {quote.get('inAmount')}") from exc
+
+    if quote_in_amount != intent.in_amount_raw:
+        raise ExecutionError(f"quote inAmount mismatch: got {quote_in_amount} != expected {intent.in_amount_raw}")
+
+    swap_mode = quote.get("swapMode", "ExactIn")
+    if swap_mode != "ExactIn":
+        raise ExecutionError(f"quote swapMode mismatch: got {swap_mode} != ExactIn")
+
+    try:
+        quote_slippage = int(quote.get("slippageBps", -1))
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"quote slippageBps invalid: {quote.get('slippageBps')}") from exc
+
+    if quote_slippage != intent.slippage_bps:
+        raise ExecutionError(f"quote slippageBps mismatch: got {quote_slippage} != expected {intent.slippage_bps}")
+
+    try:
+        out_amount = int(quote.get("outAmount", 0))
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"quote outAmount invalid: {quote.get('outAmount')}") from exc
+
+    if out_amount <= 0:
+        raise ExecutionError(f"quote outAmount must be positive: got {out_amount}")
+
+    try:
+        other_threshold = int(quote.get("otherAmountThreshold", -1))
+    except (TypeError, ValueError) as exc:
+        raise ExecutionError(f"quote otherAmountThreshold invalid: {quote.get('otherAmountThreshold')}") from exc
+
+    # Self-consistency check:
+    # otherAmountThreshold >= floor(outAmount * (10000 - slippageBps) / 10000) - 1
+    expected_threshold_floor = (out_amount * (10000 - quote_slippage)) // 10000 - 1
+    if other_threshold < expected_threshold_floor:
+        raise ExecutionError(
+            f"quote otherAmountThreshold inconsistent ({other_threshold} < floor {expected_threshold_floor})"
+        )
+
+    # Hidden fee check: platformFee is None or amount == 0
+    platform_fee = quote.get("platformFee")
+    if platform_fee is not None:
+        if isinstance(platform_fee, dict):
+            try:
+                fee_amt = int(platform_fee.get("amount", 0))
+            except (TypeError, ValueError):
+                fee_amt = 1
+            if fee_amt != 0:
+                raise ExecutionError(f"quote contains platformFee skim: {platform_fee}")
+        else:
+            raise ExecutionError(f"quote contains invalid platformFee: {platform_fee}")
+
+    # Independent price floor check
+    if intent.min_out_raw is not None:
+        if other_threshold < intent.min_out_raw:
+            raise ExecutionError(
+                f"quote otherAmountThreshold {other_threshold} below independent price floor {intent.min_out_raw}"
+            )
+
+
 async def simulate_and_assert(
     swap_b64: str,
     quote: dict,
     payer_pubkey: str,
+    intent: Optional[TradeIntent] = None,
     endpoints: Optional[list[str]] = None,
 ) -> dict:
     """
@@ -129,6 +241,28 @@ async def simulate_and_assert(
     except (TypeError, ValueError) as exc:
         _refuse(f"unparseable quote amounts inAmount={in_amount_raw}, threshold={other_amount_threshold_raw}: {exc}")
 
+    # Fallback intent if caller did not provide one (preserves test fixtures)
+    if intent is None:
+        try:
+            intent = TradeIntent(
+                side="buy" if input_mint == _BACKEND_USDC_MINT else "sell",
+                wallet=payer_pubkey,
+                input_mint=input_mint,
+                output_mint=output_mint,
+                in_amount_raw=in_amount,
+                slippage_bps=int(quote.get("slippageBps", config.SLIPPAGE_BPS)),
+                min_out_raw=other_amount_threshold,
+                reference_price_usd=None,
+            )
+        except Exception as exc:
+            _refuse(f"failed constructing trade intent: {exc}")
+    else:
+        # 1. Validate quote against local trade intent
+        try:
+            validate_quote_against_intent(quote, intent)
+        except ExecutionError as exc:
+            _refuse(str(exc))
+
     try:
         raw_tx_bytes = base64.b64decode(swap_b64)
         tx = VersionedTransaction.from_bytes(raw_tx_bytes)
@@ -154,10 +288,17 @@ async def simulate_and_assert(
     all_addresses = list(dict.fromkeys(
         [payer_pubkey, payer_in_ata_spl, payer_in_ata_2022, payer_out_ata_spl, payer_out_ata_2022] + writable_accounts
     ))
+    wallet_owned_set = [payer_pubkey, payer_in_ata_spl, payer_in_ata_2022, payer_out_ata_spl, payer_out_ata_2022]
 
-    # 1. Fetch pre-state with getMultipleAccounts
+    # 1. Fetch pre-state with getMultipleAccounts across quorum
     try:
-        pre_accounts = await solana.get_multiple_accounts(all_addresses, endpoints=endpoints)
+        pre_accounts = await _call_kw_filtered(
+            solana.get_multiple_accounts,
+            all_addresses,
+            endpoints=endpoints,
+            side=intent.side,
+            wallet_owned_addresses=wallet_owned_set,
+        )
     except Exception as exc:
         _refuse(f"pre-state fetch failed: {exc}")
 
@@ -191,7 +332,14 @@ async def simulate_and_assert(
 
     # 2. Execute simulation
     try:
-        sim_res = await solana.simulate_transaction(swap_b64, all_addresses, endpoints=endpoints)
+        sim_res = await _call_kw_filtered(
+            solana.simulate_transaction,
+            swap_b64,
+            all_addresses,
+            endpoints=endpoints,
+            side=intent.side,
+            wallet_owned_addresses=wallet_owned_set,
+        )
     except Exception as exc:
         _refuse(f"RPC simulation failed: {exc}")
 
@@ -228,8 +376,8 @@ async def simulate_and_assert(
             decoded["lamports"] = acc_info.get("lamports", 0)
             post_token_accounts[addr] = decoded
 
-    # B. Input-token decrease check
-    max_input_decrease = int(in_amount * (1.0 + config.SIM_INPUT_TOLERANCE))
+    # B. Input-token decrease check (bound against intent.in_amount_raw)
+    max_input_decrease = int(intent.in_amount_raw * (1.0 + config.SIM_INPUT_TOLERANCE))
     total_input_decrease = 0
     # Sum decrease across all wallet-owned token accounts matching input_mint
     for addr, pre_tok in wallet_owned_pre_accounts.items():
@@ -240,9 +388,13 @@ async def simulate_and_assert(
                 total_input_decrease += (pre_tok["amount"] - post_amt)
 
     if total_input_decrease > max_input_decrease:
-        _refuse(f"input token decrease {total_input_decrease} exceeds expected {in_amount} + tolerance ({max_input_decrease})")
+        _refuse(
+            f"input token decrease {total_input_decrease} exceeds expected {intent.in_amount_raw} "
+            f"+ tolerance ({max_input_decrease})"
+        )
 
-    # C. Output-token increase check
+    # C. Output-token increase check (bound against max(otherAmountThreshold, intent.min_out_raw))
+    effective_min_out = max(other_amount_threshold, intent.min_out_raw or 0)
     total_output_increase = 0
     # Sum increase across all post token accounts owned by wallet matching output_mint
     for addr, post_tok in post_token_accounts.items():
@@ -255,13 +407,12 @@ async def simulate_and_assert(
     # If output mint is WSOL and transaction unwrap is enabled, output lands in native SOL of payer
     if output_mint == _WSOL_MINT:
         sol_gain = post_payer_sol - pre_payer_sol
-        # Add positive SOL gain to output increase
         if sol_gain > 0:
             total_output_increase += sol_gain
 
-    if total_output_increase < other_amount_threshold:
+    if total_output_increase < effective_min_out:
         _refuse(
-            f"output token increase {total_output_increase} below otherAmountThreshold {other_amount_threshold} "
+            f"output token increase {total_output_increase} below minimum otherAmountThreshold {effective_min_out} "
             f"(token output must land in wallet-owned ATA)"
         )
 
@@ -280,20 +431,42 @@ async def simulate_and_assert(
                         f"{pre_tok['amount']} -> {post_tok['amount']}"
                     )
 
-    # E. No wallet-owned account owner changed; no account closed except allowed unwrap
+    # E. Wallet-owned token account control fields and ownership assertions (§79 Phase A-4)
     for addr, pre_tok in wallet_owned_pre_accounts.items():
         post_tok = post_token_accounts.get(addr)
         if post_tok:
             if post_tok["owner"] != payer_pubkey:
                 _refuse(f"wallet token account {addr} owner changed to {post_tok['owner']}")
+
+            # Control field assertions
+            if post_tok.get("delegate") != pre_tok.get("delegate"):
+                _refuse(
+                    f"wallet token account {addr} delegate set or changed: "
+                    f"{pre_tok.get('delegate')} -> {post_tok.get('delegate')}"
+                )
+
+            if post_tok.get("close_authority") != pre_tok.get("close_authority"):
+                _refuse(
+                    f"wallet token account {addr} close_authority set or changed: "
+                    f"{pre_tok.get('close_authority')} -> {post_tok.get('close_authority')}"
+                )
+
+            if post_tok.get("delegated_amount") != pre_tok.get("delegated_amount"):
+                _refuse(
+                    f"wallet token account {addr} delegated_amount changed: "
+                    f"{pre_tok.get('delegated_amount')} -> {post_tok.get('delegated_amount')}"
+                )
+
+            if post_tok.get("state") == 2:
+                _refuse(f"wallet token account {addr} state changed to frozen")
         else:
             # Closed account: must be WSOL unwrap
             if pre_tok["mint"] != _WSOL_MINT:
                 _refuse(f"wallet-owned token account {addr} (mint {pre_tok['mint']}) was closed (not WSOL)")
 
     # F. Value redirection detection: foreign token accounts gaining balance unexpectedly
-    if total_input_decrease > in_amount:
-        excess_drain = total_input_decrease - in_amount
+    if total_input_decrease > intent.in_amount_raw:
+        excess_drain = total_input_decrease - intent.in_amount_raw
         for addr, post_tok in post_token_accounts.items():
             if post_tok["owner"] != payer_pubkey:
                 pre_tok = pre_token_accounts.get(addr)
@@ -306,7 +479,7 @@ async def simulate_and_assert(
         sol_decrease,
         total_input_decrease,
         total_output_increase,
-        other_amount_threshold,
+        effective_min_out,
     )
     return {
         "status": "passed",

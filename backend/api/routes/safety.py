@@ -190,6 +190,18 @@ async def get_safety(request: Request):
     except Exception:
         log.warning("safety: no-fills check failed (fail-soft)", exc_info=True)
 
+    rpc_hosts = []
+    rpc_quorum_ok = False
+    try:
+        from live_execution import config as _le_config
+        from live_execution.solana import check_rpc_diversity
+        from urllib.parse import urlparse
+        raw_hosts = [urlparse(u).netloc for u in _le_config.RPC_URLS if u]
+        rpc_hosts = list(dict.fromkeys([h for h in raw_hosts if h]))
+        _, rpc_quorum_ok = check_rpc_diversity()
+    except Exception:
+        log.warning("safety: rpc diversity check failed (fail-soft)", exc_info=True)
+
     return {
         "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "armed": _armed_flag(),
@@ -210,6 +222,8 @@ async def get_safety(request: Request):
         },
         "crowd_chain": chain,
         "alerts": alerts,
+        "rpc_hosts": rpc_hosts,
+        "rpc_quorum_ok": rpc_quorum_ok,
         "thresholds": {
             "no_fills_hours": ALERT_NO_FILLS_HOURS,
             "no_fills_min_candidates": ALERT_NO_FILLS_MIN_CANDIDATES,

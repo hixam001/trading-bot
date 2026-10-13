@@ -27,6 +27,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
+import math
 from live_execution import config, kill_switch, memo, solana, wallet
 from live_execution.confirmation_queue import ConfirmationError
 from live_execution.jupiter_executor import (
@@ -37,15 +38,16 @@ from live_execution.jupiter_executor import (
     _BACKEND_USDC_MINT,
     _build_swap_transaction,
     _get_json,
-    _sign_transaction,
     default_ledger,
     default_queue,
     get_jupiter_quote,
     preflight,
+    sign_after_checks,
 )
 from live_execution.models import ExecutionLedger
 from live_execution.commit_log import CommitLog
 from live_execution.venue import token_deltas_from_tx
+from live_execution.trade_intent import TradeIntent
 
 log = logging.getLogger(__name__)
 
@@ -137,24 +139,19 @@ def quote_impact_pct(quote: dict) -> float:
         return 0.0
 
 
-async def _broadcast_and_confirm(swap_b64: str, payer, logc=None, sealed=None, quote: Optional[dict] = None) -> OrderResult:
-    """Sign locally, broadcast across RPCs, confirm. Journal is the CALLER job.
-
-    REF-R11: sealing + memo publication already happened in the caller
-    BEFORE this runs; on confirmation the fill signature is bound to the
-    sealed (and already on-chain) commit."""
-    try:
-        sign_res = _sign_transaction(swap_b64, payer, quote=quote)
-    except TypeError:
-        sign_res = _sign_transaction(swap_b64, payer)
-    import inspect
-    if inspect.isawaitable(sign_res):
-        signature, raw_signed = await sign_res
-    else:
-        signature, raw_signed = sign_res
-    sent = await solana.send_raw_transaction(raw_signed)
+async def _broadcast_and_confirm(
+    swap_b64: str,
+    payer,
+    intent: TradeIntent,
+    logc=None,
+    sealed=None,
+    quote: Optional[dict] = None,
+) -> OrderResult:
+    """Sign after simulation checks, broadcast via send_checked_swap, confirm. Journal is the CALLER job."""
+    signed_swap = await sign_after_checks(swap_b64, payer, intent=intent, quote=quote)
+    sent = await solana.send_checked_swap(signed_swap)
     if not sent:
-        return OrderResult(status="failed", reason="every rpc refused the transaction", signature=signature)
+        return OrderResult(status="failed", reason="every rpc refused the transaction", signature=signed_swap.signature)
     conf = await solana.confirm_signature(sent)
     if not conf["confirmed"]:
         return OrderResult(status="failed", reason=conf["err"] or "unconfirmed", signature=sent)
@@ -172,11 +169,13 @@ async def place_buy(
     idempotency_key: Optional[str] = None,
     queue=None,
     ledger: Optional[ExecutionLedger] = None,
+    reference_price_usd: Optional[float] = None,
 ) -> OrderResult:
     """Automated reference-style BUY: every guard fails closed before any network call."""
     base = OrderResult(side="buy", symbol=symbol, mint=mint)
     ledger = ledger or default_ledger()
     queue = queue or default_queue()
+
     if not idempotency_key:
         # A7 (repo audit): the old time-based fallback key was NOT
         # idempotent — a retry after an unclear network failure generated a
@@ -267,6 +266,12 @@ async def place_buy(
                          commit_payload=intent, memo_signature=memo_res["signature"],
                          memo_slot=memo_res["slot"])
 
+    if reference_price_usd is None or reference_price_usd <= 0:
+        reason = "no reference price available for buy (fail closed)"
+        logc.fail(sealed["hash"], reason)
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": reason, **commit_fields})
+
     try:
         q = await get_jupiter_quote(mint, output_decimals, usd, ledger=ledger)
     except Refusal as exc:
@@ -291,9 +296,26 @@ async def place_buy(
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": reason, **commit_fields})
 
+    min_out_raw = math.floor(
+        usd / (reference_price_usd * (1.0 + config.BUY_MAX_PRICE_DEVIATION))
+        * (10 ** (output_decimals or 0))
+    )
+    trade_intent = TradeIntent(
+        side="buy",
+        wallet=addr,
+        input_mint=_BACKEND_USDC_MINT,
+        output_mint=mint,
+        in_amount_raw=int(usd * (10 ** USDC_DECIMALS)),
+        slippage_bps=config.SLIPPAGE_BPS,
+        min_out_raw=min_out_raw,
+        reference_price_usd=reference_price_usd,
+    )
+
     try:
         swap_b64 = await _build_swap_transaction(q["quote"], addr)
-        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed, quote=q["quote"])
+        outcome = await _broadcast_and_confirm(
+            swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=q["quote"]
+        )
     except Exception as exc:
         # ANY build/sign/broadcast error (ExecutionError or not) fails closed
         # and lands in the journal. The first real armed order died on an
@@ -348,6 +370,7 @@ async def place_sell(
     ledger: Optional[ExecutionLedger] = None,
     full_close: bool = False,
     rule_id: Optional[str] = None,
+    reference_price_usd: Optional[float] = None,
 ) -> OrderResult:
     """reference-style SELL: fraction of the open position, decimals read from chain.
     UNKNOWN decimals refuse - never a default (the decimals lesson).
@@ -425,8 +448,8 @@ async def place_sell(
                               "commit_payload": intent})
     logc.record_memo(sealed["hash"], memo_res["signature"], memo_res["slot"])
     commit_fields = dict(commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
-                         commit_payload=intent, memo_signature=memo_res["signature"],
-                         memo_slot=memo_res["slot"])
+                          commit_payload=intent, memo_signature=memo_res["signature"],
+                          memo_slot=memo_res["slot"])
 
     try:
         # Jupiter's /swap/v1/quote is a GET endpoint (query params). POST
@@ -460,9 +483,31 @@ async def place_sell(
                               "reason": reason, **commit_fields})
     proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
 
+    min_out_raw = None
+    if reference_price_usd is not None and reference_price_usd > 0:
+        min_out_raw = math.floor(
+            sell_amount * reference_price_usd * (1.0 - config.SELL_MAX_PRICE_DEVIATION)
+            * (10 ** USDC_DECIMALS)
+        )
+    else:
+        log.warning("SELL_NO_REF_PRICE: sell %s has no reference price; relying on self-consistency check", mint[:8])
+
+    trade_intent = TradeIntent(
+        side="sell",
+        wallet=addr,
+        input_mint=mint,
+        output_mint=_BACKEND_USDC_MINT,
+        in_amount_raw=amount_raw,
+        slippage_bps=config.SLIPPAGE_BPS,
+        min_out_raw=min_out_raw,
+        reference_price_usd=reference_price_usd,
+    )
+
     try:
         swap_b64 = await _build_swap_transaction(quote, addr)
-        outcome = await _broadcast_and_confirm(swap_b64, payer, logc=logc, sealed=sealed, quote=quote)
+        outcome = await _broadcast_and_confirm(
+            swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=quote
+        )
     except Exception as exc:
         # Same fail-closed contract as the buy path (see comment there).
         logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
@@ -515,6 +560,7 @@ async def place_order(
     idempotency_key: Optional[str] = None,
     full_close: bool = False,
     rule_id: Optional[str] = None,
+    reference_price_usd: Optional[float] = None,
 ) -> OrderResult:
     """the reference OrderIntent parity: buys sized in USD, sells as a position fraction."""
     if side == "buy":
@@ -523,11 +569,13 @@ async def place_order(
                                side="buy", symbol=symbol, mint=mint)
         return await place_buy(mint, symbol, float(usd), output_decimals,
                                confirmation_id=confirmation_id,
-                               idempotency_key=idempotency_key)
+                               idempotency_key=idempotency_key,
+                               reference_price_usd=reference_price_usd)
     if side == "sell":
         return await place_sell(mint, symbol,
                                 1.0 if fraction is None else float(fraction),
                                 confirmation_id=confirmation_id,
                                 full_close=full_close,
-                                rule_id=rule_id)
+                                rule_id=rule_id,
+                                reference_price_usd=reference_price_usd)
     return OrderResult(status="blocked", reason=f"unknown side {side!r}", side=side, mint=mint)

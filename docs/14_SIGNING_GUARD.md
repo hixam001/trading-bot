@@ -80,19 +80,23 @@ To protect against malicious routes, compromised quote APIs, and hidden CPI drai
 ┌────────────────────────────────────────────────────────┐
 │ Layer 2: Pre-Sign Simulation & Balance Assertions      │
 │ (simulate_and_assert in live_execution/sim_guard.py)   │
-│ - Dual-RPC simulateTransaction against live state      │
+│ - Local intent binding via TradeIntent                 │
+│ - Independent price floor (DexScreener/Birdeye mark)   │
+│ - Multi-RPC quorum across distinct hosts               │
 │ - Verifies balances: SOL decrease <= 0.01 SOL          │
-│ - Input token decrease <= intended + 1% tolerance      │
-│ - Output token increase >= otherAmountThreshold        │
+│ - Input token decrease <= intent raw + 0.5% tolerance  │
+│ - Output token increase >= max(threshold, price_floor) │
+│ - Token account control fields: delegate/close/frozen  │
 │ - Zero balance change on other wallet token accounts   │
 │ - No unauthorized account owner changes or closures    │
 │ - Traps value redirection to third-party accounts      │
 └────────────────────────────────────────────────────────┘
       │
-      ▼ (Sign Transaction with Wallet Keypair)
+      ▼ (sign_after_checks produces SignedSwap with _checked=True)
 ┌────────────────────────────────────────────────────────┐
 │ Layer 3: RPC Preflight on Broadcast                    │
-│ (solana.send_raw_transaction with skipPreflight: False)│
+│ (solana.send_checked_swap -> send_raw_transaction)     │
+│ - Enforces _checked sentinel; fails closed if bypassed │
 │ - Solana node verifies program execution status        │
 │ - Rejects expired blockhashes and landing drift        │
 │ - Fails closed before network propagation              │
@@ -108,20 +112,31 @@ Enforced synchronously before any signing operation. Evaluates all outer instruc
 ### Layer 2: Pre-Sign Simulation with Balance-Delta Assertions
 Implemented in [`backend/live_execution/sim_guard.py`](backend/live_execution/sim_guard.py).
 Before signing, the transaction is simulated against independent Solana RPC nodes using `simulateTransaction` with `sigVerify: false`, `replaceRecentBlockhash: true`, and account post-state inspection:
-- Pre-state is fetched for the wallet, its USDC ATA, the output mint ATA, and every writable token account in the transaction owned by the wallet via `getMultipleAccounts`.
-- Simulation results across RPC endpoints are validated for consensus (SEC-01 dual-RPC consensus).
-- Invariants asserted:
-  1. `err is None` (simulation succeeded without runtime error).
+- **Local Intent Binding (`TradeIntent`):** The guard does not trust numbers from the Jupiter API quote. It compares the quote against a local `TradeIntent` created by the bot:
+  1. `inAmount` matches locally calculated raw input amount.
+  2. `slippageBps` matches the exact value requested.
+  3. `swapMode == "ExactIn"`, `outAmount > 0`, and no hidden `platformFee`.
+  4. Quoted `otherAmountThreshold` is self-consistent with `outAmount * (1 - slippage)`.
+  5. Independent price floor: buy requires reference price from DexScreener/Birdeye within 10% deviation; sell within 50% deviation.
+- **Multi-RPC Quorum & Host Deduplication:**
+  - RPC endpoints are deduplicated by hostname to prevent multiple URLs pointing to the same provider from counting as separate consensus nodes.
+  - Quorum verification (`responses_agree`) checks that RPC responses match on success status, error codes, payer lamports within 10,000 lamports, and token balances within 50 bps.
+  - Buys strictly require $\ge 2$ agreeing endpoints across distinct hosts (`SIM_MIN_AGREEING_RPCS = 2`).
+  - Sells allow single-RPC fallback when `SIM_SELL_ALLOW_SINGLE_RPC = True` to guarantee exit capability during RPC outages.
+  - Pre-state is fetched across quorum via `getMultipleAccounts`.
+- **Invariants Asserted:**
+  1. `err is None` across agreeing RPC endpoints.
   2. Wallet SOL decrease $\le$ `SIM_MAX_SOL_DECREASE_LAMPORTS` (10,000,000 lamports = 0.01 SOL).
-  3. Input token decrease $\le$ quote input amount $\times (1 + \text{SIM\_INPUT\_TOLERANCE})$.
-  4. Output token increase $\ge$ quote's `otherAmountThreshold` (verifies funds arrive in *our* ATA).
+  3. Input token decrease $\le$ `intent.in_amount_raw` $\times (1 + \text{SIM\_AMOUNT\_TOLERANCE\_BPS} / 10000)$.
+  4. Output token increase $\ge \max(\text{otherAmountThreshold}, \text{min\_out\_raw})$.
   5. Every other wallet-owned token account unchanged.
   6. No wallet-owned account has its owner modified or is closed unexpectedly.
-  7. Value redirection check: any third-party account gaining balance while wallet balance decreases is refused.
+  7. Token account control fields: `delegate`, `close_authority`, and `delegated_amount` must remain unchanged; account `state` must not become frozen (`state == 2`).
+  8. Value redirection check: any third-party account gaining balance while wallet balance decreases is refused.
 - Hardcoded `SIMULATION_REQUIRED = True` ensures transactions cannot bypass simulation.
 
 ### Layer 3: RPC Preflight on Broadcast
-In [`backend/live_execution/solana.py`](backend/live_execution/solana.py), `send_raw_transaction` enforces:
+In [`backend/live_execution/solana.py`](backend/live_execution/solana.py), `send_checked_swap` guarantees that only a `SignedSwap` object with `_checked=True` (produced exclusively by `sign_after_checks`) can be submitted. It delegates to `send_raw_transaction` which enforces:
 ```json
 {
   "encoding": "base64",

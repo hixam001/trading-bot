@@ -19,6 +19,7 @@ import pytest
 import live_execution.config as le_config
 from live_execution import jupiter_executor as je
 from live_execution import kill_switch, wallet
+from live_execution import solana as le_solana
 from live_execution.confirmation_queue import ConfirmationQueue
 from live_execution.models import ExecutionLedger
 
@@ -268,7 +269,21 @@ def test_sign_transaction_real_solders_roundtrip(env):
     seed = VersionedTransaction(msg, [payer])
     swap_b64 = base64.b64encode(bytes(seed)).decode()
 
-    signature, raw_signed = je._sign_transaction(swap_b64, payer)
+    from live_execution.trade_intent import TradeIntent
+    intent = TradeIntent(
+        side="buy",
+        wallet=str(payer.pubkey()),
+        input_mint="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+        output_mint="MINT11111111111111111111111111111111111111",
+        in_amount_raw=10_000_000,
+        slippage_bps=50,
+        min_out_raw=None,
+        reference_price_usd=None,
+    )
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(le_config, "SIMULATION_REQUIRED", False)
+    signed_swap = asyncio.run(je.sign_after_checks(swap_b64, payer, intent=intent))
+    signature, raw_signed = signed_swap.signature, signed_swap.raw
 
     assert len(signature) >= 40
     assert raw_signed and len(raw_signed) > 0
@@ -329,14 +344,16 @@ def _wire_fake_network(monkeypatch, calls: list[dict]):
     monkeypatch.setattr(je, "_get_json", fake_get)
     monkeypatch.setattr(je, "_post_json", fake_post)
     monkeypatch.setattr(le_solana, "send_raw_transaction", fake_send)
+    monkeypatch.setattr(le_solana, "send_checked_swap", lambda signed, endpoints=None: fake_send(signed.raw, endpoints))
     monkeypatch.setattr(le_solana, "confirm_signature", fake_confirm)
 
 
 def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
     monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
     monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
-    monkeypatch.setattr(
-        je, "_sign_transaction", lambda b64, payer: ("SIG123", b"signed-tx"))
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        return le_solana.SignedSwap("SIG123", b"signed-tx", _checked=True)
+    monkeypatch.setattr(je, "sign_after_checks", fake_sign)
     calls: list[dict] = []
     _wire_fake_network(monkeypatch, calls)
 
@@ -346,6 +363,7 @@ def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
     result = asyncio.run(je.execute_confirmed_trade(
         "MINT", 6, 10.0,
         idempotency_key="trade-1", queue=queue, ledger=ledger,
+        reference_price_usd=1.0,
     ))
     assert result["deduplicated"] is False
     assert result["signature"] == "SIG123"
@@ -369,6 +387,7 @@ def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
     again = asyncio.run(je.execute_confirmed_trade(
         "MINT", 6, 10.0,
         idempotency_key="trade-1", queue=queue, ledger=ledger,
+        reference_price_usd=1.0,
     ))
     assert again["deduplicated"] is True
     assert again["signature"] == "SIG123"
@@ -380,8 +399,9 @@ def test_propose_then_approve_then_execute_consumes_confirmation(
     monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
     monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
     monkeypatch.setattr(le_config, "REQUIRE_MANUAL_CONFIRMATION", True)
-    monkeypatch.setattr(
-        je, "_sign_transaction", lambda b64, payer: ("SIG9", b"s"))
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        return le_solana.SignedSwap("SIG9", b"s", _checked=True)
+    monkeypatch.setattr(je, "sign_after_checks", fake_sign)
     calls: list[dict] = []
     _wire_fake_network(monkeypatch, calls)
 
@@ -399,6 +419,7 @@ def test_propose_then_approve_then_execute_consumes_confirmation(
         "MINT", 6, 10.0,
         confirmation_id=pc.id, idempotency_key="trade-2",
         queue=queue, ledger=ledger,
+        reference_price_usd=1.0,
     ))
     assert result["deduplicated"] is False
     stored = json.loads((env / "confirmations.json").read_text())
@@ -410,6 +431,7 @@ def test_propose_then_approve_then_execute_consumes_confirmation(
             "OTHER", 6, 10.0,
             confirmation_id=pc.id, idempotency_key="trade-3",
             queue=queue, ledger=ledger,
+            reference_price_usd=1.0,
         ))
 
 

@@ -47,42 +47,242 @@ async def rpc(
                 log.info("[solana] %s refused by %s: %s", method, endpoint, body.get("error"))
                 continue
             return body["result"]
+from dataclasses import dataclass
+from urllib.parse import urlparse
+
+class ExecutionError(Exception):
+    """Raised when an armed order fails during quote/build/broadcast."""
+
+
 class SimulationError(Exception):
     """Raised when on-chain simulation or RPC verification fails."""
+
+
+@dataclass(frozen=True)
+class SignedSwap:
+    signature: str
+    raw: bytes
+    _checked: bool = False
+
+
+async def send_checked_swap(
+    signed: SignedSwap,
+    endpoints: Optional[list[str]] = None,
+) -> Optional[str]:
+    """Broadcast a swap transaction that has passed static inspection and pre-sign simulation."""
+    if not isinstance(signed, SignedSwap) or not getattr(signed, "_checked", False):
+        raise ExecutionError("send_checked_swap refused: transaction was not verified by sign_after_checks")
+    return await send_raw_transaction(signed.raw, endpoints=endpoints)
+
+
+def _get_async_client(timeout: float = 15.0) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout)
+
+
+def _dedup_endpoints_by_host(endpoints: list[str]) -> list[str]:
+    seen_hosts = set()
+    deduped = []
+    for ep in endpoints:
+        try:
+            host = urlparse(ep).netloc
+        except Exception:
+            host = ep
+        if host and host not in seen_hosts:
+            seen_hosts.add(host)
+            deduped.append(ep)
+    return deduped
+
+
+def check_rpc_diversity(endpoints: Optional[list[str]] = None) -> tuple[int, bool]:
+    """Check number of distinct RPC hosts. Returns (distinct_host_count, is_diverse)."""
+    eps = endpoints or config.RPC_URLS
+    deduped = _dedup_endpoints_by_host(eps)
+    distinct_count = len(deduped)
+    is_diverse = distinct_count >= 2
+    if not is_diverse:
+        log.critical("RPC_NOT_DIVERSE: config.RPC_URLS has fewer than 2 distinct hosts (%d hosts: %s)",
+                     distinct_count, [urlparse(e).netloc for e in eps])
+    return distinct_count, is_diverse
+
+
+def responses_agree(
+    a: dict,
+    b: dict,
+    wallet_owned_addrs: list[str],
+    all_addresses: Optional[list[str]] = None,
+) -> bool:
+    """
+    Pure agreement rule comparing two simulation responses a and b:
+    - Both err equal (both None or equal JSON/dict)
+    - Same account count
+    - For payer and every address in wallet_owned_addrs:
+      - decoded token amount within SIM_AMOUNT_TOLERANCE_BPS (absolute floor 1 unit)
+      - same owner
+      - same delegate presence
+      - payer lamports within SIM_LAMPORT_TOLERANCE
+    """
+    if a.get("err") != b.get("err"):
+        return False
+
+    accs_a = a.get("post_accounts", [])
+    accs_b = b.get("post_accounts", [])
+    if len(accs_a) != len(accs_b):
+        return False
+
+    from live_execution.jupiter_executor import (
+        _SPL_TOKEN_PROGRAM_ID,
+        _TOKEN_2022_PROGRAM_ID,
+    )
+    from live_execution.sim_guard import decode_token_account_data
+
+    # Map addresses to accounts if all_addresses is provided, else match by index
+    addr_to_a: dict[str, dict | None] = {}
+    addr_to_b: dict[str, dict | None] = {}
+    if all_addresses and len(all_addresses) == len(accs_a):
+        addr_to_a = dict(zip(all_addresses, accs_a))
+        addr_to_b = dict(zip(all_addresses, accs_b))
+    else:
+        # Compare index by index for all available accounts
+        for i in range(len(accs_a)):
+            addr_to_a[str(i)] = accs_a[i]
+            addr_to_b[str(i)] = accs_b[i]
+
+    # Check payer lamports (index 0 / first account)
+    if accs_a and accs_b:
+        p_a = accs_a[0]
+        p_b = accs_b[0]
+        if isinstance(p_a, dict) and isinstance(p_b, dict):
+            lamp_a = p_a.get("lamports", 0)
+            lamp_b = p_b.get("lamports", 0)
+            if abs(lamp_a - lamp_b) > config.SIM_LAMPORT_TOLERANCE:
+                return False
+
+    # Check wallet-owned accounts
+    check_addrs = [addr for addr in wallet_owned_addrs if addr in addr_to_a] if all_addresses else list(addr_to_a.keys())
+    for addr in check_addrs:
+        acc_a = addr_to_a.get(addr)
+        acc_b = addr_to_b.get(addr)
+        if acc_a is None and acc_b is None:
+            continue
+        if (acc_a is None) != (acc_b is None):
+            return False
+        if not isinstance(acc_a, dict) or not isinstance(acc_b, dict):
+            continue
+
+        owner_a = acc_a.get("owner")
+        owner_b = acc_b.get("owner")
+        if owner_a != owner_b:
+            return False
+
+        lamp_a = acc_a.get("lamports", 0)
+        lamp_b = acc_b.get("lamports", 0)
+        if abs(lamp_a - lamp_b) > config.SIM_LAMPORT_TOLERANCE:
+            return False
+
+        # Token account comparisons
+        if owner_a in (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
+            data_a = acc_a.get("data")
+            data_b = acc_b.get("data")
+            raw_a = b""
+            raw_b = b""
+            if isinstance(data_a, list) and data_a:
+                raw_a = base64.b64decode(data_a[0])
+            elif isinstance(data_a, str):
+                raw_a = base64.b64decode(data_a)
+            if isinstance(data_b, list) and data_b:
+                raw_b = base64.b64decode(data_b[0])
+            elif isinstance(data_b, str):
+                raw_b = base64.b64decode(data_b)
+
+            try:
+                dec_a = decode_token_account_data(raw_a)
+                dec_b = decode_token_account_data(raw_b)
+            except Exception:
+                return False
+
+            if dec_a["owner"] != dec_b["owner"]:
+                return False
+            if bool(dec_a["delegate"]) != bool(dec_b["delegate"]):
+                return False
+            if dec_a["state"] != dec_b["state"]:
+                return False
+
+            amt_a = dec_a["amount"]
+            amt_b = dec_b["amount"]
+            diff = abs(amt_a - amt_b)
+            max_allowed = max(1, int(max(amt_a, amt_b) * config.SIM_AMOUNT_TOLERANCE_BPS / 10000))
+            if diff > max_allowed:
+                return False
+
+    return True
 
 
 async def get_multiple_accounts(
     addresses: list[str],
     endpoints: Optional[list[str]] = None,
+    side: str = "buy",
+    wallet_owned_addresses: Optional[list[str]] = None,
 ) -> list[dict | None]:
-    """Fetch multiple accounts in a single RPC call. Returns list of account dicts (or None)."""
+    """Fetch multiple accounts across distinct RPC endpoints with quorum agreement."""
     if not addresses:
         return []
-    res = await rpc(
-        "getMultipleAccounts",
-        [addresses, {"encoding": "base64", "commitment": "confirmed"}],
-        endpoints=endpoints,
-    )
-    if res is None or not isinstance(res.get("value"), list):
-        raise SimulationError("getMultipleAccounts failed or returned malformed data across RPCs")
-    return res["value"]
+
+    target_endpoints = _dedup_endpoints_by_host(endpoints or config.RPC_URLS)[:3]
+    if not target_endpoints:
+        raise SimulationError("no RPC endpoints configured")
+
+    params = [addresses, {"encoding": "base64", "commitment": "confirmed"}]
+
+    async def _fetch(ep: str) -> dict:
+        async with _get_async_client(timeout=8.0) as client:
+            resp = await client.post(
+                ep,
+                json={"jsonrpc": "2.0", "id": 1, "method": "getMultipleAccounts", "params": params},
+            )
+            if resp.status_code != 200:
+                raise SimulationError(f"{ep}: HTTP {resp.status_code}")
+            body = resp.json()
+            if body.get("error") or body.get("result") is None:
+                raise SimulationError(f"{ep}: {body.get('error')}")
+            val = body["result"].get("value")
+            if not isinstance(val, list):
+                raise SimulationError(f"{ep}: malformed getMultipleAccounts response")
+            return {"endpoint": ep, "err": None, "post_accounts": val}
+
+    raw_results = await asyncio.gather(*[_fetch(ep) for ep in target_endpoints], return_exceptions=True)
+    valid_results = [r for r in raw_results if isinstance(r, dict)]
+
+    if not valid_results:
+        raise SimulationError("getMultipleAccounts failed across all RPCs")
+
+    agreeing = 0
+    if valid_results:
+        agreeing = 1
+        for other in valid_results[1:]:
+            if responses_agree(valid_results[0], other, wallet_owned_addresses or addresses, all_addresses=addresses):
+                agreeing += 1
+
+    is_sell = (side == "sell")
+    if agreeing >= config.SIM_MIN_AGREEING_RPCS:
+        return valid_results[0]["post_accounts"]
+    elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) >= 1:
+        log.warning("SIM_SINGLE_RPC_SELL: pre-state fetch proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
+        return valid_results[0]["post_accounts"]
+    else:
+        raise SimulationError(
+            f"getMultipleAccounts quorum not reached: {len(valid_results)} responses, {agreeing} agreeing (min {config.SIM_MIN_AGREEING_RPCS})"
+        )
 
 
 async def simulate_transaction(
     tx_b64: str,
     accounts: list[str],
     endpoints: Optional[list[str]] = None,
+    side: str = "buy",
+    wallet_owned_addresses: Optional[list[str]] = None,
     require_dual_rpc: bool = True,
 ) -> dict:
-    """Simulate a transaction against Solana RPC with account state inspection.
-
-    If two or more RPC endpoints are available in config.RPC_URLS, simulates against
-    two independent endpoints and requires agreement (SEC-01 dual-RPC consensus).
-
-    Returns:
-      {"err": ..., "logs": [...], "units": int, "post_accounts": [...]}
-    Raises SimulationError on unreachable RPCs, RPC errors, or RPC disagreement.
-    """
+    """Simulate a transaction against Solana RPC with account state inspection and dual-RPC consensus."""
     params = [
         tx_b64,
         {
@@ -97,65 +297,57 @@ async def simulate_transaction(
         },
     ]
 
-    target_endpoints = endpoints or config.RPC_URLS
-    valid_results = []
-    errors = []
+    target_endpoints = _dedup_endpoints_by_host(endpoints or config.RPC_URLS)[:3]
+    if not target_endpoints:
+        raise SimulationError("no RPC endpoints configured")
 
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        for endpoint in target_endpoints:
-            try:
-                resp = await client.post(
-                    endpoint,
-                    json={"jsonrpc": "2.0", "id": 1, "method": "simulateTransaction", "params": params},
-                )
-                if resp.status_code != 200:
-                    errors.append(f"{endpoint}: HTTP {resp.status_code}")
-                    continue
-                body = resp.json()
-                if body.get("error"):
-                    errors.append(f"{endpoint}: {body.get('error')}")
-                    continue
-                result = body.get("result", {})
-                value = result.get("value")
-                if not isinstance(value, dict):
-                    errors.append(f"{endpoint}: malformed result value")
-                    continue
-                sim_data = {
-                    "err": value.get("err"),
-                    "logs": value.get("logs", []),
-                    "units": value.get("unitsConsumed", 0),
-                    "post_accounts": value.get("accounts", []),
-                }
-                valid_results.append((endpoint, sim_data))
-                if len(valid_results) >= 2 or not require_dual_rpc:
-                    break
-            except (httpx.HTTPError, ValueError, Exception) as exc:
-                errors.append(f"{endpoint}: {exc}")
-                continue
+    async def _query_ep(endpoint: str) -> dict:
+        async with _get_async_client(timeout=8.0) as client:
+            resp = await client.post(
+                endpoint,
+                json={"jsonrpc": "2.0", "id": 1, "method": "simulateTransaction", "params": params},
+            )
+            if resp.status_code != 200:
+                raise SimulationError(f"{endpoint}: HTTP {resp.status_code}")
+            body = resp.json()
+            if body.get("error"):
+                raise SimulationError(f"{endpoint}: {body.get('error')}")
+            result = body.get("result", {})
+            value = result.get("value")
+            if not isinstance(value, dict):
+                raise SimulationError(f"{endpoint}: malformed result value")
+            return {
+                "endpoint": endpoint,
+                "err": value.get("err"),
+                "logs": value.get("logs", []),
+                "units": value.get("unitsConsumed", 0),
+                "post_accounts": value.get("accounts", []),
+            }
+
+    raw_results = await asyncio.gather(*[_query_ep(ep) for ep in target_endpoints], return_exceptions=True)
+    valid_results = [r for r in raw_results if isinstance(r, dict)]
 
     if not valid_results:
+        errors = [str(r) for r in raw_results if isinstance(r, Exception)]
         raise SimulationError(f"simulateTransaction failed across all RPCs: {', '.join(errors)}")
 
-    # Dual-RPC agreement verification if 2 endpoints succeeded
-    if len(valid_results) >= 2 and require_dual_rpc:
-        ep1, res1 = valid_results[0]
-        ep2, res2 = valid_results[1]
-        # Require err status to match (both succeed or both fail)
-        if (res1["err"] is None) != (res2["err"] is None):
-            raise SimulationError(f"simulateTransaction RPC disagreement between {ep1} and {ep2} on err state: {res1['err']} vs {res2['err']}")
-        # Require post accounts count to match
-        if len(res1["post_accounts"]) != len(res2["post_accounts"]):
-            raise SimulationError("simulateTransaction RPC disagreement on accounts length")
-        # For the primary wallet/payer account (index 0), verify lamports agreement within block-drift tolerance (10_000 lamports)
-        if res1["post_accounts"] and res2["post_accounts"]:
-            p1 = res1["post_accounts"][0]
-            p2 = res2["post_accounts"][0]
-            l1 = p1.get("lamports") if isinstance(p1, dict) else None
-            l2 = p2.get("lamports") if isinstance(p2, dict) else None
-            if l1 is not None and l2 is not None and abs(l1 - l2) > 10_000:
-                raise SimulationError(f"simulateTransaction RPC disagreement on payer lamports: {l1} vs {l2}")
+    agreeing = 0
+    if valid_results:
+        agreeing = 1
+        for other in valid_results[1:]:
+            if responses_agree(valid_results[0], other, wallet_owned_addresses or accounts, all_addresses=accounts):
+                agreeing += 1
 
-    return valid_results[0][1]
+    is_sell = (side == "sell")
+    if agreeing >= config.SIM_MIN_AGREEING_RPCS:
+        return valid_results[0]
+    elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) >= 1:
+        log.warning("SIM_SINGLE_RPC_SELL: sell proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
+        return valid_results[0]
+    else:
+        raise SimulationError(
+            f"simulation quorum not reached: {len(valid_results)} responses, {agreeing} agreeing (min {config.SIM_MIN_AGREEING_RPCS})"
+        )
 
 
 

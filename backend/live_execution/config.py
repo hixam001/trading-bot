@@ -133,9 +133,22 @@ MAX_CREATE_ACCOUNT_LAMPORTS: int = 2_500_000
 # Maximum total SOL outflow from payer across top-level System instructions (0.01 SOL)
 MAX_SYSTEM_OUTFLOW_LAMPORTS: int = 10_000_000
 
-# Simulation balance-delta assertion limits (§78 Phase B)
+# Simulation balance-delta assertion limits (§78 Phase B, §79 Phase A)
 SIM_MAX_SOL_DECREASE_LAMPORTS: int = 10_000_000
 SIM_INPUT_TOLERANCE: float = 0.01
+
+# §79 Phase A: Independent price deviation caps for simulation floor
+BUY_MAX_PRICE_DEVIATION: float = 0.10   # 10% max deviation on entry
+SELL_MAX_PRICE_DEVIATION: float = 0.50  # 50% max deviation on exit (crash exit must not be blocked)
+
+# §79 Phase A: Dual-RPC quorum and consensus configuration
+SIM_MIN_AGREEING_RPCS: int = 2
+SIM_SELL_ALLOW_SINGLE_RPC: bool = True  # Sells may proceed on 1 RPC with alert
+SIM_AMOUNT_TOLERANCE_BPS: int = 50      # 0.5% (50 bps) token amount drift
+SIM_LAMPORT_TOLERANCE: int = 10_000     # 10,000 lamports drift
+
+# §79 Phase A: Secondary RPC URL
+SOLANA_RPC_URL_2: str = os.getenv("SOLANA_RPC_URL_2", "").strip()
 
 
 
@@ -143,12 +156,12 @@ SIM_INPUT_TOLERANCE: float = 0.01
 # ---------------------------------------------------------------------------
 # reference-parity execution plumbing (2026-08-25).
 # ---------------------------------------------------------------------------
-# Rotating RPC list: first configured endpoint wins, then public fallbacks
-# (the reference solana.server.ts parity). Public endpoints rate-limit hard; set
-# SOLANA_RPC_URL to a paid RPC before arming.
+# Rotating RPC list: first configured endpoint wins, second configured endpoint
+# (SEC-01 dual-RPC consensus), then public fallbacks.
 RPC_URLS: list = [
     u for u in (
-        os.getenv("SOLANA_RPC_URL", ""),
+        os.getenv("SOLANA_RPC_URL", "").strip(),
+        os.getenv("SOLANA_RPC_URL_2", "").strip(),
         "https://api.mainnet-beta.solana.com",
         "https://solana-rpc.publicnode.com",
     ) if u
