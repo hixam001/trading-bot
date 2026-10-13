@@ -27,6 +27,7 @@ from solders.transaction import VersionedTransaction
 
 from config import JUPITER_QUOTE_URL
 from live_execution import config as live_config, wallet
+from live_execution.quote_params import build_quote_params
 from live_execution.jupiter_executor import (
     _ATA_PROGRAM_ID,
     _COMPUTE_BUDGET_PROGRAM_ID,
@@ -94,8 +95,13 @@ def decode_instruction_tag(prog_id: str, data: bytes) -> str:
 
 
 async def fetch_quote_and_swap(client: httpx.AsyncClient, input_mint: str, output_mint: str, amount_raw: int, wallet_pubkey: str) -> tuple[dict, str]:
-    quote_url = f"{JUPITER_QUOTE_URL}?inputMint={input_mint}&outputMint={output_mint}&amount={amount_raw}&slippageBps=50&asLegacyTransaction=true"
-    r = await client.get(quote_url, timeout=10.0)
+    params = build_quote_params(
+        input_mint=input_mint,
+        output_mint=output_mint,
+        amount_raw=amount_raw,
+        slippage_bps=50,
+    )
+    r = await client.get(JUPITER_QUOTE_URL, params=params, timeout=10.0)
     r.raise_for_status()
     quote = r.json()
 
@@ -105,6 +111,15 @@ async def fetch_quote_and_swap(client: httpx.AsyncClient, input_mint: str, outpu
         "wrapAndUnwrapSol": True,
         "asLegacyTransaction": True,
     }
+    if getattr(live_config, "PRIORITY_FEE_ENABLED", False):
+        swap_payload["dynamicComputeUnitLimit"] = True
+        swap_payload["prioritizationFeeLamports"] = {
+            "priorityLevelWithMaxLamports": {
+                "priorityLevel": getattr(live_config, "PRIORITY_LEVEL", "high"),
+                "maxLamports": getattr(live_config, "PRIORITY_FEE_MAX_LAMPORTS", 200_000),
+                "global": False,
+            }
+        }
     r_swap = await client.post(live_config.JUPITER_SWAP_URL, json=swap_payload, timeout=15.0)
     r_swap.raise_for_status()
     swap_tx_b64 = r_swap.json().get("swapTransaction", "")

@@ -36,11 +36,17 @@ The static guard performs strict structural analysis on the deserialized Solana 
      - Any unknown Token instruction tag or truncated instruction data: Rejected.
    - **Associated Token Account Program (`AToken...`):**
      - `Create` (tag 0) / `CreateIdempotent` (tag 1): Allowed ONLY if the wallet owner account matches our payer pubkey.
-   - **Compute Budget & Memo Programs:** Allowed at top level.
-   - **Approved DEX Aggregators & AMMs:** Allowed at top level.
+   - **Compute Budget Program (`ComputeBudget111111111111111111111111111111`):**
+     - Strictly parses instructions by 1-byte discriminant tag: `RequestHeapFrame` (tag 1), `SetComputeUnitLimit` (tag 2), `SetComputeUnitPrice` (tag 3), `SetLoadedAccountsDataSizeLimit` (tag 4). Any unapproved tag is rejected.
+     - Duplicate limit or duplicate unit price instructions are rejected.
+     - **Priority Fee Hard Cap Enforcement:** The guard calculates `effective_cu_limit * price / 1_000_000` (defaulting to 200,000 CU if limit is omitted) and enforces that total priority fee cannot exceed `PRIORITY_FEE_HARD_CAP_LAMPORTS` (1,000,000 lamports = 0.001 SOL). Prevents malicious quote APIs from draining SOL via astronomical compute unit prices.
+   - **Approved DEX Aggregators & AMMs:**
+     - Allowed at top level strictly according to `APPROVED_SWAP_PROGRAM_IDS`.
+     - Includes Jupiter v6, Raydium (AMM v4, CPMM, CLMM), Orca Whirlpool, Meteora (DLMM, Dynamic Pools), Phoenix, and Lifinity (v1: `EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S`, v2: `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`, verified via official Lifinity documentation and `@jup-ag/lifinity-sdk-v2`).
+   - **Memo Program:** Allowed at top level for transaction commitment records.
 
 4. **Address Lookup Tables (ALTs) Guard:**
-   - Swaps are requested as legacy transactions (`asLegacyTransaction: True`). Any transaction containing `address_table_lookups` is rejected because dynamic lookup regions prevent static verification of program IDs.
+   - Swaps are requested as legacy transactions (`asLegacyTransaction: True`) via unified `build_quote_params`. Any transaction containing `address_table_lookups` is rejected because dynamic lookup regions prevent static verification of program IDs.
 
 5. **Proven Wallet Ownership:**
    - Accounts are not inferred to be wallet-owned merely because the payer funded them. An account created via `CreateAccount` is only recognized as wallet-owned once initialized with owner equal to the payer. Any transfer before initialization is refused.
@@ -127,6 +133,7 @@ Before signing, the transaction is simulated against independent Solana RPC node
 - **Invariants Asserted:**
   1. `err is None` across agreeing RPC endpoints.
   2. Wallet SOL decrease $\le$ `SIM_MAX_SOL_DECREASE_LAMPORTS` (10,000,000 lamports = 0.01 SOL).
+     - **Derived bound reasoning:** In `simulateTransaction`, the Solana runtime deducts transaction fees (base signature fee $\sim$ 5,000–10,000 lamports + priority fee capped at `PRIORITY_FEE_HARD_CAP_LAMPORTS` = 1,000,000 lamports) from the fee payer's post-account lamports. In addition, up to two new token ATAs may be initialized in a swap, requiring rent exemption ($2 \times 2,039,280 = 4,078,560$ lamports). Total legitimate SOL decrease $\approx 1,000,000 + 4,078,560 + 10,000 = 5,088,560$ lamports, safely bounded below the 10,000,000 lamport (0.01 SOL) cap.
   3. Input token decrease $\le$ `intent.in_amount_raw` $\times (1 + \text{SIM\_AMOUNT\_TOLERANCE\_BPS} / 10000)$.
   4. Output token increase $\ge \max(\text{otherAmountThreshold}, \text{min\_out\_raw})$.
   5. Every other wallet-owned token account unchanged.
@@ -134,6 +141,17 @@ Before signing, the transaction is simulated against independent Solana RPC node
   7. Token account control fields: `delegate`, `close_authority`, and `delegated_amount` must remain unchanged; account `state` must not become frozen (`state == 2`).
   8. Value redirection check: any third-party account gaining balance while wallet balance decreases is refused.
 - Hardcoded `SIMULATION_REQUIRED = True` ensures transactions cannot bypass simulation.
+
+### Bounded Exit Slippage Ladder (Sells Only)
+To prevent position lock-in during market volatility or slippage spikes, the exit engine implements a bounded retry ladder:
+- **Ladder Rungs:** `EXIT_SLIPPAGE_LADDER_BPS = (50, 150, 300)` over `EXIT_MAX_ATTEMPTS = 3`. Buys never escalate slippage (a missed entry is cheap).
+- **Retryable Errors Only:** Retries only on confirmed slippage exhaustion (Jupiter program error `6001` / `0x1771`) or expired blockhash. Never retries on guard refusals, simulation failures, quorum mismatches, price-impact breaches, or kill switches.
+- **Fresh Intent Per Attempt:** Each attempt constructs a fresh `TradeIntent` with the new slippage parameter; all Layer 1 and Layer 2 guards execute afresh.
+- **Double-Fill Conclusive Resolution:** Before attempt $n+1$, the engine verifies the status of attempt $n$:
+  1. If `getSignatureStatuses` shows the transaction landed, the loop halts immediately and proceeds to journal the fill.
+  2. If the signature is not landed **and** `isBlockhashValid` is `False` (blockhash expired), it safely proceeds to the next ladder rung.
+  3. If status is pending or the blockhash is still valid, the ladder halts immediately with `exit_unresolved` to prevent duplicate fills.
+- **Single Commit Hash:** All retry attempts append audit notes via `CommitLog.note(digest, text)` under the original commit hash; no duplicate memo or new hash is published.
 
 ### Layer 3: RPC Preflight on Broadcast
 In [`backend/live_execution/solana.py`](backend/live_execution/solana.py), `send_checked_swap` guarantees that only a `SignedSwap` object with `_checked=True` (produced exclusively by `sign_after_checks`) can be submitted. It delegates to `send_raw_transaction` which enforces:

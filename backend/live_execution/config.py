@@ -125,6 +125,10 @@ APPROVED_SWAP_PROGRAM_IDS: frozenset[str] = frozenset({
     # Moonshot removed in §77: ID unverified — re-add only with an ID copied from the program's official docs/Solscan
     "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",           # Phoenix
     "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",           # OpenBook
+    # Lifinity Swap V1 (verified: docs.lifinity.io / github.com/Lifinity-Labs)
+    "EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S",           # Lifinity v1
+    # Lifinity Swap V2 (verified: docs.lifinity.io / @jup-ag/lifinity-sdk-v2)
+    "2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c",           # Lifinity v2
 })
 
 # Maximum lamports allowed in a single System CreateAccount instruction (roughly rent-exempt for 165 bytes with slack)
@@ -133,9 +137,25 @@ MAX_CREATE_ACCOUNT_LAMPORTS: int = 2_500_000
 # Maximum total SOL outflow from payer across top-level System instructions (0.01 SOL)
 MAX_SYSTEM_OUTFLOW_LAMPORTS: int = 10_000_000
 
-# Simulation balance-delta assertion limits (§78 Phase B, §79 Phase A)
+# Simulation balance-delta assertion limits (§78 Phase B, §79 Phase A/B)
+# Derived maximum legitimate SOL outflow in pre-sign simulation:
+#   PRIORITY_FEE_HARD_CAP_LAMPORTS (1_000_000)
+#   + 2 * ATA_RENT_LAMPORTS (2 * 2_039_280 = 4_078_560)
+#   + BASE_SIG_FEE (10_000)
+#   + rent drift / buffer (4_911_440)
+#   = 10_000_000 lamports (0.01 SOL)
 SIM_MAX_SOL_DECREASE_LAMPORTS: int = 10_000_000
 SIM_INPUT_TOLERANCE: float = 0.01
+
+# §79 Phase B: Priority fee & compute budget limits
+PRIORITY_FEE_ENABLED: bool = True
+PRIORITY_FEE_MAX_LAMPORTS: int = 200_000
+PRIORITY_LEVEL: str = "high"
+PRIORITY_FEE_HARD_CAP_LAMPORTS: int = 1_000_000  # Guard-side absolute cap
+
+# §79 Phase B-4: Exit slippage ladder (sells only)
+EXIT_SLIPPAGE_LADDER_BPS: tuple[int, ...] = (50, 150, 300)
+EXIT_MAX_ATTEMPTS: int = 3
 
 # §79 Phase A: Independent price deviation caps for simulation floor
 BUY_MAX_PRICE_DEVIATION: float = 0.10   # 10% max deviation on entry

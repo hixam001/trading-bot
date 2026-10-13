@@ -1,6 +1,13 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-13 (§79 Phase A complete):**
+**Current — 2026-10-13 (§79 Phase B complete):**
+- **Phase B (Route hygiene, landing quality, and safe exit retries)**:
+  1. Unified quote params in `backend/live_execution/quote_params.py` with `build_quote_params` (`asLegacyTransaction=true`, `swapMode=ExactIn`, optional `dexes`). Wired into `get_jupiter_quote`, `place_sell`, and `scripts/inspect_live_quote.py`. Parameter identity proven via dict-equality test.
+  2. Verified Lifinity program IDs (Lifinity v1: `EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S`, Lifinity v2: `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c` from official docs and `@jup-ag/lifinity-sdk-v2`) and restored to `APPROVED_SWAP_PROGRAM_IDS`. Added `scripts/refresh_dex_labels.py` and `dex_labels.json`.
+  3. Priority fee & Compute budget guard: configured `PRIORITY_FEE_MAX_LAMPORTS = 200_000`, `PRIORITY_LEVEL = "high"`, `PRIORITY_FEE_HARD_CAP_LAMPORTS = 1_000_000`. Wired priority payload into `_build_swap_transaction`. In `inspect_swap_transaction`, decoded ComputeBudget instructions (tags 1..4), rejected unapproved tags and duplicates, and strictly enforced `eff_limit * price / 1_000_000 <= PRIORITY_FEE_HARD_CAP_LAMPORTS` (defaulting to 200k CU if limit omitted). Derived `SIM_MAX_SOL_DECREASE_LAMPORTS = 10_000_000` (rent + priority fee + base fee).
+  4. Bounded exit slippage ladder for sells only (`EXIT_SLIPPAGE_LADDER_BPS = (50, 150, 300)` over `EXIT_MAX_ATTEMPTS = 3`). Retries only on retryable slippage/blockhash errors (`is_retryable_exit_error`). Double-fill safety: conclusively resolves previous attempt status (`getSignatureStatuses` + `isBlockhashValid`) before next attempt; halts immediately with `exit_unresolved` if pending or blockhash still valid. Appends notes under existing commit hash via `CommitLog.note`.
+  5. 1015 tests passing (0 failures).
+
 - **Phase A (Make simulation layer trustworthy)**:
   1. Quote bound to local intent via `TradeIntent`: validated before simulation against locally computed `in_amount_raw`, mints, slippage, `ExactIn`, no hidden platform fee, and independent price floors (`BUY_MAX_PRICE_DEVIATION = 0.10`, `SELL_MAX_PRICE_DEVIATION = 0.50`). Refuses buys without independent mark.
   2. Sealed signing channel: `AwaitableSignedTx` deleted. `sign_after_checks` requires `TradeIntent`, executes simulation, and returns `SignedSwap` with private `_checked=True`. `send_checked_swap` enforces `_checked` before broadcasting.

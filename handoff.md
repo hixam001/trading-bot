@@ -1,5 +1,24 @@
 ## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
 
+### Phase B: Route Hygiene, Landing Quality, and Safe Exit Retries (`live_execution/{quote_params.py,jupiter_executor.py,executor.py,config.py,dex_labels.json}`, `scripts/refresh_dex_labels.py`, `test_audit_79_b.py`)
+1. **Unified Quote Parameters (`backend/live_execution/quote_params.py`)**:
+   - Centralized `build_quote_params` returning `inputMint`, `outputMint`, `amount`, `slippageBps`, `asLegacyTransaction="true"`, `swapMode="ExactIn"`, and optional `dexes`.
+   - Wired into `jupiter_executor.get_jupiter_quote`, `executor.place_sell`, and `scripts/inspect_live_quote.py`. Dict equality proven by tests.
+2. **DEX Labels & Lifinity Restoration**:
+   - Re-verified Lifinity program IDs from primary sources (Lifinity v1: `EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S`, Lifinity v2: `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`, verified via official docs and `@jup-ag/lifinity-sdk-v2`) and restored to `APPROVED_SWAP_PROGRAM_IDS`.
+   - Added `scripts/refresh_dex_labels.py` and `backend/live_execution/dex_labels.json` (`{"labels": []}`). Startup logs active DEX labels count.
+3. **Priority Fee & Compute Budget Guard**:
+   - Configured `PRIORITY_FEE_MAX_LAMPORTS = 200_000`, `PRIORITY_LEVEL = "high"`, `PRIORITY_FEE_HARD_CAP_LAMPORTS = 1_000_000`. Wired into `_build_swap_transaction`.
+   - In `inspect_swap_transaction`, decoded ComputeBudget instructions (tags 1..4), rejected unapproved tags and duplicate price/limit instructions, and enforced `eff_limit * price / 1_000_000 <= PRIORITY_FEE_HARD_CAP_LAMPORTS` (defaulting to 200k CU if limit omitted).
+   - Derived `SIM_MAX_SOL_DECREASE_LAMPORTS = 10_000_000` based on Solana node fee deductions in `simulateTransaction` (priority fee cap + 2 ATAs rent exemption + base sig fee).
+4. **Bounded Exit Slippage Ladder (Sells Only)**:
+   - Configured `EXIT_SLIPPAGE_LADDER_BPS = (50, 150, 300)` over `EXIT_MAX_ATTEMPTS = 3`.
+   - Retries only on retryable slippage/blockhash errors (`is_retryable_exit_error`); never retries on guard/simulation refusals.
+   - Conclusively resolves status of previous attempt (`getSignatureStatuses` + `isBlockhashValid`) before next attempt; halts immediately with `exit_unresolved` if pending or blockhash still valid. Appends notes under existing commit hash via `CommitLog.note`.
+5. **Tests**:
+   - Added 12 tests in `backend/tests/test_audit_79_b.py`.
+   - Full test suite: **1015 passed** (0 failed).
+
 ### Phase A: Make the Simulation Layer Trustworthy (`live_execution/{sim_guard.py,solana.py,jupiter_executor.py,executor.py,trade_intent.py,config.py}`, `test_audit_79_a.py`)
 1. **Local Intent Binding (`TradeIntent`)**:
    - Created `backend/live_execution/trade_intent.py` (`TradeIntent` frozen dataclass with `side`, `wallet`, `input_mint`, `output_mint`, `in_amount_raw`, `slippage_bps`, `min_out_raw`, `reference_price_usd`).

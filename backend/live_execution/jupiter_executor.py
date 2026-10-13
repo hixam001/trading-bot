@@ -67,6 +67,7 @@ from live_execution.confirmation_queue import (  # noqa: E402
     ConfirmationQueue,
 )
 from live_execution.models import ExecutionLedger  # noqa: E402
+from live_execution.quote_params import build_quote_params  # noqa: E402
 from live_execution.trade_intent import TradeIntent  # noqa: E402
 
 log = logging.getLogger(__name__)
@@ -228,17 +229,13 @@ async def get_jupiter_quote(
     # We pay in USDC (6 decimals): raw units for the USD size — via the
     # shared unit-math helper, not a local 10**6.
     amount_raw = int(round(usd_size * raw_units_for_one_token(USDC_DECIMALS)))
-
-    data = await _get_json(
-        _BACKEND_QUOTE_URL,
-        {
-            "inputMint": input_mint,
-            "outputMint": output_mint,
-            "amount": str(amount_raw),
-            "slippageBps": str(config.SLIPPAGE_BPS),
-            "asLegacyTransaction": "true",
-        },
+    params = build_quote_params(
+        input_mint=input_mint,
+        output_mint=output_mint,
+        amount_raw=amount_raw,
+        slippage_bps=config.SLIPPAGE_BPS,
     )
+    data = await _get_json(_BACKEND_QUOTE_URL, params)
     out_raw = data.get("outAmount")
     if out_raw is None:
         raise ExecutionError(f"jupiter: no outAmount in quote for {output_mint}")
@@ -284,23 +281,30 @@ async def _build_swap_transaction(quote: dict, user_public_key: str) -> str:
     Returns the base64 UNSIGNED VersionedTransaction from Jupiter's swap API.
     Signing happens locally; the secret never leaves this process.
     """
-    data = await _post_json(
-        config.JUPITER_SWAP_URL,
-        {
-            "quoteResponse": quote,
-            "userPublicKey": user_public_key,
-            "wrapAndUnwrapSol": True,
-            # A7 (repo audit): legacy transactions carry NO address-lookup
-            # tables, so inspect_swap_transaction can verify EVERY program
-            # ID statically before signing. v0+ALTs made the SEC-01 guard
-            # silently skip unresolvable instructions (fail-open). A route
-            # too large for a legacy tx fails closed at build time — a
-            # refused order costs nothing, a blind-signed one does not.
-            # NOTE: any change here must be re-drilled on devnet with a
-            # throwaway keypair BEFORE it touches mainnet (module header).
-            "asLegacyTransaction": True,
-        },
-    )
+    payload = {
+        "quoteResponse": quote,
+        "userPublicKey": user_public_key,
+        "wrapAndUnwrapSol": True,
+        # A7 (repo audit): legacy transactions carry NO address-lookup
+        # tables, so inspect_swap_transaction can verify EVERY program
+        # ID statically before signing. v0+ALTs made the SEC-01 guard
+        # silently skip unresolvable instructions (fail-open). A route
+        # too large for a legacy tx fails closed at build time — a
+        # refused order costs nothing, a blind-signed one does not.
+        # NOTE: any change here must be re-drilled on devnet with a
+        # throwaway keypair BEFORE it touches mainnet (module header).
+        "asLegacyTransaction": True,
+    }
+    if getattr(config, "PRIORITY_FEE_ENABLED", False):
+        payload["dynamicComputeUnitLimit"] = True
+        payload["prioritizationFeeLamports"] = {
+            "priorityLevelWithMaxLamports": {
+                "priorityLevel": getattr(config, "PRIORITY_LEVEL", "high"),
+                "maxLamports": getattr(config, "PRIORITY_FEE_MAX_LAMPORTS", 200_000),
+                "global": False,
+            }
+        }
+    data = await _post_json(config.JUPITER_SWAP_URL, payload)
     b64 = data.get("swapTransaction")
     if not b64:
         raise ExecutionError("jupiter: no swapTransaction in response")
@@ -389,6 +393,10 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
     wallet_owned_accounts: set[str] = {payer_pubkey}
     created_token_accounts: set[str] = set()
     total_system_outflow_lamports: int = 0
+    compute_unit_limit: int | None = None
+    compute_unit_price: int | None = None
+    compute_unit_limit_count: int = 0
+    compute_unit_price_count: int = 0
 
     # Strict instruction validation in order
     for i, ix in enumerate(tx.message.instructions):
@@ -682,12 +690,54 @@ def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
             ata_account = account_keys[ix.accounts[1]]
             wallet_owned_accounts.add(ata_account)
 
-        # 4. Compute Budget & Memo programs
-        elif prog_id == _COMPUTE_BUDGET_PROGRAM_ID or prog_id in _MEMO_PROGRAM_IDS:
+        # 4. Compute Budget Program (ComputeBudget111111111111111111111111111111)
+        elif prog_id == _COMPUTE_BUDGET_PROGRAM_ID:
+            if len(data) < 1:
+                raise ExecutionError(f"ComputeBudget instruction #{i} has empty data")
+            cb_tag = data[0]
+            if cb_tag == 1:
+                # RequestHeapFrame: [1, bytes(4)]
+                if len(data) < 5:
+                    raise ExecutionError(f"ComputeBudget RequestHeapFrame instruction #{i} data truncated (< 5 bytes)")
+            elif cb_tag == 2:
+                # SetComputeUnitLimit: [2, units(4)]
+                compute_unit_limit_count += 1
+                if compute_unit_limit_count > 1:
+                    raise ExecutionError(f"ComputeBudget SetComputeUnitLimit instruction #{i} appears more than once")
+                if len(data) < 5:
+                    raise ExecutionError(f"ComputeBudget SetComputeUnitLimit instruction #{i} data truncated (< 5 bytes)")
+                compute_unit_limit = struct.unpack("<I", data[1:5])[0]
+            elif cb_tag == 3:
+                # SetComputeUnitPrice: [3, micro_lamports(8)]
+                compute_unit_price_count += 1
+                if compute_unit_price_count > 1:
+                    raise ExecutionError(f"ComputeBudget SetComputeUnitPrice instruction #{i} appears more than once")
+                if len(data) < 9:
+                    raise ExecutionError(f"ComputeBudget SetComputeUnitPrice instruction #{i} data truncated (< 9 bytes)")
+                compute_unit_price = struct.unpack("<Q", data[1:9])[0]
+            elif cb_tag == 4:
+                # SetLoadedAccountsDataSizeLimit: [4, bytes(4)]
+                if len(data) < 5:
+                    raise ExecutionError(f"ComputeBudget SetLoadedAccountsDataSizeLimit instruction #{i} data truncated (< 5 bytes)")
+            else:
+                raise ExecutionError(f"ComputeBudget instruction #{i} has unapproved tag {cb_tag}")
+
+        # 5. Memo programs
+        elif prog_id in _MEMO_PROGRAM_IDS:
             pass
 
-        # 5. Other approved DEX programs (Jupiter, Raydium, Orca, etc.)
+        # 6. Other approved DEX programs (Jupiter, Raydium, Orca, etc.)
         # Discriminants are DEX-specific and allowed at top level.
+
+    # Enforce ComputeBudget priority fee hard cap (§79 Phase B-3)
+    if compute_unit_price is not None:
+        eff_limit = compute_unit_limit if compute_unit_limit is not None else 200_000
+        priority_fee_lamports = (eff_limit * compute_unit_price) // 1_000_000
+        if priority_fee_lamports > config.PRIORITY_FEE_HARD_CAP_LAMPORTS:
+            raise ExecutionError(
+                f"ComputeBudget priority fee {priority_fee_lamports} lamports exceeds "
+                f"PRIORITY_FEE_HARD_CAP_LAMPORTS ({config.PRIORITY_FEE_HARD_CAP_LAMPORTS})"
+            )
 
 
 async def sign_after_checks(

@@ -112,6 +112,17 @@ class CommitLog:
                 return True
         return False
 
+    def note(self, digest: str, text: str) -> bool:
+        """Attach an informational audit note to a commit record (§79 Phase B ladder)."""
+        commits = self._load()
+        for rec in commits:
+            if rec.get("hash") == digest:
+                notes = rec.setdefault("notes", [])
+                notes.append({"text": text, "at": self.now_fn()})
+                self._save(commits)
+                return True
+        return False
+
     def recent(self, limit: int = 25) -> list:
         commits = self._load()
         return list(reversed(commits[-limit:]))

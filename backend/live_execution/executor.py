@@ -23,9 +23,12 @@ exercise the full flow on devnet with a throwaway keypair BEFORE mainnet.
 """
 from __future__ import annotations
 
+import base64
 import logging
 from dataclasses import asdict, dataclass, field
 from typing import Optional
+
+from solders.transaction import VersionedTransaction
 
 import math
 from live_execution import config, kill_switch, memo, solana, wallet
@@ -46,10 +49,49 @@ from live_execution.jupiter_executor import (
 )
 from live_execution.models import ExecutionLedger
 from live_execution.commit_log import CommitLog
+from live_execution.quote_params import build_quote_params
 from live_execution.venue import token_deltas_from_tx
 from live_execution.trade_intent import TradeIntent
 
 log = logging.getLogger(__name__)
+
+
+def is_retryable_exit_error(exc_or_msg: Exception | str) -> bool:
+    """Classify whether an exit error is safe and appropriate to retry on the slippage ladder (§79 Phase B-4).
+    Retries ONLY on slippage tolerance exceeded or expired blockhashes. Never retries guard refusals,
+    simulation assertion refusals, price impact, or kill switch triggers.
+    """
+    msg = str(exc_or_msg).lower()
+    non_retryable_markers = (
+        "unapproved",
+        "simulation refused",
+        "simulation assertion failure",
+        "guard refused",
+        "owner changed",
+        "price impact",
+        "kill switch",
+        "reserve",
+        "balance unreadable",
+        "insufficient",
+        "hard cap",
+        "consensus required",
+        "pre-state fetch failed",
+    )
+    if any(m in msg for m in non_retryable_markers):
+        return False
+
+    retryable_markers = (
+        "6001",
+        "0x1771",
+        "slippage",
+        "blockhash",
+        "timeout",
+        "not confirmed before timeout",
+        "has expired",
+        "expired",
+    )
+    return any(m in msg for m in retryable_markers)
+
 
 
 def raw_units(decimals: int) -> int:
@@ -451,102 +493,169 @@ async def place_sell(
                           commit_payload=intent, memo_signature=memo_res["signature"],
                           memo_slot=memo_res["slot"])
 
-    try:
-        # Jupiter's /swap/v1/quote is a GET endpoint (query params). POST
-        # returns 405 — the same bug the buy path had. The sell path builds
-        # its own quote (token -> USDC) so it must use the GET helper too.
-        quote = await _get_json(_BACKEND_QUOTE_URL, {
-            "inputMint": mint,
-            "outputMint": _BACKEND_USDC_MINT,
-            "amount": str(amount_raw),
-            "slippageBps": str(config.SLIPPAGE_BPS),
-        })
-    except ExecutionError as exc:
-        logc.fail(sealed["hash"], f"quote failed: {exc}")
-        return OrderResult(**{**base.to_json(), "status": "failed",
-                              "reason": f"quote: {exc}", **commit_fields})
-    except Exception as exc:
-        logc.fail(sealed["hash"], f"quote crashed: {type(exc).__name__}: {exc}")
-        return OrderResult(**{**base.to_json(), "status": "failed",
-                              "reason": f"quote: {exc}", **commit_fields})
-    out_raw = quote.get("outAmount")
-    if out_raw is None:
-        logc.fail(sealed["hash"], "no route quoted for this mint")
-        return OrderResult(**{**base.to_json(), "status": "failed",
-                              "reason": "no route quoted for this mint", **commit_fields})
+    ladder = getattr(config, "EXIT_SLIPPAGE_LADDER_BPS", (50, 150, 300))
+    last_sig: Optional[str] = None
+    last_blockhash: Optional[str] = None
+    last_error_reason: str = ""
 
-    impact = quote_impact_pct(quote)
-    if impact > config.MAX_PRICE_IMPACT_PCT:
-        reason = f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"
-        logc.fail(sealed["hash"], reason)
-        return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": reason, **commit_fields})
-    proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
+    for attempt_idx, slippage_rung in enumerate(ladder, start=1):
+        if attempt_idx > 1 and last_sig:
+            logc.note(sealed["hash"], f"attempt {attempt_idx}: resolving previous signature {last_sig}")
+            sig_status = await solana.get_signature_status(last_sig)
+            if sig_status:
+                if sig_status.get("confirmationStatus") in ("confirmed", "finalized") and not sig_status.get("err"):
+                    logc.note(sealed["hash"], f"previous signature {last_sig} landed on-chain — stopping ladder")
+                    logc.bind(sealed["hash"], last_sig)
+                    actuals = await _fill_actuals("sell", mint, last_sig)
+                    proceeds_actual = actuals["usdc_delta"] or (proceeds_usd if "proceeds_usd" in locals() else 0.0)
+                    tokens_sold_actual = actuals["tokens_delta"] or sell_amount
+                    try:
+                        ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close, rule_id=rule_id)
+                    except ValueError as exc:
+                        log.error("post-fill ledger reduce failed: %s", exc)
+                    outcome = OrderResult(
+                        side="sell",
+                        symbol=symbol,
+                        mint=mint,
+                        status="filled",
+                        signature=last_sig,
+                        usd_value=proceeds_actual,
+                        tokens=tokens_sold_actual,
+                        **commit_fields,
+                    )
+                    return outcome
 
-    min_out_raw = None
-    if reference_price_usd is not None and reference_price_usd > 0:
-        min_out_raw = math.floor(
-            sell_amount * reference_price_usd * (1.0 - config.SELL_MAX_PRICE_DEVIATION)
-            * (10 ** USDC_DECIMALS)
-        )
-    else:
-        log.warning("SELL_NO_REF_PRICE: sell %s has no reference price; relying on self-consistency check", mint[:8])
+            is_valid = await solana.is_blockhash_valid(last_blockhash) if last_blockhash else False
+            if is_valid is not False:
+                reason = f"exit_unresolved: signature {last_sig} is pending and blockhash {last_blockhash} may still be valid"
+                log.error("DOUBLE FILL SAFETY: %s", reason)
+                logc.note(sealed["hash"], reason)
+                logc.fail(sealed["hash"], reason)
+                return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason, "signature": last_sig, **commit_fields})
 
-    trade_intent = TradeIntent(
-        side="sell",
-        wallet=addr,
-        input_mint=mint,
-        output_mint=_BACKEND_USDC_MINT,
-        in_amount_raw=amount_raw,
-        slippage_bps=config.SLIPPAGE_BPS,
-        min_out_raw=min_out_raw,
-        reference_price_usd=reference_price_usd,
-    )
-
-    try:
-        swap_b64 = await _build_swap_transaction(quote, addr)
-        outcome = await _broadcast_and_confirm(
-            swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=quote
-        )
-    except Exception as exc:
-        # Same fail-closed contract as the buy path (see comment there).
-        logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
-        return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
-                              "price_impact_pct": impact, **commit_fields})
-
-    if outcome.status == "filled":
-        # A4 (repo audit): ACTUAL proceeds/tokens read off the confirmed tx
-        # (fail-soft to the quote snapshot when unreadable) — the mirror's
-        # exit price and the ledger's realized PnL must reflect the fill,
-        # not the pre-trade quote.
-        actuals = await _fill_actuals("sell", mint, outcome.signature)
-        proceeds_actual = actuals["usdc_delta"] or proceeds_usd
-        tokens_sold_actual = actuals["tokens_delta"] or sell_amount
-        if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
-            log.warning(
-                "fill actuals unreadable for %s — journaling the quote "
-                "snapshot (proceeds=%.2f)",
-                outcome.signature[:16], proceeds_usd)
+        logc.note(sealed["hash"], f"attempt {attempt_idx}/{len(ladder)} with slippage {slippage_rung} bps")
         try:
-            ledger.reduce_position(mint, frac, proceeds_actual,
-                                   full_close=full_close, rule_id=rule_id)
-        except ValueError as exc:
-            log.error("post-fill ledger reduce failed: %s", exc)
-        outcome.usd_value = proceeds_actual
-        outcome.tokens = tokens_sold_actual
-        outcome.price_impact_pct = impact
-        log.info("FILLED sell %s %.4f tokens -> $%.2f sig %s",
-                 mint[:8], tokens_sold_actual, proceeds_actual,
-                 outcome.signature)
-    else:
-        # Honest journal (same contract as the buy path).
-        logc.fail(sealed["hash"], outcome.reason or "fill not confirmed")
-    outcome.commit_hash = sealed["hash"]
-    outcome.commit_nonce = sealed["nonce"]
-    outcome.commit_payload = intent
-    outcome.memo_signature = memo_res["signature"]
-    outcome.memo_slot = memo_res["slot"]
-    return outcome
+            params = build_quote_params(
+                input_mint=mint,
+                output_mint=_BACKEND_USDC_MINT,
+                amount_raw=amount_raw,
+                slippage_bps=slippage_rung,
+            )
+            quote = await _get_json(_BACKEND_QUOTE_URL, params)
+        except ExecutionError as exc:
+            logc.fail(sealed["hash"], f"quote failed: {exc}")
+            return OrderResult(**{**base.to_json(), "status": "failed", "reason": f"quote: {exc}", **commit_fields})
+        except Exception as exc:
+            logc.fail(sealed["hash"], f"quote crashed: {type(exc).__name__}: {exc}")
+            return OrderResult(**{**base.to_json(), "status": "failed", "reason": f"quote: {exc}", **commit_fields})
+
+        out_raw = quote.get("outAmount")
+        if out_raw is None:
+            logc.fail(sealed["hash"], "no route quoted for this mint")
+            return OrderResult(**{**base.to_json(), "status": "failed", "reason": "no route quoted for this mint", **commit_fields})
+
+        impact = quote_impact_pct(quote)
+        if impact > config.MAX_PRICE_IMPACT_PCT:
+            reason = f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"
+            logc.fail(sealed["hash"], reason)
+            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": reason, **commit_fields})
+
+        proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
+
+        min_out_raw = None
+        if reference_price_usd is not None and reference_price_usd > 0:
+            min_out_raw = math.floor(
+                sell_amount * reference_price_usd * (1.0 - config.SELL_MAX_PRICE_DEVIATION)
+                * (10 ** USDC_DECIMALS)
+            )
+        else:
+            log.warning("SELL_NO_REF_PRICE: sell %s has no reference price; relying on self-consistency check", mint[:8])
+
+        trade_intent = TradeIntent(
+            side="sell",
+            wallet=addr,
+            input_mint=mint,
+            output_mint=_BACKEND_USDC_MINT,
+            in_amount_raw=amount_raw,
+            slippage_bps=slippage_rung,
+            min_out_raw=min_out_raw,
+            reference_price_usd=reference_price_usd,
+        )
+
+        try:
+            swap_b64 = await _build_swap_transaction(quote, addr)
+        except Exception as exc:
+            logc.fail(sealed["hash"], f"build failed: {exc}")
+            return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc), **commit_fields})
+
+        try:
+            raw_tx = base64.b64decode(swap_b64)
+            parsed_tx = VersionedTransaction.from_bytes(raw_tx)
+            last_blockhash = str(parsed_tx.message.recent_blockhash)
+        except Exception:
+            last_blockhash = ""
+
+        try:
+            outcome = await _broadcast_and_confirm(
+                swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=quote
+            )
+            last_sig = outcome.signature
+        except Exception as exc:
+            err_str = str(exc)
+            if not is_retryable_exit_error(err_str) or attempt_idx >= len(ladder):
+                logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
+                return OrderResult(**{**base.to_json(), "status": "failed", "reason": err_str, "price_impact_pct": impact, **commit_fields})
+            log.warning("Exit attempt %d failed with retryable error: %s. Escalating ladder.", attempt_idx, err_str)
+            last_error_reason = err_str
+            continue
+
+        if outcome.status == "filled":
+            actuals = await _fill_actuals("sell", mint, outcome.signature)
+            proceeds_actual = actuals["usdc_delta"] or proceeds_usd
+            tokens_sold_actual = actuals["tokens_delta"] or sell_amount
+            if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
+                log.warning(
+                    "fill actuals unreadable for %s — journaling the quote "
+                    "snapshot (proceeds=%.2f)",
+                    outcome.signature[:16], proceeds_usd)
+            try:
+                ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close, rule_id=rule_id)
+            except ValueError as exc:
+                log.error("post-fill ledger reduce failed: %s", exc)
+            outcome.usd_value = proceeds_actual
+            outcome.tokens = tokens_sold_actual
+            outcome.price_impact_pct = impact
+            log.info("FILLED sell %s %.4f tokens -> $%.2f sig %s", mint[:8], tokens_sold_actual, proceeds_actual, outcome.signature)
+            outcome.commit_hash = sealed["hash"]
+            outcome.commit_nonce = sealed["nonce"]
+            outcome.commit_payload = intent
+            outcome.memo_signature = memo_res["signature"]
+            outcome.memo_slot = memo_res["slot"]
+            return outcome
+        else:
+            reason = outcome.reason or "fill not confirmed"
+            last_error_reason = reason
+            if not is_retryable_exit_error(reason) or attempt_idx >= len(ladder):
+                logc.fail(sealed["hash"], reason)
+                outcome.commit_hash = sealed["hash"]
+                outcome.commit_nonce = sealed["nonce"]
+                outcome.commit_payload = intent
+                outcome.memo_signature = memo_res["signature"]
+                outcome.memo_slot = memo_res["slot"]
+                return outcome
+            log.warning("Exit attempt %d unconfirmed/slippage: %s. Escalating ladder.", attempt_idx, reason)
+            continue
+
+    logc.fail(sealed["hash"], last_error_reason or "exit ladder exhausted")
+    return OrderResult(
+        **{
+            **base.to_json(),
+            "status": "failed",
+            "reason": last_error_reason or "exit ladder exhausted",
+            "signature": last_sig,
+            **commit_fields,
+        }
+    )
 
 
 async def place_order(

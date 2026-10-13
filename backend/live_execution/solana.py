@@ -606,3 +606,28 @@ async def get_token_balances(address: str) -> Optional[dict[str, float]]:
     return balances if any_ok else None
 
 
+async def is_blockhash_valid(blockhash: str, endpoints: Optional[list[str]] = None) -> bool | None:
+    """Check whether a blockhash is still valid on-chain (SEC-01 / §79 Phase B double-fill safety).
+    Returns True if valid, False if expired, None on RPC failure.
+    """
+    res = await rpc("isBlockhashValid", [blockhash, {"commitment": "confirmed"}], endpoints=endpoints)
+    if res is not None and "value" in res:
+        return bool(res["value"])
+    return None
+
+
+async def get_signature_status(signature: str, endpoints: Optional[list[str]] = None) -> dict | None:
+    """Fetch status for a specific signature with history search (§79 Phase B).
+    Returns None if signature is unknown/not found or RPC failed, otherwise the status dict.
+    """
+    res = await rpc(
+        "getSignatureStatuses",
+        [[signature], {"searchTransactionHistory": True}],
+        endpoints=endpoints,
+    )
+    values = (res or {}).get("value") or []
+    if values and values[0]:
+        return values[0]
+    return None
+
+
