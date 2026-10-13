@@ -81,6 +81,8 @@ services:
       - engine_data:/app/data
       # Rotating application, error, and security audit logs (§74).
       - engine_logs:/app/logs
+      # State backups volume (§79 Phase E).
+      - engine_backups:/app/backups
       # Alternative secret channel (preferred on a VM): bind-mount a chmod-600
       # keypair file read-only and point WALLET_KEYPAIR_PATH at it:
       #   - ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro
@@ -100,3 +102,4 @@ volumes:
   engine_state:
   engine_data:
   engine_logs:
+  engine_backups:
