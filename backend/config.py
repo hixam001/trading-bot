@@ -65,6 +65,9 @@ TICKET_CASH_FRACTION: float = 0.15         # base = cash * 0.15
 TICKET_MAX_USD: float = 150.0              # hard per-trade ceiling
 MIN_TICKET_USD: float = 25.0               # below this, don't bother
 DAILY_DEPLOY_CAP_USD: float = 300.0        # max new deployments / UTC day
+# §79 Phase C: Token-safety and unknown-security sizing haircut
+MAX_TRANSFER_FEE_BPS: int = 100            # 1.0% maximum allowable transfer fee
+UNKNOWN_SECURITY_SIZE_MULT: float = 0.5    # haircut ticket when security is unknown
 
 # ---------------------------------------------------------------------------
 # REF-R8 risk-budget sizing (reference computeBudget() parity). HARDCODED -

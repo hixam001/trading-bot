@@ -51,6 +51,12 @@ The static guard performs strict structural analysis on the deserialized Solana 
 5. **Proven Wallet Ownership:**
    - Accounts are not inferred to be wallet-owned merely because the payer funded them. An account created via `CreateAccount` is only recognized as wallet-owned once initialized with owner equal to the payer. Any transfer before initialization is refused.
 
+6. **Token-2022 Mint-Extension Gate Screening:**
+   - Pre-trade gate screening in `data_providers/onchain_security.py` inspects the mint account via `getAccountInfo(encoding="jsonParsed")`.
+   - Rejects candidates with known-bad Token-2022 extensions: `permanentDelegate`, `transferHook`, `nonTransferable`, `pausableConfig`, or `defaultAccountState` with `state == "frozen"`.
+   - Enforces `transferFeeConfig` transfer fee ceiling: transfers with fee $> \text{MAX\_TRANSFER\_FEE\_BPS}$ (100 bps = 1.0%) are blocked.
+   - Sizing haircut: uninspected or unknown security features apply a 50% haircut (`UNKNOWN_SECURITY_SIZE_MULT = 0.5`) falling to no trade if below the ticket floor.
+
 ---
 
 ## 2. What Static Analysis Cannot See (The Need for Simulation)

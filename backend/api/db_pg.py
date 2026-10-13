@@ -195,7 +195,8 @@ _FEED_COLS = """
     rule_breakdown::text AS rule_breakdown,
     failed_rule_ids::text AS failed_rule_ids,
     regime_ok, grounding_flags::text AS grounding_flags,
-    narration_source, led_to_trade_id, model_version, prompt_version
+    narration_source, led_to_trade_id, model_version, prompt_version,
+    COALESCE(risk_flags::text, '[]') AS risk_flags
 """
 
 
@@ -295,6 +296,7 @@ _SCHEMA_SYNC_SQL = (
     "ON CONFLICT (version) DO NOTHING",
     "ALTER TABLE feed_events ADD COLUMN IF NOT EXISTS model_version TEXT",
     "ALTER TABLE feed_events ADD COLUMN IF NOT EXISTS prompt_version TEXT",
+    "ALTER TABLE feed_events ADD COLUMN IF NOT EXISTS risk_flags JSONB DEFAULT '[]'::jsonb",
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS model_version TEXT",
     "ALTER TABLE decision_commits ADD COLUMN IF NOT EXISTS prompt_version TEXT",
     # REF-R11: on-chain precommit memo columns (003_commit_memos.sql).
@@ -373,8 +375,9 @@ async def insert_feed_event(conn: asyncpg.Connection, event: FeedEvent) -> int:
         INSERT INTO feed_events (
             ts, symbol, mint_address, candidate_snapshot, verdict, thesis,
             rule_breakdown, failed_rule_ids, regime_ok, grounding_flags,
-            narration_source, led_to_trade_id, model_version, prompt_version
-        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+            narration_source, led_to_trade_id, model_version, prompt_version,
+            risk_flags
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
         RETURNING id
         """,
         _ts(event.ts), event.symbol, event.mint_address,
@@ -383,6 +386,7 @@ async def insert_feed_event(conn: asyncpg.Connection, event: FeedEvent) -> int:
         bool(event.regime_ok), json.dumps(event.grounding_flags),
         event.narration_source, event.led_to_trade_id,
         event.model_version, event.prompt_version,
+        json.dumps(event.risk_flags),
     )
 
 
@@ -403,6 +407,7 @@ def _row_to_feed_dict(row: asyncpg.Record) -> dict[str, Any]:
         "led_to_trade_id": row["led_to_trade_id"],
         "model_version": row["model_version"],
         "prompt_version": row["prompt_version"],
+        "risk_flags": json.loads(row["risk_flags"]) if "risk_flags" in row.keys() and row["risk_flags"] else [],
     }
 
 

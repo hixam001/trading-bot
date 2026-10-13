@@ -1,6 +1,13 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §79 Phase C: Token-safety gate improvements (2026-10-13):
+      1. Freeze authority live known-bad check: `freeze_authority_revoked is False` blocks in `security_clear`; `None` still passes (preserving B10).
+      2. Token-2022 mint-extension screen: added `get_mint_extension_flags` and `parse_mint_extensions` in `data_providers/onchain_security.py` using `getAccountInfo(encoding="jsonParsed")`. Blocks `permanentDelegate`, `transferHook`, `nonTransferable`, `pausableConfig`, `defaultAccountState (frozen)`, and active transfer fee > `MAX_TRANSFER_FEE_BPS` (100 bps = 1.0%). Results cached per mint with 1 hour TTL.
+      3. Enriched `Candidate` with `token_program`, `dangerous_extensions`, `transfer_fee_bps`, `transfer_fee_enable`, and `security_unknown`.
+      4. Unknown-security sizing haircut: in `sizing.py`, when `security_unknown` (mint or freeze authority unknown or RPC lookup failed), ticket is multiplied by `UNKNOWN_SECURITY_SIZE_MULT = 0.5`. Falls to 0.0 ("no trade") if below minimum ticket floor; never executes below minimum size. Set to 1.0 restores baseline behavior.
+      5. Shadow risk flags: computed `top_holder_pct` and `holder_count` buckets on `FeedEvent.risk_flags` without affecting gate verdicts. Added `SHADOW RISK FLAGS` table to `scripts/perf_report.py`.
+      6. Full test suite: **1034 passed**, 0 failed (+19 new tests in `test_audit_79_c.py`).
 - [x] §79 Phase B: Route hygiene, landing quality, and safe exit retries (2026-10-13):
       1. Unified quote params via `build_quote_params` in `quote_params.py` with `asLegacyTransaction=true`, `swapMode=ExactIn`, and optional `dexes`. Unified across buy, sell, and diagnostic CLI script.
       2. Lifinity program IDs verified (v1 `EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S`, v2 `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`) via official Lifinity documentation and `@jup-ag/lifinity-sdk-v2`, and restored to `APPROVED_SWAP_PROGRAM_IDS`. Added `scripts/refresh_dex_labels.py` and `dex_labels.json`.

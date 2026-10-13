@@ -59,6 +59,7 @@ from calibration import compute_calibration       # noqa: E402
 from sizing import (                       # noqa: E402
     compute_risk_budget,
     compute_ticket,
+    compute_risk_flags,
     portfolio_equity_and_unrealized,
 )
 
@@ -721,6 +722,7 @@ async def _journal_feed_event(conn, c, think, gate, regime,
         regime_ok=regime.regime_ok,
         grounding_flags=think.grounding_flags,
         narration_source=getattr(think, "source", "unknown"),
+        risk_flags=compute_risk_flags(c),
     )
     if getattr(think, "llm_usage", None):
         event.model_version = think.llm_usage.model
@@ -1006,7 +1008,8 @@ async def run_cycle(once: bool = False) -> dict:
                 cf = 1.0
             usd = compute_ticket(cash, None, equity_usd=eq,
                                  unrealized_usd=unrl, conviction_factor=cf,
-                                 min_ticket_usd=live_floor)
+                                 min_ticket_usd=live_floor,
+                                 security_unknown=bool(getattr(c, "security_unknown", False)))
             budget = compute_risk_budget(
                 eq, unrl, min_ticket_usd=live_floor)
             deployed_today = ledger.deployed_today_usd()

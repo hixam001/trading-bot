@@ -88,6 +88,11 @@ class Candidate:
     is_likely_honeypot: Optional[bool] = None
     mutable_metadata: Optional[bool] = None
     transfer_fee_enable: Optional[bool] = None
+    # Token-2022 mint-extension screen & unknown security flag (§79 Phase C)
+    token_program: Optional[str] = None
+    dangerous_extensions: list[str] = field(default_factory=list)
+    transfer_fee_bps: Optional[int] = None
+    security_unknown: bool = False
     name: str = ""
     source: str = "mock"   # which provider stack produced this candidate
     # Crowd conviction (crowd_heat): REAL heat from the fomo.fun board /
@@ -153,6 +158,10 @@ class Candidate:
             "is_likely_honeypot": self.is_likely_honeypot,
             "mutable_metadata": self.mutable_metadata,
             "transfer_fee_enable": self.transfer_fee_enable,
+            "token_program": self.token_program,
+            "dangerous_extensions": list(self.dangerous_extensions),
+            "transfer_fee_bps": self.transfer_fee_bps,
+            "security_unknown": self.security_unknown,
             "discovery_source": self.discovery_source,
             "source": self.source,
         }
@@ -280,6 +289,7 @@ class FeedEvent:
     led_to_trade_id: Optional[str] = None
     model_version: Optional[str] = None
     prompt_version: Optional[str] = None
+    risk_flags: list[str] = field(default_factory=list)
     id: Optional[int] = None                   # set after DB insert
 
     def to_dict(self) -> dict[str, Any]:
@@ -299,6 +309,7 @@ class FeedEvent:
             "led_to_trade_id": self.led_to_trade_id,
             "model_version": self.model_version,
             "prompt_version": self.prompt_version,
+            "risk_flags": list(self.risk_flags),
         }
 
 

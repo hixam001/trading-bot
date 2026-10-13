@@ -126,6 +126,28 @@ class LiveProviderStack:
                 if c.freeze_authority_revoked is None:
                     c.freeze_authority_revoked = flags.get("freeze_authority_revoked")
 
+            try:
+                from data_providers.onchain_security import get_mint_extension_flags
+                ext_flags = await get_mint_extension_flags(c.mint_address)
+            except Exception:
+                ext_flags = {}
+            if ext_flags:
+                c.token_program = ext_flags.get("program")
+                c.dangerous_extensions = ext_flags.get("dangerous_extensions", [])
+                c.transfer_fee_bps = ext_flags.get("transfer_fee_bps")
+                if "transferFeeConfig" in ext_flags.get("extensions", []):
+                    c.transfer_fee_enable = True
+                elif ext_flags.get("program") == "spl-token":
+                    c.transfer_fee_enable = False
+
+            if (
+                c.mint_authority_revoked is None
+                or c.freeze_authority_revoked is None
+                or not ext_flags
+                or ext_flags.get("program") is None
+            ):
+                c.security_unknown = True
+
         await asyncio.gather(*(_secure(c) for c in merged))
         log.info("Live stack: %d candidates enriched (trending=%d new_listing=%d)",
                  len(merged),

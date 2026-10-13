@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS feed_events (
     narration_source        TEXT    NOT NULL DEFAULT '',
     led_to_trade_id         TEXT,
     model_version           TEXT,
-    prompt_version          TEXT
+    prompt_version          TEXT,
+    risk_flags              TEXT    NOT NULL DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS trades (
@@ -267,6 +268,7 @@ async def init_db() -> None:
             "ALTER TABLE decision_commits ADD COLUMN prompt_version TEXT",
             "ALTER TABLE feed_events ADD COLUMN model_version TEXT",
             "ALTER TABLE feed_events ADD COLUMN prompt_version TEXT",
+            "ALTER TABLE feed_events ADD COLUMN risk_flags TEXT DEFAULT '[]'",
         ):
             try:
                 await conn.execute(stmt)
@@ -303,8 +305,9 @@ async def insert_feed_event(conn: aiosqlite.Connection, event: FeedEvent) -> int
         INSERT INTO feed_events (
             ts, symbol, mint_address, candidate_snapshot, verdict, thesis,
             rule_breakdown, failed_rule_ids, regime_ok, grounding_flags,
-            narration_source, led_to_trade_id, model_version, prompt_version
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            narration_source, led_to_trade_id, model_version, prompt_version,
+            risk_flags
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             event.ts, event.symbol, event.mint_address,
@@ -313,6 +316,7 @@ async def insert_feed_event(conn: aiosqlite.Connection, event: FeedEvent) -> int
             int(event.regime_ok), json.dumps(event.grounding_flags),
             event.narration_source, event.led_to_trade_id,
             event.model_version, event.prompt_version,
+            json.dumps(event.risk_flags),
         ),
     )
     await conn.commit()
@@ -336,6 +340,7 @@ def _row_to_feed_dict(row: aiosqlite.Row) -> dict[str, Any]:
         "led_to_trade_id": row["led_to_trade_id"],
         "model_version": row["model_version"] if "model_version" in row.keys() else None,
         "prompt_version": row["prompt_version"] if "prompt_version" in row.keys() else None,
+        "risk_flags": json.loads(row["risk_flags"]) if "risk_flags" in row.keys() and row["risk_flags"] else [],
     }
 
 

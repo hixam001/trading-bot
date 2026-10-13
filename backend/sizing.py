@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 import config
-from models import PortfolioState, Trade
+from models import Candidate, PortfolioState, Trade
 
 log = logging.getLogger(__name__)
 
@@ -233,11 +233,42 @@ def portfolio_equity_and_unrealized(portfolio: PortfolioState,
     return equity, unrealized
 
 
+def compute_risk_flags(c: Candidate) -> list[str]:
+    """Compute shadow-only risk flags (observability only — never gates trades)."""
+    flags: list[str] = []
+    # top_holder_pct bucket
+    if c.top_holder_pct is None:
+        flags.append("top_holder:unknown")
+    elif c.top_holder_pct > 0.50:
+        flags.append("top_holder:>50%")
+    elif c.top_holder_pct > 0.30:
+        flags.append("top_holder:30-50%")
+    elif c.top_holder_pct > 0.15:
+        flags.append("top_holder:15-30%")
+    else:
+        flags.append("top_holder:<=15%")
+
+    # holder_count bucket
+    if c.holder_count is None:
+        flags.append("holders:unknown")
+    elif c.holder_count < 50:
+        flags.append("holders:<50")
+    elif c.holder_count < 200:
+        flags.append("holders:50-200")
+    elif c.holder_count < 1000:
+        flags.append("holders:200-1000")
+    else:
+        flags.append("holders:>=1000")
+
+    return flags
+
+
 def compute_ticket(cash_usd: float, heat: Optional[int],
                    equity_usd: Optional[float] = None,
                    unrealized_usd: Optional[float] = None,
                    conviction_factor: Optional[float] = None,
-                   min_ticket_usd: Optional[float] = None) -> float:
+                   min_ticket_usd: Optional[float] = None,
+                   security_unknown: bool = False) -> float:
     """
     Ticket sizing, modes keyed on SIZING_MODE:
 
@@ -256,10 +287,23 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
     floor = min_ticket_usd when given, else config.MIN_TICKET_USD. The
     optional floor exists so the LIVE path can apply its own floor without
     touching the frozen default.
+
+    When security_unknown is True (§79 Phase C), ticket is multiplied by
+    UNKNOWN_SECURITY_SIZE_MULT (default 0.5). If resulting ticket < floor,
+    it falls to 0.0 ("no trade"), but NEVER executes below the minimum size.
     """
     floor = config.MIN_TICKET_USD if min_ticket_usd is None else float(min_ticket_usd)
+
     if config.SIZING_MODE == "fixed":
-        return float(config.INTENDED_POSITION_SIZE_USD)
+        base_ticket = float(config.INTENDED_POSITION_SIZE_USD)
+        if security_unknown:
+            mult = getattr(config, "UNKNOWN_SECURITY_SIZE_MULT", 0.5)
+            ticket = base_ticket * mult
+            if ticket < floor:
+                return 0.0
+            return ticket
+        return base_ticket
+
     if config.SIZING_MODE == "risk_budget":
         budget = compute_risk_budget(
             0.0 if equity_usd is None else equity_usd,
@@ -269,13 +313,27 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
         cf = conviction_factor
         if cf is None or not math.isfinite(cf) or cf <= 0:
             cf = 1.0      # fail closed: never scale on a malformed factor
-        ticket = budget.max_order_usd * cf
-        return float(min(config.HARD_ORDER_CEILING_USD,
-                         max(floor, _round_half_up(ticket))))
+        base_ticket = float(min(config.HARD_ORDER_CEILING_USD,
+                                max(floor, _round_half_up(budget.max_order_usd * cf))))
+        if security_unknown:
+            mult = getattr(config, "UNKNOWN_SECURITY_SIZE_MULT", 0.5)
+            ticket = base_ticket * mult
+            if ticket < floor:
+                return 0.0
+            return float(min(config.HARD_ORDER_CEILING_USD, max(floor, _round_half_up(ticket))))
+        return base_ticket
+
     heat_val = config.CROWD_HEAT_MIN + 14 if heat is None else heat  # ~50 neutral
     conviction = min(1.0, max(0.0, heat_val / 100.0 + 0.3))
     base = min(cash_usd * config.TICKET_CASH_FRACTION, config.TICKET_MAX_USD)
-    return max(floor, round(base * conviction))
+    base_ticket = float(max(floor, round(base * conviction)))
+    if security_unknown:
+        mult = getattr(config, "UNKNOWN_SECURITY_SIZE_MULT", 0.5)
+        ticket = base_ticket * mult
+        if ticket < floor:
+            return 0.0
+        return float(ticket)
+    return base_ticket
 
 
 def compute_entry_cost(size_usd: float) -> float:

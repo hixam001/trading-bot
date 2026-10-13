@@ -209,8 +209,17 @@ def security_clear(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResu
     problems = []
     if c.mint_authority_revoked is False:
         problems.append("mint authority NOT revoked")
+    if c.freeze_authority_revoked is False:
+        problems.append("freeze authority NOT revoked")
     if c.is_likely_honeypot is True:
         problems.append("flagged as likely honeypot")
+    if getattr(c, "dangerous_extensions", None):
+        for ext in c.dangerous_extensions:
+            problems.append(f"dangerous extension: {ext}")
+    if getattr(c, "transfer_fee_bps", None) is not None:
+        max_fee = getattr(config, "MAX_TRANSFER_FEE_BPS", 100)
+        if c.transfer_fee_bps > max_fee:
+            problems.append(f"transfer fee {c.transfer_fee_bps} bps exceeds max {max_fee} bps")
     ok = not problems
 
     def fmt(v):

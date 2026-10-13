@@ -12,6 +12,7 @@ Birdeye-only fields and stay None when Birdeye is not configured.
 from __future__ import annotations
 
 import logging
+import time
 
 import httpx
 
@@ -20,6 +21,16 @@ import config
 log = logging.getLogger(__name__)
 
 MISSING = "__missing__"
+
+VERIFIED_DANGEROUS_EXTENSIONS: tuple[str, ...] = (
+    "permanentDelegate",
+    "transferHook",
+    "nonTransferable",
+    "pausableConfig",
+)
+
+_MINT_EXTENSION_CACHE: dict[str, tuple[float, dict]] = {}
+CACHE_TTL_SECONDS: float = 3600.0  # 1 hour
 
 
 def parse_mint_authorities(info: dict) -> dict:
@@ -33,6 +44,87 @@ def parse_mint_authorities(info: dict) -> dict:
         out["mint_authority_revoked"] = ma is None
     if fa != MISSING:
         out["freeze_authority_revoked"] = fa is None
+    return out
+
+
+def parse_mint_extensions(data: dict) -> dict:
+    """Pure: extracts program and extensions from a jsonParsed mint account data object.
+
+    Accepts data dict (either raw data dict with "program" and "parsed", or the parsed dict).
+    Returns {"program": "spl-token" | "spl-token-2022", "extensions": list[str],
+             "transfer_fee_bps": int | None, "dangerous_extensions": list[str]}.
+    """
+    out: dict = {
+        "program": "spl-token",
+        "extensions": [],
+        "transfer_fee_bps": None,
+        "dangerous_extensions": [],
+    }
+    if not isinstance(data, dict):
+        return out
+
+    # Determine program
+    prog = data.get("program")
+    if prog in ("spl-token-2022", "spl-token"):
+        out["program"] = prog
+    elif data.get("owner") == "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb":
+        out["program"] = "spl-token-2022"
+    elif data.get("owner") == "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA":
+        out["program"] = "spl-token"
+
+    parsed = data.get("parsed") if "parsed" in data else data
+    info = parsed.get("info") if isinstance(parsed, dict) and "info" in parsed else parsed
+    if not isinstance(info, dict):
+        return out
+
+    extensions_list = info.get("extensions") or []
+    if not isinstance(extensions_list, list):
+        return out
+
+    ext_names = []
+    dangerous = []
+    transfer_fee_bps = None
+    max_transfer_fee = getattr(config, "MAX_TRANSFER_FEE_BPS", 100)
+
+    for item in extensions_list:
+        if not isinstance(item, dict):
+            continue
+        ext_name = item.get("extension")
+        if not ext_name:
+            continue
+        ext_names.append(ext_name)
+        state = item.get("state") or {}
+
+        # 1. Known dangerous extension names
+        if ext_name in VERIFIED_DANGEROUS_EXTENSIONS:
+            dangerous.append(ext_name)
+
+        # 2. defaultAccountState with state == 'frozen'
+        elif ext_name == "defaultAccountState":
+            if state.get("accountState") == "frozen":
+                dangerous.append("defaultAccountState (frozen)")
+
+        # 3. transferFeeConfig over max_transfer_fee
+        elif ext_name == "transferFeeConfig":
+            newer = state.get("newerTransferFee") or {}
+            older = state.get("olderTransferFee") or {}
+            fee = newer.get("transferFeeBasisPoints")
+            if fee is None:
+                fee = older.get("transferFeeBasisPoints")
+            if fee is not None:
+                try:
+                    fee_int = int(fee)
+                    transfer_fee_bps = fee_int
+                    if fee_int > max_transfer_fee:
+                        dangerous.append(
+                            f"transferFeeConfig ({fee_int} bps > {max_transfer_fee} bps)"
+                        )
+                except (ValueError, TypeError):
+                    pass
+
+    out["extensions"] = ext_names
+    out["dangerous_extensions"] = dangerous
+    out["transfer_fee_bps"] = transfer_fee_bps
     return out
 
 
@@ -76,3 +168,44 @@ async def get_authority_flags(mint: str, timeout: float = 10.0) -> dict:
                 continue
     log.warning("onchain security: every RPC failed for %s", mint[:8])
     return {}
+
+
+async def get_mint_extension_flags(mint: str, timeout: float = 10.0) -> dict:
+    """Fetch + parse Token-2022 mint extensions across ONCHAIN_RPC_URLS.
+
+    Caches results for 1 hour. Fails closed on unreachable RPC (returns empty dict).
+    """
+    now = time.monotonic()
+    if mint in _MINT_EXTENSION_CACHE:
+        cached_ts, cached_data = _MINT_EXTENSION_CACHE[mint]
+        if now - cached_ts < CACHE_TTL_SECONDS:
+            return cached_data
+
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "getAccountInfo",
+        "params": [mint, {"encoding": "jsonParsed"}],
+    }
+    async with httpx.AsyncClient(timeout=timeout) as client:
+        for endpoint in config.ONCHAIN_RPC_URLS:
+            try:
+                resp = await client.post(endpoint, json=payload)
+                if resp.status_code != 200 or not resp.text.strip():
+                    continue
+                result = (resp.json() or {}).get("result") or {}
+                value = result.get("value") or {}
+                data = value.get("data")
+                if not isinstance(data, dict):
+                    continue
+                info = (data.get("parsed") or {}).get("info")
+                if isinstance(info, dict) and info.get("type") not in (None, "mint"):
+                    continue
+                parsed = parse_mint_extensions(data)
+                _MINT_EXTENSION_CACHE[mint] = (now, parsed)
+                return parsed
+            except Exception:
+                continue
+    log.warning("onchain extensions: every RPC failed for %s", mint[:8])
+    return {}
+

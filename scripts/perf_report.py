@@ -232,6 +232,94 @@ async def refusal_stats(since_ts: float | None = None) -> dict:
     return result
 
 
+async def shadow_risk_flag_stats(since_ts: float | None = None) -> dict[str, dict]:
+    """Compute outcomes (n, win rate, avg P&L) per risk flag from closed trades and feed events."""
+    try:
+        from sizing import compute_risk_flags
+        from models import Candidate
+    except ImportError:
+        return {}
+
+    if not LEDGER_PATH.exists():
+        return {}
+    try:
+        rows = json.loads(LEDGER_PATH.read_text())["records"]
+    except Exception:
+        return {}
+
+    buys: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("kind") == "buy":
+            buys.setdefault(r["mint"], []).append(r)
+
+    closed_by_mint: dict[str, list[dict]] = {}
+    last_close_ts: dict[str, float] = {}
+    for r in sorted(rows, key=lambda x: float(x.get("ts") or 0.0)):
+        if r.get("kind") == "close" and r.get("pnl_usd") is not None:
+            mint = r["mint"]
+            lo = float(last_close_ts.get(mint, 0.0))
+            basis = sum(float(b.get("usd_size") or 0.0)
+                        for b in buys.get(mint, [])
+                        if lo < float(b.get("ts") or 0.0) <= float(r.get("ts") or 0.0))
+            last_close_ts[mint] = float(r.get("ts") or 0.0)
+            if since_ts is not None:
+                cts = _ts_epoch(r.get("ts"))
+                if cts is None or cts < since_ts:
+                    continue
+            if basis >= 0.01:
+                closed_by_mint.setdefault(mint, []).append({
+                    "pnl_usd": r["pnl_usd"],
+                    "pnl_pct": (r["pnl_usd"] / basis) * 100.0,
+                })
+
+    flag_outcomes: dict[str, list[dict]] = {}
+    try:
+        async with db.get_db() as conn:
+            feed = await db.get_feed_events(conn, limit=2000)
+    except Exception:
+        feed = []
+
+    mint_flags: dict[str, set[str]] = {}
+    for ev in feed:
+        mint = ev.get("mint_address")
+        if not mint:
+            continue
+        flags = ev.get("risk_flags")
+        if not flags:
+            snap = ev.get("candidate_snapshot") or {}
+            if isinstance(snap, dict) and snap:
+                try:
+                    cand = Candidate(
+                        symbol=snap.get("symbol", ""),
+                        mint_address=snap.get("mint_address", mint),
+                        price_usd=float(snap.get("price_usd", 1.0)),
+                        liquidity_usd=float(snap.get("liquidity_usd", 0.0)),
+                        volume_24h_usd=float(snap.get("volume_24h_usd", 0.0)),
+                        market_cap_usd=float(snap.get("market_cap_usd", 0.0)),
+                        top_holder_pct=snap.get("top_holder_pct"),
+                        holder_count=snap.get("holder_count"),
+                    )
+                    flags = compute_risk_flags(cand)
+                except Exception:
+                    flags = []
+        if flags:
+            mint_flags.setdefault(mint, set()).update(flags)
+
+    for mint, trades in closed_by_mint.items():
+        flags = mint_flags.get(mint, ["untracked"])
+        for f in flags:
+            flag_outcomes.setdefault(f, []).extend(trades)
+
+    summary = {}
+    for f, trs in sorted(flag_outcomes.items()):
+        n = len(trs)
+        wins = sum(1 for t in trs if t["pnl_usd"] > 0)
+        win_rate = (wins / n) if n > 0 else 0.0
+        avg_pnl = (sum(t["pnl_pct"] for t in trs) / n) if n > 0 else 0.0
+        summary[f] = {"n": n, "win_rate": win_rate, "avg_pnl_pct": avg_pnl}
+    return summary
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -274,6 +362,16 @@ def main() -> int:
     print("REFUSAL FUNNEL (journal, read-only):")
     for k, v in ref.items():
         print(f"  {k}: {v}")
+    print()
+    print("SHADOW RISK FLAGS (observability only — outcomes per flag):")
+    flag_stats = asyncio.run(shadow_risk_flag_stats(since_ts))
+    if not flag_stats:
+        print("  (no closed trade flag samples recorded yet)")
+    else:
+        print(f"  {'Flag':<25} | {'Trades (n)':<10} | {'Win Rate':<10} | {'Avg P&L (%)':<12}")
+        print("  " + "-" * 65)
+        for f, s in flag_stats.items():
+            print(f"  {f:<25} | {s['n']:<10} | {s['win_rate']:<9.1%} | {s['avg_pnl_pct']:>+10.2f}%")
     print()
     print("benchmark (omotrades.com disclosure, 2026-08-31): hit 9.4%, "
           "avg win +59.71%, avg loss -7.4%, expectancy -1.11%, "

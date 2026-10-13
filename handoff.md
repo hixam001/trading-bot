@@ -1,5 +1,26 @@
 ## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
 
+### Phase C: Token-Safety Gate Improvements (`rule_engine/rules.py`, `data_providers/{onchain_security.py,live.py}`, `models.py`, `sizing.py`, `run_live_cycle.py`, `api/{db.py,db_pg.py}`, `scripts/perf_report.py`, `test_audit_79_c.py`)
+1. **Freeze Authority Live Check**:
+   - `security_clear` now blocks on `freeze_authority_revoked is False` (reason: `freeze authority NOT revoked`).
+   - `freeze_authority_revoked is None` continues to pass, preserving the documented B10 operator decision that unverified security does not hard-block.
+2. **Token-2022 Mint-Extension Screen (`get_mint_extension_flags`, `parse_mint_extensions`)**:
+   - Added `get_mint_extension_flags(mint, rpc_client)` in `data_providers/onchain_security.py` using `getAccountInfo(encoding="jsonParsed")` with an in-memory 1-hour TTL cache. Fails closed to `{}` on RPC error.
+   - Screened extension names verified from official Solana documentation: `permanentDelegate`, `transferHook`, `nonTransferable`, `pausableConfig`, `defaultAccountState` (frozen), and `transferFeeConfig`.
+   - Rejects if any dangerous extension is present (`token-2022 dangerous extensions: [...]`), or if transfer fee basis points exceed `MAX_TRANSFER_FEE_BPS = 100` (1.0%).
+3. **Unknown-Security Sizing Haircut (`sizing.py`)**:
+   - Added `Candidate.security_unknown` flag (set when freeze/mint authorities or RugCheck status is `None`/unverified).
+   - In `compute_ticket_usd`, if `security_unknown` is True, size is scaled by `UNKNOWN_SECURITY_SIZE_MULT = 0.5`.
+   - If the post-haircut ticket falls below `MIN_TICKET_USD`, size falls to `0.0` ("no trade") rather than rounding up, strictly preventing executing undersized trades below minimum floor.
+   - When `security_unknown` is False, standard floor clamping behavior is preserved.
+4. **Shadow Risk Flags & DB Schema**:
+   - Implemented `compute_risk_flags(c)` in `run_live_cycle.py` tracking `top_holder_pct` and `holder_count` risk buckets on `FeedEvent.risk_flags`.
+   - Added `risk_flags TEXT DEFAULT '{}'` column migration to `feed_events` in both SQLite (`backend/api/db.py`) and PostgreSQL (`backend/api/db_pg.py`).
+   - Added `SHADOW RISK FLAGS` section to `scripts/perf_report.py` analyzing blocked/allowed distribution and outcome correlation.
+5. **Tests**:
+   - Added 19 tests in `backend/tests/test_audit_79_c.py`.
+   - Full test suite: **1034 passed** (0 failed).
+
 ### Phase B: Route Hygiene, Landing Quality, and Safe Exit Retries (`live_execution/{quote_params.py,jupiter_executor.py,executor.py,config.py,dex_labels.json}`, `scripts/refresh_dex_labels.py`, `test_audit_79_b.py`)
 1. **Unified Quote Parameters (`backend/live_execution/quote_params.py`)**:
    - Centralized `build_quote_params` returning `inputMint`, `outputMint`, `amount`, `slippageBps`, `asLegacyTransaction="true"`, `swapMode="ExactIn"`, and optional `dexes`.
