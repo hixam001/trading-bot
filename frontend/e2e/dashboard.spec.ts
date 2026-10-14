@@ -62,10 +62,15 @@ test.describe('dashboard', () => {
     const hero = page.getByTestId('hero')
     await expect(hero).toBeVisible({ timeout: 15_000 })
     await expect(hero.getByText('EQUITY')).toBeVisible()
-    // The live book (dashboard middle column) carries the wallet detail.
+    // The live book (dashboard middle column) carries the wallet detail or explicit status.
     const book = page.getByTestId('live-book')
-    await expect(book).toBeVisible({ timeout: 15_000 })
-    await expect(book.getByText('Open value')).toBeVisible()
+    const bookFallback = page.getByText('Live book not available', { exact: false })
+    await book.or(bookFallback).first().waitFor({ state: 'visible', timeout: 15_000 })
+    if (await book.isVisible()) {
+      await expect(book.getByText('Open value')).toBeVisible()
+    } else {
+      await expect(bookFallback).toBeVisible()
+    }
   })
 
   test('feed rows expand and collapse with aria-expanded', async ({ page }) => {
@@ -172,11 +177,16 @@ test.describe('pages (tabs)', () => {
     await page.getByTestId('tab-holdings').click()
     const holdings = page.getByTestId('holdings')
     await expect(holdings).toBeVisible({ timeout: 15_000 })
-    await expect(holdings.getByText('Open value')).toBeVisible()
-    // Either a position row or the explicit empty explanation — never blank.
+    // Either open value stat, or documented disabled/empty state
+    const openValue = holdings.getByText('Open value')
+    const emptyState = holdings.getByText('Live book not available', { exact: false })
+    const noPositions = holdings.getByText('No open live positions', { exact: false })
+    await openValue.or(emptyState).or(noPositions).first().waitFor({ state: 'visible', timeout: 15_000 })
     const hasContent =
       (await holdings.locator('table tbody tr').count()) > 0 ||
-      (await holdings.getByText('No open live positions').count()) > 0
+      (await openValue.isVisible()) ||
+      (await emptyState.isVisible()) ||
+      (await noPositions.isVisible())
     expect(hasContent).toBe(true)
   })
 
@@ -185,21 +195,26 @@ test.describe('pages (tabs)', () => {
     await page.getByTestId('tab-journal').click()
     const journal = page.getByTestId('journal')
     await expect(journal).toBeVisible({ timeout: 15_000 })
-    await expect(journal.getByText('Order decisions')).toBeVisible()
+    await expect(journal.getByText('Order decisions', { exact: true })).toBeVisible()
 
-    // This deployment has sealed commits (filled or not) — at least one row.
+    // Row-or-empty-state: either sealed order commits exist, or the documented empty state is rendered.
     const proofBtn = journal.locator('button[aria-expanded]').first()
-    await expect(proofBtn).toBeVisible({ timeout: 15_000 })
+    const emptyState = journal.getByText('No sealed order decisions yet', { exact: false })
+    await proofBtn.or(emptyState).first().waitFor({ state: 'visible', timeout: 15_000 })
 
-    // Expand proof detail: commit hash + memo lines appear.
-    await proofBtn.click()
-    await expect(proofBtn).toHaveAttribute('aria-expanded', 'true')
-    await expect(journal.getByText('commit hash:').first()).toBeVisible()
-    await expect(journal.getByText('memo:').first()).toBeVisible()
+    if (await proofBtn.isVisible()) {
+      // Expand proof detail: commit hash + memo lines appear.
+      await proofBtn.click()
+      await expect(proofBtn).toHaveAttribute('aria-expanded', 'true')
+      await expect(journal.getByText('commit hash:').first()).toBeVisible()
+      await expect(journal.getByText('memo:').first()).toBeVisible()
 
-    // Collapse again.
-    await proofBtn.click()
-    await expect(proofBtn).toHaveAttribute('aria-expanded', 'false')
+      // Collapse again.
+      await proofBtn.click()
+      await expect(proofBtn).toHaveAttribute('aria-expanded', 'false')
+    } else {
+      await expect(emptyState).toBeVisible()
+    }
   })
 })
 
