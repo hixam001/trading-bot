@@ -10,4 +10,9 @@ regexes = [
     '''(?i)test-operator-secret''',
     '''(?i)my-secret-api-key''',
     '''(?i)test-operator-admin-token''',
+    '''(?i)DEEPSEEK_API_KEY=""''',
+    '''(?i)GROQ_API_KEY=""''',
+]
+paths = [
+    '''\.github/workflows/tests\.yml''',
 ]

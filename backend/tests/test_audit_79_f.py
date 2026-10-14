@@ -141,10 +141,7 @@ async def test_stats_real_equity_and_status(monkeypatch):
         return 1.0  # token price
 
     from live_execution import solana, wallet
-    class MockKeypair:
-        pass
-    monkeypatch.setattr(wallet, "load_keypair", lambda: MockKeypair())
-    monkeypatch.setattr(wallet, "pubkey_string", lambda kp: "11111111111111111111111111111111")
+    monkeypatch.setattr(wallet, "public_address", lambda: "11111111111111111111111111111111")
     monkeypatch.setattr(solana, "get_sol_balance", mock_sol_bal)
     monkeypatch.setattr(mock_p, "get_current_price", mock_complete_price)
 
