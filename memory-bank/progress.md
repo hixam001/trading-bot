@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] Mandatory Pre-Commit and Pre-Push Verification Gate (2026-10-14):
+      1. Hard requirement: every commit and push requires all 7 test suites to pass cleanly.
+      2. Hermetic backend suite: 1,066 tests passing (0 failures, without `.env`, fake RPC).
+      3. Dependency audits: `pip check`, `pip-audit -r backend/requirements.lock`, `npm audit --omit=dev`.
+      4. Frontend stability: `tsc --noEmit` and `npm run build` clean (zero errors).
+      5. Playwright E2E: 30 tests green against mock backend, resilient to empty-state and populated runs.
+      6. Secret hygiene: zero secrets or unallowlisted patterns via `gitleaks git --verbose`.
+      7. CI workflow hardened and fully green on `main` (Tests & Security Audit, gitleaks, CodeQL).
 - [x] §79 Phase G: Gate funnel diagnostic report (2026-10-13):
       1. Diagnostic script (`scripts/gate_funnel_report.py`) diagnosing why the bot has had zero gate-passers / closed trades since §57.
       2. Reads verbatim `feed_events` (`rule_breakdown`, `failed_rule_ids`) and `trades`.

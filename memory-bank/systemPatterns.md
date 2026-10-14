@@ -44,3 +44,14 @@ LLM pass/fail fields; .get(key, default) fabrication on external data;
 silent except-pass near money math; short-circuit gates; auto-applied
 threshold changes; agent layers between gate and action (the reference bot does
 this — we deliberately don't).
+
+## Mandatory Pre-Commit and Pre-Push Verification Gate
+Before ANY commit or git push to the repository, ALL tests across backend, frontend, security, and CI must pass cleanly:
+1. **Hermetic Pytest**: `env -u ADMIN_TOKEN pytest -q` (all 1,066+ tests passing, zero failures, hermetic without `.env`, without real RPC/wallet).
+2. **Python Dependencies**: `pip check` (zero dependency conflicts) and `pip-audit -r backend/requirements.lock` (zero vulnerabilities).
+3. **Architectural Isolation**: AST enforcement ensuring `backend/api/` never imports `load_keypair` or touches signing code.
+4. **Frontend Quality**: `cd frontend && npx tsc --noEmit` (zero TypeScript errors) and `npm run build` (clean Vite production bundle).
+5. **Frontend Security**: `cd frontend && npm audit --omit=dev` (zero production vulnerabilities).
+6. **Playwright E2E**: `cd frontend && npm run test:e2e` (all 30 tests green against mock backend, resilient to both fresh/empty-state and populated deployments).
+7. **Secret Hygiene**: `gitleaks git --verbose` across the commit range (zero secrets or unallowlisted dummy credentials in code, config, or workflows).
+

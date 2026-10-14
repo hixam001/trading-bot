@@ -1,4 +1,31 @@
+## §80 — CI Hardening and Pre-Commit/Pre-Push Verification Invariant (2026-10-14)
+
+### CI Hardening & Incident Remediation (Commits `b7b3550` & `78ed7e3`)
+1. **Gitleaks Remediation**:
+   - Diagnosed failure caused by empty dummy environment variable assignments in `.github/workflows/tests.yml` matching Gitleaks `generic-api-key`.
+   - Fingerprinted historical commit in `.gitleaksignore`, added path/regex allowlists in `.gitleaks.toml`, and removed dummy lines from workflow file.
+   - Verified zero leaks via local and CI Gitleaks scans.
+2. **Pytest Hermeticity Remediation (`test_audit_79_f.py`)**:
+   - Diagnosed failure where `wallet.public_address` was unmocked, causing clean CI environments without `wallet_pubkey.txt` to return `None` and fail with `'partial' == 'complete'`.
+   - Mocked `wallet.public_address` to return dummy base58 pubkey.
+3. **Playwright E2E Empty-State Resilience (`dashboard.spec.ts`)**:
+   - Diagnosed failures caused by missing `EXPECTED_WALLET_ADDRESS` in mock backend and Playwright strict-mode collision on `getByText('Order decisions')` against empty-state copy.
+   - Injected `EXPECTED_WALLET_ADDRESS="11111111111111111111111111111111"` into CI mock backend invocation.
+   - Refactored assertions using `exact: true` and `.or(emptyState)` fallbacks to be resilient to both fresh/empty and populated environments.
+4. **Mandatory Pre-Commit and Pre-Push Verification Protocol**:
+   - Before any commit or git push, ALL of the following suites MUST pass:
+     1. `env -u ADMIN_TOKEN pytest -q` (all 1,066+ tests green without `.env`, fake RPC)
+     2. `pip check` and `pip-audit -r backend/requirements.lock` (clean)
+     3. AST architectural isolation (no `load_keypair` in `backend/api/`)
+     4. `cd frontend && npx tsc --noEmit` (clean, 0 errors)
+     5. `cd frontend && npm run build` (clean Vite bundle)
+     6. `cd frontend && npm audit --omit=dev` (0 vulnerabilities)
+     7. `cd frontend && npm run test:e2e` (all 30 Playwright tests green)
+     8. `gitleaks git --verbose` (0 secrets detected)
+   - Status: All GitHub Actions workflows (`Tests & Security Audit`, `gitleaks`, `CodeQL`) passing green on `main`.
+
 ## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
+
 
 ### Phase G: Gate Funnel Diagnostic Report (`scripts/gate_funnel_report.py`, `backend/tests/test_audit_79_g.py`, `docs/11_DEPLOYMENT.md`)
 1. **Diagnostic Funnel Engine (`scripts/gate_funnel_report.py`)**:

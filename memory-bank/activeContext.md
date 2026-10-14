@@ -1,6 +1,22 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-13 (§79 Complete — Phases A through G Merged, 1066 tests green):**
+**Current — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
+- **Mandatory Pre-Commit/Pre-Push Gate (Strict Invariant)**: ALL of the following tests and checks MUST pass cleanly before any commit or git push:
+  1. `env -u ADMIN_TOKEN pytest -q` — all 1,066+ hermetic tests green without `.env`, without wallet keypair, with fake RPC/fixtures.
+  2. `pip check` — zero Python dependency conflicts.
+  3. `pip-audit -r backend/requirements.lock` — zero known Python vulnerabilities.
+  4. AST architectural isolation — `backend/api/` must never import `load_keypair` or touch signing routines.
+  5. `cd frontend && npx tsc --noEmit` — zero TypeScript compiler errors.
+  6. `cd frontend && npm run build` — clean Vite production bundle.
+  7. `cd frontend && npm audit --omit=dev` — zero frontend production vulnerabilities.
+  8. `cd frontend && npm run test:e2e` — all 30 Playwright tests passing against mock backend, fully resilient to both empty/fresh-state and populated environments.
+  9. `gitleaks git --verbose` — zero secrets or unallowlisted dummy credential patterns across the commit range.
+- **Recent CI Hardening Fixes (Commits b7b3550 & 78ed7e3)**:
+  * Gitleaks CI workflow: resolved false-positive on dummy API key strings in workflow file via fingerprint whitelisting in `.gitleaksignore`, path allowlisting in `.gitleaks.toml`, and YAML cleanup.
+  * Pytest hermeticity: fixed `test_audit_79_f.py` by mocking `wallet.public_address()` so clean environments without `wallet_pubkey.txt` evaluate `wallet_equity_usd` status as `'complete'`.
+  * Playwright E2E empty-state resilience: added `EXPECTED_WALLET_ADDRESS` to mock backend startup command, used `{ exact: true }` on stat labels to avoid strict-mode ambiguity with empty-state messages, and used `.or()` selectors for empty vs populated states.
+
+**Prior — 2026-10-13 (§79 Complete — Phases A through G Merged, 1066 tests green):**
 - **Phase G (Gate Funnel Diagnostic Report)**:
   1. Created `scripts/gate_funnel_report.py`: read-only diagnostic analyzing why the bot has had zero gate-passers or closed trades since §57.
   2. Evaluates verbatim `feed_events` (`rule_breakdown`, `failed_rule_ids`) and `trades`.
