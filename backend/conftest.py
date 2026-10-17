@@ -1,15 +1,60 @@
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+# Hermetic live execution state for pytest (§81 Phase F-1):
+# Set up a dedicated temporary directory before any imports can load live_execution.config.
+_SESSION_LIVE_STATE = Path(tempfile.mkdtemp(prefix="pytest_live_execution_state_"))
+os.environ["LIVE_EXECUTION_STATE_DIR"] = str(_SESSION_LIVE_STATE)
+
 # Puts backend/ (this directory) on sys.path so every test — backend/tests
 # AND live_execution/tests — can `import config`, `import run_live_cycle`,
 # `from live_execution import ...` deterministically, regardless of the
 # working directory pytest was launched from or test-file ordering.
-import sys
-from pathlib import Path
-
 _BACKEND = str(Path(__file__).resolve().parent)
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
 import pytest
+
+_REAL_LIVE_STATE_DIR = Path(__file__).resolve().parent / "live_execution" / "state"
+_INITIAL_STATE_SNAPSHOT: dict[str, tuple[int, int]] = {}
+
+
+def _snapshot_dir(directory: Path) -> dict[str, tuple[int, int]]:
+    snapshot = {}
+    if directory.is_dir():
+        for p in directory.rglob("*"):
+            if p.is_file():
+                try:
+                    st = p.stat()
+                    snapshot[str(p.relative_to(directory))] = (st.st_size, st.st_mtime_ns)
+                except OSError:
+                    pass
+    return snapshot
+
+
+def pytest_sessionstart(session):
+    global _INITIAL_STATE_SNAPSHOT
+    _INITIAL_STATE_SNAPSHOT = _snapshot_dir(_REAL_LIVE_STATE_DIR)
+
+
+def pytest_sessionfinish(session, exitstatus):
+    current_snapshot = _snapshot_dir(_REAL_LIVE_STATE_DIR)
+    if current_snapshot != _INITIAL_STATE_SNAPSHOT:
+        diff_added = set(current_snapshot.keys()) - set(_INITIAL_STATE_SNAPSHOT.keys())
+        diff_removed = set(_INITIAL_STATE_SNAPSHOT.keys()) - set(current_snapshot.keys())
+        diff_changed = {
+            k for k in current_snapshot.keys() & _INITIAL_STATE_SNAPSHOT.keys()
+            if current_snapshot[k] != _INITIAL_STATE_SNAPSHOT[k]
+        }
+        msg = (
+            f"HERMETICITY VIOLATION: backend/live_execution/state/ was modified during the test session!\n"
+            f"Added: {sorted(diff_added)}\nRemoved: {sorted(diff_removed)}\nChanged: {sorted(diff_changed)}"
+        )
+        session.exitstatus = 1
+        pytest.exit(msg)
 
 
 @pytest.fixture(autouse=True, scope="session")

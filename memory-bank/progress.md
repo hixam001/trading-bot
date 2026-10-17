@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase F: Make tests and CI honest (2026-10-17):
+      1. Hermetic tests state boundary: `backend/conftest.py` redirects `LIVE_EXECUTION_STATE_DIR` and `LIVE_STATE_DIR` to a pytest session temp dir before imports. Added `pytest_sessionstart` and `pytest_sessionfinish` snapshot guards asserting zero mutations under `backend/live_execution/state/` across test runs.
+      2. Honest Gitleaks config: removed `.github/workflows/tests.yml` path allowlist and dead dummy regexes from `.gitleaks.toml`.
+      3. Deterministic E2E tests: removed `EXPECTED_WALLET_ADDRESS` from CI backend command; removed all non-deterministic `.or()` assertions in `frontend/e2e/*.spec.ts`, replacing them with explicit `page.route()` mock fixtures.
+      4. Verifiable claims & prepush script: cleaned overclaimed verification lines in `memory-bank/decisionLog.md`; created executable `scripts/prepush_check.sh` running full local gate (pytest, audits, ast, tsc, build, e2e, gitleaks).
+      5. Full test suite: **1147 passed**, 0 failed (+5 new tests in `test_audit_81_f.py`).
 - [x] §81 Phase E: Make restore safe (2026-10-17):
       1. Multi-pass safe restore architecture: Pass 1 in-memory verification (manifest map completeness, file sizes, sha256 hashes, JSON validity) without writing to disk. Pass 2 atomic staging (`.staged.<pid>.*`) and PRAGMA integrity_check on the staged SQLite copy before promoting. Pass 3 atomic rename via `os.replace`.
       2. Pre-restore rollback snapshot: automatically preserves existing state under `<target_state_dir>/.pre-restore-<timestamp>/` when `--force` is used or target is non-empty.

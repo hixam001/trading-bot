@@ -46,12 +46,26 @@ threshold changes; agent layers between gate and action (the reference bot does
 this — we deliberately don't).
 
 ## Mandatory Pre-Commit and Pre-Push Verification Gate
-Before ANY commit or git push to the repository, ALL tests across backend, frontend, security, and CI must pass cleanly:
-1. **Hermetic Pytest**: `env -u ADMIN_TOKEN pytest -q` (all 1,066+ tests passing, zero failures, hermetic without `.env`, without real RPC/wallet).
-2. **Python Dependencies**: `pip check` (zero dependency conflicts) and `pip-audit -r backend/requirements.lock` (zero vulnerabilities).
-3. **Architectural Isolation**: AST enforcement ensuring `backend/api/` never imports `load_keypair` or touches signing code.
-4. **Frontend Quality**: `cd frontend && npx tsc --noEmit` (zero TypeScript errors) and `npm run build` (clean Vite production bundle).
-5. **Frontend Security**: `cd frontend && npm audit --omit=dev` (zero production vulnerabilities).
-6. **Playwright E2E**: `cd frontend && npm run test:e2e` (all 30 tests green against mock backend, resilient to both fresh/empty-state and populated deployments).
-7. **Secret Hygiene**: `gitleaks git --verbose` across the commit range (zero secrets or unallowlisted dummy credentials in code, config, or workflows).
+Before ANY commit or git push to the repository, the automated verification gate must pass cleanly.
+Run the canonical verification script from the repository root:
+
+```bash
+./scripts/prepush_check.sh
+```
+
+This runs the 9 required verification steps in order and stops at the first failure:
+1. `env -u ADMIN_TOKEN pytest -q` (hermetic backend test suite)
+2. `pip check` (dependency graph integrity)
+3. `pip-audit -r backend/requirements.lock` (Python vulnerability audit)
+4. AST architectural isolation test (verifies `backend/api/` never touches `load_keypair` or signing code)
+5. `npx tsc --noEmit` (frontend TypeScript type check)
+6. `npm run build` (frontend Vite production bundle)
+7. `npm audit --omit=dev` (production npm dependency vulnerability audit)
+8. `npm run test:e2e` (Playwright end-to-end integration tests)
+9. `gitleaks git --verbose` (secret scan across repository history; skipped if binary is absent)
+
+To install this gate as an optional automatic git pre-push hook:
+```bash
+ln -s ../../scripts/prepush_check.sh .git/hooks/pre-push
+```
 

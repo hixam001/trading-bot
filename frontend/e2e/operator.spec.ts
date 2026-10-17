@@ -60,52 +60,101 @@ test.describe('command palette (§63.1)', () => {
 })
 
 test.describe('refusal funnel (§63.2)', () => {
-  test('renders on the system view', async ({ page }) => {
+  test('renders on the system view with deterministic fixture', async ({ page }) => {
+    await page.route('**/api/funnel*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          period: '24h',
+          funnel: {
+            candidates_seen: 100,
+            gate_passed: 20,
+            model_approved: 5,
+            filled: 3,
+            gate_refused: 80,
+            model_refused: 15,
+            model_refusal_rate_of_gate_passers: 0.75,
+            candidates_seen_total: 100,
+          },
+        }),
+      }),
+    )
     await page.goto(APP)
     await page.getByTestId('tab-system').click()
-    // Either the funnel (server counts) or its error panel — never blank,
-    // and never a client-side approximation of the numbers.
     const stages = page.getByTestId('funnel-stages')
-    const failed = page.getByText('Refusal funnel', { exact: true }).first()
-    await expect(stages.or(failed).first()).toBeVisible({ timeout: 15_000 })
-    if (await stages.isVisible()) {
-      // All four stages present, in order, with the model-refusal rate line.
-      await expect(stages.getByText('candidates seen')).toBeVisible()
-      await expect(stages.getByTestId('funnel-stage-gate_passed')).toBeVisible()
-      await expect(stages.getByText('model approved')).toBeVisible()
-      await expect(stages.getByText('filled')).toBeVisible()
-      await expect(stages.getByText('model refusal · share of gate-passers')).toBeVisible()
-    }
+    await expect(stages).toBeVisible({ timeout: 15_000 })
+    await expect(stages.getByText('candidates seen')).toBeVisible()
+    await expect(stages.getByTestId('funnel-stage-gate_passed')).toBeVisible()
+    await expect(stages.getByText('model approved')).toBeVisible()
+    await expect(stages.getByText('filled')).toBeVisible()
+    await expect(stages.getByText('model refusal · share of gate-passers')).toBeVisible()
   })
 })
 
 test.describe('feed keyboard navigation (§63.4)', () => {
   test('j/k move the cursor, enter expands, esc collapses', async ({ page }) => {
+    await page.route('**/api/feed*', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          total: 2,
+          limit: 50,
+          offset: 0,
+          events: [
+            {
+              id: 1,
+              ts: '2026-10-17T12:00:00Z',
+              symbol: 'SOL',
+              mint_address: 'So11111111111111111111111111111111111111112',
+              candidate_snapshot: {},
+              verdict: 'pass',
+              thesis: 'SOL thesis',
+              rule_breakdown: [],
+              failed_rule_ids: [],
+              regime_ok: true,
+              grounding_flags: [],
+              narration_source: 'model',
+              led_to_trade_id: null,
+            },
+            {
+              id: 2,
+              ts: '2026-10-17T12:01:00Z',
+              symbol: 'BONK',
+              mint_address: 'DezXAZ8z7PnrnRJjz3wXBoRgixCa6xjnB7YaB1pPB263',
+              candidate_snapshot: {},
+              verdict: 'pass',
+              thesis: 'BONK thesis',
+              rule_breakdown: [],
+              failed_rule_ids: [],
+              regime_ok: true,
+              grounding_flags: [],
+              narration_source: 'model',
+              led_to_trade_id: null,
+            },
+          ],
+        }),
+      }),
+    )
     await page.goto(APP)
     const feed = page.getByTestId('live-feed')
     const list = page.getByTestId('feed-list')
     await expect(feed).toBeVisible({ timeout: 15_000 })
 
     const rows = feed.locator('button[aria-expanded]')
-    const firstRow = rows.first()
-    const emptyState = feed.getByText('No decisions yet', { exact: false })
-    await firstRow.or(emptyState).first().waitFor({ state: 'visible', timeout: 20_000 })
+    await expect(rows.first()).toBeVisible({ timeout: 15_000 })
+    expect(await rows.count()).toBeGreaterThanOrEqual(2)
 
-    if ((await rows.count()) > 1 && (await firstRow.isVisible())) {
-      await list.focus()
-      await page.keyboard.press('j')
-      // Cursor moved to row 1 (0-indexed): it carries the selection marker.
-      await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-selected', 'true')
-      await page.keyboard.press('Enter')
-      // Enter expands the cursor row: its own button reports aria-expanded.
-      const cursorRowButton = list
-        .locator('[data-feed-row="1"]')
-        .locator('button[aria-expanded]')
-      await expect(cursorRowButton).toHaveAttribute('aria-expanded', 'true')
-      await page.keyboard.press('Escape')
-      await expect(cursorRowButton).toHaveAttribute('aria-expanded', 'false')
-    } else {
-      await expect(emptyState).toBeVisible()
-    }
+    await list.focus()
+    await page.keyboard.press('j')
+    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Enter')
+    const cursorRowButton = list
+      .locator('[data-feed-row="1"]')
+      .locator('button[aria-expanded]')
+    await expect(cursorRowButton).toHaveAttribute('aria-expanded', 'true')
+    await page.keyboard.press('Escape')
+    await expect(cursorRowButton).toHaveAttribute('aria-expanded', 'false')
   })
 })

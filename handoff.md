@@ -1,5 +1,23 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase F: Make Tests and CI Honest (`backend/conftest.py`, `.gitleaks.toml`, `.github/workflows/tests.yml`, `frontend/e2e/`, `scripts/prepush_check.sh`, `memory-bank/`, `backend/tests/test_audit_81_f.py`)
+1. **Hermetic Test State Isolation (F-1)**:
+   - Configured `backend/conftest.py` to point `LIVE_EXECUTION_STATE_DIR` and `LIVE_STATE_DIR` at a dedicated pytest session temp directory before imports.
+   - Added `pytest_sessionstart` and `pytest_sessionfinish` hooks that capture and assert identical SHA-256 tree snapshots of `backend/live_execution/state/`, raising `pytest.exit` if tests write or mutate any state files in the repository.
+   - Updated `backend/tests/test_state_path_colocation.py` to strip test session environment variables when testing unconfigured default state locations in fresh subprocesses.
+2. **Honest Secret Scanning Configuration (F-2)**:
+   - Removed `.github/workflows/tests.yml` from `path-allowlist` in `.gitleaks.toml`.
+   - Removed dead regex overrides (`DEEPSEEK_API_KEY=""`, `GROQ_API_KEY=""`) that previously hid workflow-level dummy leaks.
+3. **Deterministic E2E Testing (F-3)**:
+   - Removed artificial `EXPECTED_WALLET_ADDRESS` override from CI mock backend command in `.github/workflows/tests.yml`.
+   - Eliminated all race-prone `.or()` locator fallbacks in `frontend/e2e/dashboard.spec.ts` and `frontend/e2e/operator.spec.ts`, replacing them with deterministic `page.route()` mock fixtures for stats, portfolio, journal, feed, and funnel data.
+4. **Honest Documentation & Pre-Push Script (F-4)**:
+   - Removed unverified claim in `memory-bank/decisionLog.md` #86 ("Complete closure of all audit findings") and corrected test count references.
+   - Created `scripts/prepush_check.sh` (`chmod +x`) automating local pre-push checks: pytest, pip check & pip-audit, AST isolation, frontend typecheck, build, Playwright e2e, and gitleaks scan.
+5. **Tests & Suite**:
+   - Added 5 tests in `backend/tests/test_audit_81_f.py`.
+   - Test count: **1147 passed**, 0 failed.
+
 ### Phase E: Make Restore Safe (`scripts/restore_state.py`, `docs/15_BACKUP_RESTORE.md`, `backend/tests/test_audit_81_e.py`)
 1. **Multi-Pass Safe Restore Architecture (E-1)**:
    - Pass 1 (In-Memory Validation): Decrypts tarball, verifies manifest map completeness, checks file sizes, SHA-256 hashes, and JSON parsing in memory. Nothing is written to the destination disk during Pass 1.

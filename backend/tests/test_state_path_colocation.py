@@ -21,6 +21,7 @@ These tests pin both halves: the shipped DEFAULTS co-locate everything in
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -41,8 +42,12 @@ def _shipped_defaults() -> dict:
         "'kill_switch': str(config.KILL_SWITCH_FILE), "
         "'base_dir': str(config.BASE_DIR)}))"
     )
+    clean_env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("LIVE_STATE_DIR", "LIVE_EXECUTION_STATE_DIR")
+    }
     proc = subprocess.run([sys.executable, "-c", code], cwd=config.BASE_DIR,
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, env=clean_env)
     assert proc.returncode == 0, proc.stderr
     return json.loads(proc.stdout.strip().splitlines()[-1])
 
@@ -65,8 +70,12 @@ def test_live_execution_package_state_dir_matches_the_paper_side_default():
         "print(json.dumps({'pkg': str(le.STATE_DIR), "
         "'paper': str(config.LIVE_STATE_DIR)}))"
     )
+    clean_env = {
+        k: v for k, v in os.environ.items()
+        if k not in ("LIVE_STATE_DIR", "LIVE_EXECUTION_STATE_DIR")
+    }
     proc = subprocess.run([sys.executable, "-c", code], cwd=config.BASE_DIR,
-                          capture_output=True, text=True, timeout=60)
+                          capture_output=True, text=True, timeout=60, env=clean_env)
     assert proc.returncode == 0, proc.stderr
     d = json.loads(proc.stdout.strip().splitlines()[-1])
     assert Path(d["pkg"]).resolve() == Path(d["paper"]).resolve()
