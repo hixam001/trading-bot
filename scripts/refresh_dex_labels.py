@@ -58,7 +58,8 @@ def refresh_labels(labels_url: str | None = None, out_file: Path | None = None) 
     target_file = out_file or OUTPUT_FILE
     print(f"Fetching program-id-to-label from {url}...")
     try:
-        resp = httpx.get(url, timeout=15.0)
+        from live_execution.jupiter_client import get_headers
+        resp = httpx.get(url, headers=get_headers() or None, timeout=15.0)
         resp.raise_for_status()
         raw_data = resp.json()
         id_to_label = parse_label_map(raw_data)

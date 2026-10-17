@@ -80,8 +80,8 @@ class JupiterProvider:
 
         own_client = self._client is None
         client = self._client or httpx.AsyncClient()
-        # Quote API v6 is keyless; a Jupiter Pro key rides as x-api-key.
-        headers = {"x-api-key": config.JUPITER_API_KEY} if config.JUPITER_API_KEY else {}
+        from live_execution.jupiter_client import get_headers
+        headers = get_headers()
         try:
             data = await fetch_json(
                 client,

@@ -1,5 +1,26 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase G: Real-World Validation and API-Risk Containment (`scripts/dry_run_guard.py`, `backend/live_execution/jupiter_client.py`, `docs/16_JUPITER_API_MIGRATION.md`, `docs/11_DEPLOYMENT.md`, `backend/tests/test_audit_81_g.py`)
+1. **Operator Dry-Run Verification Tool (G-1)**:
+   - Implemented `scripts/dry_run_guard.py` (`chmod +x`): operator-run, read-only verification tool that exercises quote fetching, transaction assembly (`_build_swap_transaction`), static bytecode inspection (`inspect_swap_transaction`), and multi-RPC pre-sign simulation (`simulate_and_assert`) with real `TradeIntent` balance assertions without a keypair.
+   - Strictly uses only `wallet.public_address()`. AST test proves zero imports or references to `load_keypair` or signing helpers.
+   - Refuses execution if `LIVE_EXECUTION_STATE_DIR` is unset and default state dir exists unless `--allow-live-state` is explicitly passed (preventing live state / counter pollution).
+   - Documented in `docs/11_DEPLOYMENT.md` as mandatory pre-arm and post-upgrade check.
+2. **Centralized Jupiter API Client (G-2)**:
+   - Created `backend/live_execution/jupiter_client.py` as the single source of truth for Jupiter API base URL and request headers.
+   - Supports optional `JUPITER_API_KEY` (sent via `x-api-key` header) and `JUPITER_BASE_URL` (defaulting to `https://lite-api.jup.ag/swap/v1`).
+   - Wired into `_post_json` and `_get_json` in `jupiter_executor.py`, `data_providers/jupiter.py`, and `scripts/refresh_dex_labels.py`.
+   - Behavior with no environment variables is byte-for-byte identical to legacy behavior.
+3. **Jupiter API Migration & V2 Evaluation (G-3)**:
+   - Created `docs/16_JUPITER_API_MIGRATION.md` detailing every Jupiter endpoint in use, citing primary documentation from `developers.jup.ag` regarding Metis deprecation, Swap V2 migration, and keyless 0.5 RPS rate limits.
+   - Constructed a comprehensive analysis table of guard assumptions and failure modes under changed response structures.
+   - Evaluated and rejected Swap V2 adoption at this time: V2 defaults to versioned transactions with Address Lookup Tables (which the signing guard statically rejects) and delegated execution (`/order` + `/execute`), which violates our independent multi-RPC simulation requirement.
+4. **Fail-Closed Quote Contract (G-4)**:
+   - Verified that `validate_quote_against_intent` strictly fails closed with `QuoteMismatch` if any required parameter (`inAmount`, `outAmount`, `otherAmountThreshold`, `slippageBps`, `swapMode`, `inputMint`, `outputMint`) is missing or malformed.
+5. **Tests & Suite**:
+   - Added 11 tests in `backend/tests/test_audit_81_g.py`.
+   - Test count: **1158 passed**, 0 failed.
+
 ### Phase F: Make Tests and CI Honest (`backend/conftest.py`, `.gitleaks.toml`, `.github/workflows/tests.yml`, `frontend/e2e/`, `scripts/prepush_check.sh`, `memory-bank/`, `backend/tests/test_audit_81_f.py`)
 1. **Hermetic Test State Isolation (F-1)**:
    - Configured `backend/conftest.py` to point `LIVE_EXECUTION_STATE_DIR` and `LIVE_STATE_DIR` at a dedicated pytest session temp directory before imports.

@@ -363,6 +363,7 @@ async def simulate_transaction(
             if responses_agree(valid_results[0], other, wallet_owned_addresses or accounts, all_addresses=accounts):
                 agreeing += 1
 
+    valid_results[0]["agreeing_count"] = agreeing
     is_sell = (side == "sell")
     if agreeing >= config.SIM_MIN_AGREEING_RPCS:
         return valid_results[0]

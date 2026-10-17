@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase G: Real-world validation and API-risk containment (2026-10-17):
+      1. Pre-arm & post-upgrade dry run (`scripts/dry_run_guard.py`): operator-run, read-only verification executing quote fetching, transaction assembly, bytecode inspection, and multi-RPC pre-sign simulation with real TradeIntent assertions without keypair (AST verified: zero references to `load_keypair` or signing helpers). Refuses if live state directory is unisolated unless `--allow-live-state` is provided. Documented in `docs/11_DEPLOYMENT.md`.
+      2. Centralized Jupiter API client (`backend/live_execution/jupiter_client.py`): unified source of truth for URLs and request headers with optional `JUPITER_API_KEY` (`x-api-key`) and `JUPITER_BASE_URL`. Backward-compatible fallback ensuring byte-for-byte identical default requests.
+      3. Jupiter API migration evaluation (`docs/16_JUPITER_API_MIGRATION.md`): documented endpoint usage, confirmed developers.jup.ag Metis deprecation and keyless 0.5 RPS limits, analyzed guard assumptions and failure modes under V2, evaluated and rejected Swap V2 adoption due to ALT restrictions, and specified operator verification checklist.
+      4. Fail-closed quote contract: `validate_quote_against_intent` strictly fails closed with `QuoteMismatch` if any required quote parameter is missing or malformed.
+      5. Full test suite: **1158 passed**, 0 failed (+11 new tests in `test_audit_81_g.py`).
 - [x] §81 Phase F: Make tests and CI honest (2026-10-17):
       1. Hermetic tests state boundary: `backend/conftest.py` redirects `LIVE_EXECUTION_STATE_DIR` and `LIVE_STATE_DIR` to a pytest session temp dir before imports. Added `pytest_sessionstart` and `pytest_sessionfinish` snapshot guards asserting zero mutations under `backend/live_execution/state/` across test runs.
       2. Honest Gitleaks config: removed `.github/workflows/tests.yml` path allowlist and dead dummy regexes from `.gitleaks.toml`.

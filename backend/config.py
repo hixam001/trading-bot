@@ -273,8 +273,9 @@ ONCHAIN_RPC_URLS: list = [
         "https://solana-rpc.publicnode.com",
     ) if u
 ]
-JUPITER_QUOTE_URL: str = "https://lite-api.jup.ag/swap/v1/quote"
-JUPITER_PROGRAM_LABELS_URL: str = "https://lite-api.jup.ag/swap/v1/program-id-to-label"
+JUPITER_BASE_URL: str = os.getenv("JUPITER_BASE_URL", "https://lite-api.jup.ag/swap/v1").strip() or "https://lite-api.jup.ag/swap/v1"
+JUPITER_QUOTE_URL: str = f"{JUPITER_BASE_URL.rstrip('/')}/quote"
+JUPITER_PROGRAM_LABELS_URL: str = f"{JUPITER_BASE_URL.rstrip('/')}/program-id-to-label"
 USDC_MINT: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 SOL_MINT: str = "So11111111111111111111111111111111111111112"
 

@@ -171,7 +171,7 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
     if quote_in_amount != intent.in_amount_raw:
         _fail(f"quote inAmount mismatch: got {quote_in_amount} != expected {intent.in_amount_raw}")
 
-    swap_mode = quote.get("swapMode", "ExactIn")
+    swap_mode = quote.get("swapMode")
     if swap_mode != "ExactIn":
         _fail(f"quote swapMode mismatch: got {swap_mode} != ExactIn")
 
@@ -533,4 +533,5 @@ async def simulate_and_assert(
         "input_decrease": total_input_decrease,
         "output_increase": total_output_increase,
         "units": sim_res.get("units", 0),
+        "agreeing_rpcs": sim_res.get("agreeing_count", 1),
     }

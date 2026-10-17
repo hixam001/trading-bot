@@ -67,6 +67,7 @@ from live_execution.confirmation_queue import (  # noqa: E402
     ConfirmationQueue,
 )
 from live_execution.models import ExecutionLedger  # noqa: E402
+from live_execution.jupiter_client import get_headers  # noqa: E402
 from live_execution.quote_params import build_quote_params  # noqa: E402
 from live_execution.trade_intent import TradeIntent, usd_to_raw_amount  # noqa: E402
 
@@ -166,12 +167,15 @@ def preflight(
 # So there are two helpers, each used only for its correct verb.
 # ---------------------------------------------------------------------------
 
-async def _post_json(url: str, payload: dict) -> dict:
+async def _post_json(url: str, payload: dict, headers: dict | None = None) -> dict:
+    req_headers = get_headers()
+    if headers:
+        req_headers.update(headers)
     last: Exception | None = None
     for attempt in range(1, 4):
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(url, json=payload)
+                resp = await client.post(url, json=payload, headers=req_headers or None)
             if resp.status_code == 429:
                 raise ProviderError(f"HTTP 429 from {url}")
             resp.raise_for_status()
@@ -186,13 +190,16 @@ async def _post_json(url: str, payload: dict) -> dict:
     raise ExecutionError(f"giving up on {url} after 3 attempts") from last
 
 
-async def _get_json(url: str, params: dict) -> dict:
+async def _get_json(url: str, params: dict, headers: dict | None = None) -> dict:
     """GET-with-query-params twin of _post_json (quote endpoint is GET)."""
+    req_headers = get_headers()
+    if headers:
+        req_headers.update(headers)
     last: Exception | None = None
     for attempt in range(1, 4):
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, params=params)
+                resp = await client.get(url, params=params, headers=req_headers or None)
             if resp.status_code == 429:
                 raise ProviderError(f"HTTP 429 from {url}")
             resp.raise_for_status()
@@ -732,13 +739,19 @@ def _inspect_swap_transaction_inner(tx, payer_pubkey: str) -> None:
                 f"PRIORITY_FEE_HARD_CAP_LAMPORTS ({config.PRIORITY_FEE_HARD_CAP_LAMPORTS})"
             )
 
+    return {
+        "priority_fee_lamports": priority_fee_lamports if compute_unit_price is not None else 0,
+        "compute_unit_limit": eff_limit if compute_unit_price is not None else (compute_unit_limit or 200_000),
+        "compute_unit_price": compute_unit_price or 0,
+    }
 
-def inspect_swap_transaction(tx, payer_pubkey: str) -> None:
+
+def inspect_swap_transaction(tx, payer_pubkey: str) -> dict:
     """Validate transaction safety before signing (SEC-01 / §77 C1).
     Atomically records guard_refused safety metrics on refusal.
     """
     try:
-        _inspect_swap_transaction_inner(tx, payer_pubkey)
+        return _inspect_swap_transaction_inner(tx, payer_pubkey)
     except ExecutionError as e:
         try:
             from live_execution.safety_counters import record_safety_refusal

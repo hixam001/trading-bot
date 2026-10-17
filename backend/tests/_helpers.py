@@ -19,6 +19,9 @@ def intent_from_quote_for_tests(quote: dict, wallet: str) -> TradeIntent:
     if not isinstance(quote, dict):
         return TradeIntent("buy", wallet, _BACKEND_USDC_MINT, "", 1_000_000, 50, None, None)
 
+    if "swapMode" not in quote:
+        quote["swapMode"] = "ExactIn"
+
     if "slippageBps" not in quote:
         quote["slippageBps"] = 50
     slippage = int(quote["slippageBps"])

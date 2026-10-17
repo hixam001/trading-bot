@@ -71,7 +71,8 @@ STATE_DIR: Path = Path(
 #          `inputMint`"), while a bogus sibling route returned 404 and GET on
 #          this route returned 405. Route existence proven, not assumed.
 # ---------------------------------------------------------------------------
-JUPITER_SWAP_URL: str = "https://lite-api.jup.ag/swap/v1/swap"
+from live_execution.jupiter_client import swap_url
+JUPITER_SWAP_URL: str = swap_url()
 
 # ---------------------------------------------------------------------------
 # Hard risk limits — all fail closed. Mirrors the paper side's philosophy of

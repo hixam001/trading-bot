@@ -167,6 +167,11 @@ never keep serving a green dashboard while the decision cycle is dead.
 - [ ] WebSocket connections per IP bounded (`MAX_WS_PER_IP=4` default)
 - [ ] Dashboard reachable; `/api/live/portfolio` shows `enabled` only if armed
 - [ ] Outbound alerts verified with `python scripts/send_test_alert.py`
+- [ ] Pre-arm and post-upgrade guard dry-run verified without keypair (§81 Phase G):
+  ```bash
+  python scripts/dry_run_guard.py --side buy --mint So11111111111111111111111111111111111111112 --usd 10
+  ```
+  Must exit 0 with `VERDICT: PASSED`. Ensures live Jupiter quote params, bytecode inspection, and multi-RPC pre-sign simulation invariants succeed before arming or after upgrades.
 
 ---
 
