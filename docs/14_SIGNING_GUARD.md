@@ -42,7 +42,7 @@ The static guard performs strict structural analysis on the deserialized Solana 
      - **Priority Fee Hard Cap Enforcement:** The guard calculates `effective_cu_limit * price / 1_000_000` (scaling effective limit as min(200_000 * n_non_cb_instructions, 1_400_000) if limit is omitted per Solana runtime default) and enforces that total priority fee cannot exceed `PRIORITY_FEE_HARD_CAP_LAMPORTS` (1,000,000 lamports = 0.001 SOL). Prevents malicious quote APIs from draining SOL via astronomical compute unit prices.
    - **Approved DEX Aggregators & AMMs:**
      - Allowed at top level strictly according to `APPROVED_SWAP_PROGRAM_IDS`.
-     - Includes Jupiter v6, Raydium (AMM v4, CPMM, CLMM), Orca Whirlpool, Meteora (DLMM, Dynamic Pools), Phoenix, and Lifinity (v1: `EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S`, v2: `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`, verified via official Lifinity documentation and `@jup-ag/lifinity-sdk-v2`).
+     - Includes Jupiter v6, Raydium (AMM v4, CPMM, CLMM), Orca Whirlpool, Meteora (DLMM, Dynamic Pools), and Phoenix. (Lifinity IDs removed in §81: no primary source confirmed them and Jupiter's current label map lists no Lifinity program).
    - **Memo Program:** Allowed at top level for transaction commitment records.
 
 4. **Address Lookup Tables (ALTs) Guard:**
@@ -206,3 +206,11 @@ This tool:
 2. Runs Layer 1 static inspection (`inspect_swap_transaction`).
 3. Runs Layer 2 pre-sign balance simulation (`simulate_and_assert`) against live Solana RPC.
 4. Outputs a decoded instruction table and PASS/REFUSED verdict without ever loading private keys or signing.
+
+---
+
+## 6. DEX Routing Filter Policy (Buys vs. Sells)
+
+- **Buys (`side="buy"`):** When `dex_labels.json` is populated by `scripts/refresh_dex_labels.py`, `build_quote_params` attaches `dexes=<labels>` to restrict routes exclusively to approved venues.
+- **Sells (`side="sell"`):** Sells NEVER send the `dexes` parameter (§81 Phase D-4). Emergency and crash liquidations must never be blocked if a token's only liquid pool is on a venue not present in the current label map. The static guard (Layer 1) and simulation guard (Layer 2) already strictly bound exit execution risk.
+

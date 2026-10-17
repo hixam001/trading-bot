@@ -233,6 +233,7 @@ async def get_jupiter_quote(
         output_mint=output_mint,
         amount_raw=amount_raw,
         slippage_bps=config.SLIPPAGE_BPS,
+        side="buy",
     )
     data = await _get_json(_BACKEND_QUOTE_URL, params)
     out_raw = data.get("outAmount")

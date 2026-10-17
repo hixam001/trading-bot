@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase D: DEX allowlist and label hygiene (2026-10-17):
+      1. Removed unverified Lifinity program IDs from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py` (live check verified they do not appear in Jupiter's program-id-to-label map).
+      2. Visible inert filter: WARNING log on startup if labels empty; `dex_filter: "inactive" | "active (N labels)"` exposed on `GET /api/system-status`.
+      3. Modernized `scripts/refresh_dex_labels.py`: uses `JUPITER_PROGRAM_LABELS_URL` (`https://lite-api.jup.ag/swap/v1/program-id-to-label`); parses both object and list response shapes; atomic write via tempfile; zero references to dead `quote-api.jup.ag` in active code.
+      4. DEX filter applied exclusively to buys (`side="buy"`); sells (`side="sell"`) NEVER send `dexes` to ensure crash/emergency exits are never blocked.
+      5. Full test suite: **1135 passed**, 0 failed (+7 new tests in `test_audit_81_d.py`).
 - [x] §81 Phase C: Close remaining signing-guard gaps (2026-10-17):
       1. Created account control-field checks: Section E in `sim_guard.py` checks all post-state wallet-owned accounts. Newly created accounts require delegate is None, close_authority is None, delegated_amount == 0, state == 1 (initialized).
       2. Quorum control-field checks in `responses_agree`: exact match on delegate, close_authority, delegated_amount, state.

@@ -1,6 +1,12 @@
 # Active Context — trading-bot
 
 **Current — 2026-10-17 (§81 Post-§79 Re-Audit Remediation in Progress):**
+- **§81 Phase D Complete (DEX Allowlist and Label Hygiene)**:
+  * Removed unverified Lifinity program IDs from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py` (live check verified they do not appear in Jupiter's program-id-to-label map).
+  * Visible inert filter: WARNING log on startup if labels empty; `dex_filter: "inactive" | "active (N labels)"` exposed on `GET /api/system-status`.
+  * Modernized `scripts/refresh_dex_labels.py`: uses `JUPITER_PROGRAM_LABELS_URL` (`https://lite-api.jup.ag/swap/v1/program-id-to-label`); parses both object and list response shapes; atomic write via tempfile; zero references to dead `quote-api.jup.ag` in active code.
+  * DEX filter applied exclusively to buys (`side="buy"`); sells (`side="sell"`) NEVER send `dexes` to ensure crash/emergency exits are never blocked.
+  * Added 7 tests in `backend/tests/test_audit_81_d.py`. Full test suite: **1135 passed, 0 failed**.
 - **§81 Phase C Complete (Close Remaining Signing-Guard Gaps)**:
   * Created account control-field checks: Section E in `sim_guard.py` checks all post-state wallet-owned accounts. Newly created accounts require delegate is None, close_authority is None, delegated_amount == 0, state == 1 (initialized).
   * Quorum control-field checks in `responses_agree`: exact match on delegate, close_authority, delegated_amount, state.
@@ -25,7 +31,7 @@
   * Implemented `send_raw_transaction_detailed` in `solana.py`, raising `SendRejected` when all RPCs definitively refuse.
   * Fixed A-3 in `executor.py`: landed-with-error is treated as conclusive failure without calling `is_blockhash_valid`. Escalates if retryable, fails conclusively if non-retryable.
   * Added 36 tests in `backend/tests/test_audit_81_a.py`. Full test suite: **1102 passed, 0 failed**.
-- **Next Phase**: Phase D (DEX allowlist and label hygiene).
+- **Next Phase**: Phase E (Make restore atomic and safe).
 
 **Prior — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
 - **Mandatory Pre-Commit/Pre-Push Gate (Strict Invariant)**: ALL of the following tests and checks MUST pass cleanly before any commit or git push:

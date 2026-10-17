@@ -63,4 +63,18 @@ async def get_system_status(request: Request):
         "provider_calls_today": providers,
         "llm_usage_recent": llm_usage,
         "tick_interval_seconds": config.TICK_INTERVAL_SECONDS,
+        "dex_filter": (
+            f"active ({len(_get_labels())} labels)"
+            if _get_labels()
+            else "inactive"
+        ),
     }
+
+
+def _get_labels() -> list[str]:
+    try:
+        from live_execution.quote_params import get_active_dex_labels
+        return get_active_dex_labels()
+    except Exception:
+        return []
+

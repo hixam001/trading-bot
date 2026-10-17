@@ -98,12 +98,12 @@ def test_dex_labels_inclusion_and_empty_omission():
 
 
 def test_lifinity_program_ids_in_approved_swap_program_ids():
-    """Both Lifinity v1 and v2 verified program IDs must be in APPROVED_SWAP_PROGRAM_IDS."""
+    """§81 Phase D-1: Both Lifinity v1 and v2 program IDs must be ABSENT from APPROVED_SWAP_PROGRAM_IDS."""
     lifinity_v1 = "EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S"
     lifinity_v2 = "2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c"
 
-    assert lifinity_v1 in config.APPROVED_SWAP_PROGRAM_IDS
-    assert lifinity_v2 in config.APPROVED_SWAP_PROGRAM_IDS
+    assert lifinity_v1 not in config.APPROVED_SWAP_PROGRAM_IDS
+    assert lifinity_v2 not in config.APPROVED_SWAP_PROGRAM_IDS
 
 
 # ---------------------------------------------------------------------------

@@ -274,6 +274,7 @@ ONCHAIN_RPC_URLS: list = [
     ) if u
 ]
 JUPITER_QUOTE_URL: str = "https://lite-api.jup.ag/swap/v1/quote"
+JUPITER_PROGRAM_LABELS_URL: str = "https://lite-api.jup.ag/swap/v1/program-id-to-label"
 USDC_MINT: str = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 SOL_MINT: str = "So11111111111111111111111111111111111111112"
 

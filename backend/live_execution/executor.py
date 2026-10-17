@@ -553,6 +553,7 @@ async def place_sell(
                 output_mint=_BACKEND_USDC_MINT,
                 amount_raw=amount_raw,
                 slippage_bps=slippage_rung,
+                side="sell",
             )
             quote = await _get_json(_BACKEND_QUOTE_URL, params)
         except ExecutionError as exc:

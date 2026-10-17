@@ -1,5 +1,23 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase D: DEX Allowlist and Label Hygiene (`backend/config.py`, `live_execution/{config.py,quote_params.py}`, `scripts/refresh_dex_labels.py`, `backend/api/routes/system_status.py`, `backend/tests/test_audit_81_d.py`, `docs/14_SIGNING_GUARD.md`)
+1. **Removed Unverified Lifinity IDs (D-1)**:
+   - Removed two Lifinity program IDs (`EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S` and `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`) from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py`. Live check verified that neither appears in Jupiter's current label map.
+   - Updated `docs/14_SIGNING_GUARD.md` and `test_audit_79_b.py`.
+2. **Visible Inert Filter & SystemStatus Payload (D-2)**:
+   - When `dex_labels.json` has empty labels, `quote_params.py` logs a WARNING at process start: `dex filter inactive: run scripts/refresh_dex_labels.py`.
+   - Exposed `dex_filter: "inactive" | "active (N labels)"` in `GET /api/system-status`.
+3. **Modernized Label Refresh Script (D-3)**:
+   - Added `JUPITER_PROGRAM_LABELS_URL = "https://lite-api.jup.ag/swap/v1/program-id-to-label"` to `backend/config.py`.
+   - Updated `scripts/refresh_dex_labels.py` to use lite-api endpoint and support both dictionary and list response shapes, failing loudly without writing on garbage.
+   - Atomic write via temporary file, recording `fetched_at`, `source_url`, `labels`, and `unmapped_ids`. Prints unmapped IDs. Zero references to dead `quote-api.jup.ag` in active code.
+4. **DEX Filter Restricted to Buys (D-4)**:
+   - Added `side` argument to `build_quote_params`. Buys apply `dexes` filter when labels exist; sells NEVER send `dexes`, preventing exit lockups on tokens whose only liquid pool is unlabelled.
+   - Documented policy in `docs/14_SIGNING_GUARD.md`.
+5. **Tests & Suite**:
+   - Added 7 tests in `backend/tests/test_audit_81_d.py`.
+   - Test count: **1135 passed**, 0 failed.
+
 ### Phase C: Close Remaining Signing-Guard Gaps (`live_execution/{sim_guard.py,solana.py,executor.py,jupiter_executor.py,trade_intent.py}`, `backend/tests/test_audit_81_c.py`, `backend/tests/_helpers.py`, `docs/14_SIGNING_GUARD.md`)
 1. **Created Account Control-Field Protection (C-1)**:
    - Updated section E of `simulate_and_assert` in `sim_guard.py` to check all post-state wallet-owned accounts (`post_token_accounts`), not only pre-existing ones.

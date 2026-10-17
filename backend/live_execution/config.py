@@ -125,10 +125,7 @@ APPROVED_SWAP_PROGRAM_IDS: frozenset[str] = frozenset({
     # Moonshot removed in §77: ID unverified — re-add only with an ID copied from the program's official docs/Solscan
     "PhoeNiXZ8ByJGLkxNfZRnkUfjvmuYqLR89jjFHGqdXY",           # Phoenix
     "srmqPvymJeFKQ4zGQed1GFppgkRHL9kaELCbyksJtPX",           # OpenBook
-    # Lifinity Swap V1 (verified: docs.lifinity.io / github.com/Lifinity-Labs)
-    "EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S",           # Lifinity v1
-    # Lifinity Swap V2 (verified: docs.lifinity.io / @jup-ag/lifinity-sdk-v2)
-    "2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c",           # Lifinity v2
+    # Lifinity IDs removed in §81: no primary source confirmed them and Jupiter's current label map lists no Lifinity program.
 })
 
 # Maximum lamports allowed in a single System CreateAccount instruction (roughly rent-exempt for 165 bytes with slack)
