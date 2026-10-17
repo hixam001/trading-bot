@@ -1,5 +1,21 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase E: Make Restore Safe (`scripts/restore_state.py`, `docs/15_BACKUP_RESTORE.md`, `backend/tests/test_audit_81_e.py`)
+1. **Multi-Pass Safe Restore Architecture (E-1)**:
+   - Pass 1 (In-Memory Validation): Decrypts tarball, verifies manifest map completeness, checks file sizes, SHA-256 hashes, and JSON parsing in memory. Nothing is written to the destination disk during Pass 1.
+   - Pass 2 (Atomic Staging & SQLite Integrity): Stages files to `.staged.<pid>.*` in target directories. Runs `PRAGMA integrity_check;` directly on the staged SQLite copy before overwriting target DB. On any failure, all staged files are unlinked immediately and target remains untouched.
+   - Pass 3 (Promotion): Promotes verified staged files via atomic `os.replace`.
+2. **Pre-Restore Rollback Snapshot (E-2)**:
+   - When `--force` is used or target directory/DB is non-empty, copies existing state files to `<target_state_dir>/.pre-restore-<UTC-timestamp>/` before staging or promotion.
+3. **Mandatory Safety Latch (E-3)**:
+   - Always trips the kill switch post-restore using `kill_switch.trip("restored from <archive> at <UTC ts>; run reconcile and clear manually", state_dir=target_state_dir)`. Overwrites whatever `kill_switch.json` was restored.
+   - Prints clear instructions (`python backend/live_execution/scripts/confirm_trade.py resume`).
+4. **Strict Path Safety (E-4)**:
+   - Enforces `member.isfile()`; rejects symlinks, hardlinks, devices, and directories. Rejects absolute paths and path traversal (`..`). Only permits `MANIFEST.json`, `trading_bot.db`, and `state/*`.
+5. **Tests & Suite**:
+   - Added 7 tests in `backend/tests/test_audit_81_e.py`.
+   - Test count: **1142 passed**, 0 failed.
+
 ### Phase D: DEX Allowlist and Label Hygiene (`backend/config.py`, `live_execution/{config.py,quote_params.py}`, `scripts/refresh_dex_labels.py`, `backend/api/routes/system_status.py`, `backend/tests/test_audit_81_d.py`, `docs/14_SIGNING_GUARD.md`)
 1. **Removed Unverified Lifinity IDs (D-1)**:
    - Removed two Lifinity program IDs (`EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S` and `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`) from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py`. Live check verified that neither appears in Jupiter's current label map.

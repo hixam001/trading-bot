@@ -91,23 +91,80 @@ If any such file exists in `STATE_DIR`, it is logged and excluded from the archi
 
 ---
 
-## 6. Disaster Recovery & Restore Drill
+## 6. Disaster Recovery & Safe Restore Architecture (§81 Phase E)
+
+The restore process (`scripts/restore_state.py`) follows a strict multi-pass fail-closed architecture:
+
+1. **Pass 1: In-Memory Validation & Path Safety**:
+   - The archive is decrypted in memory.
+   - Every file member is checked for path safety: only regular files are accepted (`member.isfile()`); symlinks, hardlinks, devices, and directories are rejected. Absolute paths and directory traversal (`..`) are strictly forbidden. Allowed prefixes/names are `state/*`, `trading_bot.db`, and `MANIFEST.json`.
+   - File sizes and SHA-256 hashes are verified against `MANIFEST.json` in memory.
+   - All `.json` state files are parsed and validated.
+   - **Nothing is written to the destination disk during Pass 1.**
+
+2. **Pre-Restore Rollback Snapshot**:
+   - If `--force` is used or the target directory is non-empty, existing state files and database are preserved under `<target-state-dir>/.pre-restore-<UTC-timestamp>/` before staging or promotion.
+
+3. **Pass 2: Atomic Staging & SQLite Integrity**:
+   - Files are staged to temporary names (`.staged.<pid>.*`) in their target directory on the same filesystem.
+   - `PRAGMA integrity_check;` is executed directly on the **staged** SQLite database file. If the integrity check fails, all staged temporary files are deleted immediately and the existing database remains untouched.
+
+4. **Pass 3: Atomic Promotion**:
+   - Staged files are promoted to their final paths via atomic `os.replace`.
+
+5. **Pass 4: Mandatory Safety Latch**:
+   - The kill switch is **always tripped** upon restore, overwriting whatever `kill_switch.json` was present in the archive:
+     `kill_switch.trip("restored from <archive> at <UTC ts>; run reconcile and clear manually", state_dir=target_state_dir)`
+   - The operator must explicitly clear the kill switch after verifying reconciliation.
+
+---
+
+## 7. Operator Restore Drill (Staging Verification)
+
+Operators should periodically practice a restore drill in a scratch directory to verify backup integrity without affecting production state.
+
+### Drill Procedure:
+
+1. **Select an archive**:
+   ```bash
+   LATEST_BACKUP=$(ls -t /app/backups/state-*.tar.gz.enc | head -n 1)
+   ```
+
+2. **Restore into a scratch directory**:
+   ```bash
+   SCRATCH_DIR=$(mktemp -d /tmp/restore-drill-XXXXXX)
+   python scripts/restore_state.py "$LATEST_BACKUP" \
+       --target-state-dir "$SCRATCH_DIR/state" \
+       --target-db-path "$SCRATCH_DIR/trading_bot.db" \
+       --reconcile
+   ```
+
+3. **Verify the drill results**:
+   - Confirm all files restored: `ls -la "$SCRATCH_DIR/state"`
+   - Confirm kill switch was engaged:
+     ```bash
+     python -c "import sys; sys.path.insert(0, 'backend'); from live_execution import kill_switch; from pathlib import Path; assert kill_switch.is_tripped(Path('$SCRATCH_DIR/state')), 'Kill switch should be tripped'"
+     ```
+   - Review reconciliation report printed to console.
+
+4. **Clean up scratch directory**:
+   ```bash
+   rm -rf "$SCRATCH_DIR"
+   ```
+
+---
+
+## 8. Production Disaster Recovery Workflow
 
 > [!WARNING]
 > **MANDATORY OPERATOR WARNING:** State restored from backup.
 > **NEVER arm after restoring until reconcile reports clean.**
 
-### Restore Drill Checklist:
-
-1. **Stop the engine** before restoring production state:
+1. **Stop the engine**:
    ```bash
    docker compose stop live api
    ```
-2. **Select the archive** to restore from `/app/backups/`:
-   ```bash
-   ls -lat /app/backups/state-*.tar.gz.enc
-   ```
-3. **Execute restore into target location**:
+2. **Execute restore**:
    ```bash
    docker compose run --rm live python scripts/restore_state.py /app/backups/state-YYYYMMDDTHHMMSSZ.tar.gz.enc \
        --target-state-dir /app/state \
@@ -115,15 +172,16 @@ If any such file exists in `STATE_DIR`, it is logged and excluded from the archi
        --force \
        --reconcile
    ```
-4. **Inspect Reconciliation Output**:
-   - The restore script runs `PRAGMA integrity_check` on the SQLite database.
-   - It parses and validates every restored `.json` file against the manifest SHA-256 hashes.
-   - With `--reconcile`, it reads current on-chain token accounts and cross-checks them against the restored journal.
-   - If any `vanished` or `unjournaled` positions appear:
-     - Review on-chain Explorer transactions.
-     - Ensure no manual or out-of-band swaps were executed while the bot was offline.
-5. **Resume operation**:
+3. **Inspect reconciliation report**:
+   - Verify on-chain token accounts match the restored ledger journal.
+   - If discrepancies appear, resolve manually before clearing the kill switch.
+4. **Clear the kill switch** (only after human verification):
+   ```bash
+   docker compose run --rm live python backend/live_execution/scripts/confirm_trade.py resume
+   ```
+5. **Resume operations**:
    ```bash
    docker compose up -d live api
    ```
+
 

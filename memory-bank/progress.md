@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase E: Make restore safe (2026-10-17):
+      1. Multi-pass safe restore architecture: Pass 1 in-memory verification (manifest map completeness, file sizes, sha256 hashes, JSON validity) without writing to disk. Pass 2 atomic staging (`.staged.<pid>.*`) and PRAGMA integrity_check on the staged SQLite copy before promoting. Pass 3 atomic rename via `os.replace`.
+      2. Pre-restore rollback snapshot: automatically preserves existing state under `<target_state_dir>/.pre-restore-<timestamp>/` when `--force` is used or target is non-empty.
+      3. Mandatory safety latch: always trips the kill switch post-restore (`kill_switch.trip("restored from <archive> at <UTC ts>; run reconcile and clear manually", state_dir=target_state_dir)`), overwriting archive kill_switch.json. Prints clear command (`python backend/live_execution/scripts/confirm_trade.py resume`).
+      4. Strict path safety: enforces `member.isfile()`, rejects symlinks/hardlinks/devices/directories, rejects absolute paths and traversal `..`. Only allows `state/*`, `trading_bot.db`, and `MANIFEST.json`.
+      5. Full test suite: **1142 passed**, 0 failed (+7 new tests in `test_audit_81_e.py`).
 - [x] §81 Phase D: DEX allowlist and label hygiene (2026-10-17):
       1. Removed unverified Lifinity program IDs from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py` (live check verified they do not appear in Jupiter's program-id-to-label map).
       2. Visible inert filter: WARNING log on startup if labels empty; `dex_filter: "inactive" | "active (N labels)"` exposed on `GET /api/system-status`.
