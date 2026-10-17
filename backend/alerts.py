@@ -51,6 +51,30 @@ if ALERT_TELEGRAM_BOT_TOKEN:
     register_secret(ALERT_TELEGRAM_BOT_TOKEN)
 
 
+# Guessable / shared default topics that must be refused on public ntfy without auth
+FORBIDDEN_NTFY_TOPICS: frozenset[str] = frozenset({
+    "trading-bot",
+    "trading-bot-alerts",
+    "alerts",
+    "tradingbot",
+    "default",
+    "test",
+})
+
+
+def is_ntfy_misconfigured() -> bool:
+    """Return True if ntfy topic is guessable on unauthenticated/public server (§81 Phase H-1)."""
+    topic = os.getenv("ALERT_NTFY_TOPIC", ALERT_NTFY_TOPIC).strip()
+    url = os.getenv("ALERT_NTFY_URL", ALERT_NTFY_URL).rstrip("/")
+    token = os.getenv("ALERT_NTFY_TOKEN", ALERT_NTFY_TOKEN).strip()
+    if not topic:
+        return False
+    # If topic is guessable on public ntfy server without authentication
+    if ("ntfy.sh" in url or not token) and topic.lower() in FORBIDDEN_NTFY_TOPICS:
+        return True
+    return False
+
+
 def _alert_info_enabled() -> bool:
     return os.getenv("ALERT_INFO", "0").lower() in ("1", "true", "yes", "on")
 
@@ -62,7 +86,14 @@ def get_configured_channels() -> list[str]:
     tg_chat = os.getenv("ALERT_TELEGRAM_CHAT_ID", ALERT_TELEGRAM_CHAT_ID).strip()
     channels = []
     if topic:
-        channels.append("ntfy")
+        if is_ntfy_misconfigured():
+            log.error(
+                "ntfy alert channel misconfigured: topic '%s' is an insecure/guessable default name on public ntfy. "
+                "Refusing to broadcast alerts to public topic. Generate a private topic with 'openssl rand -hex 12'.",
+                topic,
+            )
+        else:
+            channels.append("ntfy")
     if tg_token and tg_chat:
         channels.append("telegram")
     return channels
@@ -211,6 +242,7 @@ def get_alerts_status() -> dict[str, Any]:
     """Expose alert subsystem status for /api/safety (never secrets)."""
     return {
         "channels": get_configured_channels(),
+        "alerts": "misconfigured" if is_ntfy_misconfigured() else "ok",
         "last_sent_at": _last_sent_at,
         "queued": (_queue.qsize() if _queue is not None else len(_pending_alerts)),
         "dropped": _dropped_count,
@@ -256,6 +288,9 @@ def _ensure_worker_running() -> None:
 async def _dispatch_to_ntfy(client: httpx.AsyncClient, item: AlertItem, text: str) -> None:
     topic = os.getenv("ALERT_NTFY_TOPIC", ALERT_NTFY_TOPIC).strip()
     if not topic:
+        return
+    if is_ntfy_misconfigured():
+        log.error("ntfy dispatch skipped: topic '%s' is an insecure/guessable default name on public ntfy", topic)
         return
     url = f"{os.getenv('ALERT_NTFY_URL', ALERT_NTFY_URL).rstrip('/')}/{topic}"
     token = os.getenv("ALERT_NTFY_TOKEN", ALERT_NTFY_TOKEN).strip()

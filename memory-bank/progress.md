@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase H: Smaller items (2026-10-17):
+      1. Alert channel defaults (H-1): `backend/alerts.py` forbids guessable topics (`trading-bot`, `alerts`, etc.) on public `ntfy.sh` without auth; reports `alerts: "misconfigured"` on `/api/safety` status and logs clear errors; added `openssl rand -hex 12` guidance in `.env.example` and `docs/11_DEPLOYMENT.md`.
+      2. Bounded mint extension cache (H-2): `backend/data_providers/onchain_security.py` caps `_MINT_EXTENSION_CACHE` to `MAX_MINT_EXTENSION_CACHE = 2048` using `OrderedDict` with LRU eviction on insert.
+      3. Merged position pricing (H-3): `backend/api/routes/stats.py` merged duplicate loops over `open_trades` into a single pass feeding both unrealized PnL marks and real equity marks (exactly N calls for N open positions).
+      4. Offline banner condition documented & verified (H-4): verified per DESIGN.md §3.3 & §3.4 that secondary feeds render localized panel errors while primary feeds drive global offline banner; added route-mocked Playwright tests.
+      5. Unknown-security sizing haircut below floor visibility (H-5): `backend/sizing.py` emits `reason="security_unknown_below_floor"` when 0.5x haircut drops ticket below floor; `run_live_cycle.py` records refusal reason; `scripts/gate_funnel_report.py` counts it on its own line in daily funnel, summary, and text/JSON outputs.
+      6. Mutation ledger (H-6): created `docs/17_MUTATION_LOG.md` recording all 27 mutation experiments executed across §81.
+      7. Full test suite: **1164 passed**, 0 failed (+6 new tests in `test_audit_81_h.py`).
 - [x] §81 Phase G: Real-world validation and API-risk containment (2026-10-17):
       1. Pre-arm & post-upgrade dry run (`scripts/dry_run_guard.py`): operator-run, read-only verification executing quote fetching, transaction assembly, bytecode inspection, and multi-RPC pre-sign simulation with real TradeIntent assertions without keypair (AST verified: zero references to `load_keypair` or signing helpers). Refuses if live state directory is unisolated unless `--allow-live-state` is provided. Documented in `docs/11_DEPLOYMENT.md`.
       2. Centralized Jupiter API client (`backend/live_execution/jupiter_client.py`): unified source of truth for URLs and request headers with optional `JUPITER_API_KEY` (`x-api-key`) and `JUPITER_BASE_URL`. Backward-compatible fallback ensuring byte-for-byte identical default requests.

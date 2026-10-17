@@ -95,6 +95,32 @@ def _calc_distribution(values: list[float]) -> dict[str, float]:
     }
 
 
+def _is_security_unknown_below_floor(r: dict) -> bool:
+    """Check if candidate was blocked due to unknown-security sizing haircut below floor (§81 Phase H-5)."""
+    snap = _parse_json(r.get("candidate_snapshot"))
+    if not isinstance(snap, dict):
+        snap = {}
+    if r.get("refusal_reason") == "security_unknown_below_floor":
+        return True
+    if snap.get("refusal_reason") == "security_unknown_below_floor":
+        return True
+    if snap.get("sizing_reason") == "security_unknown_below_floor":
+        return True
+    if snap.get("security_unknown_below_floor") is True:
+        return True
+    if "security_unknown_below_floor" in str(r.get("thesis", "")):
+        return True
+    failed = _parse_json(r.get("failed_rule_ids"))
+    if (
+        snap.get("security_unknown") is True
+        and len(failed) == 0
+        and str(r.get("verdict", "")).lower() == "pass"
+        and not r.get("led_to_trade_id")
+    ):
+        return True
+    return False
+
+
 def _extract_threshold(rule_id: str, sample_detail: str | None) -> str:
     if sample_detail:
         m = re.search(r"(?:vs floor|vs min|act band|vs intended size)\s+([^—,]+)", sample_detail)
@@ -220,12 +246,14 @@ def generate_funnel_report(
         entered_from_feed = sum(1 for r in rows if r.get("led_to_trade_id"))
         entered_trades = trades_by_date.get(day, 0)
         entered = max(entered_from_feed, entered_trades)
+        sec_unknown_blocked = sum(1 for r in rows if _is_security_unknown_below_floor(r))
 
         daily_funnel.append({
             "date": day,
             "candidates_seen": seen,
             "gate_passed": gate_passed,
             "think_passed": think_passed,
+            "security_unknown_below_floor": sec_unknown_blocked,
             "entered": entered,
             "gate_pass_rate": round(gate_passed / seen, 4) if seen else 0.0,
         })
@@ -237,6 +265,7 @@ def generate_funnel_report(
         sum(1 for r in feed_rows if r.get("led_to_trade_id")),
         len(trade_rows),
     )
+    baseline_sec_unknown = sum(1 for r in feed_rows if _is_security_unknown_below_floor(r))
 
     # 2. Per-rule failure rates & sole blockers
     rule_fail_counts: dict[str, int] = {}
@@ -359,9 +388,11 @@ def generate_funnel_report(
             "candidates_seen": total_candidates,
             "gate_passed": baseline_gate_passers,
             "think_passed": baseline_think_passers,
+            "security_unknown_below_floor": baseline_sec_unknown,
             "entered": baseline_entered,
             "gate_pass_rate": round(baseline_gate_passers / total_candidates, 4) if total_candidates else 0.0,
         },
+        "security_unknown_below_floor": baseline_sec_unknown,
         "daily_funnel": daily_funnel,
         "per_rule_stats": per_rule_stats,
         "counterfactuals": counterfactuals,
@@ -459,6 +490,7 @@ def format_text_report(report: dict) -> str:
 
     refusal_rate_val = report["llm_funnel"]["llm_refusal_rate_of_gate_passers"]
     refusal_rate_str = f"{refusal_rate_val * 100:.1f}%" if refusal_rate_val is not None else "N/A"
+    sec_unknown_blocked = report.get("security_unknown_below_floor", 0)
     lines.extend([
         "",
         "5. THINKER / LLM REFUSAL FUNNEL & VERDICT MIX",
@@ -467,6 +499,7 @@ def format_text_report(report: dict) -> str:
         f"  - LLM Approved (think-passed): {report['llm_funnel']['model_approved']}",
         f"  - LLM Refused (model declined): {report['llm_funnel']['model_refused']}",
         f"  - LLM Refusal Rate: {refusal_rate_str}",
+        f"  - Sizing blocked (security_unknown_below_floor): {sec_unknown_blocked}",
         "",
         "Feed Verdict Mix:",
     ])

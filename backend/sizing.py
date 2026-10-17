@@ -268,7 +268,8 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
                    unrealized_usd: Optional[float] = None,
                    conviction_factor: Optional[float] = None,
                    min_ticket_usd: Optional[float] = None,
-                   security_unknown: bool = False) -> float:
+                   security_unknown: bool = False,
+                   return_reason: bool = False) -> float | tuple[float, Optional[str]]:
     """
     Ticket sizing, modes keyed on SIZING_MODE:
 
@@ -291,6 +292,8 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
     When security_unknown is True (§79 Phase C), ticket is multiplied by
     UNKNOWN_SECURITY_SIZE_MULT (default 0.5). If resulting ticket < floor,
     it falls to 0.0 ("no trade"), but NEVER executes below the minimum size.
+    When return_reason is True (§81 Phase H-5), returns (ticket, reason) where
+    reason is "security_unknown_below_floor" on haircut drops below floor.
     """
     floor = config.MIN_TICKET_USD if min_ticket_usd is None else float(min_ticket_usd)
 
@@ -300,9 +303,9 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
             mult = getattr(config, "UNKNOWN_SECURITY_SIZE_MULT", 0.5)
             ticket = base_ticket * mult
             if ticket < floor:
-                return 0.0
-            return ticket
-        return base_ticket
+                return (0.0, "security_unknown_below_floor") if return_reason else 0.0
+            return (ticket, None) if return_reason else ticket
+        return (base_ticket, None) if return_reason else base_ticket
 
     if config.SIZING_MODE == "risk_budget":
         budget = compute_risk_budget(
@@ -319,9 +322,10 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
             mult = getattr(config, "UNKNOWN_SECURITY_SIZE_MULT", 0.5)
             ticket = base_ticket * mult
             if ticket < floor:
-                return 0.0
-            return float(min(config.HARD_ORDER_CEILING_USD, max(floor, _round_half_up(ticket))))
-        return base_ticket
+                return (0.0, "security_unknown_below_floor") if return_reason else 0.0
+            res = float(min(config.HARD_ORDER_CEILING_USD, max(floor, _round_half_up(ticket))))
+            return (res, None) if return_reason else res
+        return (base_ticket, None) if return_reason else base_ticket
 
     heat_val = config.CROWD_HEAT_MIN + 14 if heat is None else heat  # ~50 neutral
     conviction = min(1.0, max(0.0, heat_val / 100.0 + 0.3))
@@ -331,9 +335,26 @@ def compute_ticket(cash_usd: float, heat: Optional[int],
         mult = getattr(config, "UNKNOWN_SECURITY_SIZE_MULT", 0.5)
         ticket = base_ticket * mult
         if ticket < floor:
-            return 0.0
-        return float(ticket)
-    return base_ticket
+            return (0.0, "security_unknown_below_floor") if return_reason else 0.0
+        return (float(ticket), None) if return_reason else float(ticket)
+    return (base_ticket, None) if return_reason else base_ticket
+
+
+def compute_ticket_with_reason(cash_usd: float, heat: Optional[int],
+                              equity_usd: Optional[float] = None,
+                              unrealized_usd: Optional[float] = None,
+                              conviction_factor: Optional[float] = None,
+                              min_ticket_usd: Optional[float] = None,
+                              security_unknown: bool = False) -> tuple[float, Optional[str]]:
+    """Convenience wrapper for compute_ticket(..., return_reason=True) (§81 Phase H-5)."""
+    res = compute_ticket(cash_usd, heat, equity_usd=equity_usd,
+                         unrealized_usd=unrealized_usd,
+                         conviction_factor=conviction_factor,
+                         min_ticket_usd=min_ticket_usd,
+                         security_unknown=security_unknown,
+                         return_reason=True)
+    assert isinstance(res, tuple)
+    return res
 
 
 def compute_entry_cost(size_usd: float) -> float:

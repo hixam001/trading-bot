@@ -39,7 +39,25 @@ echo "=== [7/9] Auditing frontend production dependencies (npm audit --omit=dev)
 (cd frontend && npm audit --omit=dev)
 
 echo "=== [8/9] Running Playwright E2E integration tests (npm run test:e2e) ==="
+BACKEND_PID=""
+if ! curl -s http://127.0.0.1:8000/api/health | grep -q "ok"; then
+    echo "Starting local mock backend on port 8000 for E2E tests..."
+    DATA_BACKEND=mock RATE_LIMIT_PAID_PER_MINUTE=1000 RATE_LIMIT_GENERAL_PER_MINUTE=2000 "$PYTHON_BIN" -m uvicorn api.main:app --app-dir backend --host 127.0.0.1 --port 8000 >/dev/null 2>&1 &
+    BACKEND_PID=$!
+    for i in $(seq 1 30); do
+        if curl -s http://127.0.0.1:8000/api/health | grep -q "ok"; then
+            echo "Mock backend ready on port 8000."
+            break
+        fi
+        sleep 0.5
+    done
+fi
+
 (cd frontend && npm run test:e2e)
+if [[ -n "$BACKEND_PID" ]]; then
+    kill "$BACKEND_PID" 2>/dev/null || true
+    wait "$BACKEND_PID" 2>/dev/null || true
+fi
 
 echo "=== [9/9] Scanning for secret leaks (gitleaks) ==="
 if command -v gitleaks >/dev/null 2>&1; then

@@ -1,5 +1,29 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase H: Smaller Items (`backend/alerts.py`, `backend/data_providers/onchain_security.py`, `backend/api/routes/stats.py`, `frontend/src/App.tsx`, `frontend/e2e/dashboard.spec.ts`, `backend/sizing.py`, `backend/run_live_cycle.py`, `scripts/gate_funnel_report.py`, `docs/17_MUTATION_LOG.md`, `backend/tests/test_audit_81_h.py`)
+1. **Alert Channel Insecure Topic Refusal (H-1)**:
+   - In `backend/alerts.py`, added `FORBIDDEN_NTFY_TOPICS` preventing broadcasts to guessable topics (`trading-bot`, `alerts`, `default`, etc.) on public unauthenticated `ntfy.sh`.
+   - Sender logs a clear error, refuses broadcast, and reports `alerts: "misconfigured"` on `/api/safety` status when an insecure topic is configured.
+   - Added `openssl rand -hex 12` guidance in `.env.example` and `docs/11_DEPLOYMENT.md`.
+2. **Bounded Mint Extension Cache (H-2)**:
+   - Capped `_MINT_EXTENSION_CACHE` in `backend/data_providers/onchain_security.py` to `MAX_MINT_EXTENSION_CACHE = 2048` using `OrderedDict` with LRU eviction (`_put_extension_cache` and `move_to_end`).
+   - Evicts oldest entries when capacity is exceeded; tested with 3000 distinct mint insertions.
+3. **Single-Pass Position Pricing (H-3)**:
+   - Merged duplicate loops over `open_trades` in `backend/api/routes/stats.py` into a single loop feeding both unrealized PnL marks and real equity marks.
+   - Ensures exactly N calls to `get_current_price` for N open positions, eliminating redundant pricing queries.
+4. **Offline Banner Condition Documented & Verified (H-4)**:
+   - Verified that per DESIGN.md §3.3 & §3.4, primary feeds (`liveBook.error`, `safety.error`) control the global offline risk banner, while secondary feed errors like system status render localized `<ErrorPanel />` states.
+   - Route-mocked Playwright tests verify both localized system error panel and global safety offline banner.
+5. **Unknown-Security Sizing Haircut Below Floor Visibility (H-5)**:
+   - Updated `compute_ticket` and added `compute_ticket_with_reason` in `backend/sizing.py` to emit `reason="security_unknown_below_floor"` when the 0.5× unknown-security haircut drops ticket below minimum floor.
+   - Updated `backend/run_live_cycle.py` to preserve and record `security_unknown_below_floor` on entry refusal.
+   - Enhanced `scripts/gate_funnel_report.py` to detect and count `security_unknown_below_floor` as its own line in daily funnel, baseline summary, and text/JSON reports.
+6. **Mutation Ledger (H-6)**:
+   - Created `docs/17_MUTATION_LOG.md` recording all 27 mutation experiments executed across §81 (file, line removed/altered, test that failed, observed failure).
+7. **Tests & Suite**:
+   - Added 6 tests in `backend/tests/test_audit_81_h.py`.
+   - Test count: **1164 passed**, 0 failed.
+
 ### Phase G: Real-World Validation and API-Risk Containment (`scripts/dry_run_guard.py`, `backend/live_execution/jupiter_client.py`, `docs/16_JUPITER_API_MIGRATION.md`, `docs/11_DEPLOYMENT.md`, `backend/tests/test_audit_81_g.py`)
 1. **Operator Dry-Run Verification Tool (G-1)**:
    - Implemented `scripts/dry_run_guard.py` (`chmod +x`): operator-run, read-only verification tool that exercises quote fetching, transaction assembly (`_build_swap_transaction`), static bytecode inspection (`inspect_swap_transaction`), and multi-RPC pre-sign simulation (`simulate_and_assert`) with real `TradeIntent` balance assertions without a keypair.

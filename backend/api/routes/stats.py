@@ -50,24 +50,7 @@ async def get_stats(request: Request):
     # Realized P&L: everything actually booked on closed trades.
     realized_pnl_usd = sum(t.realized_pnl_usd or 0.0 for t in chronological)
 
-    # Unrealized P&L: live marks net of simulated exit costs, same math as
-    # /api/holdings. Positions whose price is unavailable contribute nothing
-    # (never fabricated as zero); with no marks at all the field stays None.
-    unrealized_marks: list[float] = []
-    total_spend_usd = 0.0
-    for t in open_trades:
-        # Entry cost incl. simulated fees/slippage — what was deducted from
-        total_spend_usd += compute_entry_cost(t.position_size_usd)
-        try:
-            decimals = (t.candidate_snapshot or {}).get("decimals")
-            price = await provider.get_current_price(t.mint_address, decimals)
-            pnl_usd, _pnl_pct = compute_unrealized_pnl(t, price)
-            unrealized_marks.append(pnl_usd)
-        except Exception:
-            # Price unavailable / invalid inputs -> skip this mark (fail-soft).
-            continue
-
-    # Real equity computation (§79 Phase F-2)
+    # Real equity computation (§79 Phase F-2, §81 Phase H-3)
     # wallet_equity_usd = USDC + SOL*price + sum(marks of open positions)
     missing: list[str] = []
     if cash is None:
@@ -95,19 +78,29 @@ async def get_stats(request: Request):
     if sol_price is None:
         missing.append("sol_price")
 
+    # Single pass over open positions feeding both unrealized PnL and equity marks (§81 Phase H-3)
+    unrealized_marks: list[float] = []
+    total_spend_usd = 0.0
     open_positions_mark_usd = 0.0
     for t in open_trades:
+        total_spend_usd += compute_entry_cost(t.position_size_usd)
         mark_price = None
-        try:
-            decimals = (t.candidate_snapshot or {}).get("decimals")
-            mark_price = await provider.get_current_price(t.mint_address, decimals)
-        except Exception:
-            mark_price = None
+        if provider is not None:
+            try:
+                decimals = (t.candidate_snapshot or {}).get("decimals")
+                mark_price = await provider.get_current_price(t.mint_address, decimals)
+            except Exception:
+                mark_price = None
 
-        if mark_price is None or mark_price <= 0:
-            missing.append(f"position_mark:{t.symbol or t.mint_address}")
-        else:
+        if mark_price is not None and mark_price > 0:
+            try:
+                pnl_usd, _pnl_pct = compute_unrealized_pnl(t, mark_price)
+                unrealized_marks.append(pnl_usd)
+            except Exception:
+                pass
             open_positions_mark_usd += t.quantity * mark_price
+        else:
+            missing.append(f"position_mark:{t.symbol or t.mint_address}")
 
     if not missing:
         equity_status = "complete"

@@ -1038,10 +1038,13 @@ async def run_cycle(once: bool = False) -> dict:
                 log.warning("live calibration unreadable - failing closed "
                             "to 1.0", exc_info=True)
                 cf = 1.0
-            usd = compute_ticket(cash, None, equity_usd=eq,
-                                 unrealized_usd=unrl, conviction_factor=cf,
-                                 min_ticket_usd=live_floor,
-                                 security_unknown=bool(getattr(c, "security_unknown", False)))
+            usd, sizing_reason = compute_ticket(
+                cash, None, equity_usd=eq,
+                unrealized_usd=unrl, conviction_factor=cf,
+                min_ticket_usd=live_floor,
+                security_unknown=bool(getattr(c, "security_unknown", False)),
+                return_reason=True,
+            )
             budget = compute_risk_budget(
                 eq, unrl, min_ticket_usd=live_floor)
             deployed_today = ledger.deployed_today_usd()
@@ -1056,16 +1059,16 @@ async def run_cycle(once: bool = False) -> dict:
         else:
             usd = min(cash * paper_config.TICKET_CASH_FRACTION,
                       paper_config.TICKET_MAX_USD)
+            sizing_reason = None
         if usd < live_floor:
-            log.info("%s refused: ticket $%.4f below live floor $%.4f "
-                     "(equity $%.2f)", c.symbol, usd, live_floor, eq)
+            reason = sizing_reason or f"ticket ${usd:.2f} below live floor ${live_floor:.2f}"
+            log.info("%s refused: %s (equity $%.2f)", c.symbol, reason, eq)
             # §45 visibility fix: a skipped trade must be as visible as an
             # executed one — this refusal previously vanished from the
             # cycle outcome even though the daily-budget refusal records.
             outcome["entries"].append(
                 {"symbol": c.symbol, "status": "refused",
-                 "reason": f"ticket ${usd:.2f} below live floor "
-                           f"${live_floor:.2f}"})
+                 "reason": reason})
             continue
         result = await place_order(
             side="buy", mint=c.mint_address, symbol=c.symbol, usd=usd,

@@ -179,7 +179,7 @@ test.describe('dashboard', () => {
     const book = page.getByTestId('live-book')
     await expect(book).toBeVisible({ timeout: 15_000 })
     await expect(book.getByText('Open value')).toBeVisible()
-    await expect(book.getByText('$250.50')).toBeVisible()
+    await expect(book.getByText('$250.50').first()).toBeVisible()
   })
 
   test('unavailable fixture shows Live book not available', async ({ page }) => {
@@ -479,5 +479,29 @@ test.describe('panel error states (DESIGN.md §3.3)', () => {
       await expect(panel).toBeVisible({ timeout: 15_000 })
       await expect(panel).toContainText('Retrying automatically')
     }
+  })
+
+  test('system-status error shows localized panel error state and leaves global risk banner healthy (§81 Phase H-4)', async ({ page }) => {
+    await page.route('**/api/system-status*', (route) => route.abort())
+    await page.goto(APP)
+    await page.getByTestId('tab-system').click()
+    const panel = page.getByTestId('error-panel')
+    await expect(panel).toBeVisible({ timeout: 15_000 })
+    await expect(panel).toContainText('System status')
+    await expect(panel).toContainText('Retrying automatically')
+    await expect(page.getByTestId('offline-banner')).toHaveCount(0)
+  })
+
+  test('primary safety feed error triggers global offline degraded risk banner (§81 Phase H-4)', async ({ page }) => {
+    await page.route('**/api/safety*', (route) =>
+      route.fulfill({
+        status: 500,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'safety circuit error' }),
+      }),
+    )
+    await page.goto(APP)
+    await expect(page.getByTestId('offline-banner')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText('feed degraded').first()).toBeVisible()
   })
 })

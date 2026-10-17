@@ -18,6 +18,8 @@ import httpx
 
 import config
 
+from collections import OrderedDict
+
 log = logging.getLogger(__name__)
 
 MISSING = "__missing__"
@@ -29,8 +31,18 @@ VERIFIED_DANGEROUS_EXTENSIONS: tuple[str, ...] = (
     "pausableConfig",
 )
 
-_MINT_EXTENSION_CACHE: dict[str, tuple[float, dict]] = {}
+MAX_MINT_EXTENSION_CACHE: int = 2048
+_MINT_EXTENSION_CACHE: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 CACHE_TTL_SECONDS: float = 3600.0  # 1 hour
+
+
+def _put_extension_cache(mint: str, data: dict, now: float) -> None:
+    """Store in cache with LRU eviction and MAX_MINT_EXTENSION_CACHE cap (§81 Phase H-2)."""
+    if mint in _MINT_EXTENSION_CACHE:
+        _MINT_EXTENSION_CACHE.move_to_end(mint)
+    _MINT_EXTENSION_CACHE[mint] = (now, data)
+    while len(_MINT_EXTENSION_CACHE) > MAX_MINT_EXTENSION_CACHE:
+        _MINT_EXTENSION_CACHE.popitem(last=False)
 
 
 def parse_mint_authorities(info: dict) -> dict:
@@ -179,7 +191,10 @@ async def get_mint_extension_flags(mint: str, timeout: float = 10.0) -> dict:
     if mint in _MINT_EXTENSION_CACHE:
         cached_ts, cached_data = _MINT_EXTENSION_CACHE[mint]
         if now - cached_ts < CACHE_TTL_SECONDS:
+            _MINT_EXTENSION_CACHE.move_to_end(mint)
             return cached_data
+        else:
+            del _MINT_EXTENSION_CACHE[mint]
 
     payload = {
         "jsonrpc": "2.0",
@@ -202,7 +217,7 @@ async def get_mint_extension_flags(mint: str, timeout: float = 10.0) -> dict:
                 if isinstance(info, dict) and info.get("type") not in (None, "mint"):
                     continue
                 parsed = parse_mint_extensions(data)
-                _MINT_EXTENSION_CACHE[mint] = (now, parsed)
+                _put_extension_cache(mint, parsed, now)
                 return parsed
             except Exception:
                 continue

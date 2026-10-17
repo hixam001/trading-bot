@@ -185,12 +185,12 @@ Both channels are optional. If neither is configured, alert events are logged lo
 
 ntfy allows receiving push notifications on Android, iOS, and Web without account registration.
 
-1. **Choose a private topic name**: e.g., `trading-bot-alerts-<random-uuid>`.
-   *(Anyone who knows the topic name can subscribe, so use an unguessable string or self-host ntfy)*.
+1. **Choose an unguessable private topic name**: generate with `openssl rand -hex 12` (e.g., `trading-bot-a7f49b12c8e3`).
+   *(Anyone who knows the topic name can subscribe on public ntfy.sh. The bot explicitly refuses to broadcast to guessable defaults like `trading-bot` or `alerts` without authentication)*.
 2. **Configure `.env`**:
    ```bash
    ALERT_NTFY_URL=https://ntfy.sh           # Default; or your self-hosted URL
-   ALERT_NTFY_TOPIC=trading-bot-alerts-<random-uuid>
+   ALERT_NTFY_TOPIC=trading-bot-a7f49b12c8e3 # Private unguessable topic
    ALERT_NTFY_TOKEN=                       # Optional: if using an auth-protected instance
    ```
 3. **Subscribe**: Install the ntfy app on your phone and subscribe to your topic name.

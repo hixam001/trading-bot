@@ -111,6 +111,10 @@ export default function App() {
         detail: 'daily-loss breaker active · reduce risk while monitoring',
       }
     }
+    // Offline risk state (DESIGN.md §3.4): triggered when primary feeds (liveBook,
+    // safety) or WebSocket fail. Secondary feeds like system status (status.error)
+    // intentionally do NOT trip the global offline banner; they render localized
+    // ErrorPanels in their respective tabs per DESIGN.md §3.3 (§81 Phase H-4).
     if (!connected || liveBook.error || safety.error || (!safety.loading && !safety.data)) {
       return {
         state: 'offline' as const,
