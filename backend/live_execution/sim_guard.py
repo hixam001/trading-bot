@@ -35,6 +35,14 @@ from live_execution.trade_intent import TradeIntent
 log = logging.getLogger(__name__)
 
 
+class SimulationRefused(ExecutionError):
+    """Raised when pre-sign simulation refuses a transaction (§81 Phase A)."""
+    def __init__(self, message: str, category: str = "sim_refused", onchain_err=None):
+        super().__init__(message)
+        self.category = category
+        self.onchain_err = onchain_err
+
+
 def _call_kw_filtered(func, *args, **kwargs):
     """Filter kwargs to match target signature when mock callables don't accept extra kwargs."""
     try:
@@ -223,7 +231,7 @@ async def simulate_and_assert(
     Execute pre-sign simulation and verify balance-delta assertions.
     Raises ExecutionError on any failure. Returns simulation summary on success.
     """
-    def _refuse(reason: str, category: str = "sim_refused") -> None:
+    def _refuse(reason: str, category: str = "sim_refused", onchain_err=None) -> None:
         global _SIMULATION_REFUSAL_COUNT
         _SIMULATION_REFUSAL_COUNT += 1
         log.error("PRE-SIGN SIMULATION REFUSED (#%d): %s", _SIMULATION_REFUSAL_COUNT, reason)
@@ -237,7 +245,7 @@ async def simulate_and_assert(
             alert_nowait(AlertEvent.SIM_REFUSAL, f"Pre-sign simulation refused: {reason}", key=f"sim_refusal:{reason[:40]}")
         except Exception:
             pass
-        raise ExecutionError(f"simulation refused: {reason}")
+        raise SimulationRefused(f"simulation refused: {reason}", category=category, onchain_err=onchain_err)
 
     if not quote or not isinstance(quote, dict):
         _refuse("quote is missing or invalid")
@@ -364,7 +372,7 @@ async def simulate_and_assert(
         _refuse(f"RPC simulation failed: {exc}", category=cat)
 
     if sim_res.get("err") is not None:
-        _refuse(f"simulation failed on-chain with err: {sim_res['err']}")
+        _refuse(f"simulation failed on-chain with err: {sim_res['err']}", onchain_err=sim_res["err"])
 
     post_accounts_list = sim_res.get("post_accounts", [])
     if len(post_accounts_list) != len(all_addresses):

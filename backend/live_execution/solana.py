@@ -14,7 +14,7 @@ import logging
 
 import httpx
 
-from typing import Optional
+from typing import Optional, NamedTuple
 
 from live_execution import config
 
@@ -378,19 +378,26 @@ async def simulate_transaction(
 
 
 
-async def send_raw_transaction(
+class SendOutcome(NamedTuple):
+    signature: Optional[str]
+    attempts: list[dict]
+
+
+async def send_raw_transaction_detailed(
     raw_signed: bytes, endpoints: Optional[list[str]] = None
-) -> Optional[str]:
-    """Broadcast the signed tx across RPCs; return the first accepted
-    signature, else None."""
+) -> SendOutcome:
+    """Broadcast the signed tx across RPCs, capturing detailed per-endpoint outcomes."""
     payload = base64.b64encode(raw_signed).decode()
+    attempts: list[dict] = []
     async with httpx.AsyncClient(timeout=15.0) as client:
         for endpoint in endpoints or config.RPC_URLS:
             try:
                 resp = await client.post(
                     endpoint,
                     json={
-                        "jsonrpc": "2.0", "id": 1, "method": "sendTransaction",
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "method": "sendTransaction",
                         "params": [
                             payload,
                             {
@@ -403,14 +410,77 @@ async def send_raw_transaction(
                     },
                 )
                 if resp.status_code != 200:
+                    attempts.append({
+                        "endpoint": endpoint,
+                        "kind": "http_status",
+                        "status_code": resp.status_code,
+                        "code": None,
+                        "message": f"HTTP {resp.status_code}",
+                        "err": None,
+                    })
                     continue
                 body = resp.json()
-            except (httpx.HTTPError, ValueError):
+            except (httpx.HTTPError, ValueError) as exc:
+                attempts.append({
+                    "endpoint": endpoint,
+                    "kind": "transport",
+                    "code": None,
+                    "message": str(exc),
+                    "err": None,
+                })
                 continue
+
             result = body.get("result")
             if isinstance(result, str) and result:
-                return result
-            log.info("[solana] send refused by %s: %s", endpoint, body.get("error"))
+                attempts.append({
+                    "endpoint": endpoint,
+                    "kind": "accepted",
+                    "signature": result,
+                    "code": None,
+                    "message": None,
+                    "err": None,
+                })
+                return SendOutcome(signature=result, attempts=attempts)
+
+            err_obj = body.get("error")
+            err_data = err_obj.get("data") if isinstance(err_obj, dict) else None
+            onchain_err = err_data.get("err") if isinstance(err_data, dict) else None
+            code = err_obj.get("code") if isinstance(err_obj, dict) else None
+            msg = err_obj.get("message") if isinstance(err_obj, dict) else str(err_obj)
+
+            log.info("[solana] send refused by %s: %s", endpoint, err_obj)
+            attempts.append({
+                "endpoint": endpoint,
+                "kind": "rpc_error",
+                "code": code,
+                "message": msg,
+                "err": onchain_err,
+                "data": err_data,
+            })
+
+    return SendOutcome(signature=None, attempts=attempts)
+
+
+async def send_raw_transaction(
+    raw_signed: bytes, endpoints: Optional[list[str]] = None
+) -> Optional[str]:
+    """Broadcast the signed tx across RPCs; return the first accepted signature.
+    Raises SendRejected if every endpoint returned a definitive RPC error.
+    Returns None if any endpoint failed with transport/HTTP error (ambiguous).
+    """
+    outcome = await send_raw_transaction_detailed(raw_signed, endpoints=endpoints)
+    if outcome.signature:
+        return outcome.signature
+
+    # If EVERY attempt returned kind == "rpc_error", raise SendRejected
+    if outcome.attempts and all(a.get("kind") == "rpc_error" for a in outcome.attempts):
+        from live_execution.exit_errors import SendRejected
+        first_err = outcome.attempts[0]
+        raise SendRejected(
+            f"every rpc refused the transaction: {first_err.get('message') or first_err.get('err')}",
+            attempts=outcome.attempts,
+        )
+
     return None
 
 

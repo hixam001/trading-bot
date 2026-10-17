@@ -57,40 +57,9 @@ log = logging.getLogger(__name__)
 
 
 def is_retryable_exit_error(exc_or_msg: Exception | str) -> bool:
-    """Classify whether an exit error is safe and appropriate to retry on the slippage ladder (§79 Phase B-4).
-    Retries ONLY on slippage tolerance exceeded or expired blockhashes. Never retries guard refusals,
-    simulation assertion refusals, price impact, or kill switch triggers.
-    """
-    msg = str(exc_or_msg).lower()
-    non_retryable_markers = (
-        "unapproved",
-        "simulation refused",
-        "simulation assertion failure",
-        "guard refused",
-        "owner changed",
-        "price impact",
-        "kill switch",
-        "reserve",
-        "balance unreadable",
-        "insufficient",
-        "hard cap",
-        "consensus required",
-        "pre-state fetch failed",
-    )
-    if any(m in msg for m in non_retryable_markers):
-        return False
-
-    retryable_markers = (
-        "6001",
-        "0x1771",
-        "slippage",
-        "blockhash",
-        "timeout",
-        "not confirmed before timeout",
-        "has expired",
-        "expired",
-    )
-    return any(m in msg for m in retryable_markers)
+    """Classify whether an exit error is safe and appropriate to retry on the slippage ladder (§81 Phase A)."""
+    from live_execution.exit_errors import classify_exit_failure
+    return classify_exit_failure(exc_or_msg).retry
 
 
 
@@ -168,9 +137,12 @@ class OrderResult:
     commit_payload: dict = field(default_factory=dict)
     memo_signature: str = ""
     memo_slot: Optional[int] = None
+    error: Optional[object] = None
 
     def to_json(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d.pop("error", None)
+        return d
 
 
 def quote_impact_pct(quote: dict) -> float:
@@ -190,8 +162,18 @@ async def _broadcast_and_confirm(
     quote: Optional[dict] = None,
 ) -> OrderResult:
     """Sign after simulation checks, broadcast via send_checked_swap, confirm. Journal is the CALLER job."""
+    from live_execution.exit_errors import SendRejected
+
     signed_swap = await sign_after_checks(swap_b64, payer, intent=intent, quote=quote)
-    sent = await solana.send_checked_swap(signed_swap)
+    try:
+        sent = await solana.send_checked_swap(signed_swap)
+    except SendRejected as exc:
+        return OrderResult(
+            status="failed",
+            reason=f"send refused: {exc}",
+            signature=signed_swap.signature,
+            error=exc,
+        )
     if not sent:
         return OrderResult(status="failed", reason="every rpc refused the transaction", signature=signed_swap.signature)
     conf = await solana.confirm_signature(sent)
@@ -497,13 +479,15 @@ async def place_sell(
     last_sig: Optional[str] = None
     last_blockhash: Optional[str] = None
     last_error_reason: str = ""
+    rung_notes: list[str] = []
 
     for attempt_idx, slippage_rung in enumerate(ladder, start=1):
         if attempt_idx > 1 and last_sig:
             logc.note(sealed["hash"], f"attempt {attempt_idx}: resolving previous signature {last_sig}")
             sig_status = await solana.get_signature_status(last_sig)
-            if sig_status:
-                if sig_status.get("confirmationStatus") in ("confirmed", "finalized") and not sig_status.get("err"):
+            if sig_status and sig_status.get("confirmationStatus") in ("confirmed", "finalized"):
+                sig_err = sig_status.get("err")
+                if not sig_err:
                     logc.note(sealed["hash"], f"previous signature {last_sig} landed on-chain — stopping ladder")
                     logc.bind(sealed["hash"], last_sig)
                     actuals = await _fill_actuals("sell", mint, last_sig)
@@ -524,19 +508,44 @@ async def place_sell(
                         **commit_fields,
                     )
                     return outcome
-
-            is_valid = await solana.is_blockhash_valid(last_blockhash) if last_blockhash else False
-            if is_valid is not False:
-                reason = f"exit_unresolved: signature {last_sig} is pending and blockhash {last_blockhash} may still be valid"
-                log.error("DOUBLE FILL SAFETY: %s", reason)
-                try:
-                    from alerts import alert_nowait, AlertEvent
-                    alert_nowait(AlertEvent.EXIT_UNRESOLVED, f"Exit unresolved for {mint[:8]}: {reason}", key=f"exit_unresolved:{mint}")
-                except Exception:
-                    pass
-                logc.note(sealed["hash"], reason)
-                logc.fail(sealed["hash"], reason)
-                return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason, "signature": last_sig, **commit_fields})
+                else:
+                    # Landed on-chain but failed: conclusive failure, fee was paid, can never double-fill.
+                    from live_execution.exit_errors import classify_exit_failure, custom_error_code
+                    failure = classify_exit_failure(sig_err)
+                    if failure.retry and attempt_idx <= len(ladder):
+                        prev_rung = ladder[attempt_idx - 2]
+                        code = custom_error_code(sig_err)
+                        rung_notes.append(f"{prev_rung}bps=landed-failed({code or 'retryable'})")
+                        log.warning(
+                            "Previous exit signature %s landed with retryable error: %s. Escalating ladder.",
+                            last_sig, sig_err,
+                        )
+                        last_sig = None
+                    else:
+                        fail_reason = f"landed-failed (fee paid): {sig_err}"
+                        logc.fail(sealed["hash"], fail_reason)
+                        return OrderResult(
+                            **{
+                                **base.to_json(),
+                                "status": "failed",
+                                "reason": fail_reason,
+                                "signature": last_sig,
+                                **commit_fields,
+                            }
+                        )
+            else:
+                is_valid = await solana.is_blockhash_valid(last_blockhash) if last_blockhash else False
+                if is_valid is not False:
+                    reason = f"exit_unresolved: signature {last_sig} is pending and blockhash {last_blockhash} may still be valid"
+                    log.error("DOUBLE FILL SAFETY: %s", reason)
+                    try:
+                        from alerts import alert_nowait, AlertEvent
+                        alert_nowait(AlertEvent.EXIT_UNRESOLVED, f"Exit unresolved for {mint[:8]}: {reason}", key=f"exit_unresolved:{mint}")
+                    except Exception:
+                        pass
+                    logc.note(sealed["hash"], reason)
+                    logc.fail(sealed["hash"], reason)
+                    return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason, "signature": last_sig, **commit_fields})
 
         logc.note(sealed["hash"], f"attempt {attempt_idx}/{len(ladder)} with slippage {slippage_rung} bps")
         try:
@@ -612,11 +621,14 @@ async def place_sell(
             last_sig = outcome.signature
         except Exception as exc:
             err_str = str(exc)
-            if not is_retryable_exit_error(err_str) or attempt_idx >= len(ladder):
+            if not is_retryable_exit_error(exc) or attempt_idx >= len(ladder):
                 logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
                 return OrderResult(**{**base.to_json(), "status": "failed", "reason": err_str, "price_impact_pct": impact, **commit_fields})
             log.warning("Exit attempt %d failed with retryable error: %s. Escalating ladder.", attempt_idx, err_str)
             last_error_reason = err_str
+            from live_execution.exit_errors import custom_error_code
+            code = custom_error_code(getattr(exc, "onchain_err", None) or exc)
+            rung_notes.append(f"{slippage_rung}bps=slippage({code or 'retryable'})")
             continue
 
         if outcome.status == "filled":
@@ -645,7 +657,8 @@ async def place_sell(
         else:
             reason = outcome.reason or "fill not confirmed"
             last_error_reason = reason
-            if not is_retryable_exit_error(reason) or attempt_idx >= len(ladder):
+            err_target = getattr(outcome, "error", None) or reason
+            if not is_retryable_exit_error(err_target) or attempt_idx >= len(ladder):
                 logc.fail(sealed["hash"], reason)
                 outcome.commit_hash = sealed["hash"]
                 outcome.commit_nonce = sealed["nonce"]
@@ -654,14 +667,18 @@ async def place_sell(
                 outcome.memo_slot = memo_res["slot"]
                 return outcome
             log.warning("Exit attempt %d unconfirmed/slippage: %s. Escalating ladder.", attempt_idx, reason)
+            from live_execution.exit_errors import custom_error_code
+            code = custom_error_code(getattr(outcome, "error", None) or reason)
+            rung_notes.append(f"{slippage_rung}bps=preflight-slippage({code or 'retryable'})")
             continue
 
-    logc.fail(sealed["hash"], last_error_reason or "exit ladder exhausted")
+    final_reason = f"ladder: {' -> '.join(rung_notes)}" if rung_notes else (last_error_reason or "exit ladder exhausted")
+    logc.fail(sealed["hash"], final_reason)
     return OrderResult(
         **{
             **base.to_json(),
             "status": "failed",
-            "reason": last_error_reason or "exit ladder exhausted",
+            "reason": final_reason,
             "signature": last_sig,
             **commit_fields,
         }

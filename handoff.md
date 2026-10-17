@@ -1,3 +1,24 @@
+## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
+
+### Phase A: Make the Sell Slippage Ladder Actually Escalate (`live_execution/{executor.py,solana.py,sim_guard.py,config.py,exit_errors.py}`, `backend/tests/test_audit_81_a.py`, `docs/14_SIGNING_GUARD.md`, `.env.example`)
+1. **Structured Exit Failure Classification (`live_execution/exit_errors.py`)**:
+   - Implemented `custom_error_code(err) -> int | None` parsing JSON form `{"InstructionError": [idx, {"Custom": N}]}`, list form `[idx, {"Custom": N}]`, and log text `custom program error: 0x1771`.
+   - Added `EXIT_RETRYABLE_CUSTOM_ERRORS = (6001,)` in `config.py` (env-overridable via `EXIT_RETRYABLE_CUSTOM_ERRORS`). Jupiter error 6001 (`0x1771` `SlippageToleranceExceeded`) is **CONFIRMED** from Jupiter aggregator documentation.
+   - Added `SimulationRefused(ExecutionError)` in `sim_guard.py` with `category` and `onchain_err` attributes. `_refuse` passes `onchain_err=sim_res["err"]` on simulation failures.
+   - Added `classify_exit_failure` and `ExitFailure(retry, reason)`. `SimulationRefused` with retryable on-chain custom error escalates; any guard refusal without on-chain error never retries.
+   - Made `is_retryable_exit_error` in `executor.py` delegate cleanly to `classify_exit_failure(exc_or_msg).retry`.
+2. **RPC Preflight Error Preservation (`solana.py`, `executor.py`)**:
+   - Added `send_raw_transaction_detailed(raw, endpoints) -> SendOutcome` capturing per-endpoint attempts (`kind`: `"accepted"`, `"rpc_error"`, `"http_status"`, `"transport"`).
+   - If every endpoint returns `rpc_error`, `send_raw_transaction` raises `SendRejected(msg, attempts=...)`. Ambiguous transport/http errors return `None` (preserved fail-closed behavior).
+   - `_broadcast_and_confirm` catches `SendRejected` and carries the error on `OrderResult.error` and `OrderResult.reason`.
+3. **Conclusive Landed-With-Error Resolution (`executor.py`)**:
+   - In `place_sell` retry loop, if `get_signature_status` returns confirmed/finalized with `err`, the code treats it as a conclusive failure (fee was paid, cannot double-fill) and does NOT call `is_blockhash_valid`.
+   - If the landed error is retryable (code in `EXIT_RETRYABLE_CUSTOM_ERRORS`), the ladder escalates with `last_sig = None`. If non-retryable, it halts as `landed-failed (fee paid): ...` instead of `exit_unresolved`.
+   - Added `rung_notes` tracking across attempts, outputting reason strings like `ladder: 50bps=slippage(6001) -> 150bps=filled`.
+4. **Tests & Suite**:
+   - Added 36 comprehensive tests in `backend/tests/test_audit_81_a.py`.
+   - Baseline: 1066 passed -> **1102 passed** (0 failed).
+
 ## §80 — CI Hardening and Pre-Commit/Pre-Push Verification Invariant (2026-10-14)
 
 ### CI Hardening & Incident Remediation (Commits `b7b3550` & `78ed7e3`)

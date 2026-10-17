@@ -156,6 +156,12 @@ PRIORITY_FEE_HARD_CAP_LAMPORTS: int = 1_000_000  # Guard-side absolute cap
 # §79 Phase B-4: Exit slippage ladder (sells only)
 EXIT_SLIPPAGE_LADDER_BPS: tuple[int, ...] = (50, 150, 300)
 EXIT_MAX_ATTEMPTS: int = 3
+_retryable_env = os.getenv("EXIT_RETRYABLE_CUSTOM_ERRORS", "")
+EXIT_RETRYABLE_CUSTOM_ERRORS: tuple[int, ...] = (
+    tuple(int(x) for x in _retryable_env.split(",") if x.strip().isdigit())
+    if _retryable_env.strip()
+    else (6001,)
+)
 
 # §79 Phase A: Independent price deviation caps for simulation floor
 BUY_MAX_PRICE_DEVIATION: float = 0.10   # 10% max deviation on entry

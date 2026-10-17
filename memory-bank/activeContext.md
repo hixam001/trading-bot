@@ -1,6 +1,16 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
+**Current — 2026-10-17 (§81 Post-§79 Re-Audit Remediation in Progress):**
+- **§81 Phase A Complete (Make the Sell Slippage Ladder Actually Escalate)**:
+  * Implemented `live_execution/exit_errors.py` with `custom_error_code`, `ExitFailure`, `SendRejected`, and `classify_exit_failure`.
+  * Added `SimulationRefused(ExecutionError)` in `sim_guard.py` carrying `onchain_err`.
+  * Added `EXIT_RETRYABLE_CUSTOM_ERRORS = (6001,)` in `config.py` (confirmed Jupiter SlippageToleranceExceeded 0x1771).
+  * Implemented `send_raw_transaction_detailed` in `solana.py`, raising `SendRejected` when all RPCs definitively refuse.
+  * Fixed A-3 in `executor.py`: landed-with-error is treated as conclusive failure without calling `is_blockhash_valid`. Escalates if retryable, fails conclusively if non-retryable.
+  * Added 36 tests in `backend/tests/test_audit_81_a.py`. Full test suite: **1102 passed, 0 failed**.
+- **Next Phase**: Phase B (Fix wallet-drop alarm reliability and ledger flow counting).
+
+**Prior — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
 - **Mandatory Pre-Commit/Pre-Push Gate (Strict Invariant)**: ALL of the following tests and checks MUST pass cleanly before any commit or git push:
   1. `env -u ADMIN_TOKEN pytest -q` — all 1,066+ hermetic tests green without `.env`, without wallet keypair, with fake RPC/fixtures.
   2. `pip check` — zero Python dependency conflicts.

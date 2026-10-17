@@ -149,15 +149,19 @@ Before signing, the transaction is simulated against independent Solana RPC node
 - Hardcoded `SIMULATION_REQUIRED = True` ensures transactions cannot bypass simulation.
 
 ### Bounded Exit Slippage Ladder (Sells Only)
-To prevent position lock-in during market volatility or slippage spikes, the exit engine implements a bounded retry ladder:
+To prevent position lock-in during market volatility or slippage spikes, the exit engine implements a bounded retry ladder (§79 Phase B-4, hardened in §81 Phase A):
 - **Ladder Rungs:** `EXIT_SLIPPAGE_LADDER_BPS = (50, 150, 300)` over `EXIT_MAX_ATTEMPTS = 3`. Buys never escalate slippage (a missed entry is cheap).
-- **Retryable Errors Only:** Retries only on confirmed slippage exhaustion (Jupiter program error `6001` / `0x1771`) or expired blockhash. Never retries on guard refusals, simulation failures, quorum mismatches, price-impact breaches, or kill switches.
+- **Structured Error Classification:** Handled via `live_execution/exit_errors.py` (`classify_exit_failure`). Retries only on confirmed slippage exhaustion (`EXIT_RETRYABLE_CUSTOM_ERRORS = (6001,)`, where `6001` / `0x1771` is **CONFIRMED** from Jupiter aggregator documentation as `SlippageToleranceExceeded`) or expired blockhash:
+  1. **Pre-Sign Simulation:** `SimulationRefused` carrying `onchain_err` with custom error 6001 escalates the ladder safely (tx was never signed or broadcast). Guard refusals without onchain error never retry.
+  2. **RPC Preflight:** `SendRejected` captured via `send_raw_transaction_detailed`; if all RPCs definitively refuse with code 6001 or expired blockhash, the ladder escalates. Ambiguous transport errors do not escalate.
+  3. **Landed-with-Error:** If `get_signature_status` returns confirmed/finalized with error 6001, the failure is conclusive (fee was paid, can never double-fill); the ladder escalates without checking blockhash validity. If the error is non-retryable (e.g. 6024), it stops immediately as a conclusive failure rather than `exit_unresolved`.
 - **Fresh Intent Per Attempt:** Each attempt constructs a fresh `TradeIntent` with the new slippage parameter; all Layer 1 and Layer 2 guards execute afresh.
 - **Double-Fill Conclusive Resolution:** Before attempt $n+1$, the engine verifies the status of attempt $n$:
-  1. If `getSignatureStatuses` shows the transaction landed, the loop halts immediately and proceeds to journal the fill.
-  2. If the signature is not landed **and** `isBlockhashValid` is `False` (blockhash expired), it safely proceeds to the next ladder rung.
-  3. If status is pending or the blockhash is still valid, the ladder halts immediately with `exit_unresolved` to prevent duplicate fills.
-- **Single Commit Hash:** All retry attempts append audit notes via `CommitLog.note(digest, text)` under the original commit hash; no duplicate memo or new hash is published.
+  1. If `getSignatureStatuses` shows the transaction landed without error, the loop halts immediately and proceeds to journal the fill.
+  2. If the transaction landed with an error, it is classified directly (conclusive failure; blockhash is not checked).
+  3. If the signature is not landed **and** `isBlockhashValid` is `False` (blockhash expired), it safely proceeds to the next ladder rung.
+  4. If status is pending or the blockhash is still valid, the ladder halts immediately with `exit_unresolved` to prevent duplicate fills.
+- **Single Commit Hash:** All retry attempts append audit notes via `CommitLog.note(digest, text)` under the original commit hash; no duplicate memo or new hash is published. Reason string tracks rung notes across attempts.
 
 ### Layer 3: RPC Preflight on Broadcast
 In [`backend/live_execution/solana.py`](backend/live_execution/solana.py), `send_checked_swap` guarantees that only a `SignedSwap` object with `_checked=True` (produced exclusively by `sign_after_checks`) can be submitted. It delegates to `send_raw_transaction` which enforces:

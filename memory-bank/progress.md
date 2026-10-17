@@ -1,6 +1,12 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase A: Make the sell slippage ladder actually escalate (2026-10-17):
+      1. Structured exit failure classification (`live_execution/exit_errors.py`): `custom_error_code`, `ExitFailure`, `SendRejected`, `classify_exit_failure`.
+      2. SimulationRefused carrying `onchain_err` in `sim_guard.py`. Retries only on confirmed slippage (custom code 6001 / 0x1771 from Jupiter docs).
+      3. Preflight RPC error preservation: `send_raw_transaction_detailed` in `solana.py`.
+      4. Landed-with-error conclusive resolution: never checks blockhash when error landed on-chain; escalates if retryable, halts if non-retryable without `exit_unresolved`.
+      5. Full test suite: **1102 passed**, 0 failed (+36 new tests in `test_audit_81_a.py`).
 - [x] Mandatory Pre-Commit and Pre-Push Verification Gate (2026-10-14):
       1. Hard requirement: every commit and push requires all 7 test suites to pass cleanly.
       2. Hermetic backend suite: 1,066 tests passing (0 failures, without `.env`, fake RPC).
