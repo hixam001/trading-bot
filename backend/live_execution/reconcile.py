@@ -129,26 +129,48 @@ def reconcile(meta: dict, balances: Optional[dict],
 UNEXPLAINED_OUTFLOW_USD: float = float(os.getenv("UNEXPLAINED_OUTFLOW_USD", "5.0"))
 
 
+class WalletDropResult(dict):
+    """Result of wallet drop check (§81 Phase B)."""
+    @property
+    def alerted(self) -> bool:
+        return bool(self.get("alerted", False))
+
+    @property
+    def skipped(self) -> bool:
+        return bool(self.get("skipped", False))
+
+    @property
+    def reason(self) -> str:
+        return str(self.get("reason", ""))
+
+    @property
+    def unexplained_drop_usd(self) -> float:
+        return float(self.get("unexplained_drop_usd", 0.0))
+
+    @property
+    def unexplained_sol_drop(self) -> float:
+        return float(self.get("unexplained_sol_drop", 0.0))
+
+
 def check_wallet_drop(
-    current_usdc: float,
-    current_sol: float,
-    sol_price_usd: float,
-    ledger: Any,
+    current_usdc: Optional[float],
+    current_sol: Optional[float],
+    sol_price_usd: Optional[float] = None,
+    ledger: Any = None,
     state_dir: Optional[Path] = None,
     now_fn: Callable[[], float] = time.time,
-) -> dict[str, Any]:
+) -> WalletDropResult:
     """
-    Compare current wallet USDC + SOL(USD) against the previous snapshot and
-    the ExecutionLedger to detect unexplained balance outflows.
+    Compare current wallet USDC and SOL balances against the previous snapshot and
+    the ExecutionLedger to detect unexplained balance outflows (§81 Phase B).
 
-    "Explained" outflow definition:
-      - Legitimate buy orders recorded in the ledger (cash outflow = rec.usd_size)
-      - Legitimate close/sell orders recorded in the ledger (cash inflow = rec.proceeds_usd)
-      - Known Solana transaction network & priority fees (estimated 0.001 SOL per confirmed tx)
-      - Mark-to-market valuation changes on held SOL reserve
+    Evaluates two independent balance channels:
+      1. USDC channel: actual USDC delta vs ledger (opens spend USDC, closes return USDC).
+         Tolerance: UNEXPLAINED_OUTFLOW_USD (default $10.00).
+      2. SOL channel: actual SOL delta vs gas burn (0.003 SOL/record + 0.02 SOL buffer).
 
-    If (actual_total_usd_change - explained_change) < -UNEXPLAINED_OUTFLOW_USD:
-      Emits AlertEvent.WALLET_DROP.
+    Fails closed on unreadable balances: if either current_usdc or current_sol is None,
+    skips the drop check without alerting and without overwriting the snapshot.
     """
     import json
     try:
@@ -159,8 +181,29 @@ def check_wallet_drop(
 
     snap_file = target_dir / "wallet_snapshot.json"
     now = now_fn()
-    curr_total_usd = current_usdc + (current_sol * sol_price_usd)
-    result = {"alerted": False, "unexplained_drop_usd": 0.0}
+
+    if current_usdc is None or current_sol is None:
+        log.warning(
+            "wallet balances unreadable (usdc=%s, sol=%s); skipping drop check",
+            current_usdc,
+            current_sol,
+        )
+        return WalletDropResult({
+            "alerted": False,
+            "skipped": True,
+            "reason": "balances_unreadable",
+            "unexplained_drop_usd": 0.0,
+            "unexplained_sol_drop": 0.0,
+        })
+
+    result = WalletDropResult({
+        "alerted": False,
+        "skipped": False,
+        "unexplained_drop_usd": 0.0,
+        "unexplained_sol_drop": 0.0,
+        "reason": "",
+        "channel": "",
+    })
 
     if snap_file.is_file():
         try:
@@ -168,10 +211,6 @@ def check_wallet_drop(
             prev_ts = float(prev.get("ts", 0.0))
             prev_usdc = float(prev.get("usdc", 0.0))
             prev_sol = float(prev.get("sol", 0.0))
-            prev_sol_price = float(prev.get("sol_price_usd", sol_price_usd))
-            prev_total_usd = prev_usdc + (prev_sol * prev_sol_price)
-
-            actual_delta_usd = curr_total_usd - prev_total_usd
 
             records = getattr(ledger, "_load", lambda: [])()
             period_buys_usd = 0.0
@@ -181,36 +220,63 @@ def check_wallet_drop(
                 r_ts = float(r.get("ts", 0.0))
                 if prev_ts <= r_ts <= now:
                     tx_count += 1
-                    if r.get("kind") == "buy":
+                    k = r.get("kind")
+                    if k in ("buy", "open"):
                         period_buys_usd += float(r.get("usd_size", 0.0))
-                    elif r.get("kind") in ("close", "sell"):
-                        period_proceeds_usd += float(r.get("proceeds_usd", 0.0))
+                    elif k in ("close", "sell"):
+                        proceeds = r.get("usd_size") or r.get("proceeds_usd", 0.0)
+                        period_proceeds_usd += float(proceeds or 0.0)
 
-            known_fees_usd = tx_count * 0.001 * sol_price_usd
-            sol_price_delta_usd = prev_sol * (sol_price_usd - prev_sol_price)
-            explained_delta_usd = period_proceeds_usd - period_buys_usd - known_fees_usd + sol_price_delta_usd
-
-            unexplained_delta_usd = actual_delta_usd - explained_delta_usd
+            # Channel 1: USDC delta vs ledger flows
+            actual_usdc_delta = current_usdc - prev_usdc
+            explained_usdc_delta = period_proceeds_usd - period_buys_usd
+            unexplained_usdc_delta = actual_usdc_delta - explained_usdc_delta
 
             outflow_cap = float(os.getenv("UNEXPLAINED_OUTFLOW_USD", str(UNEXPLAINED_OUTFLOW_USD)))
-            if unexplained_delta_usd < -outflow_cap:
-                drop_amount = abs(unexplained_delta_usd)
+            usdc_dropped = unexplained_usdc_delta < -outflow_cap
+
+            # Channel 2: SOL delta vs gas tolerance
+            actual_sol_delta = current_sol - prev_sol
+            sol_tolerance = (tx_count * 0.003) + 0.02
+            sol_dropped = actual_sol_delta < -sol_tolerance
+
+            if usdc_dropped or sol_dropped:
                 result["alerted"] = True
-                result["unexplained_drop_usd"] = drop_amount
-                log.critical(
-                    "WALLET_DROP: Unexplained wallet outflow of $%.2f exceeds cap $%.2f "
-                    "(actual Δ=$%.2f, explained Δ=$%.2f)",
-                    drop_amount, outflow_cap, actual_delta_usd, explained_delta_usd,
-                )
+                drop_usdc = abs(unexplained_usdc_delta) if usdc_dropped else 0.0
+                drop_sol = abs(actual_sol_delta) if sol_dropped else 0.0
+                result["unexplained_drop_usd"] = drop_usdc
+                result["unexplained_sol_drop"] = drop_sol
+
+                channels = []
+                if usdc_dropped:
+                    channels.append(f"USDC drop ${drop_usdc:.2f} (cap ${outflow_cap:.2f})")
+                if sol_dropped:
+                    channels.append(f"SOL drop {drop_sol:.4f} SOL (tolerance {sol_tolerance:.4f} SOL)")
+                channel_str = ", ".join(channels)
+                result["channel"] = channel_str
+                result["reason"] = f"unexplained outflow: {channel_str}"
+
+                log.critical("WALLET_DROP: %s", result["reason"])
                 try:
                     from alerts import alert_nowait, AlertEvent
                     alert_nowait(
                         AlertEvent.WALLET_DROP,
-                        f"Unexplained wallet outflow of ${drop_amount:.2f} (actual Δ=${actual_delta_usd:.2f}, explained Δ=${explained_delta_usd:.2f})",
+                        f"Unexplained wallet outflow: {channel_str}",
                         key="wallet_drop",
                     )
                 except Exception:
                     pass
+
+                # Trip kill switch if configured
+                from live_execution import config as live_cfg
+                if getattr(live_cfg, "WALLET_DROP_TRIPS_KILL_SWITCH", False):
+                    try:
+                        kill_file = target_dir / "kill_switch.txt"
+                        kill_file.write_text(f"wallet_drop: {channel_str}")
+                        log.critical("KILL SWITCH TRIPPED by wallet drop: %s", channel_str)
+                    except Exception as exc:
+                        log.error("Failed tripping kill switch on wallet drop: %s", exc)
+
         except Exception as exc:
             log.warning("reconcile: failed checking wallet drop: %s", exc)
 
@@ -222,8 +288,6 @@ def check_wallet_drop(
             "ts": now,
             "usdc": current_usdc,
             "sol": current_sol,
-            "sol_price_usd": sol_price_usd,
-            "total_usd": curr_total_usd,
         }, indent=2))
         tmp_file.replace(snap_file)
     except Exception as exc:

@@ -1,6 +1,14 @@
 # Active Context — trading-bot
 
 **Current — 2026-10-17 (§81 Post-§79 Re-Audit Remediation in Progress):**
+- **§81 Phase B Complete (Fix Wallet-Drop Alarm Reliability & Flow Counting)**:
+  * Fixed flow accounting in `reconcile.py`: reads `usd_size` for close records (with `proceeds_usd` fallback).
+  * Split check into two channels: USDC delta vs ledger flows, and SOL delta vs gas tolerance (`0.003/tx + 0.02 buffer`). Eliminated hardcoded $150 SOL mark.
+  * Fail-closed on unreadable balances: skips drop check when USDC or SOL is None without corrupting snapshot.
+  * Replaced swallowed exceptions in `run_live_cycle.py` with explicit error logging.
+  * Added `scripts/ack_wallet_change.py` with strict keypair isolation (AST verified).
+  * Added `WALLET_DROP_TRIPS_KILL_SWITCH = False` (default alert-only).
+  * Added 8 tests in `backend/tests/test_audit_81_b.py`. Full test suite: **1110 passed, 0 failed**.
 - **§81 Phase A Complete (Make the Sell Slippage Ladder Actually Escalate)**:
   * Implemented `live_execution/exit_errors.py` with `custom_error_code`, `ExitFailure`, `SendRejected`, and `classify_exit_failure`.
   * Added `SimulationRefused(ExecutionError)` in `sim_guard.py` carrying `onchain_err`.
@@ -8,7 +16,7 @@
   * Implemented `send_raw_transaction_detailed` in `solana.py`, raising `SendRejected` when all RPCs definitively refuse.
   * Fixed A-3 in `executor.py`: landed-with-error is treated as conclusive failure without calling `is_blockhash_valid`. Escalates if retryable, fails conclusively if non-retryable.
   * Added 36 tests in `backend/tests/test_audit_81_a.py`. Full test suite: **1102 passed, 0 failed**.
-- **Next Phase**: Phase B (Fix wallet-drop alarm reliability and ledger flow counting).
+- **Next Phase**: Phase C (Close the remaining signing-guard gaps).
 
 **Prior — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
 - **Mandatory Pre-Commit/Pre-Push Gate (Strict Invariant)**: ALL of the following tests and checks MUST pass cleanly before any commit or git push:

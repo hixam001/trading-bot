@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase B: Fix wallet-drop alarm reliability and ledger flow counting (2026-10-17):
+      1. Flow accounting in `reconcile.py`: reads `usd_size` for close records (with `proceeds_usd` fallback).
+      2. Two-channel checks (USDC and SOL independently): eliminated hardcoded $150 SOL mark.
+      3. Fail-closed on unreadable: skips drop check when USDC or SOL is None without corrupting snapshot.
+      4. Logged exceptions instead of swallowing in `run_live_cycle.py`.
+      5. Created `scripts/ack_wallet_change.py` with strict keypair isolation (AST verified).
+      6. Added `WALLET_DROP_TRIPS_KILL_SWITCH = False` (default alert-only).
+      7. Full test suite: **1110 passed**, 0 failed (+8 new tests in `test_audit_81_b.py`).
 - [x] §81 Phase A: Make the sell slippage ladder actually escalate (2026-10-17):
       1. Structured exit failure classification (`live_execution/exit_errors.py`): `custom_error_code`, `ExitFailure`, `SendRejected`, `classify_exit_failure`.
       2. SimulationRefused carrying `onchain_err` in `sim_guard.py`. Retries only on confirmed slippage (custom code 6001 / 0x1771 from Jupiter docs).

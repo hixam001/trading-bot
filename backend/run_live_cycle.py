@@ -414,13 +414,12 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
                 except Exception:
                     pass
 
-        # §79 Phase D: check unexplained wallet drop against ledger
+        # §79 Phase D / §81 Phase B: check unexplained wallet drop against ledger
         try:
             from live_execution.reconcile import check_wallet_drop
-            sol_price_usd = 150.0  # conservative reference mark
-            check_wallet_drop(cash, sol_bal or 0.0, sol_price_usd, ledger)
-        except Exception:
-            pass
+            check_wallet_drop(cash, sol_bal, ledger=ledger)
+        except Exception as exc:
+            log.error("wallet drop check crashed: %s", exc, exc_info=True)
 
     except Exception as exc:
         log.warning("live USDC balance unavailable (%s) - cash=0 "

@@ -262,6 +262,9 @@ def min_live_ticket_usd(equity_usd) -> float:
 # scaled to this book). Checked against the execution ledger.
 MAX_DAILY_DEPLOY_USD: float = 300.0
 
+# §81 Phase B: Automatically trip kill switch when an unexplained wallet drop is detected (default false / alert-only)
+WALLET_DROP_TRIPS_KILL_SWITCH: bool = os.getenv("WALLET_DROP_TRIPS_KILL_SWITCH", "false").lower() in ("true", "1", "yes")
+
 
 # ---------------------------------------------------------------------------
 # DEVNET DRILL (P0-1): exercises wallet load, address verify, chain reads,

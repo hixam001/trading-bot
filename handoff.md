@@ -1,5 +1,27 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase B: Fix Wallet-Drop Alarm Reliability and Ledger Flow Counting (`live_execution/{reconcile.py,config.py}`, `backend/run_live_cycle.py`, `scripts/ack_wallet_change.py`, `backend/tests/test_audit_81_b.py`, `.env.example`)
+1. **Accurate Flow Accounting (B-1)**:
+   - Fixed `check_wallet_drop` in `reconcile.py` to read `r.get("usd_size")` for `kind="close"` records (with fallback to `proceeds_usd` for legacy records). Previously always read `proceeds_usd` which was absent on `ExecutionRecord`, distorting inflow to 0.0 and triggering false alarms on legitimate sells.
+2. **Two-Channel Independent Checks (B-1, B-3)**:
+   - Replaced flawed total USD calculation that used a hardcoded $150 SOL price with two independent checks:
+     * **USDC Channel**: Actual USDC balance delta vs net ledger flows (`period_proceeds_usd - period_buys_usd`). Alarms if unexplained outflow exceeds `UNEXPLAINED_OUTFLOW_USD` (default $10.00).
+     * **SOL Channel**: Actual SOL balance delta vs gas tolerance (`tx_count * 0.003 SOL + 0.02 SOL` buffer). Alarms on real SOL drain without needing a synthetic SOL price.
+   - Deprecated `sol_price_usd` argument; it is no longer used for balance comparisons.
+3. **Fail-Closed on Unreadable Balances (B-2)**:
+   - If either `current_usdc` or `current_sol` is `None` (RPC failure), `check_wallet_drop` logs a warning and returns `WalletDropResult(skipped=True, reason="balances_unreadable")`. It does NOT save a corrupted snapshot.
+   - Updated `run_live_cycle.py`: passed `sol_bal` directly instead of `sol_bal or 0.0`.
+4. **Exception Visibility (B-4)**:
+   - In `run_live_cycle.py`, replaced silent `except Exception: pass` around `check_wallet_drop` with `log.error("wallet drop check crashed: %s", exc, exc_info=True)`.
+5. **Operator Acknowledgment Script (B-5)**:
+   - Created `scripts/ack_wallet_change.py` allowing operators to reset the baseline snapshot after deliberate deposits or withdrawals. Accepts `--reason` (required) and `--usdc`/`--sol` or `--live` (via RPC).
+   - AST verified: strictly does NOT import `load_keypair` or touch signing keys.
+6. **Configurable Kill Switch Trip (B-6)**:
+   - Added `WALLET_DROP_TRIPS_KILL_SWITCH: bool = False` in `config.py` (env-overridable, default `False` alert-only per operator decision). If enabled, unexplained wallet drops automatically trip the kill switch.
+7. **Tests & Suite**:
+   - Added 8 tests in `backend/tests/test_audit_81_b.py`.
+   - Full test suite: **1110 passed** (0 failed).
+
 ### Phase A: Make the Sell Slippage Ladder Actually Escalate (`live_execution/{executor.py,solana.py,sim_guard.py,config.py,exit_errors.py}`, `backend/tests/test_audit_81_a.py`, `docs/14_SIGNING_GUARD.md`, `.env.example`)
 1. **Structured Exit Failure Classification (`live_execution/exit_errors.py`)**:
    - Implemented `custom_error_code(err) -> int | None` parsing JSON form `{"InstructionError": [idx, {"Custom": N}]}`, list form `[idx, {"Custom": N}]`, and log text `custom program error: 0x1771`.
