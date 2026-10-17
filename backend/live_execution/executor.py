@@ -51,7 +51,7 @@ from live_execution.models import ExecutionLedger
 from live_execution.commit_log import CommitLog
 from live_execution.quote_params import build_quote_params
 from live_execution.venue import token_deltas_from_tx
-from live_execution.trade_intent import TradeIntent
+from live_execution.trade_intent import TradeIntent, usd_to_raw_amount
 
 log = logging.getLogger(__name__)
 
@@ -267,6 +267,11 @@ async def place_buy(
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": f"insufficient USDC: {usdc_bal:.2f} < {usd:.2f}"})
 
+    # §81 Phase C-6: Fail closed on missing/invalid reference price BEFORE publishing commit memo
+    if reference_price_usd is None or reference_price_usd <= 0:
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": "no reference price available for buy (fail closed)"})
+
     # REF-R11 commit-reveal, fail-closed ordering:
     #   seal -> publish memo -> CONFIRM memo -> quote -> build -> broadcast.
     # The memo goes out BEFORE the quote so the quote->fill window stays as
@@ -289,12 +294,6 @@ async def place_buy(
     commit_fields = dict(commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
                          commit_payload=intent, memo_signature=memo_res["signature"],
                          memo_slot=memo_res["slot"])
-
-    if reference_price_usd is None or reference_price_usd <= 0:
-        reason = "no reference price available for buy (fail closed)"
-        logc.fail(sealed["hash"], reason)
-        return OrderResult(**{**base.to_json(), "status": "blocked",
-                              "reason": reason, **commit_fields})
 
     try:
         q = await get_jupiter_quote(mint, output_decimals, usd, ledger=ledger)
@@ -329,7 +328,7 @@ async def place_buy(
         wallet=addr,
         input_mint=_BACKEND_USDC_MINT,
         output_mint=mint,
-        in_amount_raw=int(usd * (10 ** USDC_DECIMALS)),
+        in_amount_raw=usd_to_raw_amount(usd, USDC_DECIMALS),
         slippage_bps=config.SLIPPAGE_BPS,
         min_out_raw=min_out_raw,
         reference_price_usd=reference_price_usd,

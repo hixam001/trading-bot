@@ -1,6 +1,15 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §81 Phase C: Close remaining signing-guard gaps (2026-10-17):
+      1. Created account control-field checks: Section E in `sim_guard.py` checks all post-state wallet-owned accounts. Newly created accounts require delegate is None, close_authority is None, delegated_amount == 0, state == 1 (initialized).
+      2. Quorum control-field checks in `responses_agree`: exact match on delegate, close_authority, delegated_amount, state.
+      3. Quote mismatch single counter & alert: QuoteMismatch(ExecutionError), count=False in _refuse prevents double counting.
+      4. Mandatory TradeIntent: removed quote-synthesizing fallback; test helper in `tests/_helpers.py`; AST check ensures production code never imports _helpers.
+      5. Consistent USD->raw conversion: `usd_to_raw_amount` in `trade_intent.py` using Decimal and ROUND_HALF_UP; property tested across 10,000 cents.
+      6. Reference price check before memo: moved before `logc.seal` and `publish_commit_memo` in `place_buy`.
+      7. Priority fee limit scales by non-CB instructions: `min(200_000 * n_non_cb_instructions, 1_400_000)` per Solana runtime default.
+      8. Full test suite: **1128 passed**, 0 failed (+18 new tests in `test_audit_81_c.py`).
 - [x] §81 Phase B: Fix wallet-drop alarm reliability and ledger flow counting (2026-10-17):
       1. Flow accounting in `reconcile.py`: reads `usd_size` for close records (with `proceeds_usd` fallback).
       2. Two-channel checks (USDC and SOL independently): eliminated hardcoded $150 SOL mark.

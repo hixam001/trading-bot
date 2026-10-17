@@ -29,6 +29,7 @@ from live_execution.jupiter_executor import (
 )
 from live_execution.trade_intent import TradeIntent
 from live_execution import executor
+from tests.helpers import make_intent_from_quote
 
 SYSTEM_PROGRAM_ID = Pubkey.from_string(_SYSTEM_PROGRAM_ID)
 TOKEN_PROGRAM_ID = Pubkey.from_string(_SPL_TOKEN_PROGRAM_ID)
@@ -38,8 +39,8 @@ USDC_MINT = Pubkey.from_string("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")
 
 
 def _make_token_data(mint: Pubkey, owner: Pubkey, amount: int) -> bytes:
-    """Standard 165-byte SPL token account data."""
-    return bytes(mint) + bytes(owner) + struct.pack("<Q", amount) + b"\x00" * 93
+    """Standard 165-byte SPL token account data (state=1 initialized)."""
+    return bytes(mint) + bytes(owner) + struct.pack("<Q", amount) + b"\x00" * 36 + b"\x01" + b"\x00" * 56
 
 
 def _make_acc_info(lamports: int, owner_pid: Pubkey, data_bytes: bytes) -> dict:
@@ -121,7 +122,7 @@ async def test_sim_guard_pass_case(monkeypatch):
     monkeypatch.setattr(solana, "get_multiple_accounts", fake_get_multiple_accounts)
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
-    res = await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+    res = await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
     assert res["status"] == "passed"
     assert res["sol_decrease"] == 5000
     assert res["input_decrease"] == 1_000_000
@@ -145,7 +146,7 @@ async def test_sim_guard_err_case(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="failed on-chain with err"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -167,7 +168,7 @@ async def test_sim_guard_sol_over_cap_refused(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="SIM_MAX_SOL_DECREASE_LAMPORTS|wallet SOL decrease"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -214,7 +215,7 @@ async def test_sim_guard_extra_token_account_drained_refused(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="unrelated wallet token account.*balance changed"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -252,7 +253,7 @@ async def test_sim_guard_output_below_threshold_refused(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="otherAmountThreshold"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -291,7 +292,7 @@ async def test_sim_guard_output_ata_owned_by_someone_else_refused(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="otherAmountThreshold|token output must land in wallet-owned ATA"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -338,7 +339,7 @@ async def test_sim_guard_owner_changed_refused(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="owner changed"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -354,7 +355,7 @@ async def test_sim_guard_rpc_down_refused(monkeypatch):
     monkeypatch.setattr(solana, "get_multiple_accounts", boom)
 
     with pytest.raises(ExecutionError, match="pre-state fetch failed|RPC connection refused"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -380,7 +381,7 @@ async def test_sim_guard_malformed_layout_refused(monkeypatch):
     monkeypatch.setattr(solana, "get_multiple_accounts", fake_get_multiple_accounts)
 
     with pytest.raises(ExecutionError, match="malformed token account layout"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 @pytest.mark.asyncio
@@ -440,7 +441,7 @@ async def test_sim_guard_reproduce_a1_drain_independently_refused(monkeypatch):
     monkeypatch.setattr(solana, "simulate_transaction", fake_simulate_transaction)
 
     with pytest.raises(ExecutionError, match="wallet SOL decrease|otherAmountThreshold"):
-        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()))
+        await sim_guard.simulate_and_assert(tx_b64, quote, str(payer.pubkey()), intent=make_intent_from_quote(quote, str(payer.pubkey())))
 
 
 # ---------------------------------------------------------------------------

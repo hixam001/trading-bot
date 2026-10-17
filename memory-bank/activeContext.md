@@ -1,6 +1,15 @@
 # Active Context — trading-bot
 
 **Current — 2026-10-17 (§81 Post-§79 Re-Audit Remediation in Progress):**
+- **§81 Phase C Complete (Close Remaining Signing-Guard Gaps)**:
+  * Created account control-field checks: Section E in `sim_guard.py` checks all post-state wallet-owned accounts. Newly created accounts require delegate is None, close_authority is None, delegated_amount == 0, state == 1 (initialized).
+  * Quorum control-field checks in `responses_agree`: exact match on delegate, close_authority, delegated_amount, state.
+  * Quote mismatch single counter & alert: QuoteMismatch(ExecutionError), count=False in _refuse prevents double counting.
+  * Mandatory TradeIntent: removed quote-synthesizing fallback; test helper in `tests/_helpers.py`; AST check ensures production code never imports _helpers.
+  * Consistent USD->raw conversion: `usd_to_raw_amount` in `trade_intent.py` using Decimal and ROUND_HALF_UP; property tested across 10,000 cents.
+  * Reference price check before memo: moved before `logc.seal` and `publish_commit_memo` in `place_buy`.
+  * Priority fee limit scales by non-CB instructions: `min(200_000 * n_non_cb_instructions, 1_400_000)` per Solana runtime default.
+  * Added 18 tests in `backend/tests/test_audit_81_c.py`. Full test suite: **1128 passed, 0 failed**.
 - **§81 Phase B Complete (Fix Wallet-Drop Alarm Reliability & Flow Counting)**:
   * Fixed flow accounting in `reconcile.py`: reads `usd_size` for close records (with `proceeds_usd` fallback).
   * Split check into two channels: USDC delta vs ledger flows, and SOL delta vs gas tolerance (`0.003/tx + 0.02 buffer`). Eliminated hardcoded $150 SOL mark.
@@ -16,7 +25,7 @@
   * Implemented `send_raw_transaction_detailed` in `solana.py`, raising `SendRejected` when all RPCs definitively refuse.
   * Fixed A-3 in `executor.py`: landed-with-error is treated as conclusive failure without calling `is_blockhash_valid`. Escalates if retryable, fails conclusively if non-retryable.
   * Added 36 tests in `backend/tests/test_audit_81_a.py`. Full test suite: **1102 passed, 0 failed**.
-- **Next Phase**: Phase C (Close the remaining signing-guard gaps).
+- **Next Phase**: Phase D (DEX allowlist and label hygiene).
 
 **Prior — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
 - **Mandatory Pre-Commit/Pre-Push Gate (Strict Invariant)**: ALL of the following tests and checks MUST pass cleanly before any commit or git push:

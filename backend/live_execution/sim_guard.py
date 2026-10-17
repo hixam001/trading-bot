@@ -43,6 +43,11 @@ class SimulationRefused(ExecutionError):
         self.onchain_err = onchain_err
 
 
+class QuoteMismatch(ExecutionError):
+    """Raised when quote violates locally computed trade intent (§81 Phase C-3)."""
+    pass
+
+
 def _call_kw_filtered(func, *args, **kwargs):
     """Filter kwargs to match target signature when mock callables don't accept extra kwargs."""
     try:
@@ -147,7 +152,7 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
             record_safety_refusal("quote_mismatch", msg)
         except Exception:
             pass
-        raise ExecutionError(msg)
+        raise QuoteMismatch(msg)
 
     if not quote or not isinstance(quote, dict):
         _fail("quote is missing or invalid")
@@ -224,22 +229,23 @@ async def simulate_and_assert(
     swap_b64: str,
     quote: dict,
     payer_pubkey: str,
-    intent: Optional[TradeIntent] = None,
+    intent: TradeIntent,
     endpoints: Optional[list[str]] = None,
 ) -> dict:
     """
     Execute pre-sign simulation and verify balance-delta assertions.
     Raises ExecutionError on any failure. Returns simulation summary on success.
     """
-    def _refuse(reason: str, category: str = "sim_refused", onchain_err=None) -> None:
+    def _refuse(reason: str, category: str = "sim_refused", onchain_err=None, count: bool = True) -> None:
         global _SIMULATION_REFUSAL_COUNT
         _SIMULATION_REFUSAL_COUNT += 1
         log.error("PRE-SIGN SIMULATION REFUSED (#%d): %s", _SIMULATION_REFUSAL_COUNT, reason)
-        try:
-            from live_execution.safety_counters import record_safety_refusal
-            record_safety_refusal(category, reason)
-        except Exception:
-            pass
+        if count:
+            try:
+                from live_execution.safety_counters import record_safety_refusal
+                record_safety_refusal(category, reason)
+            except Exception:
+                pass
         try:
             from alerts import alert_nowait, AlertEvent
             alert_nowait(AlertEvent.SIM_REFUSAL, f"Pre-sign simulation refused: {reason}", key=f"sim_refusal:{reason[:40]}")
@@ -267,27 +273,13 @@ async def simulate_and_assert(
     except (TypeError, ValueError) as exc:
         _refuse(f"unparseable quote amounts inAmount={in_amount_raw}, threshold={other_amount_threshold_raw}: {exc}")
 
-    # Fallback intent if caller did not provide one (preserves test fixtures)
-    if intent is None:
-        try:
-            intent = TradeIntent(
-                side="buy" if input_mint == _BACKEND_USDC_MINT else "sell",
-                wallet=payer_pubkey,
-                input_mint=input_mint,
-                output_mint=output_mint,
-                in_amount_raw=in_amount,
-                slippage_bps=int(quote.get("slippageBps", config.SLIPPAGE_BPS)),
-                min_out_raw=other_amount_threshold,
-                reference_price_usd=None,
-            )
-        except Exception as exc:
-            _refuse(f"failed constructing trade intent: {exc}")
-    else:
-        # 1. Validate quote against local trade intent
-        try:
-            validate_quote_against_intent(quote, intent)
-        except ExecutionError as exc:
-            _refuse(str(exc))
+    # 1. Validate quote against local trade intent (§81 Phase C-3, C-4)
+    try:
+        validate_quote_against_intent(quote, intent)
+    except QuoteMismatch as exc:
+        _refuse(str(exc), category="quote_mismatch", count=False)
+    except ExecutionError as exc:
+        _refuse(str(exc), category="sim_refused")
 
     try:
         raw_tx_bytes = base64.b64decode(swap_b64)
@@ -459,38 +451,64 @@ async def simulate_and_assert(
                         f"{pre_tok['amount']} -> {post_tok['amount']}"
                     )
 
-    # E. Wallet-owned token account control fields and ownership assertions (§79 Phase A-4)
+    # E. Wallet-owned token account control fields and ownership assertions (§79 Phase A-4, §81 Phase C-1)
+    # 1. Newly created accounts owned by wallet: must have all control fields clear and state initialized
+    for addr, post_tok in post_token_accounts.items():
+        if post_tok.get("owner") == payer_pubkey and addr not in wallet_owned_pre_accounts:
+            if post_tok.get("delegate") is not None:
+                _refuse(
+                    f"created account {addr} has unauthorized delegate set: {post_tok.get('delegate')}",
+                    category="guard_refused",
+                )
+            if post_tok.get("close_authority") is not None:
+                _refuse(
+                    f"created account {addr} has unauthorized close_authority: {post_tok.get('close_authority')}",
+                    category="guard_refused",
+                )
+            if post_tok.get("delegated_amount", 0) != 0:
+                _refuse(
+                    f"created account {addr} has non-zero delegated_amount: {post_tok.get('delegated_amount')}",
+                    category="guard_refused",
+                )
+            if post_tok.get("state") != 1:
+                _refuse(
+                    f"created account {addr} state is not initialized (state={post_tok.get('state')})",
+                    category="guard_refused",
+                )
+
+    # 2. Pre-existing accounts: verify owner continuity, control fields, and closure rules
     for addr, pre_tok in wallet_owned_pre_accounts.items():
         post_tok = post_token_accounts.get(addr)
         if post_tok:
             if post_tok["owner"] != payer_pubkey:
-                _refuse(f"wallet token account {addr} owner changed to {post_tok['owner']}")
+                _refuse(f"wallet token account {addr} owner changed to {post_tok['owner']}", category="guard_refused")
 
-            # Control field assertions
             if post_tok.get("delegate") != pre_tok.get("delegate"):
                 _refuse(
                     f"wallet token account {addr} delegate set or changed: "
-                    f"{pre_tok.get('delegate')} -> {post_tok.get('delegate')}"
+                    f"{pre_tok.get('delegate')} -> {post_tok.get('delegate')}",
+                    category="guard_refused",
                 )
 
             if post_tok.get("close_authority") != pre_tok.get("close_authority"):
                 _refuse(
                     f"wallet token account {addr} close_authority set or changed: "
-                    f"{pre_tok.get('close_authority')} -> {post_tok.get('close_authority')}"
+                    f"{pre_tok.get('close_authority')} -> {post_tok.get('close_authority')}",
+                    category="guard_refused",
                 )
 
             if post_tok.get("delegated_amount") != pre_tok.get("delegated_amount"):
                 _refuse(
                     f"wallet token account {addr} delegated_amount changed: "
-                    f"{pre_tok.get('delegated_amount')} -> {post_tok.get('delegated_amount')}"
+                    f"{pre_tok.get('delegated_amount')} -> {post_tok.get('delegated_amount')}",
+                    category="guard_refused",
                 )
 
             if post_tok.get("state") == 2:
-                _refuse(f"wallet token account {addr} state changed to frozen")
+                _refuse(f"wallet token account {addr} state changed to frozen", category="guard_refused")
         else:
-            # Closed account: must be WSOL unwrap
             if pre_tok["mint"] != _WSOL_MINT:
-                _refuse(f"wallet-owned token account {addr} (mint {pre_tok['mint']}) was closed (not WSOL)")
+                _refuse(f"wallet-owned token account {addr} (mint {pre_tok['mint']}) was closed (not WSOL)", category="guard_refused")
 
     # F. Value redirection detection: foreign token accounts gaining balance unexpectedly
     if total_input_decrease > intent.in_amount_raw:

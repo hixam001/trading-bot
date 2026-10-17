@@ -1,5 +1,28 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### Phase C: Close Remaining Signing-Guard Gaps (`live_execution/{sim_guard.py,solana.py,executor.py,jupiter_executor.py,trade_intent.py}`, `backend/tests/test_audit_81_c.py`, `backend/tests/_helpers.py`, `docs/14_SIGNING_GUARD.md`)
+1. **Created Account Control-Field Protection (C-1)**:
+   - Updated section E of `simulate_and_assert` in `sim_guard.py` to check all post-state wallet-owned accounts (`post_token_accounts`), not only pre-existing ones.
+   - For newly created accounts (e.g. initial token buy), strictly asserts `delegate is None`, `close_authority is None`, `delegated_amount == 0`, and `state == 1` (initialized, not frozen). Refuses with clear 'created account' markers.
+2. **Quorum Control-Field Verification (C-2)**:
+   - Extended `responses_agree` in `solana.py` to verify exact pubkey matches on `delegate` and `close_authority`, as well as `delegated_amount` and `state`. Updated docstring.
+3. **Single Refusal Counter & Alert on Quote Mismatch (C-3)**:
+   - Added `QuoteMismatch(ExecutionError)`. `validate_quote_against_intent._fail` records the safety refusal under `category="quote_mismatch"` once.
+   - `simulate_and_assert` catches `QuoteMismatch` and calls `_refuse(..., count=False)`, ensuring exactly one counter increment and exactly one alert.
+4. **Mandatory Explicit Intent (C-4)**:
+   - Made `intent: TradeIntent` a required parameter in `simulate_and_assert` (removed quote-synthesizing fallback that trusted untrusted quote data).
+   - Created test utility `tests/_helpers.py` (`intent_from_quote_for_tests`). AST test proves production code under `live_execution/` never imports `_helpers`.
+5. **Unified USD-to-Raw Conversion (C-5)**:
+   - Added `usd_to_raw_amount(usd, decimals=6)` in `trade_intent.py` using `Decimal(str(usd))` and `ROUND_HALF_UP`.
+   - Used consistently in both `place_buy` and `get_jupiter_quote`. Verified via property test across 10,000 cent values (0.01..100.00).
+6. **Local Preconditions Before On-Chain Commit Memo (C-6)**:
+   - In `place_buy` (`executor.py`), moved `reference_price_usd` validation BEFORE `logc.seal` and `publish_commit_memo`. A buy missing reference price blocks immediately without burning SOL on memos or leaving orphaned commit hashes.
+7. **Accurate Default Compute Budget Limit (C-7)**:
+   - In `jupiter_executor.py`, priority fee cap now scales effective CU limit as `min(200_000 * n_non_compute_budget_instructions, 1_400_000)` when `SetComputeUnitLimit` is omitted, matching Solana runtime default.
+8. **Tests & Suite**:
+   - Added 18 tests in `backend/tests/test_audit_81_c.py`.
+   - Full test suite: **1128 passed** (0 failed).
+
 ### Phase B: Fix Wallet-Drop Alarm Reliability and Ledger Flow Counting (`live_execution/{reconcile.py,config.py}`, `backend/run_live_cycle.py`, `scripts/ack_wallet_change.py`, `backend/tests/test_audit_81_b.py`, `.env.example`)
 1. **Accurate Flow Accounting (B-1)**:
    - Fixed `check_wallet_drop` in `reconcile.py` to read `r.get("usd_size")` for `kind="close"` records (with fallback to `proceeds_usd` for legacy records). Previously always read `proceeds_usd` which was absent on `ExecutionRecord`, distorting inflow to 0.0 and triggering false alarms on legitimate sells.

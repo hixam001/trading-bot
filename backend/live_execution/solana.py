@@ -121,13 +121,16 @@ def responses_agree(
     all_addresses: Optional[list[str]] = None,
 ) -> bool:
     """
-    Pure agreement rule comparing two simulation responses a and b:
+    Pure agreement rule comparing two simulation responses a and b (§81 Phase C-2):
     - Both err equal (both None or equal JSON/dict)
     - Same account count
     - For payer and every address in wallet_owned_addrs:
       - decoded token amount within SIM_AMOUNT_TOLERANCE_BPS (absolute floor 1 unit)
       - same owner
-      - same delegate presence
+      - exact delegate pubkey match
+      - exact close_authority pubkey match
+      - exact delegated_amount match
+      - exact state match
       - payer lamports within SIM_LAMPORT_TOLERANCE
     """
     if a.get("err") != b.get("err"):
@@ -211,9 +214,13 @@ def responses_agree(
 
             if dec_a["owner"] != dec_b["owner"]:
                 return False
-            if bool(dec_a["delegate"]) != bool(dec_b["delegate"]):
+            if dec_a.get("delegate") != dec_b.get("delegate"):
                 return False
-            if dec_a["state"] != dec_b["state"]:
+            if dec_a.get("close_authority") != dec_b.get("close_authority"):
+                return False
+            if dec_a.get("delegated_amount") != dec_b.get("delegated_amount"):
+                return False
+            if dec_a.get("state") != dec_b.get("state"):
                 return False
 
             amt_a = dec_a["amount"]

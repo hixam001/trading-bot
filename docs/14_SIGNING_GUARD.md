@@ -39,7 +39,7 @@ The static guard performs strict structural analysis on the deserialized Solana 
    - **Compute Budget Program (`ComputeBudget111111111111111111111111111111`):**
      - Strictly parses instructions by 1-byte discriminant tag: `RequestHeapFrame` (tag 1), `SetComputeUnitLimit` (tag 2), `SetComputeUnitPrice` (tag 3), `SetLoadedAccountsDataSizeLimit` (tag 4). Any unapproved tag is rejected.
      - Duplicate limit or duplicate unit price instructions are rejected.
-     - **Priority Fee Hard Cap Enforcement:** The guard calculates `effective_cu_limit * price / 1_000_000` (defaulting to 200,000 CU if limit is omitted) and enforces that total priority fee cannot exceed `PRIORITY_FEE_HARD_CAP_LAMPORTS` (1,000,000 lamports = 0.001 SOL). Prevents malicious quote APIs from draining SOL via astronomical compute unit prices.
+     - **Priority Fee Hard Cap Enforcement:** The guard calculates `effective_cu_limit * price / 1_000_000` (scaling effective limit as min(200_000 * n_non_cb_instructions, 1_400_000) if limit is omitted per Solana runtime default) and enforces that total priority fee cannot exceed `PRIORITY_FEE_HARD_CAP_LAMPORTS` (1,000,000 lamports = 0.001 SOL). Prevents malicious quote APIs from draining SOL via astronomical compute unit prices.
    - **Approved DEX Aggregators & AMMs:**
      - Allowed at top level strictly according to `APPROVED_SWAP_PROGRAM_IDS`.
      - Includes Jupiter v6, Raydium (AMM v4, CPMM, CLMM), Orca Whirlpool, Meteora (DLMM, Dynamic Pools), Phoenix, and Lifinity (v1: `EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S`, v2: `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`, verified via official Lifinity documentation and `@jup-ag/lifinity-sdk-v2`).
@@ -98,7 +98,7 @@ To protect against malicious routes, compromised quote APIs, and hidden CPI drai
 │ - Verifies balances: SOL decrease <= 0.01 SOL          │
 │ - Input token decrease <= intent raw + 0.5% tolerance  │
 │ - Output token increase >= max(threshold, price_floor) │
-│ - Token account control fields: delegate/close/frozen  │
+│ - Token account control fields: delegate/close/frozen (verified on all post-state wallet accounts, newly created and pre-existing)  │
 │ - Zero balance change on other wallet token accounts   │
 │ - No unauthorized account owner changes or closures    │
 │ - Traps value redirection to third-party accounts      │
@@ -132,7 +132,7 @@ Before signing, the transaction is simulated against independent Solana RPC node
   5. Independent price floor: buy requires reference price from DexScreener/Birdeye within 10% deviation; sell within 50% deviation.
 - **Multi-RPC Quorum & Host Deduplication:**
   - RPC endpoints are deduplicated by hostname to prevent multiple URLs pointing to the same provider from counting as separate consensus nodes.
-  - Quorum verification (`responses_agree`) checks that RPC responses match on success status, error codes, payer lamports within 10,000 lamports, and token balances within 50 bps.
+  - Quorum verification (`responses_agree`) checks that RPC responses match on success status, error codes, payer lamports within 10,000 lamports, token balances within 50 bps, and exact matches on token account delegate, close_authority, delegated_amount, and state.
   - Buys strictly require $\ge 2$ agreeing endpoints across distinct hosts (`SIM_MIN_AGREEING_RPCS = 2`).
   - Sells allow single-RPC fallback when `SIM_SELL_ALLOW_SINGLE_RPC = True` to guarantee exit capability during RPC outages.
   - Pre-state is fetched across quorum via `getMultipleAccounts`.

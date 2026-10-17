@@ -68,7 +68,7 @@ from live_execution.confirmation_queue import (  # noqa: E402
 )
 from live_execution.models import ExecutionLedger  # noqa: E402
 from live_execution.quote_params import build_quote_params  # noqa: E402
-from live_execution.trade_intent import TradeIntent  # noqa: E402
+from live_execution.trade_intent import TradeIntent, usd_to_raw_amount  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -226,9 +226,8 @@ async def get_jupiter_quote(
     """
     dec = preflight(usd_size, output_mint, output_decimals, ledger)
 
-    # We pay in USDC (6 decimals): raw units for the USD size — via the
-    # shared unit-math helper, not a local 10**6.
-    amount_raw = int(round(usd_size * raw_units_for_one_token(USDC_DECIMALS)))
+    # §81 Phase C-5: Single USD->raw conversion via usd_to_raw_amount
+    amount_raw = usd_to_raw_amount(usd_size, USDC_DECIMALS)
     params = build_quote_params(
         input_mint=input_mint,
         output_mint=output_mint,
@@ -713,9 +712,18 @@ def _inspect_swap_transaction_inner(tx, payer_pubkey: str) -> None:
         # 6. Other approved DEX programs (Jupiter, Raydium, Orca, etc.)
         # Discriminants are DEX-specific and allowed at top level.
 
-    # Enforce ComputeBudget priority fee hard cap (§79 Phase B-3)
+    # Enforce ComputeBudget priority fee hard cap (§79 Phase B-3, §81 Phase C-7)
     if compute_unit_price is not None:
-        eff_limit = compute_unit_limit if compute_unit_limit is not None else 200_000
+        if compute_unit_limit is not None:
+            eff_limit = compute_unit_limit
+        else:
+            # Solana CU default: 200,000 CU per non-ComputeBudget instruction, capped at 1,400,000
+            non_cb_ixs = sum(
+                1 for ix in getattr(tx.message, "instructions", [])
+                if account_keys[ix.program_id_index] != _COMPUTE_BUDGET_PROGRAM_ID
+            )
+            eff_limit = min(200_000 * max(1, non_cb_ixs), 1_400_000)
+
         priority_fee_lamports = (eff_limit * compute_unit_price) // 1_000_000
         if priority_fee_lamports > config.PRIORITY_FEE_HARD_CAP_LAMPORTS:
             raise ExecutionError(
@@ -912,7 +920,7 @@ async def execute_confirmed_trade(
         wallet=user_public_key,
         input_mint=_BACKEND_USDC_MINT,
         output_mint=output_mint,
-        in_amount_raw=int(usd_size * (10 ** USDC_DECIMALS)),
+        in_amount_raw=usd_to_raw_amount(usd_size, USDC_DECIMALS),
         slippage_bps=config.SLIPPAGE_BPS,
         min_out_raw=min_out_raw,
         reference_price_usd=reference_price_usd,
