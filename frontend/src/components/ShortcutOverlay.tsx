@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { SHORTCUTS } from '../lib/shortcuts'
 
 /**
@@ -8,6 +9,23 @@ import { SHORTCUTS } from '../lib/shortcuts'
  * because it is not a separate listing.
  */
 export default function ShortcutOverlay({ onClose }: { onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // §83 a11y: the dialog declared aria-modal but never took focus, so Tab
+  // walked the (visually inert) page behind it. Focus the panel on mount and
+  // keep Tab inside for as long as it is open.
+  useEffect(() => {
+    const panel = panelRef.current
+    panel?.focus()
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab') return
+      e.preventDefault()
+      panel?.focus()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => document.removeEventListener('keydown', onKeyDown)
+  }, [])
+
   return (
     <div
       className="fixed inset-0 z-50 bg-base/80 flex items-center justify-center px-4"
@@ -15,7 +33,9 @@ export default function ShortcutOverlay({ onClose }: { onClose: () => void }) {
       data-testid="shortcut-overlay"
     >
       <div
-        className="w-full max-w-[560px] bg-surface border border-line-strong rounded"
+        ref={panelRef}
+        tabIndex={-1}
+        className="w-full max-w-[560px] bg-surface border border-line-strong rounded outline-none"
         role="dialog"
         aria-modal="true"
         aria-label="keyboard shortcuts"
