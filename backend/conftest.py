@@ -8,11 +8,13 @@ from pathlib import Path
 _SESSION_LIVE_STATE = Path(tempfile.mkdtemp(prefix="pytest_live_execution_state_"))
 os.environ["LIVE_EXECUTION_STATE_DIR"] = str(_SESSION_LIVE_STATE)
 
-# Puts backend/ (this directory) on sys.path so every test — backend/tests
-# AND live_execution/tests — can `import config`, `import run_live_cycle`,
-# `from live_execution import ...` deterministically, regardless of the
-# working directory pytest was launched from or test-file ordering.
+# Puts both repo root and backend/ on sys.path so every test can import
+# root scripts, config, live_execution deterministically regardless of
+# working directory or test runner invocation mode (bare pytest or python -m).
 _BACKEND = str(Path(__file__).resolve().parent)
+_ROOT = str(Path(__file__).resolve().parent.parent)
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
 if _BACKEND not in sys.path:
     sys.path.insert(0, _BACKEND)
 
