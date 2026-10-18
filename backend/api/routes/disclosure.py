@@ -178,15 +178,20 @@ async def get_disclosure():
             {"gain": g, "trim": t}
             for g, t in (getattr(config, "EXIT_TP_LADDER", None) or [])
         ],
+        # §83: these read five attribute names that never existed on config
+        # (CROWD_HEAT_ACT_MIN/MAX, REGIME_GREEN_MIN/MAX_PCT,
+        # REGIME_MIN_MEDIAN_VOL_USD) — every disclosure response published
+        # null for the crowd-heat and regime bands. Pin the REAL names.
         "crowd_heat_act_band": [
-            getattr(config, "CROWD_HEAT_ACT_MIN", None),
-            getattr(config, "CROWD_HEAT_ACT_MAX", None),
+            getattr(config, "CROWD_HEAT_MIN", None),
+            getattr(config, "CROWD_HEAT_MAX", None),
         ],
         "regime_green_band": [
-            getattr(config, "REGIME_GREEN_MIN_PCT", None),
-            getattr(config, "REGIME_GREEN_MAX_PCT", None),
+            getattr(config, "REGIME_MIN_PCT_GREEN", None),
+            getattr(config, "REGIME_MAX_PCT_GREEN", None),
         ],
-        "regime_min_median_vol_usd": getattr(config, "REGIME_MIN_MEDIAN_VOL_USD", None),
+        "regime_min_median_vol_usd": getattr(
+            config, "REGIME_MIN_MEDIAN_VOLUME_USD", None),
     }
 
     # REF-R8/R9: the computed risk budget + calibration the sizing used.

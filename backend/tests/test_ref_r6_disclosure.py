@@ -91,6 +91,16 @@ async def test_disclosure_config_truths_numeric_types():
             f"config_truth '{field}' should be numeric or None, got {type(val)}"
         )
 
+    # §83: these three used to read nonexistent config attribute names, so the
+    # public feed served null bands forever ("numeric or None" let it pass).
+    # Pin them to the real config constants instead.
+    assert ct["crowd_heat_act_band"] == [
+        config.CROWD_HEAT_MIN, config.CROWD_HEAT_MAX]
+    assert ct["regime_green_band"] == [
+        config.REGIME_MIN_PCT_GREEN, config.REGIME_MAX_PCT_GREEN]
+    assert ct["regime_min_median_vol_usd"] == \
+        config.REGIME_MIN_MEDIAN_VOLUME_USD
+
 
 @pytest.mark.asyncio
 async def test_disclosure_break_state_on_break():
