@@ -496,3 +496,104 @@ def test_cli_exit_codes(sample_state_3files, keys):
     proc_fail = subprocess.run(cmd_failure, capture_output=True, text=True)
     assert proc_fail.returncode != 0
 
+
+def test_corrupt_sqlite_index_integrity_check_failure_aborts(sample_state_3files, keys):
+    """
+    Test 8 (§82 Phase E):
+    A real SQLite database file that opens fine without sqlite3.DatabaseError,
+    but fails PRAGMA integrity_check (index page corruption).
+    Must catch the `if not res or res[0][0] != "ok":` branch in restore_state.py.
+    Asserts:
+      - restore aborts with RuntimeError matching "SQLite PRAGMA integrity_check failed"
+      - target DB is not promoted (intact original content preserved)
+      - target state dir is untouched
+      - no staging debris left behind
+    """
+    state_dir, db_path, backup_dir = sample_state_3files
+    key_backup, key_secret = keys
+
+    # Pre-existing target DB
+    target_state = backup_dir / "target_state_db2"
+    target_state.mkdir()
+    target_db = backup_dir / "target_trading_bot2.db"
+    conn = sqlite3.connect(str(target_db))
+    conn.execute("CREATE TABLE preserved (val TEXT);")
+    conn.execute("INSERT INTO preserved VALUES ('original_intact_content');")
+    conn.commit()
+    conn.close()
+    original_target_db_bytes = target_db.read_bytes()
+
+    # Build a real SQLite DB that opens fine but fails integrity_check
+    corrupted_db_file = backup_dir / "corrupted_index.db"
+    cconn = sqlite3.connect(str(corrupted_db_file))
+    cconn.execute("PRAGMA page_size = 4096")
+    cconn.execute("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT);")
+    cconn.execute("CREATE INDEX idx_name ON items (name);")
+    for i in range(100):
+        cconn.execute("INSERT INTO items (name) VALUES (?)", (f"item_{i:04d}",))
+    cconn.commit()
+    cconn.close()
+
+    # Corrupt index page bytes inside the file (offset 4160 corrupts cell pointer without raising DatabaseError)
+    with open(corrupted_db_file, "r+b") as f:
+        f.seek(4160)
+        f.write(b"\x01\x02\x03\x04")
+
+    # Verify that sqlite3.connect succeeds and PRAGMA integrity_check returns non-ok without raising DatabaseError
+    test_conn = sqlite3.connect(str(corrupted_db_file))
+    cur = test_conn.cursor()
+    cur.execute("PRAGMA integrity_check;")
+    chk = cur.fetchall()
+    test_conn.close()
+    assert chk and chk[0][0] != "ok", f"Expected integrity check failure, got {chk}"
+
+    corrupted_db_bytes = corrupted_db_file.read_bytes()
+
+    # Package into valid encrypted backup archive with matching manifest
+    fernet = Fernet(key_backup.encode("utf-8"))
+    out_buf = io.BytesIO()
+    manifest_files = []
+
+    with tarfile.open(fileobj=out_buf, mode="w:gz") as tout:
+        for p in sorted(state_dir.glob("*.json")):
+            data = p.read_bytes()
+            arcname = f"state/{p.name}"
+            ti = tarfile.TarInfo(name=arcname)
+            ti.size = len(data)
+            tout.addfile(ti, io.BytesIO(data))
+            manifest_files.append({"name": arcname, "size": len(data), "sha256": backup_state.sha256_bytes(data)})
+
+        ti_db = tarfile.TarInfo(name="trading_bot.db")
+        ti_db.size = len(corrupted_db_bytes)
+        tout.addfile(ti_db, io.BytesIO(corrupted_db_bytes))
+        manifest_files.append({"name": "trading_bot.db", "size": len(corrupted_db_bytes), "sha256": backup_state.sha256_bytes(corrupted_db_bytes)})
+
+        manifest_data = {
+            "version": 1,
+            "created_at": "2026-10-18T10:00:00Z",
+            "git_rev": "testrev",
+            "files": manifest_files,
+        }
+        manifest_bytes = json.dumps(manifest_data).encode("utf-8")
+        ti_m = tarfile.TarInfo(name="MANIFEST.json")
+        ti_m.size = len(manifest_bytes)
+        tout.addfile(ti_m, io.BytesIO(manifest_bytes))
+
+    archive = backup_dir / "corrupted_index_archive.tar.gz.enc"
+    archive.write_bytes(fernet.encrypt(out_buf.getvalue()))
+
+    # Restore must fail with integrity check error
+    with pytest.raises(RuntimeError, match="SQLite PRAGMA integrity_check failed"):
+        restore_state.restore_backup(
+            archive_path=archive,
+            target_state_dir=target_state,
+            target_db_path=target_db,
+            backup_key=key_backup,
+            force=True,
+        )
+
+    # Target DB must remain untouched
+    assert target_db.read_bytes() == original_target_db_bytes, "Target DB was overwritten!"
+    # Staging debris cleaned up
+    assert list(target_state.glob(".staged.*")) == []
+

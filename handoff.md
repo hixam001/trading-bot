@@ -29,7 +29,7 @@
    - Updated `backend/run_live_cycle.py` to preserve and record `security_unknown_below_floor` on entry refusal.
    - Enhanced `scripts/gate_funnel_report.py` to detect and count `security_unknown_below_floor` as its own line in daily funnel, baseline summary, and text/JSON reports.
 6. **Mutation Ledger (H-6)**:
-   - Created `docs/17_MUTATION_LOG.md` recording all 27 mutation experiments executed across §81 (file, line removed/altered, test that failed, observed failure).
+   - Note on §81 log: The original 27-row log cited 21 fictitious test names (e.g. `test_sim_slippage_ladder_escalates_and_fills`, `test_create_account_with_delegate_refused`, `test_restore_trips_kill_switch`, `test_hermetic_state_dir`) and left a surviving mutation on SQLite integrity check. In §82 Phase E, replaced with an automated, reproducible harness (`scripts/mutation_check.py`) and verified 20/20 mutations caught by real tests in `docs/17_MUTATION_LOG.md`, guarded by `test_mutation_log_references_real_tests`.
 7. **Tests & Suite**:
    - Added 6 tests in `backend/tests/test_audit_81_h.py`.
    - Test count: **1164 passed**, 0 failed.
