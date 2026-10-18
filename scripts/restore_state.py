@@ -90,6 +90,25 @@ def validate_member_path(member: tarfile.TarInfo, target_state_dir: Path) -> Non
         raise RuntimeError(f"Unauthorized member name in archive: '{name}'")
 
 
+def _remove_sqlite_sidecars(db_path: Optional[Path]) -> None:
+    """Delete stray -wal/-shm/-journal sidecars beside db_path (§83).
+
+    api/db.py runs the book in WAL mode, so promoted/rolled-back DB files
+    can sit next to sidecars that belong to a DIFFERENT database lineage.
+    SQLite may try to recover a foreign WAL; and after a raw copy2 a fresh
+    DB inherits the old sidecar names. Best-effort and logged: a sidecar we
+    cannot delete must not abort a restore that is otherwise complete.
+    """
+    if db_path is None:
+        return
+    for suffix in ("-wal", "-shm", "-journal"):
+        try:
+            Path(str(db_path) + suffix).unlink(missing_ok=True)
+        except OSError as exc:
+            log.warning("Could not remove stale SQLite sidecar %s%s: %s",
+                        db_path, suffix, exc)
+
+
 def _attempt_rollback(pre_restore_dir: Path, target_state_dir: Path, target_db_path: Optional[Path]) -> None:
     """Best-effort atomic rollback of pre-restore backup files via temp files in target dir."""
     pid = os.getpid()
@@ -109,6 +128,8 @@ def _attempt_rollback(pre_restore_dir: Path, target_state_dir: Path, target_db_p
             staged_rollback.append((tmp, dest))
 
         for tmp, dest in staged_rollback:
+            if target_db_path is not None and dest == target_db_path:
+                _remove_sqlite_sidecars(target_db_path)
             os.replace(tmp, dest)
         log.info("Automatic rollback succeeded from %s", pre_restore_dir)
         print(f"ROLLBACK SUCCESS: Restored pre-restore state from {pre_restore_dir}")
@@ -241,8 +262,32 @@ def restore_backup(
                 if p.is_file() and not p.name.startswith(".pre-restore-") and not p.name.startswith(".staged."):
                     shutil.copy2(p, pre_restore_dir / p.name)
 
-        if target_db_path and target_db_path.is_file():
-            shutil.copy2(target_db_path, pre_restore_dir / target_db_path.name)
+            if target_db_path and target_db_path.is_file():
+                # §83: copy2 of the main file alone drops committed-but-not-
+                # checkpointed rows living in the -wal sidecar (api/db.py runs
+                # WAL mode), so the "Existing state preserved" rollback snapshot
+                # could silently lose the newest trades. Take a consistent
+                # snapshot through SQLite itself, exactly like backup_state.
+                pre_db = pre_restore_dir / target_db_path.name
+                try:
+                    src_conn = sqlite3.connect(str(target_db_path))
+                    try:
+                        dst_conn = sqlite3.connect(str(pre_db))
+                        try:
+                            src_conn.backup(dst_conn)
+                        finally:
+                            dst_conn.close()
+                    finally:
+                        src_conn.close()
+                except sqlite3.DatabaseError as exc:
+                    # A non-SQLite file (foreign or corrupt) cannot be read
+                    # through the backup API; preserve its raw bytes — the
+                    # rollback path copies files back verbatim anyway. Any
+                    # other error (locked, IO) stays fatal: never proceed to
+                    # overwrite a real book we could not snapshot.
+                    if "file is not a database" not in str(exc):
+                        raise
+                    shutil.copy2(target_db_path, pre_db)
 
         print(f"PRE-RESTORE BACKUP: Existing state preserved in {pre_restore_dir}")
         log.info("Pre-restore backup created at %s", pre_restore_dir)
@@ -314,6 +359,11 @@ def restore_backup(
     promoted: list[tuple[Path, Path]] = []
     try:
         for temp_path, dest_path in staged_files:
+            if target_db_path is not None and dest_path == target_db_path:
+                # §83: the restored DB replaces the whole lineage — stale
+                # -wal/-shm/-journal sidecars from the pre-restore book must
+                # not survive the swap.
+                _remove_sqlite_sidecars(target_db_path)
             os.replace(temp_path, dest_path)
             promoted.append((temp_path, dest_path))
             restored_files.append(str(dest_path))

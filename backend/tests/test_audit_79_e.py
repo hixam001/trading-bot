@@ -457,3 +457,88 @@ def test_backup_cli_resolves_db_path_through_backend_config(
     import config as backend_config
     assert captured["db_path"] == Path(backend_config.DB_PATH)
 
+
+# ---------------------------------------------------------------------------
+# §83: restore must not leave/copy stale SQLite sidecars
+# ---------------------------------------------------------------------------
+
+def test_restore_removes_stale_sqlite_sidecars(sample_state, keys, tmp_path):
+    """A promoted DB must not sit next to -wal/-shm/-journal files that
+    belong to the pre-restore lineage (SQLite could try to recover a foreign
+    WAL against the restored file)."""
+    state_dir, db_path, backup_dir = sample_state
+    key_backup, _ = keys
+    archive = backup_state.create_backup(
+        state_dir=state_dir, db_path=db_path, backup_dir=backup_dir,
+        backup_key=key_backup)
+
+    target_db = tmp_path / "live" / "trading_bot.db"
+    target_db.parent.mkdir(parents=True)
+    seed = sqlite3.connect(str(target_db))
+    seed.execute("CREATE TABLE old (x TEXT);")
+    seed.commit()
+    seed.close()
+
+    sidecars = [Path(str(target_db) + s)
+                for s in ("-wal", "-shm", "-journal")]
+    for s in sidecars:
+        s.write_bytes(b"stale sidecar")
+
+    restore_state.restore_backup(
+        archive_path=archive,
+        target_state_dir=tmp_path / "restored_state",
+        target_db_path=target_db,
+        backup_key=key_backup,
+        force=True,
+    )
+
+    for s in sidecars:
+        assert not s.exists(), f"stale sidecar survived restore: {s}"
+
+
+def test_pre_restore_snapshot_includes_uncheckpointed_wal_rows(
+        sample_state, keys, tmp_path):
+    """The rollback snapshot is advertised as "Existing state preserved",
+    but a raw copy2 of the main file loses committed rows still living in
+    the -wal sidecar (WAL mode). The snapshot must go through SQLite."""
+    state_dir, db_path, backup_dir = sample_state
+    key_backup, _ = keys
+    archive = backup_state.create_backup(
+        state_dir=state_dir, db_path=db_path, backup_dir=backup_dir,
+        backup_key=key_backup)
+
+    target_dir = tmp_path / "live"
+    target_dir.mkdir()
+    target_db = target_dir / "trading_bot.db"
+    conn = sqlite3.connect(str(target_db))
+    conn.execute("PRAGMA journal_mode=WAL;")
+    conn.execute("CREATE TABLE orders (id TEXT PRIMARY KEY);")
+    conn.execute("INSERT INTO orders VALUES ('wal-only-row');")
+    conn.commit()
+    # Connection stays OPEN: the committed row lives in the -wal sidecar and
+    # the main DB file alone does not contain it.
+    assert Path(str(target_db) + "-wal").exists()
+
+    try:
+        restore_state.restore_backup(
+            archive_path=archive,
+            target_state_dir=tmp_path / "restored_state",
+            target_db_path=target_db,
+            backup_key=key_backup,
+            force=True,
+        )
+    finally:
+        conn.close()
+
+    pre_dirs = list((tmp_path / "restored_state").glob(".pre-restore-*"))
+    assert len(pre_dirs) == 1
+    snapshot = pre_dirs[0] / "trading_bot.db"
+    assert snapshot.is_file()
+
+    sconn = sqlite3.connect(str(snapshot))
+    try:
+        count = sconn.execute("SELECT COUNT(*) FROM orders").fetchone()[0]
+    finally:
+        sconn.close()
+    assert count == 1, "pre-restore snapshot lost the uncheckpointed WAL row"
+
