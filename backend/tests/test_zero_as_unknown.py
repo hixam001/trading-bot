@@ -70,6 +70,75 @@ def test_discovery_missing_buys_and_sells_stay_none():
     assert c.sells_6h is None
 
 
+def test_discovery_negative_price_change_survives_parsing():
+    """§83: a negative change is DATA, not a missing value.
+
+    `_safe_float` maps every f <= 0 to None (right for volumes), so the
+    scanner used to erase every negative percent. rule_engine/fake_chart.py
+    coerces None to 0, which can never satisfy `chg < -25` / `< -55` — the
+    straight-bleed / distribution-corpse wash-trade detectors were dead code
+    on real scanner output. The signed helper must round-trip negatives.
+    """
+    client = httpx.AsyncClient()
+    kd = KeywordScanner(client)
+    pair_bleed = {
+        "chainId": "solana",
+        "pairAddress": "Pair333333333333333333333333333333333333333",
+        "baseToken": {"address": MINT_A, "symbol": "BLEED", "name": "Bleed Token"},
+        "priceUsd": "1.0",
+        "liquidity": {"usd": 50_000},
+        "volume": {"h1": 10_000, "h24": 50_000, "h6": 20_000},
+        "priceChange": {"h1": -30.0, "h6": -45.0, "h24": -60.0},
+        "txns": {"h1": {"buys": 100, "sells": 120}},
+    }
+    cands = kd._build_board([pair_bleed], boosted_mints=set())
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.price_change_1h_pct == -30.0
+    assert c.price_change_6h_pct == -45.0
+    assert c.price_change_24h_pct == -60.0
+
+    from rule_engine.fake_chart import is_fake_candidate
+    fake, reason = is_fake_candidate(c)
+    assert fake is True
+    assert reason == "straight-bleed"
+
+
+def test_discovery_missing_price_change_stays_none():
+    """Absent change windows must remain None (unknown != zero), and the
+    signed helper must reject non-finite junk."""
+    from data_providers.discovery import _safe_float_signed, _safe_float
+
+    assert _safe_float_signed(None) is None
+    assert _safe_float_signed("") is None
+    assert _safe_float_signed("abc") is None
+    assert _safe_float_signed(float("nan")) is None
+    assert _safe_float_signed(float("inf")) is None
+    assert _safe_float_signed("-12.5") == -12.5
+    assert _safe_float_signed("0") == 0.0
+    # volumes keep the positive-only policy
+    assert _safe_float("-5") is None
+    assert _safe_float("0") is None
+
+    client = httpx.AsyncClient()
+    kd = KeywordScanner(client)
+    pair_no_chg = {
+        "chainId": "solana",
+        "pairAddress": "Pair444444444444444444444444444444444444444",
+        "baseToken": {"address": MINT_B, "symbol": "NOCHG", "name": "No Change"},
+        "priceUsd": "1.0",
+        "liquidity": {"usd": 50_000},
+        "volume": {"h1": 10_000, "h24": 50_000, "h6": 20_000},
+        "txns": {"h1": {"buys": 100, "sells": 120}},
+    }
+    cands = kd._build_board([pair_no_chg], boosted_mints=set())
+    assert len(cands) == 1
+    c = cands[0]
+    assert c.price_change_1h_pct is None
+    assert c.price_change_6h_pct is None
+    assert c.price_change_24h_pct is None
+
+
 def test_research_aggregate_pairs_cases():
     """aggregate_pairs handles all four required cases for buys_6h and sells_6h:
     (a) all pairs report buys=0 -> 0

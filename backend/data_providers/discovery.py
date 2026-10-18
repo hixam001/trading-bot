@@ -83,6 +83,26 @@ def _safe_float(v) -> Optional[float]:
         return None
 
 
+def _safe_float_signed(v) -> Optional[float]:
+    """Signed variant for price-CHANGE fields (§83).
+
+    `_safe_float` maps every f <= 0 to None, which is right for volumes but
+    erased every negative percent — so a straight bleed (-35%) and a
+    distribution corpse (-60%) reached rule_engine/fake_chart.py as None,
+    which `_n()` coerces to 0, and thresholds 8/9 (chg < -25 / < -55, the
+    wash-trade "bleed" detectors) could NEVER fire from real scanner data.
+    A negative change is data; zero is a real reading. Only unparseable /
+    non-finite inputs are None.
+    """
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    if f != f or f in (float("inf"), float("-inf")):
+        return None
+    return f
+
+
 def _age_hours(created_ms) -> Optional[float]:
     if not created_ms:
         return None
@@ -198,10 +218,10 @@ class KeywordScanner:
                 vol_24h=_safe_float(vol.get("h24")) or 0.0,
                 vol_6h=_safe_float(vol.get("h6")) or 0.0,
                 vol_5m=_safe_float(vol.get("m5")),
-                chg_5m=_safe_float(chg.get("m5")),
-                chg_1h=_safe_float(chg.get("h1")),
-                chg_6h=_safe_float(chg.get("h6")),
-                chg_24h=_safe_float(chg.get("h24")),
+                chg_5m=_safe_float_signed(chg.get("m5")),
+                chg_1h=_safe_float_signed(chg.get("h1")),
+                chg_6h=_safe_float_signed(chg.get("h6")),
+                chg_24h=_safe_float_signed(chg.get("h24")),
                 buys_1h=None if h1.get("buys") is None else int(h1.get("buys")),
                 sells_1h=None if h1.get("sells") is None else int(h1.get("sells")),
                 buys_6h=None if h6t.get("buys") is None else int(h6t.get("buys")),
