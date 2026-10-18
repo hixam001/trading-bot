@@ -40,11 +40,17 @@ LIVE_STATE_DIR: Path = Path(
     os.getenv("LIVE_STATE_DIR")
     or str(Path(__file__).parent / "live_execution" / "state")
 )
-BREAK_STATE_FILE: str = os.getenv(
-    "BREAK_STATE_FILE", str(LIVE_STATE_DIR / "break_state.json")
+# `os.getenv(k, default)` RETURNS "" for a set-but-empty var, and Path("")
+# is "." — the exact accident live_execution/config.py documents for
+# STATE_DIR. .env.example shipped these two lines blank, so an operator who
+# copied it wrote a break state at the repo root (and Path(".").with_suffix
+# raises) while disclosure read a kill switch that never existed. Empty
+# must mean unset, same `or` pattern as LIVE_STATE_DIR above.
+BREAK_STATE_FILE: str = os.getenv("BREAK_STATE_FILE") or str(
+    LIVE_STATE_DIR / "break_state.json"
 )
-KILL_SWITCH_FILE: str = os.getenv(
-    "KILL_SWITCH_FILE", str(LIVE_STATE_DIR / "kill_switch.json")
+KILL_SWITCH_FILE: str = os.getenv("KILL_SWITCH_FILE") or str(
+    LIVE_STATE_DIR / "kill_switch.json"
 )
 
 BLOCKLIST_STATE_FILE: str = os.getenv(

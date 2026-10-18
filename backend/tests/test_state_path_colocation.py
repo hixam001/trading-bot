@@ -136,6 +136,50 @@ def test_kill_switch_reader_understands_the_real_writers_schema(
     assert disclosure._kill_switch_state()["active"] is False
 
 
+# --- empty env values must mean "unset" (§83) ---------------------------------
+
+def test_empty_env_values_never_resolve_to_the_repo_root():
+    """`.env.example` shipped BREAK_STATE_FILE= / KILL_SWITCH_FILE= blank.
+
+    `os.getenv(k, default)` returns "" for a set-but-empty var, so the
+    default is defeated and Path("") == ".": `set_break` died on
+    `Path('.').with_suffix('.tmp')` (ValueError), `is_on_break` read the
+    repo root (always False), and the disclosure feed read a kill switch
+    that never existed. Empty must behave exactly like unset.
+    """
+    code = (
+        "import json, config; "
+        "print(json.dumps({"
+        "'live_state_dir': str(config.LIVE_STATE_DIR), "
+        "'break_state': str(config.BREAK_STATE_FILE), "
+        "'kill_switch': str(config.KILL_SWITCH_FILE)}))"
+    )
+    env = dict(os.environ)
+    env.update({
+        "LIVE_STATE_DIR": "",
+        "BREAK_STATE_FILE": "",
+        "KILL_SWITCH_FILE": "",
+    })
+    proc = subprocess.run([sys.executable, "-c", code], cwd=config.BASE_DIR,
+                          capture_output=True, text=True, timeout=60, env=env)
+    assert proc.returncode == 0, proc.stderr
+    d = json.loads(proc.stdout.strip().splitlines()[-1])
+    state_dir = Path(d["live_state_dir"])
+    assert state_dir.name == "state" and state_dir.parent.name == "live_execution"
+    assert Path(d["break_state"]).parent == state_dir
+    assert Path(d["kill_switch"]).parent == state_dir
+
+
+def test_env_example_ships_no_blank_state_overrides():
+    """Static guard: the example must not re-introduce the §83 blanks."""
+    text = (config.PROJECT_ROOT / ".env.example").read_text()
+    offenders = [
+        line for line in text.splitlines()
+        if line.strip().startswith(("BREAK_STATE_FILE=", "KILL_SWITCH_FILE="))
+    ]
+    assert offenders == [], offenders
+
+
 # --- codebase-wide guard ------------------------------------------------------
 
 def test_no_module_anchors_live_state_on_the_repo_root():
