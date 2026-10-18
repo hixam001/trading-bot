@@ -77,6 +77,7 @@ USDC_DECIMALS = 6
 
 
 ExecutionError = solana.ExecutionError
+SendRejected = solana.SendRejected
 
 
 class Refusal(ExecutionError):
@@ -958,7 +959,10 @@ async def execute_confirmed_trade(
         quote_result["price_usd"], signature,
     )
 
-    sent = await solana.send_checked_swap(signed_swap)
+    try:
+        sent = await solana.send_checked_swap(signed_swap)
+    except SendRejected as exc:
+        raise ExecutionError(f"every rpc refused the transaction: {exc}") from exc
     if not sent:
         raise ExecutionError("every rpc refused the transaction")
     conf = await solana.confirm_signature(sent)

@@ -16,6 +16,7 @@ import logging
 from live_execution import config, wallet
 from live_execution.solana import (  # noqa: F401
     LAMPORTS_PER_SOL,
+    SendRejected,
     confirm_signature,
     latest_blockhash,
     rpc as sol_rpc,
@@ -100,7 +101,11 @@ async def run_drill() -> list:
         step(False, "simulate", str(exc))
         return steps
 
-    sig = await send_raw_transaction(raw, endpoints=[config.DRILL_RPC_URL])
+    try:
+        sig = await send_raw_transaction(raw, endpoints=[config.DRILL_RPC_URL])
+    except SendRejected as exc:
+        step(False, "broadcast", f"every rpc refused: {exc}")
+        return steps
     if not sig:
         step(False, "broadcast", "every rpc refused")
         return steps

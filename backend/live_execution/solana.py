@@ -50,8 +50,12 @@ async def rpc(
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-class ExecutionError(Exception):
-    """Raised when an armed order fails during quote/build/broadcast."""
+# ExecutionError and SendRejected are defined in exit_errors.py so that
+# SendRejected can subclass ExecutionError without a circular import.
+# Re-export them here so existing callers that do
+# `from live_execution.solana import ExecutionError` continue to work unchanged.
+from live_execution.exit_errors import ExecutionError, SendRejected  # noqa: F401 — re-export
+
 
 
 class SimulationError(Exception):

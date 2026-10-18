@@ -534,14 +534,26 @@ async def _scan_exits_for_position(
                  mint[:8], decision.rule_id, gate_note, decision.detail)
         return
     decision = gated
-    log.info("EXIT %s %s (%s)", decision.action, mint[:8], decision.detail)
-    result = await place_order(
-        side="sell", mint=mint, symbol=mint[:6],
-        fraction=fraction,
-        full_close=(decision.action == "close_full"),
-        rule_id=decision.rule_id,
-        reference_price_usd=price,
-    )
+    try:
+        result = await place_order(
+            side="sell", mint=mint, symbol=mint[:6],
+            fraction=fraction,
+            full_close=(decision.action == "close_full"),
+            rule_id=decision.rule_id,
+            reference_price_usd=price,
+        )
+    except Exception as exc:
+        log.error("EXIT place_order failed unexpectedly for %s: %s", mint[:8], exc, exc_info=True)
+        try:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(
+                AlertEvent.EXIT_UNRESOLVED,
+                f"Unexpected exception during exit for {mint[:8]}: {exc}",
+                key=f"exit_error:{mint}",
+            )
+        except Exception:
+            pass
+        return
     log.info("sell -> %s %s", result.status, result.reason)
     if result.status == "filled":
         # REF-R11: journal the sell's seal + memo into the public record.

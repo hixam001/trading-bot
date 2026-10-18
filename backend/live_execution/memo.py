@@ -110,7 +110,10 @@ async def publish_commit_memo(payer, seal_hash: str,
         raw = build_memo_transaction(text, payer, blockhash)
     except MemoError as exc:
         raise MemoPublishError(str(exc)) from exc
-    sent = await solana.send_raw_transaction(raw, endpoints=endpoints)
+    try:
+        sent = await solana.send_raw_transaction(raw, endpoints=endpoints)
+    except solana.SendRejected as exc:
+        raise MemoPublishError(f"every rpc refused the memo transaction: {exc}") from exc
     if not sent:
         raise MemoPublishError("every rpc refused the memo transaction")
     conf = await solana.confirm_signature(sent, endpoints=endpoints)

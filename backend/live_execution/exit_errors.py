@@ -64,8 +64,18 @@ class ExitFailure(NamedTuple):
     reason: str
 
 
-class SendRejected(Exception):
-    """Raised when every RPC endpoint definitively rejected the transaction at preflight."""
+class ExecutionError(Exception):
+    """
+    Raised when a trade execution fails. Defined here (exit_errors) so that
+    SendRejected can subclass it without a circular import: solana.py imports
+    exit_errors lazily inside functions; exit_errors.py must not import solana.
+    Re-exported from live_execution.solana for backward compatibility.
+    """
+
+
+class SendRejected(ExecutionError):
+    """Raised when every RPC endpoint definitively rejected the transaction at preflight.
+    Subclasses ExecutionError so callers that catch ExecutionError also catch SendRejected."""
     def __init__(self, msg: str, attempts: list[dict]):
         super().__init__(msg)
         self.attempts = attempts
@@ -80,6 +90,27 @@ class SendRejected(Exception):
         if details:
             return f"{super().__str__()} ({'; '.join(details)})"
         return super().__str__()
+
+
+def is_already_processed(attempt: dict) -> bool:
+    """
+    Return True if the attempt's message or err indicates the transaction was
+    already processed on-chain.  A transaction that is 'already processed' has
+    landed — treat it as ambiguous (return None from send_raw_transaction so
+    get_signature_status decides), never as rejected.
+
+    Wording matched case-insensitively on both common Solana RPC spellings:
+      - "This transaction has already been processed" (agave / validator)
+      - "AlreadyProcessed" (Solana program error code name)
+    Source: https://github.com/anza-xyz/agave/blob/master/sdk/src/transaction/error.rs
+    (AlreadyProcessed variant). Marked [VERIFY] — matched on both spellings
+    as fail-closed default.
+    """
+    text = " ".join([
+        str(attempt.get("message", "")),
+        str(attempt.get("err", "")),
+    ]).lower()
+    return "already been processed" in text or "alreadyprocessed" in text
 
 
 def classify_exit_failure(exc_or_msg, *, onchain_err=None) -> ExitFailure:
