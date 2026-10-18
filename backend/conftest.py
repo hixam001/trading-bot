@@ -105,3 +105,79 @@ def _isolate_live_state(tmp_path_factory):
     for name, value in originals.items():
         if value is not None:
             setattr(config, name, value)
+
+
+import ipaddress
+import socket
+from typing import Any
+
+_IS_NETWORK_EXEMPT = False
+
+
+def _is_loopback_host(host: Any) -> bool:
+    if not host:
+        return True
+    if isinstance(host, (bytes, bytearray)):
+        host = host.decode("utf-8", errors="ignore")
+    host_str = str(host).strip().lower()
+    if host_str in ("localhost", "127.0.0.1", "::1", "0.0.0.0"):
+        return True
+    try:
+        return ipaddress.ip_address(host_str).is_loopback
+    except ValueError:
+        return False
+
+
+@pytest.fixture(autouse=True)
+def _check_network_marker(request):
+    global _IS_NETWORK_EXEMPT
+    _IS_NETWORK_EXEMPT = bool(request.node.get_closest_marker("network"))
+    try:
+        yield
+    finally:
+        _IS_NETWORK_EXEMPT = False
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _hermetic_network_guard():
+    """Session-scoped socket patch blocking all non-loopback network calls (§82 Phase G)."""
+    orig_connect = socket.socket.connect
+    orig_connect_ex = socket.socket.connect_ex
+    orig_getaddrinfo = socket.getaddrinfo
+
+    def guarded_connect(self, address):
+        if not _IS_NETWORK_EXEMPT:
+            if getattr(self, "family", None) != socket.AF_UNIX:
+                if isinstance(address, tuple):
+                    host = address[0]
+                    port = address[1] if len(address) > 1 else 0
+                    if not _is_loopback_host(host):
+                        raise AssertionError(f"network access attempted in test: {host}:{port}")
+        return orig_connect(self, address)
+
+    def guarded_connect_ex(self, address):
+        if not _IS_NETWORK_EXEMPT:
+            if getattr(self, "family", None) != socket.AF_UNIX:
+                if isinstance(address, tuple):
+                    host = address[0]
+                    port = address[1] if len(address) > 1 else 0
+                    if not _is_loopback_host(host):
+                        raise AssertionError(f"network access attempted in test: {host}:{port}")
+        return orig_connect_ex(self, address)
+
+    def guarded_getaddrinfo(host, port, *args, **kwargs):
+        if not _IS_NETWORK_EXEMPT:
+            if not _is_loopback_host(host):
+                raise AssertionError(f"network access attempted in test: {host}:{port}")
+        return orig_getaddrinfo(host, port, *args, **kwargs)
+
+    socket.socket.connect = guarded_connect
+    socket.socket.connect_ex = guarded_connect_ex
+    socket.getaddrinfo = guarded_getaddrinfo
+
+    yield
+
+    socket.socket.connect = orig_connect
+    socket.socket.connect_ex = orig_connect_ex
+    socket.getaddrinfo = orig_getaddrinfo
+

@@ -32,6 +32,7 @@ def mock_wallet_and_ledger(tmp_path, monkeypatch):
 
     monkeypatch.setattr(rlc.wallet, "load_keypair", lambda: _FakePayer())
     monkeypatch.setattr(rlc.wallet, "pubkey_string", lambda p: "FakeWalletAddr1111111111111111111111111111111")
+    monkeypatch.setattr(rlc, "_reconcile_with_chain", AsyncMock(return_value={"checked": True, "discrepancies": []}))
 
     ledger = ExecutionLedger(tmp_path / "ledger.json")
     return tmp_path, ledger

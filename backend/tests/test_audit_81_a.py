@@ -405,12 +405,16 @@ async def test_preflight_all_rpc_slippage_escalates(env, monkeypatch):
     async def fake_get_sig_status(sig, endpoints=None):
         return None
 
+    async def fake_blockhash_valid(blockhash, endpoints=None):
+        return True
+
     monkeypatch.setattr(ex, "_get_json", fake_get)
     monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
     monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
     monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send_checked)
     monkeypatch.setattr(ex.solana, "confirm_signature", fake_confirm)
     monkeypatch.setattr(ex.solana, "get_signature_status", fake_get_sig_status)
+    monkeypatch.setattr(ex.solana, "is_blockhash_valid", fake_blockhash_valid)
 
     ledger = _ledger_with_position(env)
     res = await ex.place_sell(MINT, "TEST", 1.0, ledger=ledger)
