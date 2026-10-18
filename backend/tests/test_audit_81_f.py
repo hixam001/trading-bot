@@ -45,6 +45,7 @@ def test_session_finish_guard_catches_state_dir_mutations(tmp_path):
     must cause the session-finish guard to fail the pytest session with exit code != 0.
     """
     real_state_dir = BACKEND_DIR / "live_execution" / "state"
+    real_state_dir.mkdir(parents=True, exist_ok=True)
     probe_file = real_state_dir / f".hermeticity_test_probe_{os.getpid()}"
 
     # Write a test file inside backend/tests so backend/conftest.py is loaded
@@ -53,6 +54,7 @@ def test_session_finish_guard_catches_state_dir_mutations(tmp_path):
 def test_pollute():
     from pathlib import Path
     p = Path({str(probe_file)!r})
+    p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text("polluted")
 """, encoding="utf-8")
 

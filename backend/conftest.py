@@ -39,6 +39,7 @@ def _snapshot_dir(directory: Path) -> dict[str, tuple[int, int]]:
 
 def pytest_sessionstart(session):
     global _INITIAL_STATE_SNAPSHOT
+    _REAL_LIVE_STATE_DIR.mkdir(parents=True, exist_ok=True)
     _INITIAL_STATE_SNAPSHOT = _snapshot_dir(_REAL_LIVE_STATE_DIR)
 
 
