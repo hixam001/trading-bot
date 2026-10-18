@@ -42,8 +42,10 @@ def _good_tx(wallet: str = "WALLET123", mint: str = "MINT456") -> dict:
     }
 
 
-def _good_payload(mint: str = "MINT456") -> dict:
-    return {"mint": mint, "entry_allowed": True}
+def _good_payload(mint: str = "MINT456", kind: str = "buy") -> dict:
+    # §83: sealed payloads carry kind="buy"/"sell" (executor.py intents);
+    # "entry_allowed" is not a payload field.
+    return {"mint": mint, "kind": kind}
 
 
 _COMMIT_AT = "2026-08-26T10:00:00+00:00"
@@ -119,6 +121,33 @@ def test_empty_account_keys_returns_unknown_not_pass():
     assert fp_check["status"] == "unknown"
 
 
+def test_committed_side_comes_from_payload_kind():
+    """§83 regression: side was inferred from a nonexistent 'entry_allowed'
+    payload key, so EVERY commit — buys included — was labeled 'sell'."""
+    tx = _good_tx()
+    buy = _verify_binding_checks(
+        tx, _good_payload(kind="buy"), _COMMIT_AT, "WALLET123")
+    assert buy["committed_side"] == "buy"
+    sell = _verify_binding_checks(
+        tx, _good_payload(kind="sell"), _COMMIT_AT, "WALLET123")
+    assert sell["committed_side"] == "sell"
+
+
+def test_wallet_address_resolves_without_loading_keys(monkeypatch):
+    """§83 regression: the binding report read a config attribute that does
+    not exist, so the fee-payer check never ran and 'matched' was
+    unreachable. The resolver must return the operator's published address
+    without touching the signing key."""
+    from live_execution import config as live_cfg
+    from api.routes.proof import _wallet_address_for_binding
+
+    monkeypatch.setattr(
+        live_cfg, "EXPECTED_WALLET_ADDRESS",
+        "So11111111111111111111111111111111111111112")
+    assert _wallet_address_for_binding() == \
+        "So11111111111111111111111111111111111111112"
+
+
 # ---------------------------------------------------------------------------
 # /api/binding.json endpoint tests
 # ---------------------------------------------------------------------------
@@ -188,7 +217,7 @@ async def test_binding_matched_tx_reports_matched():
 
     mint = "MINT456"
     wallet = "WALLET123"
-    payload = {"mint": mint, "entry_allowed": True}
+    payload = {"mint": mint, "kind": "buy"}
 
     mock_row = {
         "id": 4, "symbol": "BONK", "signature": "valid-sig",
@@ -202,13 +231,17 @@ async def test_binding_matched_tx_reports_matched():
     mock_live_solana = MagicMock()
     mock_live_solana.get_transaction = mock_get_transaction
 
-    import config as cfg
+    # §83: the wallet address comes from the live wallet resolver, NOT from a
+    # (nonexistent) config.WALLET_ADDRESS — patch the real resolution seam.
     with patch("api.routes.proof.db", _make_mock_db([mock_row])), \
          patch.dict("sys.modules", {"live_execution.solana": mock_live_solana}), \
-         patch.object(cfg, "WALLET_ADDRESS", wallet, create=True):
+         patch("api.routes.proof._wallet_address_for_binding",
+               return_value=wallet):
         result = await get_binding()
 
     bound_pairs = [p for p in result["pairs"] if p.get("signature")]
     assert len(bound_pairs) == 1
     assert bound_pairs[0]["status"] == "matched"
     assert result["totals"]["matched"] == 1
+    # §83: a buy commit must not be labeled "sell".
+    assert bound_pairs[0]["committed_side"] == "buy"

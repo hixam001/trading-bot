@@ -285,6 +285,23 @@ async def get_verify():
 # REF-R1 — Independent binding report
 # ---------------------------------------------------------------------------
 
+def _wallet_address_for_binding() -> str:
+    """The signing wallet's public address, resolved WITHOUT loading keys.
+
+    §83: get_binding used to read `getattr(config, "WALLET_ADDRESS", "")` —
+    an attribute that exists on NO config module (the paper config carries
+    no wallet identity on purpose; the live side exposes
+    wallet.public_address(), which reads EXPECTED_WALLET_ADDRESS or the
+    run-cycle's wallet_pubkey.txt). The lookup was always "", so the
+    fee-payer check could never run and REF-R1 could never reach 'matched'.
+    """
+    try:
+        from live_execution import wallet
+        return wallet.public_address() or ""
+    except Exception:
+        return ""
+
+
 def _verify_binding_checks(tx: dict, commit_payload: dict,
                             commit_created_at: str, wallet_address: str) -> dict:
     """
@@ -300,7 +317,10 @@ def _verify_binding_checks(tx: dict, commit_payload: dict,
     """
     checks = []
     mint = commit_payload.get("mint", "")
-    committed_side = "buy" if commit_payload.get("entry_allowed") else "sell"
+    # §83: the sealed payloads carry kind="buy"/"sell" (executor.py intents).
+    # "entry_allowed" is NOT a payload field — the old inference labeled
+    # every commit, including buys, as "sell".
+    committed_side = str(commit_payload.get("kind") or "unknown")
 
     # Check 1: confirmed
     meta = tx.get("meta") or {}
@@ -392,11 +412,7 @@ async def get_binding():
     if "pytest" not in sys.modules and _BINDING_CACHE["data"] is not None and (now - _BINDING_CACHE["ts"]) < _PROOF_CACHE_TTL:
         return _BINDING_CACHE["data"]
 
-
-
-    import config as cfg
-
-    wallet_address = getattr(cfg, "WALLET_ADDRESS", "")
+    wallet_address = _wallet_address_for_binding()
     # Try to import get_transaction — only available in live_execution; in
     # pure-paper mode we still produce the report but all bound rows show
     # 'unknown' (RPC not reachable from paper side).
