@@ -1,5 +1,15 @@
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
+### CI Pipeline & Pytest Path Resolution Fix (Commits `a0c7a0b` & `b09b6e7`)
+1. **Repository Root on `sys.path` (`pytest.ini`, `backend/conftest.py`, `test_audit_81_d.py`, `test_audit_81_g.py`)**:
+   - Added `pythonpath = . backend` to `pytest.ini` and ensured `_ROOT` is inserted into `sys.path` in `backend/conftest.py` so that bare `pytest -q` (used in GitHub Actions CI) resolves root modules and `scripts.*` imports without requiring `python -m pytest`.
+   - Defensively added `REPO_ROOT` path insertions to `test_audit_81_d.py` and `test_audit_81_g.py`.
+2. **Fresh Checkout State Directory Provisioning (`backend/conftest.py`, `test_audit_81_f.py`)**:
+   - Ensured `_REAL_LIVE_STATE_DIR.mkdir(parents=True, exist_ok=True)` in `pytest_sessionstart` and `test_session_finish_guard_catches_state_dir_mutations` so that fresh clones where `backend/live_execution/state/` does not yet exist do not fail with `FileNotFoundError` during hermeticity guard testing.
+3. **Verification**:
+   - All 1164 tests pass with exit code 0 under `rm -rf backend/live_execution/state && rm -f .env backend/.env && pytest -q`.
+   - All GitHub Actions workflows (`Tests & Security Audit`, `gitleaks`, `CodeQL`) passing green on `main`.
+
 ### Phase H: Smaller Items (`backend/alerts.py`, `backend/data_providers/onchain_security.py`, `backend/api/routes/stats.py`, `frontend/src/App.tsx`, `frontend/e2e/dashboard.spec.ts`, `backend/sizing.py`, `backend/run_live_cycle.py`, `scripts/gate_funnel_report.py`, `docs/17_MUTATION_LOG.md`, `backend/tests/test_audit_81_h.py`)
 1. **Alert Channel Insecure Topic Refusal (H-1)**:
    - In `backend/alerts.py`, added `FORBIDDEN_NTFY_TOPICS` preventing broadcasts to guessable topics (`trading-bot`, `alerts`, `default`, etc.) on public unauthenticated `ntfy.sh`.

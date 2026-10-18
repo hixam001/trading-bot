@@ -1,6 +1,10 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] CI Pipeline & Pytest Path Resolution Fix (2026-10-18):
+      1. Added `pythonpath = . backend` to `pytest.ini` and ensured `_ROOT` is in `sys.path` in `backend/conftest.py` for bare `pytest` invocations.
+      2. Ensured `backend/live_execution/state` directory is created on fresh checkouts before hermeticity snapshot.
+      3. All GitHub Actions workflows (`Tests & Security Audit`, `gitleaks`, `CodeQL`) passing green on `main`. Full suite: **1164 passed**, 0 failed.
 - [x] §81 Phase H: Smaller items (2026-10-17):
       1. Alert channel defaults (H-1): `backend/alerts.py` forbids guessable topics (`trading-bot`, `alerts`, etc.) on public `ntfy.sh` without auth; reports `alerts: "misconfigured"` on `/api/safety` status and logs clear errors; added `openssl rand -hex 12` guidance in `.env.example` and `docs/11_DEPLOYMENT.md`.
       2. Bounded mint extension cache (H-2): `backend/data_providers/onchain_security.py` caps `_MINT_EXTENSION_CACHE` to `MAX_MINT_EXTENSION_CACHE = 2048` using `OrderedDict` with LRU eviction on insert.
