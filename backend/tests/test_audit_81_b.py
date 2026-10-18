@@ -213,8 +213,8 @@ def test_b4_kill_switch_tripped_when_configured(tmp_path, monkeypatch):
     snap_file = tmp_path / "wallet_snapshot.json"
     snap_file.write_text(json.dumps({"ts": 100.0, "usdc": 100.0, "sol": 1.0}))
 
-    kill_file = tmp_path / "kill_switch.txt"
-    assert not kill_file.exists()
+    from live_execution import kill_switch
+    assert not kill_switch.is_tripped(state_dir=tmp_path)
 
     res = check_wallet_drop(
         current_usdc=50.0,
@@ -225,7 +225,26 @@ def test_b4_kill_switch_tripped_when_configured(tmp_path, monkeypatch):
     )
 
     assert res.get("alerted") is True
-    assert kill_file.exists(), "Kill switch was not tripped despite WALLET_DROP_TRIPS_KILL_SWITCH=True"
+    assert kill_switch.is_tripped(state_dir=tmp_path), "Kill switch was not tripped despite WALLET_DROP_TRIPS_KILL_SWITCH=True"
+    assert "wallet_drop" in kill_switch.trip_reason(state_dir=tmp_path)
+    assert not (tmp_path / "kill_switch.txt").exists(), "Must not write kill_switch.txt"
+
+    # Negative case: option off → not tripped
+    tmp_path2 = tmp_path / "neg"
+    tmp_path2.mkdir()
+    monkeypatch.setattr(live_config, "WALLET_DROP_TRIPS_KILL_SWITCH", False)
+    monkeypatch.setattr(live_config, "STATE_DIR", tmp_path2)
+    snap_file2 = tmp_path2 / "wallet_snapshot.json"
+    snap_file2.write_text(json.dumps({"ts": 100.0, "usdc": 100.0, "sol": 1.0}))
+    res2 = check_wallet_drop(
+        current_usdc=50.0,
+        current_sol=1.0,
+        ledger=FakeLedger([]),
+        state_dir=tmp_path2,
+        now_fn=lambda: 200.0,
+    )
+    assert res2.get("alerted") is True
+    assert not kill_switch.is_tripped(state_dir=tmp_path2), "Kill switch tripped when option is False"
 
 
 def test_b5_ack_wallet_change_script_isolation(tmp_path):

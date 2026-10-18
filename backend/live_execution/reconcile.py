@@ -271,9 +271,12 @@ def check_wallet_drop(
                 from live_execution import config as live_cfg
                 if getattr(live_cfg, "WALLET_DROP_TRIPS_KILL_SWITCH", False):
                     try:
-                        kill_file = target_dir / "kill_switch.txt"
-                        kill_file.write_text(f"wallet_drop: {channel_str}")
-                        log.critical("KILL SWITCH TRIPPED by wallet drop: %s", channel_str)
+                        from live_execution import kill_switch
+                        if not kill_switch.is_tripped(state_dir=target_dir):
+                            kill_switch.trip(f"wallet_drop: {channel_str}", state_dir=target_dir)
+                            log.critical("KILL SWITCH TRIPPED by wallet drop: %s", channel_str)
+                        else:
+                            log.info("kill switch already tripped (keeping earlier reason): %s", kill_switch.trip_reason(state_dir=target_dir))
                     except Exception as exc:
                         log.error("Failed tripping kill switch on wallet drop: %s", exc)
 

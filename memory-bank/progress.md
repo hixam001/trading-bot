@@ -82,7 +82,7 @@
       5. Frontend & CI: distinct equity labels ("Booked P&L equity" vs "Wallet equity"), refusal counters row, Playwright e2e race-free selectors (`firstRow.or(emptyState)`), and hardened `.github/workflows/tests.yml`.
       6. Full test suite: **1062 passed**, 0 failed (+4 new tests in `test_audit_79_f.py`).
 - [x] §79 Phase E: Backups and restore (2026-10-13):
-      1. Encrypted state backup script (`scripts/backup_state.py`): packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.txt`, `operator_break.txt` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
+      1. Encrypted state backup script (`scripts/backup_state.py`): packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.json`, `break_state.json` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
       2. State restore script (`scripts/restore_state.py`): pre-restore safety checks (refuses if engine running without `--force`), creates automatic `.pre_restore_<ts>` rollback backup, verifies manifest hashes and SQLite integrity.
       3. Backup shell script & cron (`deploy/backup.sh`): executable wrapper loading `.env` and executing backup.
       4. Added `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/15_BACKUP_RESTORE.md`.

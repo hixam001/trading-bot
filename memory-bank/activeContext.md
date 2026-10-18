@@ -66,7 +66,7 @@
   6. Added `backend/tests/test_audit_79_f.py` (4 tests).
 
 - **Phase E (Backups and Restore)**:
-  1. Created `scripts/backup_state.py`: packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.txt`, `operator_break.txt` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
+  1. Created `scripts/backup_state.py`: packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.json`, `break_state.json` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
   2. Created `scripts/restore_state.py`: pre-restore safety checks (refuses if engine running without `--force`), creates automatic `.pre_restore_<ts>` rollback backup, verifies manifest hashes and SQLite integrity.
   3. Added `deploy/backup.sh` executable wrapper, `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/15_BACKUP_RESTORE.md`.
   4. Added `backend/tests/test_audit_79_e.py` (8 tests).

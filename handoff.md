@@ -245,7 +245,7 @@
 
 ### Phase E: Backups and Restore (`scripts/{backup_state.py,restore_state.py}`, `deploy/backup.sh`, `docs/15_BACKUP_RESTORE.md`, compose, `.env.example`, `test_audit_79_e.py`)
 1. **Encrypted State Backup Script (`scripts/backup_state.py`)**:
-   - Atomically packages state and journal files: `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.txt`, `operator_break.txt`.
+   - Atomically packages state and journal files: `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.json`, `break_state.json`.
    - Encrypted with AES-256-GCM via `cryptography.hazmat.primitives.ciphers.aead.AESGCM` using `BACKUP_ENCRYPTION_KEY` (sha256-derived).
    - Excludes secret material: `.env`, `keypair*.json`, `*secret*`, `*wallet*`, `*.key`.
    - File format: `MAGIC = b"AGYBKP01"`, 12-byte random nonce, ciphertext with GCM auth tag, `.agybkp` extension.
