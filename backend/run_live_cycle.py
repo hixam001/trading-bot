@@ -381,11 +381,22 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
             is_open=True,
         ))
     cash = 0.0
+    usdc_bal = None
+    sol_bal = None
     try:
         payer = wallet.load_keypair()
         payer_addr = wallet.pubkey_string(payer)
-        usdc_bal = await solana.get_usdc_balance(payer_addr)
-        sol_bal = await solana.get_sol_balance(payer_addr)
+        try:
+            usdc_bal = await solana.get_usdc_balance(payer_addr)
+        except Exception as exc:
+            log.warning("live USDC balance fetch failed: %s", exc)
+            usdc_bal = None
+        try:
+            sol_bal = await solana.get_sol_balance(payer_addr)
+        except Exception as exc:
+            log.warning("live SOL balance fetch failed: %s", exc)
+            sol_bal = None
+
         if usdc_bal is not None:
             cash = max(usdc_bal, 0.0)
             if cash < paper_config.MIN_TICKET_USD:
@@ -414,16 +425,21 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
                 except Exception:
                     pass
 
-        # §79 Phase D / §81 Phase B: check unexplained wallet drop against ledger
+        # §79 Phase D / §81 Phase B / §82 Phase D: check unexplained wallet drop against ledger
         try:
             from live_execution.reconcile import check_wallet_drop
-            check_wallet_drop(cash, sol_bal, ledger=ledger)
+            check_wallet_drop(usdc_bal, sol_bal, ledger=ledger)
         except Exception as exc:
             log.error("wallet drop check crashed: %s", exc, exc_info=True)
 
     except Exception as exc:
         log.warning("live USDC balance unavailable (%s) - cash=0 "
                     "(no entries this cycle)", exc)
+        try:
+            from live_execution.reconcile import check_wallet_drop
+            check_wallet_drop(None, None, ledger=ledger)
+        except Exception:
+            pass
     return PortfolioState(cash_usd=cash, open_positions=positions), meta, chain_report
 
 
