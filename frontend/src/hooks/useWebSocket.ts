@@ -4,9 +4,10 @@ import type { FeedEventRow } from '../types'
 
 /**
  * Decision feed hook (I1): hydrate recent history from REST /api/feed on mount
- * (so the feed survives reloads and is never blank while waiting for the next
- * tick), then live-append new decisions over WebSocket /ws/feed. Rows are
- * deduped by id and kept newest-first, capped at 200.
+ * AND on every socket (re)connect — so the feed survives reloads, a backend
+ * restart, or a network blip, and is never blank while waiting for the next
+ * tick. Live pushes arrive over WebSocket /ws/feed. Rows are deduped by id
+ * and kept newest-first, capped at 200.
  *
  * §58: `freshId` carries the id of the most recent LIVE arrival (WS push
  * only — hydration must not re-flash old rows). The feed's authored motion
@@ -31,29 +32,27 @@ export function useFeedSocket(): {
       .slice(0, 200)
   }
 
-  // 1) Hydrate history (fail-soft: a REST hiccup just leaves the WS path).
-  useEffect(() => {
-    let cancelled = false
-    fetch(apiUrl('/api/feed?limit=50'))
-      .then((r) => (r.ok ? r.json() : null))
-      .then((d) => {
-        if (cancelled || !d || !Array.isArray(d.events)) return
-        setEvents((prev) => merge(prev, d.events as FeedEventRow[]))
-      })
-      .catch(() => undefined)
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  // 2) Live push over WebSocket — with automatic reconnect (DESIGN.md §3.4:
-  //    a backend restart or network blip must never leave the stream dead
-  //    until a manual reload; REST polling keeps filling the feed either way).
+  // Hydrate history from REST (fail-soft: a REST hiccup just leaves the WS
+  // path), then live-append over WebSocket with automatic reconnect
+  // (DESIGN.md §3.4: a backend restart or network blip must never leave the
+  // stream dead until a manual reload). §83: hydration re-runs on every
+  // (re)open — the old code hydrated only on mount and silently dropped
+  // every decision emitted while the socket was down.
   useEffect(() => {
     let closed = false
     let retries = 0
     let timer: ReturnType<typeof setTimeout> | undefined
     let ws: WebSocket | null = null
+
+    const hydrate = () => {
+      fetch(apiUrl('/api/feed?limit=50'))
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => {
+          if (closed || !d || !Array.isArray(d.events)) return
+          setEvents((prev) => merge(prev, d.events as FeedEventRow[]))
+        })
+        .catch(() => undefined)
+    }
 
     const connect = () => {
       if (closed) return
@@ -62,6 +61,8 @@ export function useFeedSocket(): {
       ws.onopen = () => {
         retries = 0
         setConnected(true)
+        // Close the gap: pull anything pushed while we were disconnected.
+        hydrate()
       }
       ws.onclose = () => {
         setConnected(false)
@@ -85,6 +86,7 @@ export function useFeedSocket(): {
       }
     }
 
+    hydrate()
     connect()
     return () => {
       closed = true
