@@ -414,3 +414,46 @@ def test_retention_pruning_daily_and_weekly(tmp_path):
     assert oldest not in remaining
     assert oldest in deleted
 
+
+# ---------------------------------------------------------------------------
+# §83: backup must never silently omit the database
+# ---------------------------------------------------------------------------
+
+def test_create_backup_refuses_missing_db(sample_state, keys):
+    """A missing DB used to be skipped without a word — the archive looked
+    like a SUCCESS while containing no tick history at all."""
+    state_dir, _, backup_dir = sample_state
+    key_backup, key_secret = keys
+    with pytest.raises(RuntimeError, match="database file not found"):
+        backup_state.create_backup(
+            state_dir=state_dir,
+            db_path=state_dir.parent / "does-not-exist.db",
+            backup_dir=backup_dir,
+            backup_key=key_backup,
+            secret_store_key=key_secret,
+        )
+
+
+def test_backup_cli_resolves_db_path_through_backend_config(
+        tmp_path, monkeypatch):
+    """Bare `python scripts/backup_state.py` must resolve the SAME DB the app
+    uses (backend/config.DB_PATH), not a CWD-relative data/trading_bot.db,
+    and the script must load .env like the app does."""
+    captured = {}
+
+    def fake_create_backup(state_dir, db_path, backup_dir, backup_key,
+                           secret_store_key=None, now_dt=None):
+        captured["db_path"] = db_path
+        raise RuntimeError("stop-after-capture")
+
+    monkeypatch.setattr(backup_state, "create_backup", fake_create_backup)
+    monkeypatch.setattr(sys, "argv", [
+        "backup_state.py", "--state-dir", str(tmp_path / "state")])
+    monkeypatch.setenv("BACKUP_ENCRYPTION_KEY", "irrelevant-for-capture")
+
+    rc = backup_state.main()
+    assert rc == 1  # create_backup's sentinel error is handled by main
+
+    import config as backend_config
+    assert captured["db_path"] == Path(backend_config.DB_PATH)
+

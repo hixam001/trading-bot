@@ -174,6 +174,16 @@ def create_backup(
         use_supabase = os.getenv("USE_SUPABASE_DB", "").lower() in ("1", "true", "yes")
         if use_supabase:
             log.info("USE_SUPABASE_DB=1: skipping local SQLite backup (managed by Supabase)")
+        elif db_path is not None and not db_path.is_file():
+            # §83: a backup that silently lacks the book is worse than a
+            # failed backup. The old code skipped a missing DB without a
+            # word — an archive with no tick history looked "SUCCESS".
+            raise RuntimeError(
+                f"database file not found at '{db_path}' — refusing to write "
+                f"a backup without the book's SQLite database. Pass an "
+                f"explicit --db-path or set DB_PATH so it matches the app "
+                f"(default backend/trading_bot.db)."
+            )
         elif db_path and db_path.is_file():
             if is_denylisted(db_path.name):
                 log.warning("Denylist skipping DB: %s", db_path.name)
@@ -266,8 +276,15 @@ def main() -> int:
 
     db_path = args.db_path
     if not db_path:
-        db_env = os.getenv("DB_PATH", "data/trading_bot.db")
-        db_path = Path(db_env)
+        # §83: single source of truth — the app resolves DB_PATH as
+        # backend/ + $DB_PATH (backend/config.py) AND loads .env. This
+        # script used to fall back to CWD-relative data/trading_bot.db with
+        # no dotenv, so a host-run backup silently archived NO database.
+        try:
+            import config as backend_config
+            db_path = Path(backend_config.DB_PATH)
+        except Exception:
+            db_path = backend_dir / os.getenv("DB_PATH", "trading_bot.db")
 
     backup_dir = args.backup_dir or Path(os.getenv("BACKUP_DIR", "/app/backups"))
     backup_key = args.key or os.getenv("BACKUP_ENCRYPTION_KEY", "")
