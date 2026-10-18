@@ -142,7 +142,7 @@ MUTATIONS: list[Mutation] = [
         phase="§81-E",
         mutation_id="81E_RESTORE_KILL_SWITCH_TRIP",
         file_path="scripts/restore_state.py",
-        exact_old_text="kill_switch.trip(trip_reason, state_dir=target_state_dir)",
+        exact_old_text="kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 4 safety latch",
         new_text="pass",
         test_selector="backend/tests/test_audit_81_e.py",
         description="Post-restore mandatory kill switch trip disabled",
@@ -222,6 +222,25 @@ MUTATIONS: list[Mutation] = [
         new_text="check_wallet_drop(cash, sol_bal, ledger=ledger)",
         test_selector="backend/tests/test_audit_82_d.py",
         description="Pass unreadable usdc_bal as None to check_wallet_drop reverted to cash (0.0)",
+    ),
+    # §82-F
+    Mutation(
+        phase="§82-F",
+        mutation_id="82F_RESTORE_RECONCILE_ONLY",
+        file_path="scripts/restore_state.py",
+        exact_old_text="if args.reconcile_only:",
+        new_text="if False:",
+        test_selector="backend/tests/test_audit_82_f.py",
+        description="restore_state.py --reconcile-only execution check disabled",
+    ),
+    Mutation(
+        phase="§82-F",
+        mutation_id="82F_RESTORE_PARTIAL_PROMOTION",
+        file_path="scripts/restore_state.py",
+        exact_old_text="if len(promoted) > 0:",
+        new_text="if False:",
+        test_selector="backend/tests/test_audit_82_f.py",
+        description="Partial promotion kill switch trip and rollback check disabled",
     ),
 ]
 
@@ -314,6 +333,10 @@ def main() -> int:
     results = []
     survivors = []
 
+    # Snapshot initial bytes of all target files
+    target_files = sorted(set(m.file_path for m in MUTATIONS))
+    initial_bytes = {fpath: (REPO_ROOT / fpath).read_bytes() for fpath in target_files}
+
     for idx, m in enumerate(MUTATIONS, start=1):
         print(f"[{idx:2d}/{len(MUTATIONS)}] {m.phase} {m.mutation_id} in {m.file_path}...", end=" ", flush=True)
         try:
@@ -333,16 +356,15 @@ def main() -> int:
         if not caught:
             survivors.append(m.mutation_id)
 
-    # Verify git diff is clean on target files
-    target_files = sorted(set(m.file_path for m in MUTATIONS))
-    diff_res = subprocess.run(
-        ["git", "diff", "--stat", "--"] + target_files,
-        cwd=str(REPO_ROOT),
-        capture_output=True,
-        text=True,
-    )
-    if diff_res.stdout.strip():
-        print(f"WARNING: git diff not empty after restorations:\n{diff_res.stdout}")
+    # Verify all target files match their pre-run bytes exactly
+    restoration_failed = False
+    for fpath, expected_b in initial_bytes.items():
+        actual_b = (REPO_ROOT / fpath).read_bytes()
+        if actual_b != expected_b:
+            print(f"ERROR: File {fpath} was not restored to its pre-run state!")
+            restoration_failed = True
+
+    if restoration_failed:
         return 1
 
     print(f"\nAll restorations verified clean. Mutations: {len(results)}, Caught: {len(results) - len(survivors)}, Survivors: {len(survivors)}")

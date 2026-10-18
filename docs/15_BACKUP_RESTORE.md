@@ -109,8 +109,13 @@ The restore process (`scripts/restore_state.py`) follows a strict multi-pass fai
    - Files are staged to temporary names (`.staged.<pid>.*`) in their target directory on the same filesystem.
    - `PRAGMA integrity_check;` is executed directly on the **staged** SQLite database file. If the integrity check fails, all staged temporary files are deleted immediately and the existing database remains untouched.
 
-4. **Pass 3: Atomic Promotion**:
+4. **Pass 3: Atomic Promotion & Partial Failure Containment (§82 Phase F)**:
    - Staged files are promoted to their final paths via atomic `os.replace`.
+   - If `os.replace` fails after ≥1 files have been promoted:
+     - The kill switch is immediately tripped: `PARTIAL RESTORE: promoted N of M files from <archive>; state is inconsistent; do not arm`.
+     - Automatic best-effort rollback restores the pre-restore backup files via atomic `os.replace`.
+     - Staged temporary files are unlinked and the exception is re-raised.
+   - If zero files were promoted, the original state remains intact and the partial restore trip is not engaged.
 
 5. **Pass 4: Mandatory Safety Latch**:
    - The kill switch is **always tripped** upon restore, overwriting whatever `kill_switch.json` was present in the archive:
@@ -175,6 +180,10 @@ Operators should periodically practice a restore drill in a scratch directory to
 3. **Inspect reconciliation report**:
    - Verify on-chain token accounts match the restored ledger journal.
    - If discrepancies appear, resolve manually before clearing the kill switch.
+   - To re-run reconciliation at any time without re-restoring the archive, use `--reconcile-only`:
+     ```bash
+     docker compose run --rm live python scripts/restore_state.py --reconcile-only --target-state-dir /app/state
+     ```
 4. **Clear the kill switch** (only after human verification):
    ```bash
    docker compose run --rm live python backend/live_execution/scripts/confirm_trade.py resume

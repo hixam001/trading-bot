@@ -90,6 +90,39 @@ def validate_member_path(member: tarfile.TarInfo, target_state_dir: Path) -> Non
         raise RuntimeError(f"Unauthorized member name in archive: '{name}'")
 
 
+def _attempt_rollback(pre_restore_dir: Path, target_state_dir: Path, target_db_path: Optional[Path]) -> None:
+    """Best-effort atomic rollback of pre-restore backup files via temp files in target dir."""
+    pid = os.getpid()
+    staged_rollback: list[tuple[Path, Path]] = []
+    try:
+        for p in pre_restore_dir.iterdir():
+            if not p.is_file():
+                continue
+            if target_db_path and p.name == target_db_path.name:
+                dest = target_db_path
+            else:
+                dest = target_state_dir / p.name
+
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            tmp = dest.parent / f".rollback.{pid}.{dest.name}"
+            shutil.copy2(p, tmp)
+            staged_rollback.append((tmp, dest))
+
+        for tmp, dest in staged_rollback:
+            os.replace(tmp, dest)
+        log.info("Automatic rollback succeeded from %s", pre_restore_dir)
+        print(f"ROLLBACK SUCCESS: Restored pre-restore state from {pre_restore_dir}")
+    except Exception as rb_exc:
+        log.critical("Automatic rollback failed: %s", rb_exc)
+        print(f"ROLLBACK FAILED: {rb_exc}", file=sys.stderr)
+        for tmp, _ in staged_rollback:
+            try:
+                tmp.unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise
+
+
 def restore_backup(
     archive_path: Path,
     target_state_dir: Path,
@@ -278,9 +311,11 @@ def restore_backup(
     # PASS 3: Promotion (os.replace)
     # =========================================================================
     restored_files: list[str] = []
+    promoted: list[tuple[Path, Path]] = []
     try:
         for temp_path, dest_path in staged_files:
             os.replace(temp_path, dest_path)
+            promoted.append((temp_path, dest_path))
             restored_files.append(str(dest_path))
     except Exception as exc:
         for temp_path, _ in staged_files:
@@ -288,9 +323,31 @@ def restore_backup(
                 temp_path.unlink(missing_ok=True)
             except Exception:
                 pass
-        if pre_restore_dir:
-            print(f"ROLLBACK NOTE: Restore failed during promotion. Rollback state is in {pre_restore_dir}")
-            log.error("Restore failed during promotion. Rollback state is in %s", pre_restore_dir)
+
+        if len(promoted) > 0:
+            from live_execution import kill_switch
+            trip_reason = (
+                f"PARTIAL RESTORE: promoted {len(promoted)} of {len(staged_files)} files "
+                f"from {archive_path.name}; state is inconsistent; do not arm"
+            )
+            try:
+                kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 3 partial restore
+            except Exception as ks_err:
+                log.error("Failed to trip kill switch on partial restore: %s", ks_err)
+
+            if pre_restore_dir and pre_restore_dir.is_dir():
+                print(f"ROLLBACK NOTE: Partial restore failure ({len(promoted)}/{len(staged_files)} promoted). Attempting automatic rollback from {pre_restore_dir}")
+                log.error("Partial restore failure. Attempting automatic rollback from %s", pre_restore_dir)
+                try:
+                    _attempt_rollback(pre_restore_dir, target_state_dir, target_db_path)
+                except Exception as rb_err:
+                    log.error("Automatic rollback failed: %s", rb_err)
+            else:
+                log.error("No pre-restore backup available for automatic rollback")
+        else:
+            if pre_restore_dir:
+                print(f"ROLLBACK NOTE: Restore failed before any files promoted. Existing state remains intact in {pre_restore_dir}")
+                log.warning("Restore failed before promotion. Existing state in %s", pre_restore_dir)
         raise
 
     # =========================================================================
@@ -299,7 +356,7 @@ def restore_backup(
     from live_execution import kill_switch
     ts_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     trip_reason = f"restored from {archive_path.name} at {ts_str}; run reconcile and clear manually"
-    kill_switch.trip(trip_reason, state_dir=target_state_dir)
+    kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 4 safety latch
 
     notice = f"""
 ================================================================================
@@ -310,7 +367,7 @@ Reason: {trip_reason}
 
 To inspect state and clear the kill switch:
   1. Run reconciliation:
-     python scripts/restore_state.py {archive_path} --target-state-dir {target_state_dir} --reconcile
+     python scripts/restore_state.py --reconcile-only --target-state-dir {target_state_dir}
   2. Clear the kill switch manually after verification:
      python backend/live_execution/scripts/confirm_trade.py resume
 ================================================================================
@@ -382,13 +439,21 @@ async def run_reconcile(state_dir: Path) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Restore encrypted state backup")
-    parser.add_argument("archive", type=Path, help="Path to state-*.tar.gz.enc archive")
+    parser.add_argument("archive", type=Path, nargs="?", default=None, help="Path to state-*.tar.gz.enc archive")
     parser.add_argument("--target-state-dir", type=Path, required=True, help="Target state directory")
     parser.add_argument("--target-db-path", type=Path, default=None, help="Target SQLite DB path")
     parser.add_argument("--key", type=str, default=None, help="Backup encryption key")
     parser.add_argument("--force", action="store_true", help="Force overwrite non-empty target directory")
     parser.add_argument("--reconcile", action="store_true", help="Run read-only reconciliation check")
+    parser.add_argument("--reconcile-only", action="store_true", help="Run read-only reconciliation check without restoring backup")
     args = parser.parse_args()
+
+    if args.reconcile_only:
+        asyncio.run(run_reconcile(args.target_state_dir))
+        return 0
+
+    if not args.archive:
+        parser.error("archive is required unless --reconcile-only is specified")
 
     backup_key = args.key or os.getenv("BACKUP_ENCRYPTION_KEY", "")
 
