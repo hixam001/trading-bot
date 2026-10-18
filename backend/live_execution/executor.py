@@ -619,6 +619,17 @@ async def place_sell(
                 swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=quote
             )
             last_sig = outcome.signature
+            from live_execution.exit_errors import SendRejected, is_already_processed
+            if isinstance(outcome.error, SendRejected):
+                attempts = outcome.error.attempts
+                if (
+                    attempts
+                    and all(a.get("kind") == "rpc_error" for a in attempts)
+                    and not any(is_already_processed(a) for a in attempts)
+                ):
+                    # Definitive preflight rejection: transaction never entered the network
+                    last_sig = None
+                    last_blockhash = None
         except Exception as exc:
             err_str = str(exc)
             if not is_retryable_exit_error(exc) or attempt_idx >= len(ladder):

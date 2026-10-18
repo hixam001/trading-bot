@@ -486,7 +486,11 @@ async def send_raw_transaction(
 
     # If EVERY attempt returned kind == "rpc_error", raise SendRejected
     if outcome.attempts and all(a.get("kind") == "rpc_error" for a in outcome.attempts):
-        from live_execution.exit_errors import SendRejected
+        from live_execution.exit_errors import SendRejected, is_already_processed
+        # A transaction that is "already processed" has landed — treat as ambiguous
+        # (return None) so last_sig is kept and get_signature_status decides.
+        if any(is_already_processed(a) for a in outcome.attempts):
+            return None
         first_err = outcome.attempts[0]
         raise SendRejected(
             f"every rpc refused the transaction: {first_err.get('message') or first_err.get('err')}",
