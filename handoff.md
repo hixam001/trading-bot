@@ -1,3 +1,48 @@
+## §82 — Post-§81 Re-Audit Bug Fixes & Honest Verification (2026-10-18)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `cac8ab7`
+- Initial baseline (network): 1164 passed, 0 failed (102 warnings)
+- Initial baseline (offline/blocked network): 1163 passed, 1 failed (`backend/tests/test_audit_81_a.py::test_preflight_all_rpc_slippage_escalates` due to unmocked `is_blockhash_valid` calling real RPC)
+- Final suite (with hermetic network socket guard active): **1199 passed**, 0 failed (102 warnings in 17.32s)
+- Final suite (offline/network blocked): **1199 passed**, 0 failed (102 warnings in 17.61s)
+
+### Phase Commits & Verified Changes
+1. **§82-A (Commit `b9ae16f`) — `SendRejected` Containment**:
+   - `SendRejected` subclasses `ExecutionError` in `backend/live_execution/exit_errors.py` (re-exported in `solana.py`).
+   - Callers outside the ladder (`memo.publish_commit_memo`, `execute_confirmed_trade`, `drill.py`) catch `SendRejected` so unhandled exceptions never crash the executor or leave sealed commits unclosed.
+   - Per-position exit `place_order` call in `run_live_cycle.py:538` wrapped in `try/except Exception`, logs with `exc_info=True`, fires `EXIT_UNRESOLVED` alert, and continues loop so one failed exit cannot abort remaining exits for the cycle.
+   - AST guard test `test_every_send_call_site_handles_send_rejected` enforces that all send call sites contain `SendRejected`.
+2. **§82-B (Commit `8e1a33c`) — Preflight Reject Ladder Escalation**:
+   - Added `is_already_processed` in `backend/live_execution/exit_errors.py`.
+   - `solana.send_raw_transaction` returns `None` (ambiguous) instead of `SendRejected` when any endpoint returns "already processed".
+   - `executor.place_sell` resets `last_sig = None` and `last_blockhash = None` when outcome error is `SendRejected` with definitive `rpc_error` and not already processed, allowing ladder escalation rather than false `exit_unresolved`.
+3. **§82-C (Commit `e6c7522`) — Kill-Switch JSON Parity**:
+   - `reconcile.check_wallet_drop` trips the kill switch via `kill_switch.trip()` (`kill_switch.json`), preserving earlier trip reason if already tripped.
+   - Fixed `test_audit_81_b.py:test_b4_kill_switch_tripped_when_configured` to assert `kill_switch.is_tripped()`.
+   - Removed stale references to `kill_switch.txt` and `operator_break.txt` across docs and memory-bank.
+4. **§82-D (Commit `b408549`) — USDC None Passed to Drop Check**:
+   - `run_live_cycle._live_portfolio` passes `usdc_bal` directly (which is `None` when unreadable) to `check_wallet_drop`, while `cash = 0.0` stays for ticket sizing.
+   - Wrapped `get_usdc_balance` and `get_sol_balance` calls so network/RPC exceptions treat both as `None`.
+5. **§82-E (Commit `f419640`) — Automated Reproducible Mutation Testing**:
+   - Implemented `scripts/mutation_check.py` running declarative mutations against critical security barriers, failure classifications, and integrity checks.
+   - Corrected inaccurate §81 mutation log (which cited 21 non-existent test names and left SQLite integrity check unverified).
+   - Added `test_corrupt_sqlite_index_integrity_check_failure_aborts` catching SQLite PRAGMA integrity check failure.
+   - Added `test_mutation_log_references_real_tests` ensuring all documented test names exist in `backend/tests/`.
+6. **§82-F (Commit `ad701d9`) — Restore Script Reconcile-Only & Rollback**:
+   - Added `--reconcile-only` flag to `scripts/restore_state.py`; `archive` is optional when `--reconcile-only` is passed.
+   - If promotion fails after ≥1 files are promoted, trips kill switch with `PARTIAL RESTORE: promoted N of M files...` and attempts automatic atomic rollback from pre-restore backup.
+   - Updated post-restore banner and `docs/15_BACKUP_RESTORE.md` to print `python scripts/restore_state.py --reconcile-only --target-state-dir <dir>`.
+7. **§82-G (Commit `6049d17`) — Hermetic Test Network Socket Guard**:
+   - Autouse session-scoped socket fixture in `backend/conftest.py` blocking all non-loopback network calls (`socket.connect`, `socket.connect_ex`, `socket.getaddrinfo`) unless marked with `@pytest.mark.network`.
+   - Rewrote `backend/tests/test_audit_81_a.py::test_preflight_all_rpc_slippage_escalates` to mock `is_blockhash_valid`.
+   - Mocked `_reconcile_with_chain` in `test_audit_82_d.py`.
+   - Verified 1199 tests passing with 0 network calls.
+8. **§82-H (Current) — Documentation, System Patterns & Pre-Push Check**:
+   - Updated `handoff.md`, `memory-bank/decisionLog.md`, `memory-bank/systemPatterns.md`, and `docs/14_SIGNING_GUARD.md`.
+
+---
+
 ## §81 — Complete Post-§79 Re-Audit Remediation (2026-10-17)
 
 ### CI Pipeline & Pytest Path Resolution Fix (Commits `a0c7a0b` & `b09b6e7`)
@@ -7,7 +52,7 @@
 2. **Fresh Checkout State Directory Provisioning (`backend/conftest.py`, `test_audit_81_f.py`)**:
    - Ensured `_REAL_LIVE_STATE_DIR.mkdir(parents=True, exist_ok=True)` in `pytest_sessionstart` and `test_session_finish_guard_catches_state_dir_mutations` so that fresh clones where `backend/live_execution/state/` does not yet exist do not fail with `FileNotFoundError` during hermeticity guard testing.
 3. **Verification**:
-   - All 1164 tests pass with exit code 0 under `rm -rf backend/live_execution/state && rm -f .env backend/.env && pytest -q`.
+   - Note on baseline: At HEAD `cac8ab7`, 1164 tests passed with network access; in a sandbox with network blocked, 1163 passed and 1 failed (`test_preflight_all_rpc_slippage_escalates` reached unmocked real RPC). Fully hermetic test isolation with socket guard enforced in §82-G (1199 passed offline).
    - All GitHub Actions workflows (`Tests & Security Audit`, `gitleaks`, `CodeQL`) passing green on `main`.
 
 ### Phase H: Smaller Items (`backend/alerts.py`, `backend/data_providers/onchain_security.py`, `backend/api/routes/stats.py`, `frontend/src/App.tsx`, `frontend/e2e/dashboard.spec.ts`, `backend/sizing.py`, `backend/run_live_cycle.py`, `scripts/gate_funnel_report.py`, `docs/17_MUTATION_LOG.md`, `backend/tests/test_audit_81_h.py`)
@@ -29,10 +74,10 @@
    - Updated `backend/run_live_cycle.py` to preserve and record `security_unknown_below_floor` on entry refusal.
    - Enhanced `scripts/gate_funnel_report.py` to detect and count `security_unknown_below_floor` as its own line in daily funnel, baseline summary, and text/JSON reports.
 6. **Mutation Ledger (H-6)**:
-   - Note on §81 log: The original 27-row log cited 21 fictitious test names (e.g. `test_sim_slippage_ladder_escalates_and_fills`, `test_create_account_with_delegate_refused`, `test_restore_trips_kill_switch`, `test_hermetic_state_dir`) and left a surviving mutation on SQLite integrity check. In §82 Phase E, replaced with an automated, reproducible harness (`scripts/mutation_check.py`) and verified 20/20 mutations caught by real tests in `docs/17_MUTATION_LOG.md`, guarded by `test_mutation_log_references_real_tests`.
+   - Note on §81 log: The original 27-row log cited 21 fictitious test names (e.g. `test_sim_slippage_ladder_escalates_and_fills`, `test_create_account_with_delegate_refused`, `test_restore_trips_kill_switch`, `test_hermetic_state_dir`) and left a surviving mutation on SQLite integrity check. In §82 Phase E, replaced with an automated, reproducible harness (`scripts/mutation_check.py`) and verified 22/22 mutations caught by real tests in `docs/17_MUTATION_LOG.md`, guarded by `test_mutation_log_references_real_tests`.
 7. **Tests & Suite**:
    - Added 6 tests in `backend/tests/test_audit_81_h.py`.
-   - Test count: **1164 passed**, 0 failed.
+   - Measured baseline at §81 close: 1164 passed online (1163 passed / 1 failed offline).
 
 ### Phase G: Real-World Validation and API-Risk Containment (`scripts/dry_run_guard.py`, `backend/live_execution/jupiter_client.py`, `docs/16_JUPITER_API_MIGRATION.md`, `docs/11_DEPLOYMENT.md`, `backend/tests/test_audit_81_g.py`)
 1. **Operator Dry-Run Verification Tool (G-1)**:
@@ -58,6 +103,7 @@
 ### Phase F: Make Tests and CI Honest (`backend/conftest.py`, `.gitleaks.toml`, `.github/workflows/tests.yml`, `frontend/e2e/`, `scripts/prepush_check.sh`, `memory-bank/`, `backend/tests/test_audit_81_f.py`)
 1. **Hermetic Test State Isolation (F-1)**:
    - Configured `backend/conftest.py` to point `LIVE_EXECUTION_STATE_DIR` and `LIVE_STATE_DIR` at a dedicated pytest session temp directory before imports.
+   - Note on scope (§82-G): §81-F covered filesystem state hermeticity only, not network isolation. Non-loopback network socket guard was added in §82-G.
    - Added `pytest_sessionstart` and `pytest_sessionfinish` hooks that capture and assert identical SHA-256 tree snapshots of `backend/live_execution/state/`, raising `pytest.exit` if tests write or mutate any state files in the repository.
    - Updated `backend/tests/test_state_path_colocation.py` to strip test session environment variables when testing unconfigured default state locations in fresh subprocesses.
 2. **Honest Secret Scanning Configuration (F-2)**:

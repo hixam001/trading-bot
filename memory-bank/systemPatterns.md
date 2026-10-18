@@ -38,6 +38,14 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
    liquidity break (<$8k), invalidation (−25%&1.4×sells), stale (14d),
    TP ladder (+100/300/900 trims). Dedicated 15s fast exit scanner to avoid
    stop-loss gap risk.
+9. **Failure contract discipline (§82 Phase A):** when changing a function's failure
+   contract (e.g. from returning `None` on failure to raising an exception such as
+   `SendRejected`), grep every single caller in the codebase to ensure all sites handle
+   the new exception type. Enforced statically via AST guard tests (`test_every_send_call_site_handles_send_rejected`).
+10. **Hermetic network isolation (§82 Phase G):** tests must never depend on real
+    network calls or external RPC endpoints. Enforced session-wide via an autouse socket
+    patch in `conftest.py` that blocks non-loopback traffic unless explicitly marked with
+    `@pytest.mark.network`. All tests mock `solana.rpc`, `is_blockhash_valid`, and balance queries.
 
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;
