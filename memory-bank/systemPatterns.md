@@ -46,6 +46,25 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
     network calls or external RPC endpoints. Enforced session-wide via an autouse socket
     patch in `conftest.py` that blocks non-loopback traffic unless explicitly marked with
     `@pytest.mark.network`. All tests mock `solana.rpc`, `is_blockhash_valid`, and balance queries.
+11. **Empty env means unset (§83 Phase A):** never resolve path/identity env vars with
+    `os.getenv(key, default)` — a set-but-empty value returns `""`, defeats the default,
+    and `Path("")` is `.` (the repo root). Always use `os.getenv(key) or <default>`
+    (the §35 `STATE_DIR` lesson generalized). Pinned by `test_state_path_colocation.py`
+    including a static guard that `.env.example` ships no blank state overrides.
+12. **Config is the single source of truth for derived paths (§83 Phase G):** operational
+    scripts must resolve paths the way the app does (`config.DB_PATH`, `LIVE_STATE_DIR`,
+    …) and load `.env`; a CWD-relative fallback silently reads/writes the wrong file.
+    A backup that cannot find the book must refuse loudly (`database file not found`),
+    never produce a success-looking archive without it.
+13. **SQLite lineage discipline (§83 Phase H):** `api/db.py` runs WAL mode, so raw-copying
+    the main DB file drops committed-but-not-checkpointed rows; snapshot through SQLite's
+    `Connection.backup()` instead. When promoting or rolling back a DB file, delete stale
+    `-wal`/`-shm`/`-journal` sidecars first — otherwise SQLite may recover a foreign WAL
+    against the restored file.
+14. **Frontend stream recovery (§83 Phases E–F):** WebSocket consumers re-hydrate REST
+    state on every (re)open, not just mount — a backend restart or network blip must not
+    silently drop events until a manual reload. Modal overlays (`aria-modal`) take focus
+    on mount and trap Tab inside for as long as they are open.
 
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;

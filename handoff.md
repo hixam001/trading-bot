@@ -1,3 +1,51 @@
+## §83 — Post-§82 Hardening: Config Truth, Data Honesty, Frontend Recovery & Backup Integrity (2026-10-19)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `43d51d8` (§82-H)
+- Baseline suite: 1199 passed, 0 failed (102 warnings)
+- Final suite (hermetic network socket guard active): **1209 passed**, 0 failed (102 warnings in 17.55s)
+
+### Phase Commits & Verified Changes
+1. **§83-A (Commit `f9135a6`) — Empty State-Path Env Values Mean Unset**:
+   - `os.getenv(key, default)` RETURNS `""` for a set-but-empty variable, defeating the default; `Path("")` is `.` (the repo root). With `.env.example` shipping `BREAK_STATE_FILE=` / `KILL_SWITCH_FILE=` blank, break state was written at the repo root, `set_break` died on `Path('.').with_suffix('.tmp')` (ValueError), `is_on_break` read the repo root (always False), and disclosure read a kill switch that never existed.
+   - `backend/config.py` now resolves `BREAK_STATE_FILE` / `KILL_SWITCH_FILE` with the same `os.getenv(k) or <default inside LIVE_STATE_DIR>` pattern already used for `LIVE_STATE_DIR`; empty behaves exactly like unset.
+   - `.env.example` now ships both lines COMMENTED OUT with an explicit warning (an empty value would resolve to the repo root, not the default directory).
+   - Tests: `test_empty_env_values_never_resolve_to_the_repo_root` (subprocess with all three vars empty) and static guard `test_env_example_ships_no_blank_state_overrides`.
+2. **§83-B (Commit `a934622`) — Disclosure Config-Truths Pinned to Real Attributes**:
+   - `backend/api/routes/disclosure.py` published `crowd_heat_act_band`, `regime_green_band`, and `regime_min_median_vol_usd` by reading five config attribute names that never existed (`CROWD_HEAT_ACT_MIN/MAX`, `REGIME_GREEN_MIN/MAX_PCT`, `REGIME_MIN_MEDIAN_VOL_USD`) — every disclosure response served `null` bands forever, and the "numeric or None" test let it pass.
+   - Pinned to the real constants: `CROWD_HEAT_MIN` / `CROWD_HEAT_MAX`, `REGIME_MIN_PCT_GREEN` / `REGIME_MAX_PCT_GREEN`, `REGIME_MIN_MEDIAN_VOLUME_USD`.
+   - `test_ref_r6_disclosure.py` now asserts exact equality with those config constants (no more null-tolerant pass).
+3. **§83-C (Commit `135e530`) — Negative Price Change Is Data, Not Missing**:
+   - `discovery.py::_safe_float` maps every `f <= 0` to `None` (correct for volumes) — it erased every negative percent, and `rule_engine/fake_chart.py` coerces `None` to 0, so the wash-trade "straight bleed" (`chg < -25`) and "distribution corpse" (`chg < -55`) detectors could NEVER fire from real scanner data.
+   - Added `_safe_float_signed` for `chg_5m/1h/6h/24h`: negative values and 0 are real readings; only unparseable / non-finite inputs are `None`. Volume fields keep the positive-only policy.
+   - Tests: negative changes round-trip and drive `is_fake_candidate` → `straight-bleed`; absent change windows stay `None`; junk (`"abc"`, NaN, inf) rejected.
+4. **§83-D (Commit `04a9b68`) — Binding Wallet Resolution & Committed Side**:
+   - `get_binding` read `config.WALLET_ADDRESS` — an attribute that exists on no config module — so the resolved address was always `""`, the fee-payer check could never run, and REF-R1 could never reach `matched`. New `_wallet_address_for_binding()` resolves `live_execution.wallet.public_address()` (EXPECTED_WALLET_ADDRESS or the run-cycle's `wallet_pubkey.txt`) without loading key material.
+   - `committed_side` now comes from the sealed payload's `kind` (`"buy"`/`"sell"`); the old inference read a nonexistent `entry_allowed` payload field and labeled every commit — buys included — as `"sell"`.
+   - Tests: `test_committed_side_comes_from_payload_kind`, `test_wallet_address_resolves_without_loading_keys`; the matched-tx endpoint test now patches the real resolution seam and asserts a buy commit is labeled `buy`.
+5. **§83-E (Commit `b472b75`) — Decision Feed Re-Hydrates on Every Socket (Re)Connect**:
+   - `frontend/src/hooks/useWebSocket.ts` hydrated `/api/feed` only on mount; every decision emitted while the socket was down was silently dropped until a manual reload.
+   - Hydration extracted to `hydrate()` and now runs on mount AND on every `ws.onopen`; dedupe-by-id, newest-first ordering, and the 200-row cap are unchanged. `freshId` still tracks live WS arrivals only (hydration never re-flashes old rows).
+6. **§83-F (Commit `adbfd4a`) — Shortcut Overlay Focus + Tab Trap**:
+   - `ShortcutOverlay` declared `aria-modal` but never took focus, so Tab walked the (visually inert) page behind it.
+   - The panel now takes focus on mount (`tabIndex={-1}`, `outline-none`) and a document-level keydown handler keeps Tab inside it for as long as it is open.
+7. **§83-G (Commit `be64ef1`) — Backup DB Path Through Config & DB-Less Archive Refusal**:
+   - The `backup_state.py` CLI fell back to a CWD-relative `data/trading_bot.db` without loading `.env`, so a host-run backup silently archived NO database while still reporting success.
+   - The CLI now resolves `Path(config.DB_PATH)` through the backend config (single source of truth, `.env` loaded like the app), with a backend-relative fallback only if the import fails.
+   - `create_backup` now raises `RuntimeError("database file not found at '<path>' — refusing to write a backup without the book's SQLite database")` instead of silently skipping a missing DB (a backup that silently lacks the book is worse than a failed backup).
+   - Tests: `test_create_backup_refuses_missing_db`, `test_backup_cli_resolves_db_path_through_backend_config`.
+8. **§83-H (Commit `74e05c9`) — WAL-Tail Pre-Restore Snapshot & Stale Sidecar Cleanup**:
+   - The pre-restore rollback snapshot used `shutil.copy2` on the main DB file only; `api/db.py` runs SQLite in WAL mode, so committed-but-not-checkpointed rows living in the `-wal` sidecar were silently lost from a snapshot advertised as "Existing state preserved". The snapshot now goes through SQLite's `Connection.backup()` (consistent, checkpointed); a raw `copy2` is used ONLY when the file is genuinely not a SQLite database ("file is not a database") — any other error (locked, IO) stays fatal, so a real book that could not be snapshotted is never overwritten.
+   - New `_remove_sqlite_sidecars()` deletes stale `-wal`/`-shm`/`-journal` files beside the target DB immediately before promotion and before rollback `os.replace`, so a restored/rolled-back DB never sits next to sidecars from a foreign lineage (SQLite could try to recover a foreign WAL against the restored file). Best-effort and logged: an undeletable sidecar must not abort an otherwise complete restore.
+   - Tests: `test_restore_removes_stale_sqlite_sidecars`, `test_pre_restore_snapshot_includes_uncheckpointed_wal_rows` (writes a committed row that exists only in the `-wal` sidecar with the connection still open, then asserts the snapshot contains it).
+
+### §83 Verification & Scope
+- Backend suite: **1209 passed**, 0 failed, 102 warnings in 17.55s (+10 tests over the 1199 baseline; session-wide hermetic network socket guard active).
+- Frontend fixes (§83-E/F) are frontend-only; covered by the mandatory pre-commit gate (`tsc --noEmit`, `npm run build`, Playwright e2e).
+- Untouched invariants: no changes to signing, execution, sizing, rule thresholds, risk flags, or money paths. §83-C restores data flow INTO existing detectors without moving any threshold.
+
+---
+
 ## §82 — Post-§81 Re-Audit Bug Fixes & Honest Verification (2026-10-18)
 
 ### Baseline & Measured Suite Counts

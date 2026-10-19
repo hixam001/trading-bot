@@ -1,3 +1,23 @@
+## Memory-bank update — 2026-10-19 (§83 Post-§82 hardening: config truth, data honesty, frontend recovery & backup integrity)
+
+- **Task**: fix the eight defects found in the post-§82 review, one commit per defect (§83-A…§83-H), treating each as a truth/robustness bug rather than a feature. (§82 itself — A–H, 1199 green — was documented in handoff §82 and decision log #88.)
+- **Backend fixes**:
+  - **§83-A (`f9135a6`)**: `os.getenv(k, default)` returns `""` for a set-but-empty var, defeating the default — `Path("")` is `.`, so a blank `BREAK_STATE_FILE=` wrote break state at the repo root, `set_break` raised `ValueError` on `Path('.').with_suffix('.tmp')`, `is_on_break` always read False, and disclosure read a kill switch that never existed. `backend/config.py` now uses the `os.getenv(k) or <default inside LIVE_STATE_DIR>` pattern for both `BREAK_STATE_FILE` and `KILL_SWITCH_FILE`; `.env.example` ships both lines commented out with a warning. Tests: empty-env subprocess resolution + static `.env.example` guard.
+  - **§83-B (`a934622`)**: `disclosure.py` read `CROWD_HEAT_ACT_MIN/MAX`, `REGIME_GREEN_MIN/MAX_PCT`, `REGIME_MIN_MEDIAN_VOL_USD` — five attribute names that existed on no config module — so the public feed published `null` crowd-heat/regime bands forever. Pinned to the real constants (`CROWD_HEAT_MIN/MAX`, `REGIME_MIN_PCT_GREEN`/`REGIME_MAX_PCT_GREEN`, `REGIME_MIN_MEDIAN_VOLUME_USD`); `test_ref_r6_disclosure.py` asserts exact equality.
+  - **§83-C (`135e530`)**: `_safe_float` maps `f <= 0` to `None` (correct for volumes) and erased every negative percent; `fake_chart._n()` coerces `None` to 0, so the wash-trade straight-bleed (`chg < -25`) and distribution-corpse (`chg < -55`) detectors could never fire from real scanner data. Added `_safe_float_signed` for the four `chg_*` windows (negatives and 0 are data; only junk/NaN/inf are `None`); volumes keep the positive-only policy.
+  - **§83-D (`04a9b68`)**: binding read `config.WALLET_ADDRESS` (exists nowhere) → address always `""`, fee-payer check never ran, REF-R1 `matched` unreachable. New `_wallet_address_for_binding()` resolves `live_execution.wallet.public_address()` without loading keys. `committed_side` now comes from the sealed payload `kind` (`entry_allowed` is not a payload field — it labeled every commit, buys included, as "sell").
+  - **§83-G (`be64ef1`)**: `scripts/backup_state.py` CLI fell back to a CWD-relative `data/trading_bot.db` with no dotenv, so a host-run backup silently archived NO database while reporting success. Now resolves `Path(config.DB_PATH)` through backend config; `create_backup` raises `database file not found` for a genuinely missing DB instead of skipping it.
+  - **§83-H (`74e05c9`)**: pre-restore snapshot used `copy2` on the main DB file only, dropping committed rows still in the `-wal` sidecar (WAL mode). Snapshot now goes through SQLite `Connection.backup()` (raw copy2 only for "file is not a database"); new `_remove_sqlite_sidecars()` clears stale `-wal`/`-shm`/`-journal` before promotion and before rollback `os.replace`.
+- **Frontend fixes**:
+  - **§83-E (`b472b75`)**: `useWebSocket.ts` hydrated `/api/feed` only on mount, silently dropping every decision emitted while the socket was down. `hydrate()` now runs on mount AND every `ws.onopen`; dedupe/newest-first/200-cap unchanged; `freshId` still live-push only.
+  - **§83-F (`adbfd4a`)**: `ShortcutOverlay` declared `aria-modal` but never took focus; the panel now focuses on mount (`tabIndex={-1}`) and a document keydown handler traps Tab inside while open.
+- **Tests**:
+  - Full suite: **1209 passed**, 0 failed (102 warnings in 17.55s; +10 over the §82 baseline of 1199; hermetic network socket guard active).
+- **Documentation**: handoff §83; `docs/15_BACKUP_RESTORE.md` (config-resolved DB path, DB-less refusal, SQLite-consistent pre-restore snapshot, sidecar cleanup); `docs/11_DEPLOYMENT.md` (empty env means unset); `frontend/DESIGN.md` §7 (reconnect re-hydration, overlay Tab trap); memory-bank `activeContext`/`progress`/`decisionLog` #89/`systemPatterns`.
+- **Constraints & Invariants Preserved**:
+  - No signing, execution, sizing, rule-threshold, or risk-flag changes; §83-C restores data INTO the existing detectors without moving any threshold.
+  - `LIVE_TRADING_ENABLED` / `REQUIRE_MANUAL_CONFIRMATION` untouched.
+
 ## Memory-bank update — 2026-10-11 (§77 Security Audit Remediation: Phases A–E)
 
 - **Task**: Address and close all findings of an independent security audit across commits §70–§76 across 5 phases:

@@ -20,6 +20,8 @@ The trading engine maintains state in two primary locations:
 
 Losing the ledger risks duplicate fills, lost positions, and inaccurate cost basis. `backup_state.py` and `restore_state.py` provide encrypted snapshots and deterministic restores.
 
+Both scripts resolve the database path through the backend config (`backend/config.py` → `DB_PATH`, with `.env` loaded like the app), never from the current working directory (§83 Phase G). A backup whose database file is missing is **refused** (`database file not found`) rather than silently producing an archive with no tick history.
+
 ---
 
 ## 2. Key Generation & Setup
@@ -104,13 +106,15 @@ The restore process (`scripts/restore_state.py`) follows a strict multi-pass fai
 
 2. **Pre-Restore Rollback Snapshot**:
    - If `--force` is used or the target directory is non-empty, existing state files and database are preserved under `<target-state-dir>/.pre-restore-<UTC-timestamp>/` before staging or promotion.
+   - The database snapshot goes through SQLite's `Connection.backup()` (§83 Phase H), so committed rows still living in the `-wal` sidecar (WAL mode) are included. A raw file copy is used only when the target is genuinely not a SQLite database (`file is not a database`); any other failure (locked, IO) stays fatal, so a real book that could not be snapshotted is never overwritten.
 
 3. **Pass 2: Atomic Staging & SQLite Integrity**:
    - Files are staged to temporary names (`.staged.<pid>.*`) in their target directory on the same filesystem.
    - `PRAGMA integrity_check;` is executed directly on the **staged** SQLite database file. If the integrity check fails, all staged temporary files are deleted immediately and the existing database remains untouched.
 
-4. **Pass 3: Atomic Promotion & Partial Failure Containment (§82 Phase F)**:
+4. **Pass 3: Atomic Promotion & Partial Failure Containment (§82 Phase F, §83 Phase H)**:
    - Staged files are promoted to their final paths via atomic `os.replace`.
+   - Immediately before the restored database is promoted, stale `-wal`/`-shm`/`-journal` sidecars beside it are deleted (§83 Phase H): the restored DB replaces the whole lineage, and SQLite must never try to recover a foreign WAL against it. The same cleanup runs before the rollback `os.replace`, and is best-effort/logged — an undeletable sidecar must not abort an otherwise complete restore.
    - If `os.replace` fails after ≥1 files have been promoted:
      - The kill switch is immediately tripped: `PARTIAL RESTORE: promoted N of M files from <archive>; state is inconsistent; do not arm`.
      - Automatic best-effort rollback restores the pre-restore backup files via atomic `os.replace`.

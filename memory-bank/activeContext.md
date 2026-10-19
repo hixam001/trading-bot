@@ -1,6 +1,35 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-17 (§81 Post-§79 Re-Audit Remediation in Progress):**
+**Current — 2026-10-19 (§83 Post-§82 Hardening: Config Truth, Data Honesty, Frontend Recovery & Backup Integrity — complete, 8 commits A–H):**
+- **§83-A — Empty state-path env values mean unset (`f9135a6`)**:
+  * `os.getenv(k, default)` returns `""` for a set-but-empty var, defeating the default (`Path("")` == repo root): a blank `BREAK_STATE_FILE=` made `set_break` die on `Path('.').with_suffix('.tmp')`, `is_on_break` read the repo root (always False), and disclosure read a nonexistent kill switch.
+  * `backend/config.py` now uses `os.getenv(k) or <default inside LIVE_STATE_DIR>` for `BREAK_STATE_FILE`/`KILL_SWITCH_FILE`; `.env.example` ships both lines commented out with a warning.
+  * Tests: subprocess empty-env resolution + static `.env.example` guard in `test_state_path_colocation.py`.
+- **§83-B — Disclosure config-truths pinned to real attributes (`a934622`)**:
+  * `disclosure.py` read five nonexistent config names and served `null` crowd-heat/regime bands forever; now reads `CROWD_HEAT_MIN/MAX`, `REGIME_MIN_PCT_GREEN`/`REGIME_MAX_PCT_GREEN`, `REGIME_MIN_MEDIAN_VOLUME_USD`; `test_ref_r6_disclosure.py` asserts exact equality.
+- **§83-C — Signed price-change fields survive discovery parsing (`135e530`)**:
+  * `_safe_float` erased every negative percent (None → `_n()` → 0), so fake_chart's straight-bleed (`chg < -25`) / distribution-corpse (`chg < -55`) detectors could never fire. New `_safe_float_signed` keeps negatives and 0 as data; only junk/NaN/inf are None. Volumes keep positive-only policy.
+- **§83-D — Binding report wallet + committed side (`04a9b68`)**:
+  * `get_binding` read `config.WALLET_ADDRESS` (exists nowhere) → always `""`, fee-payer check never ran, `matched` unreachable. New `_wallet_address_for_binding()` resolves `wallet.public_address()` without loading keys.
+  * `committed_side` now comes from the sealed payload `kind` (`entry_allowed` is not a payload field — it labeled every commit, including buys, as "sell").
+- **§83-E — Feed re-hydrates on every socket (re)connect (`b472b75`)**:
+  * `useWebSocket.ts` hydrated `/api/feed` only on mount; decisions emitted while the socket was down were silently dropped. `hydrate()` now runs on mount AND every `ws.onopen`; dedupe/newest-first/200-cap unchanged; `freshId` stays live-push only.
+- **§83-F — Shortcut overlay focus + Tab trap (`adbfd4a`)**:
+  * `aria-modal` overlay never took focus; panel now focuses on mount (`tabIndex={-1}`) and a document keydown handler keeps Tab inside while open.
+- **§83-G — Backup resolves DB path through backend config; refuses DB-less archive (`be64ef1`)**:
+  * CLI no longer falls back to CWD-relative `data/trading_bot.db` without dotenv; resolves `config.DB_PATH`. `create_backup` raises `database file not found` instead of silently archiving no book.
+- **§83-H — Pre-restore snapshot includes WAL tail; stale sidecars removed (`74e05c9`)**:
+  * Pre-restore snapshot now goes through SQLite `Connection.backup()` (raw copy2 only for genuinely non-SQLite files); `_remove_sqlite_sidecars()` clears stale `-wal`/`-shm`/`-journal` before promotion and rollback replace.
+- **Verification**: full suite **1209 passed**, 0 failed (102 warnings, 17.55s; +10 over the §82 baseline of 1199). No signing/execution/sizing/threshold changes.
+
+**Prior — 2026-10-18 (§82 Post-§81 Re-Audit Bug Fixes, Phases A–H complete, suite 1199 green):**
+- **A–B**: `SendRejected` subclassed `ExecutionError` and contained across memo/confirmed-trade/drill callers (AST-guarded), per-position exit loop isolated; preflight `SendRejected` resets `last_sig`/`last_blockhash` so the sell ladder escalates; "already processed" stays ambiguous (`None`).
+- **C–D**: wallet-drop trips `kill_switch.json` (not `.txt`); unreadable USDC is passed as `None` (never 0.0) to `check_wallet_drop`.
+- **E–F**: automated reproducible mutation harness (`scripts/mutation_check.py`, 22/22 caught) replacing the fabricated §81 log; restore gained `--reconcile-only`, partial-promotion kill-switch trip and automatic rollback.
+- **G–H**: session-scoped hermetic network socket guard (non-loopback blocked, `@pytest.mark.network` opt-out); docs/system-patterns/audit corrections.
+- Full detail: handoff §82, decision log #88.
+
+**Prior — 2026-10-17 (§81 Post-§79 Re-Audit Remediation, Phases A–H complete):**
 - **§81 Phase D Complete (DEX Allowlist and Label Hygiene)**:
   * Removed unverified Lifinity program IDs from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py` (live check verified they do not appear in Jupiter's program-id-to-label map).
   * Visible inert filter: WARNING log on startup if labels empty; `dex_filter: "inactive" | "active (N labels)"` exposed on `GET /api/system-status`.
@@ -31,7 +60,7 @@
   * Implemented `send_raw_transaction_detailed` in `solana.py`, raising `SendRejected` when all RPCs definitively refuse.
   * Fixed A-3 in `executor.py`: landed-with-error is treated as conclusive failure without calling `is_blockhash_valid`. Escalates if retryable, fails conclusively if non-retryable.
   * Added 36 tests in `backend/tests/test_audit_81_a.py`. Full test suite: **1102 passed, 0 failed**.
-- **Next Phase**: Phase E (Make restore atomic and safe).
+- **Follow-on**: §81 phases E–H and §82/§83 superseded the list above; see the Current/Prior blocks at the top for the live state.
 
 **Prior — 2026-10-14 (CI Hardening & Mandatory Pre-Commit/Pre-Push Verification Gate Enforced):**
 - **Mandatory Pre-Commit/Pre-Push Gate (Strict Invariant)**: ALL of the following tests and checks MUST pass cleanly before any commit or git push:

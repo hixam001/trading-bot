@@ -103,12 +103,16 @@ realized P&L rows. Buys live in the order-decisions lifecycle above.
 3. **error** — what failed + that retry is automatic; `fail` border.
 4. **offline** (app-level) — single global banner when risk state is offline
    (primary feeds fail or safety unknown); panels keep last data; the WebSocket
-   reconnects with exponential backoff (1s–15s).
+   reconnects with exponential backoff (1s–15s) and re-hydrates recent
+   decisions from REST on every (re)open, so nothing emitted during the gap
+   is lost (§83).
 5. **stale** — deferred by operator decision (2026-09-06): every panel's
    REST poll self-heals on its next interval (see prior revisions).
 
 ## 4. Accessibility acceptance criteria (testable)
 - All interactive elements are `<button>`/`<a>` with visible focus rings.
+- Modal dialogs (`aria-modal`) receive focus on open and trap Tab inside for
+  as long as they are open (§83).
 - Expandable rows: `aria-expanded`, operable with Enter/Space.
 - Copy-address buttons announce "copied" state (text, not color-only).
 - No meaning carried by color alone — every pass/fail value also carries a
@@ -157,6 +161,17 @@ Instrument Serif, grain textures.
 - [ ] Tab order walks hero → tabs → panels without traps
 
 ## 7. Revision history (condensed)
+- **§83 (2026-10-19)** — two frontend truth/recovery fixes.
+  (1) Decision-feed hydration (`useWebSocket.ts`) now runs on every socket
+  (re)open, not only on mount: a backend restart or network blip previously
+  dropped every decision emitted while the socket was down until a manual
+  reload. Dedupe-by-id, newest-first ordering and the 200-row cap are
+  unchanged; `freshId` still tracks live WS arrivals only, so hydration never
+  re-flashes old rows. (2) `ShortcutOverlay` made its `aria-modal` promise
+  real: the panel takes focus on mount (`tabIndex={-1}`) and a document-level
+  keydown handler keeps Tab inside it while open, instead of walking the
+  visually inert page behind it.
+
 - **§65 (2026-09-21)** — full keyboard vocabulary + mint-history drill-down.
   (1) The §63 decisions-tape cursor is promoted to a GLOBAL vocabulary:
   j/k move, Enter expands, g/G jump to top/bottom (single `g`, deliberate —

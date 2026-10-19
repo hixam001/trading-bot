@@ -125,7 +125,7 @@ spin-down. On Oracle's always-on VM this is unnecessary.
 
 ## 4. Database
 
-- **Default:** SQLite at `DB_PATH` — put it on a mounted volume (compose does).
+- **Default:** SQLite at `DB_PATH` (resolved as `backend/ + $DB_PATH`, i.e. app-relative) — put it on a mounted volume (compose does). `scripts/backup_state.py` and `scripts/restore_state.py` resolve the same path through `backend/config.py` and load `.env`, so a host-run backup can never silently archive a different (or missing) database; a missing DB refuses the backup outright (§83 Phase G).
 - **Supabase:** run `migrations/supabase/*.sql` in the SQL editor, then set
   `USE_SUPABASE_DB=1`, `SUPABASE_DB_URL` (direct asyncpg connection to the pooler).
   `api/db_pg.py` is a drop-in with the identical surface.
@@ -148,7 +148,12 @@ is an always-on VM with a persistent disk/volume.
 env vars — never hand-edit paths in code. A stale path does not error; it
 silently forks a second state directory, and an operator-tripped kill switch
 in the wrong directory is a kill switch nothing reads.
-`backend/tests/test_state_path_colocation.py` pins this.
+**Leave these variables unset unless relocating a file**: an empty value
+would otherwise resolve to the repo root, because `os.getenv(k, default)`
+returns `""` for a set-but-empty variable and `Path("")` is `.`. Since
+§83 Phase A an empty value is treated exactly like unset, and `.env.example`
+ships `BREAK_STATE_FILE`/`KILL_SWITCH_FILE` commented out.
+`backend/tests/test_state_path_colocation.py` pins all of this.
 
 **Container supervision.** The entrypoint runs the API *and* (when armed +
 wallet configured) the live cycle, and exits non-zero if EITHER dies, so the

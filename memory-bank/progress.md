@@ -1,6 +1,26 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §83 Post-§82 Hardening: config truth, data honesty, frontend recovery & backup integrity (2026-10-19, 8 commits A–H):
+      1. §83-A (`f9135a6`): empty `BREAK_STATE_FILE`/`KILL_SWITCH_FILE` env values now mean unset (`os.getenv(k) or default`, same as `LIVE_STATE_DIR`), fixing repo-root resolution (`Path("")` == `.`), the `set_break` ValueError, and the disclosure kill-switch phantom; `.env.example` ships both lines commented out; subprocess + static guard tests in `test_state_path_colocation.py`.
+      2. §83-B (`a934622`): disclosure config-truths pinned to REAL attributes (`CROWD_HEAT_MIN/MAX`, `REGIME_MIN_PCT_GREEN`/`REGIME_MAX_PCT_GREEN`, `REGIME_MIN_MEDIAN_VOLUME_USD`); previously five nonexistent names served `null` bands forever.
+      3. §83-C (`135e530`): `_safe_float_signed` keeps negative price changes as data (volumes stay positive-only) so fake_chart straight-bleed/distribution-corpse detectors can fire; absent windows stay `None`.
+      4. §83-D (`04a9b68`): binding resolves the wallet via `wallet.public_address()` (never `config.WALLET_ADDRESS`, which exists nowhere) and takes `committed_side` from the sealed payload `kind` instead of nonexistent `entry_allowed`.
+      5. §83-E (`b472b75`): decision feed re-hydrates `/api/feed` on every socket (re)connect, not just mount — no decisions are dropped during backend restarts or network blips.
+      6. §83-F (`adbfd4a`): shortcut overlay takes focus on mount and traps Tab inside while open (`aria-modal` made real).
+      7. §83-G (`be64ef1`): backup CLI resolves `config.DB_PATH` through backend config (loads `.env` like the app) and refuses a DB-less archive (`database file not found`) instead of reporting a false SUCCESS.
+      8. §83-H (`74e05c9`): pre-restore snapshot goes through SQLite `Connection.backup()` (committed WAL tail preserved; raw copy2 only for genuinely non-SQLite files) and `_remove_sqlite_sidecars()` clears stale `-wal`/`-shm`/`-journal` before promotion and rollback replace.
+      9. Full test suite: **1209 passed**, 0 failed (+10 new tests, 102 warnings in 17.55s; hermetic network socket guard active). No signing/execution/sizing/threshold changes.
+- [x] §82 Post-§81 re-audit bug fixes & honest verification (2026-10-18, Phases A–H):
+      1. §82-A: `SendRejected` subclasses `ExecutionError` and is contained across memo/confirmed-trade/drill callers; per-position exit loop isolated so one failed exit cannot abort the cycle; AST guard enforces every send call site handles it.
+      2. §82-B: preflight `SendRejected` in `place_sell` resets `last_sig`/`last_blockhash` so the slippage ladder escalates instead of returning a false `exit_unresolved`; "already processed" is never treated as rejected (ambiguous `None`).
+      3. §82-C: wallet-drop trips the persistent `kill_switch.json` via `trip()` (preserving an earlier reason); stale `kill_switch.txt`/`operator_break.txt` references removed.
+      4. §82-D: `run_live_cycle` passes unreadable USDC as `None` (never `0.0`) to `check_wallet_drop`; RPC exceptions treat USDC/SOL as `None`.
+      5. §82-E: automated reproducible mutation harness (`scripts/mutation_check.py`) replaces the inaccurate §81 mutation log; 22/22 mutations caught by real tests; SQLite integrity mutation now covered.
+      6. §82-F: `restore_state.py` gains `--reconcile-only`; partial promotion trips the kill switch and attempts automatic atomic rollback from the pre-restore backup.
+      7. §82-G: session-scoped hermetic network socket guard blocks all non-loopback calls unless marked `@pytest.mark.network`; unmocked RPC test rewritten; suite verified offline.
+      8. §82-H: documentation, system patterns and audit corrections updated.
+      9. Full test suite: **1199 passed**, 0 failed (online and offline).
 - [x] CI Pipeline & Pytest Path Resolution Fix (2026-10-18):
       1. Added `pythonpath = . backend` to `pytest.ini` and ensured `_ROOT` is in `sys.path` in `backend/conftest.py` for bare `pytest` invocations.
       2. Ensured `backend/live_execution/state` directory is created on fresh checkouts before hermeticity snapshot.
