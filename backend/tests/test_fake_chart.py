@@ -259,3 +259,16 @@ def test_dexscreener_extracts_volume_m5():
     }
     fields = _extract_pair_fields(pair)
     assert fields["volume_5m_usd"] == 12_345
+
+
+# --- §84: unknown trade counts must not fabricate a one-sided tape ---------
+
+def test_unknown_sells_cannot_trip_one_sided_tape():
+    fake, reason = _run(buys_1h=60, sells_1h=None)
+    assert fake is False, reason
+
+
+def test_unknown_buys_cannot_trip_avg_ticket():
+    fake, reason = _run(vol_1h=160_000, buys_1h=None, sells_1h=60,
+                        liq_usd=140_000)
+    assert fake is False, reason

@@ -273,6 +273,37 @@ def test_parse_token_2022_high_transfer_fee():
     assert any("transferFeeConfig" in d for d in parsed["dangerous_extensions"])
 
 
+def test_transfer_fee_reports_active_older_but_gates_on_pending_newer():
+    """§84: older fee is ACTIVE until the next epoch; newer is scheduled.
+    Report the active bps but refuse on the worse of the two."""
+    payload = {
+        "program": "spl-token-2022",
+        "parsed": {"info": {"extensions": [{
+            "extension": "transferFeeConfig",
+            "state": {
+                "olderTransferFee": {"transferFeeBasisPoints": 50},
+                "newerTransferFee": {"transferFeeBasisPoints": 250},
+            },
+        }]}},
+    }
+    parsed = parse_mint_extensions(payload)
+    assert parsed["transfer_fee_bps"] == 50
+    assert any("transferFeeConfig" in d for d in parsed["dangerous_extensions"])
+
+    pending_only = {
+        "program": "spl-token-2022",
+        "parsed": {"info": {"extensions": [{
+            "extension": "transferFeeConfig",
+            "state": {
+                "newerTransferFee": {"transferFeeBasisPoints": 250},
+            },
+        }]}},
+    }
+    parsed2 = parse_mint_extensions(pending_only)
+    assert parsed2["transfer_fee_bps"] == 250
+    assert parsed2["dangerous_extensions"]
+
+
 def test_parse_token_2022_default_frozen():
     parsed = parse_mint_extensions(TOKEN_2022_DEFAULT_FROZEN)
     assert parsed["program"] == "spl-token-2022"

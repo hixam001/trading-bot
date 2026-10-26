@@ -43,11 +43,17 @@ def _make_decision(id_: int, symbol: str, created_at: str) -> dict:
     }
 
 
-def _make_fill(trade_id: str, symbol: str, opened_at: str) -> dict:
+def _sig(n: int) -> str:
+    """A real-signature-shaped base58 id (87 chars), unique per n."""
+    return "5" * 86 + chr(65 + n)
+
+
+def _make_fill(trade_id: str, symbol: str, opened_at: str,
+               mint: str | None = None) -> dict:
     return {
         "trade_id": trade_id,
         "symbol": symbol,
-        "mint_address": f"mint_{symbol}",
+        "mint_address": mint or f"mint_{symbol}",
         "opened_at": opened_at,
         "side": "buy",
     }
@@ -84,7 +90,8 @@ async def test_basic_match_attributes_fill():
     """A decision + fill with matching symbol within window → attributed."""
     now = _now()
     decisions = [_make_decision(1, "BONK", _iso(now - timedelta(minutes=5)))]
-    fills = [_make_fill("trade-abc", "BONK", _iso(now))]
+    fill_sig = _sig(0)
+    fills = [_make_fill(fill_sig, "BONK", _iso(now))]
 
     bind_calls = []
 
@@ -104,7 +111,7 @@ async def test_basic_match_attributes_fill():
     assert len(bind_calls) == 1
     commit_id, sig, phase, matched_by = bind_calls[0]
     assert commit_id == 1
-    assert sig == "trade-abc"
+    assert sig == fill_sig
     assert phase == "filled"
     assert matched_by == "retro"
 
@@ -120,8 +127,8 @@ async def test_double_claim_prevention():
         _make_decision(3, "BONK", _iso(base + timedelta(minutes=2))),
     ]
     fills = [
-        _make_fill("fill-1", "BONK", _iso(base + timedelta(minutes=3))),
-        _make_fill("fill-2", "BONK", _iso(base + timedelta(minutes=4))),
+        _make_fill(_sig(1), "BONK", _iso(base + timedelta(minutes=3))),
+        _make_fill(_sig(2), "BONK", _iso(base + timedelta(minutes=4))),
     ]
 
     bind_calls = []
@@ -149,7 +156,7 @@ async def test_window_edge_fill_too_late():
     """Fill >12h after decision is outside the window and NOT matched."""
     now = _now()
     decisions = [_make_decision(1, "WIF", _iso(now - timedelta(hours=13)))]
-    fills = [_make_fill("fill-late", "WIF", _iso(now))]  # 13h after
+    fills = [_make_fill(_sig(3), "WIF", _iso(now))]  # 13h after
 
     bind_calls = []
     mock_db = AsyncMock()
@@ -169,7 +176,7 @@ async def test_symbol_mismatch_not_matched():
     """Different symbols never match even with identical timestamps."""
     now = _now()
     decisions = [_make_decision(1, "BONK", _iso(now - timedelta(minutes=1)))]
-    fills = [_make_fill("fill-wrong", "WIF", _iso(now))]
+    fills = [_make_fill(_sig(4), "WIF", _iso(now))]
 
     mock_db = AsyncMock()
     mock_db.get_pending_unsigned_commits = AsyncMock(return_value=decisions)
@@ -188,12 +195,52 @@ async def test_fill_before_decision_not_matched():
     """Fill whose timestamp precedes the decision is NOT attributed (ordering)."""
     now = _now()
     decisions = [_make_decision(1, "BONK", _iso(now))]
-    fills = [_make_fill("fill-early", "BONK", _iso(now - timedelta(minutes=5)))]
+    fills = [_make_fill(_sig(5), "BONK", _iso(now - timedelta(minutes=5)))]
 
     mock_db = AsyncMock()
     mock_db.get_pending_unsigned_commits = AsyncMock(return_value=decisions)
     mock_db.get_recent_fills_for_retro = AsyncMock(return_value=fills)
     mock_db.bind_commit_signature = AsyncMock(return_value=0)
+
+    with patch("retro_matcher.db", mock_db):
+        result = await run_retro_match(conn=None)
+
+    assert result["matched"] == 0
+    mock_db.bind_commit_signature.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_synthetic_mirror_id_is_never_written_as_signature():
+    """`live-<mint8>` is a mirror key, not a chain signature — never bind it."""
+    now = _now()
+    decisions = [_make_decision(1, "BONK", _iso(now - timedelta(minutes=5)))]
+    fills = [_make_fill("live-mint_BON", "BONK", _iso(now))]
+
+    mock_db = AsyncMock()
+    mock_db.get_pending_unsigned_commits = AsyncMock(return_value=decisions)
+    mock_db.get_recent_fills_for_retro = AsyncMock(return_value=fills)
+    mock_db.bind_commit_signature = AsyncMock(return_value=1)
+
+    with patch("retro_matcher.db", mock_db):
+        result = await run_retro_match(conn=None)
+
+    assert result["matched"] == 0
+    mock_db.bind_commit_signature.assert_not_called()
+    assert result["unmatched_fills"][0]["trade_id"] == "live-mint_BON"
+
+
+@pytest.mark.asyncio
+async def test_same_symbol_different_mint_is_not_matched():
+    """Many mints share a ticker — identity is the mint, not the symbol."""
+    now = _now()
+    decisions = [_make_decision(1, "BONK", _iso(now - timedelta(minutes=5)))]
+    fills = [_make_fill(_sig(6), "BONK", _iso(now),
+                        mint="mint_NOT_THE_DECISION")]
+
+    mock_db = AsyncMock()
+    mock_db.get_pending_unsigned_commits = AsyncMock(return_value=decisions)
+    mock_db.get_recent_fills_for_retro = AsyncMock(return_value=fills)
+    mock_db.bind_commit_signature = AsyncMock(return_value=1)
 
     with patch("retro_matcher.db", mock_db):
         result = await run_retro_match(conn=None)

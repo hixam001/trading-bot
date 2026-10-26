@@ -232,7 +232,11 @@ class Thinker:
             return ThinkResult(
                 thesis, invalidation, verdict,
                 source=f"{self._main_llm.provider}:{self._main_llm.model}",
-                break_taking=bool(break_obj.get("taking")),
+                break_taking=(
+                    break_obj.get("taking") is True
+                    or (isinstance(break_obj.get("taking"), str)
+                        and break_obj["taking"].strip().lower()
+                        in {"true", "1", "yes", "on"})),
                 break_minutes=min(max(raw_m, 0), 60),
                 break_reason=str(break_obj.get("reason") or ""),
                 llm_usage=result

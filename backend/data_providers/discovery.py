@@ -300,7 +300,10 @@ class KeywordScanner:
                 has_telegram="telegram" in info["socials"],
                 has_website=True if info["has_site"] else None,
                 boosted=True if mint in boosted_mints else None,
-                decimals=6,
+                # Dexscreener does not report decimals. Execution resolves it
+                # from the chain; a hardcoded 6 fabricated raw-unit amounts
+                # for every non-6-decimal token (the decimals lesson).
+                decimals=None,
                 source="dexscreener:keyword",
                 discovery_source="keyword",
             ))

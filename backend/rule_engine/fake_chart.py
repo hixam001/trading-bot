@@ -110,15 +110,19 @@ def is_fake_chart(
 
     # 5. volume with almost nobody behind it. Needs REAL trade counts — unknown
     # buys/sells are not "nobody" (unknown != zero).
+    # 5-7 all reason about the trade COUNT, so they need BOTH sides visible.
+    # A missing side coerced to 0 used to fabricate "one-sided-tape" and
+    # inflate the average ticket (unknown != zero).
     if buys_1h is not None and sells_1h is not None:
+        # 5. volume with almost nobody behind it
         if vol1h > 50_000 and trades < 60:
             return True, "vol-without-crowd"
-    # 6. an average ticket no real participant in a pool this thin would send
-    if trades > 0 and vol1h / trades > 2_500 and liq < 150_000:
-        return True, "avg-ticket-too-big"
-    # 7. one-sided by construction: bots loop, crowds do not
-    if trades > 40 and (buys == 0 or sells == 0):
-        return True, "one-sided-tape"
+        # 6. an average ticket no real participant in a pool this thin would send
+        if trades > 0 and vol1h / trades > 2_500 and liq < 150_000:
+            return True, "avg-ticket-too-big"
+        # 7. one-sided by construction: bots loop, crowds do not
+        if trades > 40 and (buys == 0 or sells == 0):
+            return True, "one-sided-tape"
 
     # 8/9. charts nothing intelligent can be said about: a straight bleed off
     # the top / a distribution corpse already down hard on every window. An

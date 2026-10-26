@@ -376,8 +376,8 @@ async def test_think_candidate_degrades_to_template_on_error():
     tk = FakeThinker(raise_exc=RuntimeError("LLM down"))
     out = await dp.think_candidate(make_candidate(), tk)
     assert out is not None
-    assert out.wants_entry is not None     # template verdict present
-    assert "degraded" in out.source or out.source == "template"
+    assert out.verdict == "pass"           # §84: a crashed thinker never buys
+    assert "degraded" in out.source
 
 
 async def test_think_candidate_passes_memory_line():

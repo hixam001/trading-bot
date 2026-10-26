@@ -85,10 +85,14 @@ async def get_exits():
         "stale_band_pct": cfg.EXIT_STALE_BAND_PCT,
         "stale_vol6h_usd": cfg.EXIT_STALE_VOL6H_USD,
         "tp_ladder": [{"gain": g, "trim": t} for g, t in cfg.EXIT_TP_LADDER],
+        # §84: report the units and constants the gate actually uses.
+        # min_clip is the SELL clip floor (not the entry ticket floor), and
+        # SELL_COOLDOWN_MINUTES is already expressed in MINUTES — multiplying
+        # by 60 published 1800 for a 30-minute cooldown.
         "sell_risk_gate": {
-            "min_clip_usd": cfg.MIN_TICKET_USD,
-            "cooldown_minutes_per_mint": cfg.SELL_COOLDOWN_MINUTES * 60
-            if hasattr(cfg, 'SELL_COOLDOWN_MINUTES') else 30,
+            "min_clip_usd": cfg.SELL_MIN_CLIP_USD,
+            "cooldown_minutes_per_mint": getattr(
+                cfg, 'SELL_COOLDOWN_MINUTES', 30.0),
             "max_exits_per_24h": getattr(cfg, 'MAX_EXITS_PER_24H', 8),
         },
     }

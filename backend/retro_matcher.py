@@ -13,11 +13,15 @@ ALGORITHM (the reference's, kept intact):
   1. pending = decision rows with entry_allowed=1 AND signature IS NULL
      (newest 60)
   2. candidates = opened trades (newest 120) not already bound
-  3. match on: same symbol (case-insensitive, $ stripped) + same side
-     (always 'buy' for now) + fill_at >= decision_at + within 12h window
-  4. earliest unmatched fill wins; a `taken` signatures set grows during
-     the run so nothing is claimed twice
-  5. write back signature=trade_id, phase='filled', matched_by='retro'
+  3. match on: same mint (when both rows carry one) + same symbol
+     (case-insensitive, $ stripped) + same side (always 'buy' for now) +
+     fill_at >= decision_at + within 12h window
+  4. the fill's trade_id must be a REAL Solana signature — synthetic
+     `live-*` / `ledger-*` mirror keys are not chain bindings and are left
+     unattributed for exact CommitLog binding
+  5. earliest unmatched fill wins; a `taken` set grows during the run so
+     nothing is claimed twice
+  6. write back signature=trade_id, phase='filled', matched_by='retro'
 
 SAFEGUARDS (beyond the reference):
   - Exact-bind rows (signature IS NOT NULL) are never overwritten; the
@@ -30,6 +34,7 @@ SAFEGUARDS (beyond the reference):
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -40,10 +45,26 @@ log = logging.getLogger(__name__)
 
 _RETRO_WINDOW_HOURS = 12
 
+# A Solana transaction signature is 64 bytes encoded as base58 — 86-88
+# characters of the base58 alphabet. `live-<mint8>` / `ledger-*` trade IDs
+# are synthetic mirror keys, NOT signatures; writing one into
+# decision_commits.signature fabricated a chain binding that does not exist.
+_SIGNATURE_RE = re.compile(r"^[1-9A-HJ-NP-Za-km-z]{80,90}$")
+
+
+def _is_tx_signature(value: Any) -> bool:
+    return isinstance(value, str) and bool(_SIGNATURE_RE.match(value.strip()))
+
 
 def _strip_symbol(s: str) -> str:
     """Normalize symbol for case-insensitive, $-stripped comparison."""
     return s.strip().lstrip("$").upper()
+
+
+def _mint_of(row: dict) -> str:
+    """Decision mint from the row or its payload; '' when absent."""
+    mint = row.get("mint_address") or (row.get("payload") or {}).get("mint")
+    return str(mint or "").strip()
 
 
 def _parse_iso(s: str | None) -> datetime | None:
@@ -76,6 +97,7 @@ async def run_retro_match(conn: Any) -> dict:
 
     for decision in pending:
         d_sym = _strip_symbol(decision.get("symbol", ""))
+        d_mint = _mint_of(decision)
         d_at = _parse_iso(decision.get("created_at"))
         if not d_at:
             continue
@@ -87,8 +109,17 @@ async def run_retro_match(conn: Any) -> dict:
         for fill in fills:
             if fill["trade_id"] in taken:
                 continue
+            # Only REAL chain signatures may be claimed as a binding. The
+            # live mirror writes synthetic IDs; those are exactly bound by
+            # CommitLog and must never be stamped as signatures here.
+            if not _is_tx_signature(fill.get("trade_id")):
+                continue
             f_sym = _strip_symbol(fill.get("symbol", ""))
             if f_sym != d_sym:
+                continue
+            # Mint is the identity; a symbol is not (many mints share one).
+            f_mint = _mint_of(fill)
+            if d_mint and f_mint and d_mint != f_mint:
                 continue
             # side check: both are 'buy' in current paper mode
             if fill.get("side", "buy") != "buy":
@@ -127,15 +158,11 @@ async def run_retro_match(conn: Any) -> dict:
                     best_fill["trade_id"][:12],
                 )
 
-    # Surface unattributed fills — fills not claimed by any commit
-    claimed_trade_ids = {f["trade_id"] for f in fills if f["trade_id"] in taken}
+    # Surface unattributed fills — fills not claimed by any commit. Synthetic
+    # mirror IDs are reported as unattributed rather than silently rebound.
     unmatched_fills = [
         f for f in fills
-        if f["trade_id"] not in claimed_trade_ids
-    ]
-    unmatched_decisions = [
-        d for d in pending
-        if not any(True for _ in [])  # refreshed in next pass
+        if f["trade_id"] not in taken
     ]
 
     if matched:

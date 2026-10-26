@@ -814,10 +814,15 @@ async def get_recent_fills_for_retro(
     """Opened trade rows not already claimed by a bound commit."""
     rows = await conn.fetch(
         """
-        SELECT trade_id, symbol, mint_address, opened_at::text AS opened_at,
-               entry_price_usd, position_size_usd
-        FROM trades
-        ORDER BY opened_at DESC LIMIT $1
+        SELECT t.trade_id, t.symbol, t.mint_address,
+               t.opened_at::text AS opened_at,
+               t.entry_price_usd, t.position_size_usd
+        FROM trades t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM decision_commits c
+            WHERE c.signature IS NOT NULL AND c.signature = t.trade_id
+        )
+        ORDER BY t.opened_at DESC LIMIT $1
         """,
         limit,
     )

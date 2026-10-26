@@ -60,8 +60,10 @@ def _parse_candidate(raw: dict[str, Any]) -> Optional[Candidate]:
         # Missing liquidity/volume is unevaluable (rules fail closed on None);
         # missing market cap only disables the vol/mcap ratio check.
         liquidity_usd=liquidity,
-        volume_24h_usd=v24 if v24 is not None else 0.0,
-        market_cap_usd=mc if mc is not None else 0.0,
+        # Missing volume/mcap is UNKNOWN, never zero — zero would masquerade
+        # as a measured dead tape and silently satisfy ratio checks.
+        volume_24h_usd=v24,
+        market_cap_usd=mc,
         # Mint decimals — required for correct execution-price quoting.
         decimals=require_type(raw.get("decimals"), int, "decimals", "birdeye"),
         discovery_source="trending",

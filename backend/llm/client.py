@@ -98,6 +98,10 @@ class LLMClient:
         self.model = model
         self._client = client
         self._ok: Optional[bool] = None
+        # §84: the health verdict may not be cached forever — a provider that
+        # dies (or recovers) after the first probe must surface.
+        self._ok_at: float = 0.0
+        self._health_ttl_seconds: float = 60.0
         # Bounded per-provider timeout (performance-discipline rule: every
         # external call has a defined timeout). Main clients pass their own
         # provider value; the social client falls back to SOCIAL_LLM_*.
@@ -123,16 +127,22 @@ class LLMClient:
         }
 
     async def health(self) -> bool:
-        if self._ok is not None:
+        now = time.monotonic()
+        if (self._ok is not None
+                and now - self._ok_at < self._health_ttl_seconds):
             return self._ok
         if not self.api_key:
             self._ok = False
+            self._ok_at = now
             return False
         try:
-            resp = await self.client.get(f"{self.base_url}/models", headers=self._headers(), timeout=10.0)
+            resp = await self.client.get(
+                f"{self.base_url}/models", headers=self._headers(),
+                timeout=10.0)
             self._ok = resp.status_code == 200
         except httpx.HTTPError:
             self._ok = False
+        self._ok_at = now
         return self._ok
 
     async def complete_json(
@@ -174,19 +184,26 @@ class LLMClient:
                 timeout=self.timeout_seconds,
             )
             
-            body: dict[str, Any] = {}
+            raw_body: Any = {}
             if response.status_code == 200:
-                body = response.json()
+                raw_body = response.json()
+            # A 200 body is not guaranteed to be a JSON object (proxy error
+            # pages, bare lists): treat every non-object as unparsable instead
+            # of raising AttributeError outside the fail-soft envelope.
+            body: dict[str, Any] = raw_body if isinstance(raw_body, dict) else {}
                 
             choices = body.get("choices")
-            if not isinstance(choices, list) or not choices:
+            if (not isinstance(raw_body, dict)
+                    or not isinstance(choices, list) or not choices
+                    or not isinstance(choices[0], dict)):
                 return LLMResult(
                     text="", provider=self.provider, model=self.model, task=task,
                     http_status=response.status_code, latency_ms=(time.monotonic() - started) * 1000.0,
                     degradation_reason="unparsable_response" if response.status_code == 200 else f"http_{response.status_code}"
                 )
                 
-            message = choices[0].get("message")
+            first_choice = choices[0]
+            message = first_choice.get("message")
             text = message.get("content") if isinstance(message, dict) else None
             if not isinstance(text, str) or not text.strip():
                 return LLMResult(
@@ -204,7 +221,13 @@ class LLMClient:
             cache_tok = 0
             
             # DeepSeek specific cache tokens
-            prompt_cache_details = usage.get("prompt_cache_hit_tokens") or usage.get("prompt_cache_details", {}).get("cached_tokens")
+            cache_details = usage.get("prompt_cache_details")
+            cache_from_details = (
+                cache_details.get("cached_tokens")
+                if isinstance(cache_details, dict) else None)
+            prompt_cache_details = (
+                usage.get("prompt_cache_hit_tokens")
+                or cache_from_details)
             if prompt_cache_details:
                 cache_tok = _int_or_none(prompt_cache_details) or 0
                 in_tok -= cache_tok # non-cache tokens
@@ -227,7 +250,7 @@ class LLMClient:
                 pricing_snapshot_id=_PRICING_SNAPSHOT.get(self.provider, f"{self.provider}_unknown"),
                 http_status=response.status_code,
                 is_peak_window=is_peak,
-                finish_reason=choices[0].get("finish_reason", "")
+                finish_reason=first_choice.get("finish_reason", "")
             )
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as e:
             return LLMResult(

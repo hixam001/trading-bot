@@ -767,16 +767,14 @@ async def get_recent_fills_for_retro(
     always 'buy' for opens (the only side our paper engine currently writes)."""
     cursor = await conn.execute(
         """
-        SELECT trade_id, symbol, mint_address, opened_at, entry_price_usd,
-               position_size_usd
-        FROM trades
-        WHERE trade_id NOT IN (
-            SELECT trade_id FROM trades WHERE trade_id IN (
-                SELECT payload_json FROM decision_commits
-                WHERE signature IS NOT NULL AND signature = trade_id
-            )
+        SELECT t.trade_id, t.symbol, t.mint_address, t.opened_at,
+               t.entry_price_usd, t.position_size_usd
+        FROM trades t
+        WHERE NOT EXISTS (
+            SELECT 1 FROM decision_commits c
+            WHERE c.signature IS NOT NULL AND c.signature = t.trade_id
         )
-        ORDER BY opened_at DESC LIMIT ?
+        ORDER BY t.opened_at DESC LIMIT ?
         """,
         (limit,),
     )

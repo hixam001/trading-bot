@@ -232,11 +232,20 @@ async def _journal_live_commit(conn, symbol: str, mint_address: str,
     if not getattr(result, "commit_hash", ""):
         return
     try:
-        now_iso = datetime.now(timezone.utc).isoformat()
+        # §84: the decision time is the SEAL time, not journal-insert time.
+        # The seal exists before the memo and the fill; using "now" here put
+        # created_at AFTER the fill's blockTime, so the independent verifier
+        # marked every real fill mismatched on time-ordering.
+        sealed_at = getattr(result, "commit_sealed_at", None)
+        if sealed_at is not None:
+            decided_iso = datetime.fromtimestamp(
+                float(sealed_at), tz=timezone.utc).isoformat()
+        else:
+            decided_iso = datetime.now(timezone.utc).isoformat()
         await db.insert_decision_commit(
             conn,
-            created_at=now_iso,
-            tick_ts=now_iso,
+            created_at=decided_iso,
+            tick_ts=decided_iso,
             symbol=symbol,
             mint_address=mint_address,
             verdict=verdict,
@@ -1098,9 +1107,15 @@ async def run_cycle(once: bool = False) -> dict:
                 {"symbol": c.symbol, "status": "refused",
                  "reason": reason})
             continue
+        # §84: Dexscreener/keyword candidates no longer carry a fabricated
+        # decimals value. Resolve it from chain before execution; unknown
+        # still refuses inside place_order (never a default).
+        output_decimals = c.decimals
+        if output_decimals is None:
+            output_decimals = await _cached_decimals(c.mint_address)
         result = await place_order(
             side="buy", mint=c.mint_address, symbol=c.symbol, usd=usd,
-            output_decimals=c.decimals,
+            output_decimals=output_decimals,
             idempotency_key=f"{c.mint_address}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M')}",
             reference_price_usd=c.price_usd,
         )

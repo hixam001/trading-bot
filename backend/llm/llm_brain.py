@@ -138,10 +138,22 @@ async def run_role(
         client = _build_provider(pid, timeout_override=timeout_seconds)
         if client is None or not client.api_key:
             continue
-        result = await client.complete_json(
-            task=task, system_prompt=system_prompt,
-            user_prompt=user_prompt, budget=budget, json_mode=json_mode,
-        )
+        try:
+            result = await client.complete_json(
+                task=task, system_prompt=system_prompt,
+                user_prompt=user_prompt, budget=budget, json_mode=json_mode,
+            )
+        except Exception as exc:
+            # §84: one provider's unexpected failure must not kill the role
+            # chain (and must not leak the client either).
+            log.warning("llm_brain role=%s provider=%s crashed: %s",
+                        role, pid, exc)
+            result = None
+        finally:
+            # §84: build_provider creates a fresh client per attempt. The
+            # success path returned before closing it, leaking an
+            # AsyncClient (and its connection pool) on every LLM call.
+            await client.aclose()
         if result is not None and result.text and not result.degradation_reason:
             degraded = pid != declared
             label = f"{client.provider}:{client.model}" + (
@@ -153,7 +165,6 @@ async def run_role(
         if result is not None:
             log.warning("llm_brain role=%s provider=%s degraded: %s",
                         role, pid, result.degradation_reason)
-        await client.aclose()
 
     return None, fallback
 
@@ -408,6 +419,24 @@ def _str_list(v, cap: int) -> list:
             and str(x).strip()][:cap]
 
 
+def _as_bool(v) -> bool:
+    """Parse a model-emitted flag without `bool('false') == True`."""
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() in {"true", "1", "yes", "on"}
+    if isinstance(v, (int, float)):
+        return v != 0
+    return False
+
+
+def _as_int(v, default: int = 0) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def parse_llm_tick(raw: str, valid_symbols: set) -> Optional[dict]:
     """Extract + validate the brain tick JSON. Returns a normalized dict or None
     (None => caller fails closed). `valid_symbols` is the UPPER-cased ticker set
@@ -468,8 +497,8 @@ def parse_llm_tick(raw: str, valid_symbols: set) -> Optional[dict]:
         "remember": [m for m in (obj.get("remember") or [])
                      if isinstance(m, dict)][:2],
         "fomo": fomo,
-        "break_taking": bool(brk.get("taking")),
-        "break_minutes": min(max(int(brk.get("minutes") or 0), 0), 60),
+        "break_taking": _as_bool(brk.get("taking")),
+        "break_minutes": min(max(_as_int(brk.get("minutes")), 0), 60),
         "break_reason": str(brk.get("reason") or ""),
     }
 

@@ -349,8 +349,17 @@ async def think_candidate(candidate, thinker, memory_line: str = ""):
     except Exception as e:
         log.error("thinker error on %s: %s", candidate.symbol, e,
                   exc_info=True)
+        # §84: an exception means the configured live provider did not answer
+        # validly. The template explains the refusal but must not approve an
+        # entry — the old fallback could return verdict="buy" on a model
+        # outage, silently bypassing the fail-closed contract.
         from llm.thinker import template_think
-        return template_think(candidate)
+        fallback = template_think(candidate)
+        fallback.verdict = "pass"
+        fallback.source = f"degraded:exception:{type(e).__name__}"
+        fallback.break_taking = False
+        fallback.break_minutes = 0
+        return fallback
 
 
 async def apply_break(think) -> bool:

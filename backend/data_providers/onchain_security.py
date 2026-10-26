@@ -120,19 +120,27 @@ def parse_mint_extensions(data: dict) -> dict:
         elif ext_name == "transferFeeConfig":
             newer = state.get("newerTransferFee") or {}
             older = state.get("olderTransferFee") or {}
-            fee = newer.get("transferFeeBasisPoints")
-            if fee is None:
-                fee = older.get("transferFeeBasisPoints")
-            if fee is not None:
+            # The OLDER fee is the one in force until the next epoch; `newer`
+            # is only scheduled. Report the active fee but gate on the worst
+            # of both so a pending hike cannot slip through.
+            active = older.get("transferFeeBasisPoints")
+            scheduled = newer.get("transferFeeBasisPoints")
+            fees = []
+            for raw_fee in (active, scheduled):
+                if raw_fee is None:
+                    continue
                 try:
-                    fee_int = int(fee)
-                    transfer_fee_bps = fee_int
-                    if fee_int > max_transfer_fee:
-                        dangerous.append(
-                            f"transferFeeConfig ({fee_int} bps > {max_transfer_fee} bps)"
-                        )
+                    fees.append(int(raw_fee))
                 except (ValueError, TypeError):
-                    pass
+                    continue
+            if fees:
+                gate_fee = max(fees)
+                transfer_fee_bps = (
+                    int(active) if active is not None else gate_fee)
+                if gate_fee > max_transfer_fee:
+                    dangerous.append(
+                        f"transferFeeConfig ({gate_fee} bps > {max_transfer_fee} bps)"
+                    )
 
     out["extensions"] = ext_names
     out["dangerous_extensions"] = dangerous

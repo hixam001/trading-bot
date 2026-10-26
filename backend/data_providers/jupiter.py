@@ -64,7 +64,9 @@ class JupiterProvider:
         decimals stored on the candidate snapshot; without them we refuse to
         guess.
         """
-        if decimals is None or decimals <= 0:
+        # Zero is a valid decimals value (whole-token mints); only an unknown
+        # (None) or negative value is unevaluable.
+        if decimals is None or decimals < 0:
             raise ProviderError(
                 f"jupiter: token decimals unknown for {mint_address} — "
                 f"refusing to quote (a wrong decimals value would fabricate "

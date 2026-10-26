@@ -102,7 +102,7 @@ def assert_decimals_known(output_decimals: int | None, mint: str) -> int:
     refuse the trade. A wrong raw-unit amount scales the trade size by
     10**(9 - true_decimals); there is no safe default.
     """
-    if output_decimals is None or output_decimals <= 0:
+    if output_decimals is None or output_decimals < 0:
         raise Refusal(
             f"output token {mint} has UNKNOWN decimals — refusing to trade. "
             f"Never assume a default decimals value."

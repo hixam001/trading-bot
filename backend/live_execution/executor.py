@@ -135,6 +135,11 @@ class OrderResult:
     commit_hash: str = ""
     commit_nonce: str = ""
     commit_payload: dict = field(default_factory=dict)
+    # §84: the seal's wall-clock time. Journaling must use THIS for
+    # decision_commits.created_at — stamping "now" after the fill lands makes
+    # every real fill look like it was committed after its own blockTime and
+    # fails the independent time-ordering check.
+    commit_sealed_at: Optional[float] = None
     memo_signature: str = ""
     memo_slot: Optional[int] = None
     error: Optional[object] = None
@@ -292,7 +297,9 @@ async def place_buy(
                               "commit_payload": intent})
     logc.record_memo(sealed["hash"], memo_res["signature"], memo_res["slot"])
     commit_fields = dict(commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
-                         commit_payload=intent, memo_signature=memo_res["signature"],
+                         commit_payload=intent,
+                         commit_sealed_at=sealed.get("sealed_at"),
+                         memo_signature=memo_res["signature"],
                          memo_slot=memo_res["slot"])
 
     try:
@@ -471,7 +478,9 @@ async def place_sell(
                               "commit_payload": intent})
     logc.record_memo(sealed["hash"], memo_res["signature"], memo_res["slot"])
     commit_fields = dict(commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
-                          commit_payload=intent, memo_signature=memo_res["signature"],
+                          commit_payload=intent,
+                          commit_sealed_at=sealed.get("sealed_at"),
+                          memo_signature=memo_res["signature"],
                           memo_slot=memo_res["slot"])
 
     ladder = getattr(config, "EXIT_SLIPPAGE_LADDER_BPS", (50, 150, 300))
