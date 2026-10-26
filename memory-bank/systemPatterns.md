@@ -65,6 +65,22 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
     state on every (re)open, not just mount — a backend restart or network blip must not
     silently drop events until a manual reload. Modal overlays (`aria-modal`) take focus
     on mount and trap Tab inside for as long as they are open.
+15. **Seal time is the journal truth (§84-A):** `OrderResult.commit_sealed_at` carries
+    the CommitLog seal timestamp; `decision_commits.created_at`/`tick_ts` must use it,
+    never insert time. A fill stamped later than its own `blockTime` fails the
+    independent time-ordering proof.
+16. **Unknown is not a retryable expiry (§84-E):** an empty/unparseable previous
+    blockhash means the prior signed exit cannot be proven dead — keep the position
+    `exit_unresolved` rather than escalating the ladder into a possible double fill.
+    Same rule for absent decimals/feeds: resolve or refuse, never synthesize.
+17. **Per-attempt provider clients close in `finally` (§84-C):** `run_role` builds a
+    fresh client per provider attempt and must close it on both success and failure;
+    one provider exception falls through to the next provider. Health verdicts are
+    TTL-cached, not cached forever, so a dead/recovered provider surfaces.
+18. **Synthetic IDs are never chain bindings (§84-B):** only 80–90-char base58 values
+    may be written to `decision_commits.signature`; `live-*`/`ledger-*` mirror keys stay
+    unattributed until exact CommitLog binding. Retro matches also require mint
+    agreement when both rows expose a mint.
 
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;

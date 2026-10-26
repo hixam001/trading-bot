@@ -1,3 +1,24 @@
+## Memory-bank update — 2026-10-26 (§84 Post-§83 re-audit: proof truth, execution integrity, LLM/data resilience & frontend honesty)
+
+- **Task**: audit the post-§83 tree for silent-wrong-state bugs across proof/journal truth, retro binding, LLM fail-soft behavior, external-data honesty, live execution accounting, frontend keyboard/risk state, and auth cookie/key handling; fix each with regression tests, one phase per commit.
+- **Backend fixes**:
+  - **A**: `/api/exits.json` reported the wrong sell-clip config name and multiplied cooldown by 60; both now reflect `SELL_MIN_CLIP_USD` / `SELL_COOLDOWN_MINUTES`. `commit_sealed_at` flows from the seal through `OrderResult` so journal rows use seal time, not post-fill insert time.
+  - **B**: `retro_matcher` fabricated signatures from synthetic `live-*`/`ledger-*` IDs and matched symbol-only; now requires a real base58 signature, rejects mint mismatch, and excludes already-bound fills in SQLite and Postgres.
+  - **C**: LLM client health is TTL-cached (60s); malformed bodies/choices degrade; `run_role` contains provider exceptions and closes each client in `finally`; `"false"`/junk break payloads parse safely; pipeline exceptions fail closed to `pass` with `degraded:exception:<Type>`.
+  - **D**: fake-chart needs both buy and sell counts; Token-2022 gates on the active and pending fee max; Birdeye None stays None; discovery no longer invents 6 decimals; zero decimals is valid and run-cycle resolves unknown decimals before ordering.
+  - **E**: token deltas filter to the wallet owner; empty/unknown previous blockhash is `exit_unresolved` instead of a retry; exit scans persist new HWMs.
+  - **G**: session cookies emit a real UTC `Expires` datetime; signing keys use LRU eviction.
+- **Frontend fixes**:
+  - **F**: LiveFeed Enter respects focused inner buttons; App kill-switch posture allows sells but not buys and treats loading primary feeds as offline; global Enter ignores interactive targets; MintHistory dedupes fetches/pages, preserves loaded rows on page errors, cleans retry timers, and owns list-scoped keys; useApi adds 15s timeout, in-flight guard, and unmount abort.
+- **Tests**:
+  - Backend: **1229 passed**, 0 failed (17.03s; +20 over §83 including `test_audit_84.py`).
+  - Frontend: `tsc --noEmit` + `npm run build` clean; Playwright **39/39** with built SPA + mock-provider API (`DATA_BACKEND=mock`, `RATE_LIMIT_ENABLED=false`, isolated DB/state dirs).
+- **Documentation**: handoff §84; memory-bank `activeContext`/`progress`/`session-log`/`systemPatterns`; decision log #90.
+- **Constraints & Invariants Preserved**:
+  - No changes to wallet signing, sizing, rule thresholds, risk flags, or hardcoded arming switches.
+  - Unknown blockhash/decimals/feed data stays unknown and fail-closed; synthetic IDs never become chain proofs.
+  - `backend/requirements.lock` was dirty before this work and is deliberately excluded.
+
 ## Memory-bank update — 2026-10-19 (§83 Post-§82 hardening: config truth, data honesty, frontend recovery & backup integrity)
 
 - **Task**: fix the eight defects found in the post-§82 review, one commit per defect (§83-A…§83-H), treating each as a truth/robustness bug rather than a feature. (§82 itself — A–H, 1199 green — was documented in handoff §82 and decision log #88.)

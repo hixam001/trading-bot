@@ -1,6 +1,16 @@
 # Active Context — trading-bot
 
-**Current — 2026-10-19 (§83 Post-§82 Hardening: Config Truth, Data Honesty, Frontend Recovery & Backup Integrity — complete, 8 commits A–H):**
+**Current — 2026-10-26 (§84 Post-§83 Re-Audit: Proof Truth, Execution Integrity, LLM/Data Resilience & Frontend Honesty — complete, 7 phases A–G):**
+- **§84-A — Proof units + seal-time journaling**: `/api/exits.json` now reports `SELL_MIN_CLIP_USD` and `SELL_COOLDOWN_MINUTES` without the hidden `*60`; `OrderResult.commit_sealed_at` carries the CommitLog seal time through buy/sell and `_journal_live_commit` uses it for `created_at`/`tick_ts` (fills no longer appear committed after their own blockTime).
+- **§84-B — Retro matcher binding integrity**: only 80–90-char base58 trade IDs can become signatures; synthetic `live-*`/`ledger-*` mirror keys are never bound; mint mismatch (when both rows expose one) rejects a match; both DB backends exclude fills already referenced by a non-null commit signature.
+- **§84-C — LLM resilience**: health verdicts expire after 60s; malformed 200 bodies/choices degrade to `unparsable_response`; `run_role` contains provider exceptions and closes clients in `finally`; `bool("false")` no longer means true; pipeline exception fallback is explicitly `verdict="pass"`, zero break, `degraded:exception:<Type>`.
+- **§84-D — No invented data**: fake-chart thresholds require both buy and sell counts; Token-2022 transfer fees use the active (older) fee and gate on the max; Birdeye missing volume/mcap stay `None`; discovery does not fabricate 6 decimals; zero decimals is valid; run-cycle resolves unknown decimals before ordering.
+- **§84-E — Execution integrity**: fill actuals are filtered to the wallet owner; unknown/empty prior blockhash keeps an exit `exit_unresolved` instead of retrying; new high-water marks are persisted to the mirror DB.
+- **§84-F — Frontend honesty**: row Enter respects inner buttons; manual kill switch permits sells with buys blocked; risk posture stays offline until BOTH primary feeds have data; MintHistory and useApi gained in-flight dedupe, retry cleanup, page-error preservation, timeout/abort, and scoped keyboard handling.
+- **§84-G — Auth hardening**: session cookie `Expires` is a real UTC datetime, not `3600`; active signing keys evict the least-recently-used key, never an arbitrary one.
+- **Verification**: backend **1229 passed**, 0 failed (17.03s); `tsc --noEmit` + `npm run build` clean; Playwright **39/39** against built SPA + mock-provider API. No signing/sizing/threshold/risk-flag changes.
+
+**Prior — 2026-10-19 (§83 Post-§82 Hardening: Config Truth, Data Honesty, Frontend Recovery & Backup Integrity — complete, 8 commits A–H):**
 - **§83-A — Empty state-path env values mean unset (`f9135a6`)**:
   * `os.getenv(k, default)` returns `""` for a set-but-empty var, defeating the default (`Path("")` == repo root): a blank `BREAK_STATE_FILE=` made `set_break` die on `Path('.').with_suffix('.tmp')`, `is_on_break` read the repo root (always False), and disclosure read a nonexistent kill switch.
   * `backend/config.py` now uses `os.getenv(k) or <default inside LIVE_STATE_DIR>` for `BREAK_STATE_FILE`/`KILL_SWITCH_FILE`; `.env.example` ships both lines commented out with a warning.

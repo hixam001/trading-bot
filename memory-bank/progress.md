@@ -1,6 +1,15 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §84 Post-§83 Re-Audit: proof truth, execution integrity, LLM/data resilience & frontend honesty (2026-10-26, phases A–G):
+      1. §84-A: `/api/exits.json` uses the real sell-clip constant and true cooldown minutes; `decision_commits.created_at`/`tick_ts` use the CommitLog seal time carried on `OrderResult.commit_sealed_at`, restoring time-ordering proof.
+      2. §84-B: retro matcher accepts only real base58 signatures (never synthetic `live-*`/`ledger-*` mirror IDs), rejects mint mismatches, and both DB backends skip fills already bound by a commit signature.
+      3. §84-C: LLM health verdicts expire after 60s; malformed provider responses degrade instead of raising; `run_role` contains exceptions and closes clients; string `"false"` is false; pipeline exception fallback is a zero-break `pass` with a degraded source.
+      4. §84-D: fake-chart gates on both buy and sell counts; Token-2022 screens the active fee and gates on the max; Birdeye missing fields stay `None`; discovery stops fabricating 6 decimals; zero decimals is valid; run-cycle resolves unknown decimals.
+      5. §84-E: fill actuals filter to the wallet owner; unknown prior blockhash stays `exit_unresolved` (no double-fill retry); HWM updates persist to the mirror DB.
+      6. §84-F: Enter on inner row buttons is not hijacked; kill-switch posture blocks buys but allows exits; risk state is offline until both primary feeds have data; MintHistory/useApi add in-flight guards, retry cleanup, page-error retention, timeouts and abort-on-unmount.
+      7. §84-G: session cookie emits a real UTC `Expires` date (not `3600`); signing-key rotation evicts the least-recently-used key.
+      8. Verification: backend **1229 passed**, 0 failed (17.03s); `tsc --noEmit` + `npm run build` clean; Playwright **39/39** against the built SPA and a mock-provider API.
 - [x] §83 Post-§82 Hardening: config truth, data honesty, frontend recovery & backup integrity (2026-10-19, 8 commits A–H):
       1. §83-A (`f9135a6`): empty `BREAK_STATE_FILE`/`KILL_SWITCH_FILE` env values now mean unset (`os.getenv(k) or default`, same as `LIVE_STATE_DIR`), fixing repo-root resolution (`Path("")` == `.`), the `set_break` ValueError, and the disclosure kill-switch phantom; `.env.example` ships both lines commented out; subprocess + static guard tests in `test_state_path_colocation.py`.
       2. §83-B (`a934622`): disclosure config-truths pinned to REAL attributes (`CROWD_HEAT_MIN/MAX`, `REGIME_MIN_PCT_GREEN`/`REGIME_MAX_PCT_GREEN`, `REGIME_MIN_MEDIAN_VOLUME_USD`); previously five nonexistent names served `null` bands forever.

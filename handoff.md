@@ -1,3 +1,57 @@
+## §84 — Post-§83 Re-Audit: Proof Truth, Execution Integrity, LLM/Data Resilience & Frontend Honesty (2026-10-26)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `8da3bc1` (§83-H)
+- Baseline suite: **1209 passed**, 0 failed (102 warnings)
+- Final suite: **1229 passed**, 0 failed (102 warnings in 17.03s; +20 tests)
+- Playwright: **39/39 passed** against the built SPA + a mock-provider API on `:8000` (`DATA_BACKEND=mock`, `RATE_LIMIT_ENABLED=false`, isolated tmp DB/state dirs, no wallet key material, live engine NOT started)
+- `npx tsc --noEmit` and `npm run build` clean
+
+### Phase Commits & Verified Changes
+1. **§84-A (Commit `baf6202`, grouped A–D) — Proof/Journal Truth: Units, Constants & Seal Time**:
+   - `GET /api/exits.json` advertised `min_clip_usd` from one config name and a cooldown in seconds while consumers expected minutes (`*60`); both now come from `config.SELL_MIN_CLIP_USD` and `getattr(config, "SELL_COOLDOWN_MINUTES", 30.0)` without a hidden conversion.
+   - `OrderResult.commit_sealed_at` now carries the CommitLog seal's wall-clock time out of both `place_buy` and `place_sell`; `run_live_cycle._journal_live_commit` stamps `decision_commits.created_at`/`tick_ts` from that seal (UTC ISO), not from insert time. Previously every real fill appeared committed AFTER its own `blockTime`, failing the independent time-ordering proof.
+   - Tests: `test_exits_reports_sell_clip_and_cooldown_units`, `test_journal_created_at_is_seal_time_not_insert_time`.
+2. **§84-B (Commit `baf6202`) — Retro Matcher Never Fabricates a Chain Binding**:
+   - `retro_matcher` claimed any `trade_id` as a signature, including synthetic mirror keys (`live-<mint8>`, `ledger-*`), and matched on symbol alone. New `_SIGNATURE_RE` accepts only 80–90 base58 characters; synthetic IDs are skipped. When both decision and fill expose a mint, mint mismatch rejects the pairing.
+   - `get_recent_fills_for_retro` (SQLite and Postgres twins) now excludes trades already referenced by any non-null `decision_commits.signature`.
+   - Removed the unused `unmatched_decisions` counter instead of reporting a number the loop never incremented.
+   - Tests: `test_retro_query_excludes_already_bound_trade_ids`, `test_synthetic_mirror_id_is_never_written_as_signature`, `test_same_symbol_different_mint_is_not_matched`.
+3. **§84-C (Commit `baf6202`) — LLM Fail-Soft Envelope Actually Contains Provider Failures**:
+   - `LLMClient.health()` cached its verdict forever; it now re-probes after `_health_ttl_seconds = 60.0`. A dead or recovered provider can no longer be hidden by the first probe.
+   - `complete_json()` rejected non-object 200 bodies, non-list `choices`, and non-dict first choices as `unparsable_response` instead of raising `AttributeError`; non-dict `prompt_cache_details` is handled safely.
+   - `run_role()` wraps each provider call in `try/except Exception/finally` and closes every per-attempt client in `finally` — unexpected provider exceptions fall through to the next provider, and the success path no longer leaks an `AsyncClient` connection pool.
+   - `thinker.parse_verdict_json` and `llm_brain.parse_llm_tick` parse booleans without `bool("false") == True`; `break_minutes` junk becomes 0. `decision_pipeline` exception fallback now returns `verdict="pass"`, `break_taking=False`, `break_minutes=0`, `source="degraded:exception:<Type>"` (previously a permissive/ambiguous fallback).
+   - Tests: health TTL re-probe, non-object body, non-dict choice, `run_role` closes on success, string `"false"`/`"15m"` parsing, pipeline exception verdict.
+4. **§84-D (Commit `baf6202`) — External Data Is Never Invented**:
+   - `fake_chart` thresholds 5/6/7 now require BOTH `buys_1h` and `sells_1h`; a missing sell count no longer fabricates a buy/sell imbalance signal.
+   - `onchain_security` screens the ACTIVE (older) Token-2022 transfer fee and gates on `max(older, newer)`, rather than only the pending newer fee.
+   - `birdeye` passes through `volume_24h_usd`/`market_cap_usd` as `None` when absent (never `0.0`).
+   - Keyword-discovery candidates leave `decimals=None` instead of fabricating 6; `run_live_cycle` resolves decimals via `_cached_decimals` before `place_order`. Jupiter quote/executor decimal guards now accept `0` as valid and reject only `None`/negative.
+   - Tests: unknown buy/sell counts, active-vs-pending transfer fee, Birdeye missing fields, zero decimals quoted.
+5. **§84-E (Commit `88560aa`) — Execution Accounting & HWM Truth**:
+   - `venue.token_deltas_from_tx(tx, owner=...)` and `_fill_actuals(..., owner=addr)` sum only the wallet owner's token entries, so unrelated accounts in the same transaction cannot inflate fill actuals.
+   - A pending sell with an empty/unparseable prior blockhash now yields `is_valid=None` and stays `exit_unresolved` ("blockhash is unknown") instead of treating unknown as expired and retrying a possibly-live exit (double-fill risk).
+   - `_scan_exits_for_position` persists a new high-water mark through `db.update_high_water` (best-effort) with `trade_id=f"live-{mint[:8]}"`; HWM no longer resets on process restart.
+   - Tests: owner-filtered token deltas, owner forwarded to the parser, unparseable-blockhash fail-closed, HWM mirror persistence.
+6. **§84-F (Commit `d1bd320`) — Frontend Keyboard, Risk State & Request Lifecycle**:
+   - `LiveFeed` Enter no longer toggles the row when the focused target is an inner `button/a/[role=button]`; row focus moves the cursor.
+   - `App` manual kill-switch posture is `canBuy:false, canSell:auto`; risk state is offline unless BOTH primary feeds (`liveBook`, `safety`) have data — loading is never "safe to trade". The global Enter dispatcher ignores interactive targets.
+   - `MintHistory` guards duplicate in-flight fetches, clears retry timers at fetch start, dedupes appended pages by event id, keeps loaded rows with a localized page error instead of blanking, shows the skeleton only while empty, and owns j/k/g/G/Enter/Esc while its list has focus (with the same interactive-target guard).
+   - `useApi` aborts requests after `REQUEST_TIMEOUT_MS = 15_000`, prevents overlapping fetches, aborts on unmount, and reports an explicit timeout error.
+   - Playwright: focused-row Enter expands only that row; j/k/Enter work with focus inside the drill-down; loading primary feeds never advertise safe.
+7. **§84-G (Commit `9dcc02b`) — Session Cookie Expiry & Signing-Key Eviction**:
+   - `set_session_cookie` passed `expires=age` (seconds) to Starlette, emitting invalid `Expires=3600` (1970); it now emits a UTC datetime `now + age`.
+   - `_ACTIVE_SIGNING_KEYS` is an LRU `OrderedDict` (move-to-end on use, evict oldest); the old set's arbitrary `pop()` could evict the CURRENT key while retaining long-dead rotations, breaking logout revocation.
+   - Tests: real GMT expiry in the future, eviction keeps the current key.
+
+### §84 Verification & Scope
+- Backend: **1229 passed**, 0 failed (17.03s; hermetic network socket guard active).
+- Frontend: `tsc --noEmit` + `npm run build` clean; **39/39** Playwright tests passed with the built SPA served by a mock-provider API (`RATE_LIMIT_ENABLED=false` required because 39 unmocked page loads exceed the 20/min paid-tier limit).
+- Invariants preserved: no changes to wallet signing, sizing, rule thresholds, risk flags, or the hardcoded live arming switches. Fail-closed behavior only becomes stricter (unknown blockhash/decimals/feeds stay unknown). `backend/requirements.lock` was already dirty before §84 and is intentionally not part of this work.
+
+---
+
 ## §83 — Post-§82 Hardening: Config Truth, Data Honesty, Frontend Recovery & Backup Integrity (2026-10-19)
 
 ### Baseline & Measured Suite Counts
