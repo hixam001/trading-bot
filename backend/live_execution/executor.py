@@ -75,7 +75,8 @@ def raw_units(decimals: int) -> int:
     return raw_units_for_one_token(decimals)
 
 
-async def _fill_actuals(side: str, mint: str, signature: str) -> dict:
+async def _fill_actuals(side: str, mint: str, signature: str,
+                        owner: Optional[str] = None) -> dict:
     """A4 (repo audit): the ACTUAL amounts a confirmed fill moved.
 
     Fetches the confirmed tx (jsonParsed) and derives the signed net token
@@ -90,7 +91,7 @@ async def _fill_actuals(side: str, mint: str, signature: str) -> dict:
         return out
     try:
         tx = await solana.get_transaction(signature)
-        deltas = token_deltas_from_tx(tx)
+        deltas = token_deltas_from_tx(tx, owner=owner)
     except Exception as exc:
         log.info("fill actuals: tx fetch/parse failed for %s: %s",
                  signature[:16], exc)
@@ -360,7 +361,7 @@ async def place_buy(
         # tx — real slippage means the fill rarely equals the quote, and the
         # ledger is the money authority. An unreadable tx journals the quote
         # snapshot (and logs loudly), never a guess.
-        actuals = await _fill_actuals("buy", mint, outcome.signature)
+        actuals = await _fill_actuals("buy", mint, outcome.signature, owner=addr)
         usd_actual = actuals["usdc_delta"] or usd
         tokens_actual = actuals["tokens_delta"] or q["tokens_out"]
         if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
@@ -498,7 +499,7 @@ async def place_sell(
                 if not sig_err:
                     logc.note(sealed["hash"], f"previous signature {last_sig} landed on-chain — stopping ladder")
                     logc.bind(sealed["hash"], last_sig)
-                    actuals = await _fill_actuals("sell", mint, last_sig)
+                    actuals = await _fill_actuals("sell", mint, last_sig, owner=addr)
                     proceeds_actual = actuals["usdc_delta"] or (proceeds_usd if "proceeds_usd" in locals() else 0.0)
                     tokens_sold_actual = actuals["tokens_delta"] or sell_amount
                     try:
@@ -542,9 +543,17 @@ async def place_sell(
                             }
                         )
             else:
-                is_valid = await solana.is_blockhash_valid(last_blockhash) if last_blockhash else False
+                # §84: an unparseable/empty blockhash means we cannot prove
+                # the previous signed exit is dead. Treating that as "expired"
+                # retried the ladder and risked a second fill. Unknown must
+                # stay unresolved (fail closed).
+                is_valid = (await solana.is_blockhash_valid(last_blockhash)
+                            if last_blockhash else None)
                 if is_valid is not False:
-                    reason = f"exit_unresolved: signature {last_sig} is pending and blockhash {last_blockhash} may still be valid"
+                    state = ("unknown" if not last_blockhash
+                             else f"may still be valid ({last_blockhash})")
+                    reason = (f"exit_unresolved: signature {last_sig} is "
+                              f"pending and blockhash is {state}")
                     log.error("DOUBLE FILL SAFETY: %s", reason)
                     try:
                         from alerts import alert_nowait, AlertEvent
@@ -652,7 +661,7 @@ async def place_sell(
             continue
 
         if outcome.status == "filled":
-            actuals = await _fill_actuals("sell", mint, outcome.signature)
+            actuals = await _fill_actuals("sell", mint, outcome.signature, owner=addr)
             proceeds_actual = actuals["usdc_delta"] or proceeds_usd
             tokens_sold_actual = actuals["tokens_delta"] or sell_amount
             if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:

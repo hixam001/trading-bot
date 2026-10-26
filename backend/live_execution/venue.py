@@ -152,13 +152,20 @@ async def fetch_fill_venue(signature: str) -> dict:
 # never to a fabricated number).
 # ---------------------------------------------------------------------------
 
-def _sum_token_balances(entries) -> Optional[dict[str, float]]:
-    """Per-mint sum over a pre/postTokenBalances list (None = malformed)."""
+def _sum_token_balances(entries, owner: Optional[str] = None) -> Optional[dict[str, float]]:
+    """Per-mint sum over a pre/postTokenBalances list (None = malformed).
+
+    When `owner` is given, only that wallet's token accounts count. Summing
+    every account (pool + wallet + fee accounts) makes the pool's balance
+    change cancel the wallet's — a token delta of ~zero on every swap.
+    """
     if not isinstance(entries, list):
         return None
     sums: dict[str, float] = {}
     for e in entries:
         if not isinstance(e, dict):
+            continue
+        if owner is not None and e.get("owner") != owner:
             continue
         mint = e.get("mint")
         amt = (e.get("uiTokenAmount") or {}).get("uiAmount")
@@ -171,7 +178,8 @@ def _sum_token_balances(entries) -> Optional[dict[str, float]]:
     return sums
 
 
-def token_deltas_from_tx(tx: Optional[dict]) -> Optional[dict[str, float]]:
+def token_deltas_from_tx(tx: Optional[dict],
+                         owner: Optional[str] = None) -> Optional[dict[str, float]]:
     """Net per-mint token-balance change across the transaction.
 
     Sums meta.preTokenBalances / meta.postTokenBalances per mint (a
@@ -184,8 +192,8 @@ def token_deltas_from_tx(tx: Optional[dict]) -> Optional[dict[str, float]]:
     meta = tx.get("meta")
     if not isinstance(meta, dict):
         return None
-    pre = _sum_token_balances(meta.get("preTokenBalances"))
-    post = _sum_token_balances(meta.get("postTokenBalances"))
+    pre = _sum_token_balances(meta.get("preTokenBalances"), owner=owner)
+    post = _sum_token_balances(meta.get("postTokenBalances"), owner=owner)
     if pre is None or post is None:
         return None
     out: dict[str, float] = {}

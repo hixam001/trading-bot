@@ -95,7 +95,7 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
 
     # fill actuals: never called in failure paths; return empty for success
-    async def fake_fill_actuals(side, mint, sig):
+    async def fake_fill_actuals(side, mint, sig, owner=None):
         return {"usdc_delta": 1.20, "tokens_delta": 1.0}
 
     monkeypatch.setattr(ex, "_fill_actuals", fake_fill_actuals)

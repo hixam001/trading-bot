@@ -80,3 +80,38 @@ async def test_seed_is_fail_soft(_db, monkeypatch):
     hwm = await rlc._seed_hwm_from_mirror({"keep": 1.0})
     # unchanged marks, no exception escaped
     assert hwm == {"keep": 1.0}
+
+
+# --- §84: a new peak is persisted, not just kept in memory -------------------
+
+async def test_scan_persists_new_high_water_to_mirror(_db, monkeypatch):
+    from api import db
+
+    trade = _trade(MINT, entry=1.0)
+    async with db.get_db() as conn:
+        assert await db.try_insert_open_trade(conn, trade) == 1
+
+    async def fake_decimals(mint):
+        return 6
+
+    class FakeJupiter:
+        async def get_current_price(self, mint, decimals=None):
+            return 1.5
+
+    class FakeLedger:
+        def tranches_taken(self, mint):
+            return 0
+
+    monkeypatch.setattr(rlc, "_cached_decimals", fake_decimals)
+    hwm: dict = {}
+    m = {"opened_ts": datetime.now(timezone.utc).timestamp(), "price_usd": 1.0,
+         "cost": 100.0, "tokens": 100.0}
+    await rlc._scan_exits_for_position(FakeJupiter(), FakeLedger(), hwm, MINT, m)
+
+    assert hwm[MINT] == pytest.approx(1.5)
+    async with db.get_db() as conn:
+        cur = await conn.execute(
+            "SELECT high_water_usd FROM trades WHERE trade_id = ?",
+            (trade.trade_id,))
+        row = await cur.fetchone()
+    assert row["high_water_usd"] == pytest.approx(1.5)

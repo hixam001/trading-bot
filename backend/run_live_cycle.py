@@ -508,9 +508,20 @@ async def _scan_exits_for_position(
         return
     prev = hwm.get(mint, m["price_usd"])
     hwm[mint] = max(prev, price)
+    trade_id = f"live-{mint[:8]}"
+    # §84: the trail peak lived only in memory; update_high_water had zero
+    # callers, so every restart re-seeded it from a mirror that was never
+    # written. Persist each new peak (never lower; best-effort — a DB hiccup
+    # must not block an exit).
+    if hwm[mint] > prev:
+        try:
+            async with db.get_db() as conn:
+                await db.update_high_water(conn, trade_id, hwm[mint])
+        except Exception as exc:
+            log.warning("persist high-water for %s failed: %s", mint[:8], exc)
     m["last_price_usd"] = price   # REF-R8: freshest mark for the risk budget
     trade = Trade(
-        trade_id=f"live-{mint[:8]}", symbol=mint[:6], mint_address=mint,
+        trade_id=trade_id, symbol=mint[:6], mint_address=mint,
         opened_at=_iso(m["opened_ts"]), entry_price_usd=m["price_usd"],
         position_size_usd=m["cost"], quantity=m["tokens"] or 1.0,
         candidate_snapshot={}, thesis="live book", is_open=True,

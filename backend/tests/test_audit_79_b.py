@@ -271,7 +271,7 @@ async def test_exit_slippage_ladder_escalates_on_slippage_error(arm_environment,
         # Success on attempt 2
         return OrderResult(status="filled", signature="SELL_SIG_ATTEMPT_2", slot=101)
 
-    async def fake_actuals(side, mint, sig):
+    async def fake_actuals(side, mint, sig, owner=None):
         return {"usdc_delta": 95.0, "tokens_delta": 10.0}
 
     monkeypatch.setattr(executor, "_get_json", fake_get_json)
@@ -419,6 +419,59 @@ async def test_double_fill_safety_refuses_when_previous_signature_pending_and_bl
 
 
 @pytest.mark.asyncio
+async def test_double_fill_safety_unparseable_blockhash_is_unresolved(arm_environment, monkeypatch):
+    """§84: an empty/unknown blockhash must NOT be treated as expired."""
+    tmp_path, payer = arm_environment
+    ledger = ExecutionLedger(tmp_path / "executions.json")
+    ledger.record_buy("buy-1", TOKEN_MINT, 100.0, 10.0, 10.0, "BUY_SIG")
+
+    attempt_count = 0
+
+    async def fake_get_json(url, params):
+        nonlocal attempt_count
+        attempt_count += 1
+        return {
+            "outAmount": "95000000",
+            "priceImpactPct": "0.005",
+            "inputMint": TOKEN_MINT,
+            "outputMint": USDC_MINT,
+            "inAmount": params["amount"],
+            "slippageBps": params["slippageBps"],
+        }
+
+    async def fake_build(quote, user_pk):
+        # Decodes, but cannot be parsed as a VersionedTransaction: the
+        # executor cannot learn the blockhash.
+        return base64.b64encode(b"not-a-transaction").decode()
+
+    async def fake_broadcast(swap_b64, p, intent=None, logc=None, sealed=None, quote=None):
+        return OrderResult(status="failed", reason="not confirmed before timeout",
+                           signature="SIG_PENDING_1")
+
+    async def fake_get_sig_status(sig):
+        return None
+
+    async def must_not_be_called(bh):
+        raise AssertionError("validity checked for an unknown blockhash")
+
+    monkeypatch.setattr(executor, "_get_json", fake_get_json)
+    monkeypatch.setattr(executor, "_build_swap_transaction", fake_build)
+    monkeypatch.setattr(executor, "_broadcast_and_confirm", fake_broadcast)
+    monkeypatch.setattr(solana, "get_signature_status", fake_get_sig_status)
+    monkeypatch.setattr(solana, "is_blockhash_valid", must_not_be_called)
+
+    result = await executor.place_sell(
+        mint=TOKEN_MINT, symbol="TOK", fraction=1.0, ledger=ledger,
+        reference_price_usd=10.0,
+    )
+
+    assert result.status == "failed"
+    assert "exit_unresolved" in result.reason
+    assert "blockhash is unknown" in result.reason
+    assert attempt_count == 1
+
+
+@pytest.mark.asyncio
 async def test_double_fill_safety_recovers_when_previous_signature_landed_late(arm_environment, monkeypatch):
     """
     Double-fill safety: If attempt 1 was unconfirmed at first but landed before attempt 2,
@@ -457,7 +510,7 @@ async def test_double_fill_safety_recovers_when_previous_signature_landed_late(a
         # Now landed!
         return {"confirmationStatus": "confirmed", "err": None, "slot": 200}
 
-    async def fake_actuals(side, mint, sig):
+    async def fake_actuals(side, mint, sig, owner=None):
         return {"usdc_delta": 95.0, "tokens_delta": 10.0}
 
     monkeypatch.setattr(executor, "_get_json", fake_get_json)

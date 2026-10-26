@@ -113,3 +113,44 @@ async def test_fill_actuals_fail_soft(monkeypatch):
     # an empty signature short-circuits to unreadable
     assert await executor._fill_actuals("sell", MINT, "") == \
         {"tokens_delta": None, "usdc_delta": None}
+
+# --- §84: only the WALLET's balance change counts ---------------------------
+
+def _owned_bal(mint: str, ui, owner: str) -> dict:
+    return {"mint": mint, "owner": owner,
+            "uiTokenAmount": {"uiAmount": ui, "amount": "0", "decimals": 6}}
+
+
+def test_owner_filter_prevents_pool_cancelling_wallet_delta():
+    wallet, pool = "WALLET111", "POOL222"
+    tx = _tx(
+        [_owned_bal(MINT, 0.0, wallet), _owned_bal(MINT, 10.0, pool),
+         _owned_bal(USDC, 10.0, wallet), _owned_bal(USDC, 0.0, pool)],
+        [_owned_bal(MINT, 5.0, wallet), _owned_bal(MINT, 5.0, pool),
+         _owned_bal(USDC, 0.0, wallet), _owned_bal(USDC, 10.0, pool)],
+    )
+    # Unscoped, the pool's loss cancels the wallet's gain.
+    assert MINT not in token_deltas_from_tx(tx)
+    d = token_deltas_from_tx(tx, owner=wallet)
+    assert d[MINT] == pytest.approx(5.0)
+    assert d[USDC] == pytest.approx(-10.0)
+
+
+@pytest.mark.asyncio
+async def test_fill_actuals_passes_owner_to_parser(monkeypatch):
+    seen = {}
+
+    def fake_parse(tx, owner=None):
+        seen["owner"] = owner
+        return {MINT: 1.0, USDC: -2.0}
+
+    monkeypatch.setattr(executor, "token_deltas_from_tx", fake_parse)
+    monkeypatch.setattr(executor.solana, "get_transaction",
+                        lambda sig: _async_value({"meta": {}}))
+    out = await executor._fill_actuals("buy", MINT, "SIGX", owner="WALLET111")
+    assert seen["owner"] == "WALLET111"
+    assert out == {"tokens_delta": 1.0, "usdc_delta": 2.0}
+
+
+async def _async_value(value):
+    return value
