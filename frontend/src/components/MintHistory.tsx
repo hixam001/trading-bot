@@ -40,6 +40,7 @@ export default function MintHistory({
   const [done, setDone] = useState(false) // fetched through to the end
   const listRef = useRef<HTMLDivElement>(null)
   const retryTimer = useRef<number | null>(null)
+  const inFlight = useRef(false)
 
   // Fresh state for the §65 registry (subscribed once, never stale).
   const stateRef = useRef({ events, expanded, cursor, total })
@@ -47,6 +48,12 @@ export default function MintHistory({
 
   const fetchPage = useCallback(
     async (offset: number) => {
+      if (inFlight.current) return
+      inFlight.current = true
+      if (retryTimer.current) {
+        window.clearTimeout(retryTimer.current)
+        retryTimer.current = null
+      }
       setLoading(offset === 0)
       setError(null)
       try {
@@ -57,13 +64,20 @@ export default function MintHistory({
         const body = (await r.json()) as MintHistoryResponse
         setTotal(body.total)
         setDone(offset + body.events.length >= body.total)
-        setEvents((prev) => (offset === 0 ? body.events : [...prev, ...body.events]))
+        setEvents((prev) => {
+          if (offset === 0) return body.events
+          // A retry/overlap can return rows already loaded; never duplicate
+          // React keys (and never grow the list with the same page twice).
+          const seen = new Set(prev.map((ev) => ev.id))
+          return [...prev, ...body.events.filter((ev) => !seen.has(ev.id))]
+        })
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e))
         // §3.3: the retry is automatic, not a dead end.
         if (retryTimer.current) window.clearTimeout(retryTimer.current)
         retryTimer.current = window.setTimeout(() => void fetchPage(offset), RETRY_MS)
       } finally {
+        inFlight.current = false
         setLoading(false)
       }
     },
@@ -103,6 +117,35 @@ export default function MintHistory({
   }
   useEffect(() => registerList('mint-history', ctrlRef), [])
 
+  // §84: the list registers with the global vocabulary, but while IT has
+  // focus App's dispatcher stands down (`owns`). Without a local handler
+  // j/k/Enter were dead exactly when the user was inside the list.
+  function onListKeyDown(e: React.KeyboardEvent) {
+    const { events: rows, cursor: cur } = stateRef.current
+    if (rows.length === 0) return
+    const target = e.target
+    // A focused row button owns Enter (native click expands that row).
+    if (e.key === 'Enter' && target instanceof HTMLElement
+        && target.closest('button, a, [role="button"]')) return
+    if (e.key === 'j' || e.key === 'ArrowDown') {
+      e.preventDefault()
+      setCursor((c) => Math.min(c + 1, rows.length - 1))
+    } else if (e.key === 'k' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      setCursor((c) => Math.max(c - 1, 0))
+    } else if (e.key === 'g') {
+      e.preventDefault()
+      setCursor(0)
+    } else if (e.key === 'G') {
+      e.preventDefault()
+      setCursor(rows.length - 1)
+    } else if (e.key === 'Enter') {
+      e.preventDefault()
+      const ev = rows[cur]
+      if (ev) setExpanded((open) => (open === ev.id ? null : ev.id))
+    }
+  }
+
   // Keep the cursor row in view as j/k moves it.
   useEffect(() => {
     listRef.current
@@ -124,6 +167,8 @@ export default function MintHistory({
       cursor={cursor}
       listRef={listRef}
       onExpand={setExpanded}
+      onKeyDown={onListKeyDown}
+      onRowFocus={setCursor}
       hasMore={hasMore}
       onOlder={() => void fetchPage(events.length)}
     />
@@ -133,7 +178,7 @@ export default function MintHistory({
 /** The drill-down's presentation: rows identical in voice to the tape. */
 function MintHistoryBody({
   mint, onClose, loading, error, total, events, expanded, cursor,
-  listRef, onExpand, hasMore, onOlder,
+  listRef, onExpand, onKeyDown, onRowFocus, hasMore, onOlder,
 }: {
   mint: string
   onClose: () => void
@@ -145,6 +190,8 @@ function MintHistoryBody({
   cursor: number
   listRef: React.RefObject<HTMLDivElement | null>
   onExpand: (id: number | null) => void
+  onKeyDown: (e: React.KeyboardEvent) => void
+  onRowFocus: (i: number) => void
   hasMore: boolean
   onOlder: () => void
 }) {
@@ -178,9 +225,9 @@ function MintHistoryBody({
           ) : null}
         </div>
 
-        {loading ? (
+        {loading && events.length === 0 ? (
           <Skeleton rows={4} />
-        ) : error ? (
+        ) : error && events.length === 0 ? (
           <ErrorState
             message={`mint history unavailable for ${shortAddr(mint, 8, 8)} (${error})`}
           />
@@ -190,10 +237,23 @@ function MintHistoryBody({
             the engine, or it predates the feed_events table.
           </Empty>
         ) : (
-          <MintHistoryList
-            events={events} expanded={expanded} cursor={cursor}
-            listRef={listRef} onExpand={onExpand}
-          />
+          <>
+            {/* A pagination failure keeps the rows already loaded — the
+                error is about the NEXT page, not the history we have. */}
+            {error && (
+              <div
+                className="mb-2 text-[10.5px] text-warn"
+                data-testid="mint-history-page-error"
+              >
+                older history unavailable ({error}) · retrying automatically
+              </div>
+            )}
+            <MintHistoryList
+              events={events} expanded={expanded} cursor={cursor}
+              listRef={listRef} onExpand={onExpand} onKeyDown={onKeyDown}
+              onRowFocus={onRowFocus}
+            />
+          </>
         )}
 
         {!error && hasMore && (
@@ -215,13 +275,15 @@ function MintHistoryBody({
 
 /** The scroll-bounded listbox: the SAME row voice as the decisions tape. */
 function MintHistoryList({
-  events, expanded, cursor, listRef, onExpand,
+  events, expanded, cursor, listRef, onExpand, onKeyDown, onRowFocus,
 }: {
   events: FeedEventRow[]
   expanded: number | null
   cursor: number
   listRef: React.RefObject<HTMLDivElement | null>
   onExpand: (id: number | null) => void
+  onKeyDown: (e: React.KeyboardEvent) => void
+  onRowFocus: (i: number) => void
 }) {
   return (
     <div
@@ -232,6 +294,7 @@ function MintHistoryList({
       aria-label="mint history · j/k move, enter expand, esc collapse"
       aria-activedescendant={`mh-row-${cursor}`}
       data-testid="mint-history-list"
+      onKeyDown={onKeyDown}
     >
       {events.map((ev, i) => {
         const isOpen = expanded === ev.id
@@ -242,6 +305,7 @@ function MintHistoryList({
             data-mh-row={i}
             role="option"
             aria-selected={i === cursor}
+            onFocus={() => onRowFocus?.(i)}
             className={`border-b border-line-soft ${
               i === cursor ? 'bg-surface shadow-[inset_2px_0_0_0] shadow-live' : ''
             }`}

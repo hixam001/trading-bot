@@ -140,6 +140,26 @@ test.describe('§65 global keyboard vocabulary', () => {
     await expect(rowButton).toHaveAttribute('aria-expanded', 'false')
   })
 
+  test('Enter on a focused row button expands that row only', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+    const list = page.getByTestId('feed-list')
+    await expect(list.locator('[data-feed-row="0"]')).toBeVisible()
+
+    // Move the keyboard cursor away from row 2, then put DOM focus on row 2.
+    await page.keyboard.press('j')
+    await list.locator('[data-feed-row="1"]').locator('button[aria-expanded]').focus()
+    await page.keyboard.press('Enter')
+
+    // The focused row expands; the cursor row must NOT also toggle.
+    await expect(list.locator('[data-feed-row="1"]').locator('button[aria-expanded]'))
+      .toHaveAttribute('aria-expanded', 'true')
+    await expect(list.locator('[data-feed-row="0"]').locator('button[aria-expanded]'))
+      .toHaveAttribute('aria-expanded', 'false')
+    // Focus follows the cursor so later j/k starts from the focused row.
+    await expect(list.locator('[data-feed-row="1"]')).toHaveAttribute('aria-current', 'true')
+  })
+
   test('LiveFeed rows expose list/listitem roles and j/k moves cursor with aria-current', async ({ page }) => {
     await mockApi(page)
     await page.goto('/')
@@ -232,6 +252,26 @@ test.describe('§65 mint-history drill-down', () => {
     await page.keyboard.press('Escape')
     await expect(historyPanel).toBeHidden()
     await expect(page.getByTestId('holdings')).toBeVisible()
+  })
+
+  test('j/k/Enter operate the drill-down while its list itself has focus', async ({ page }) => {
+    await mockApi(page)
+    await page.goto('/')
+    await page.getByTestId('tab-holdings').click()
+    await page.getByTestId('mint-history-button').first().click()
+    const list = page.getByTestId('mint-history-list')
+    await expect(list.locator('[data-mh-row="0"]')).toHaveAttribute('aria-selected', 'true')
+
+    // Focus the listbox container (Tab-focus path). App's dispatcher stands
+    // down for `owns`, so the list must handle these keys itself.
+    await list.focus()
+    await page.keyboard.press('j')
+    await expect(list.locator('[data-mh-row="1"]')).toHaveAttribute('aria-selected', 'true')
+    await page.keyboard.press('Enter')
+    await expect(list.locator('[data-mh-row="1"]').locator('button[aria-expanded]'))
+      .toHaveAttribute('aria-expanded', 'true')
+    await page.keyboard.press('k')
+    await expect(list.locator('[data-mh-row="0"]')).toHaveAttribute('aria-selected', 'true')
   })
 
   test('empty history renders the documented empty state, not blank', async ({ page }) => {

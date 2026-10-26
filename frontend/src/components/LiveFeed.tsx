@@ -121,6 +121,11 @@ export default function LiveFeed({
 
   function onListKeyDown(e: React.KeyboardEvent) {
     if (visible.length === 0) return
+    // §84: a focused row button owns Enter itself (native click toggles that
+    // row). Stepping the cursor row too would expand two different rows.
+    const target = e.target
+    if (e.key === 'Enter' && target instanceof HTMLElement
+        && target.closest('button, a, [role="button"]')) return
     if (e.key === 'j' || e.key === 'ArrowDown') {
       e.preventDefault()
       setCursor((c) => Math.min(c + 1, visible.length - 1))
@@ -254,6 +259,7 @@ export default function LiveFeed({
                   id={`feed-row-${i}`}
                   data-feed-row={i}
                   role="listitem"
+                  onFocus={() => setCursor(i)}
                   aria-current={i === cursor ? 'true' : undefined}
                   aria-selected={i === cursor ? 'true' : 'false'}
                   className={`border-b border-line-soft ${isFresh ? 'row-flash' : ''} ${

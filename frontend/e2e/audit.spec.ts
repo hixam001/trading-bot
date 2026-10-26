@@ -59,6 +59,31 @@ test('failed safety poll is not all clear; offline banner still renders', async 
   await expect(page.getByTestId('offline-banner')).toBeVisible()
 })
 
+test('primary feeds still loading never advertise safe to trade (§84)', async ({ page }) => {
+  await mockApi(page)
+  let release!: () => void
+  const gate = new Promise<void>((resolve) => { release = resolve })
+  await page.route('**/api/live/portfolio', route => route.fulfill({
+    status: 200,
+    json: { enabled: true, wallet: 'Wallet111', cash_usd: 10, equity_usd: 10,
+      open_value_usd: 0, unrealized_pnl_usd: 0, deployed_today_usd: 0,
+      closed_trades: 0, chain_excluded: [], positions: [] },
+  }))
+  await page.route('**/api/safety', async (route) => {
+    await gate
+    await route.fulfill({ status: 200, json: safety })
+  })
+
+  await page.goto('/')
+  const hero = page.getByTestId('hero')
+  // The absent safety payload is not evidence that breakers are clear.
+  await expect(hero).toContainText('feed degraded')
+  await expect(hero).not.toContainText('safe to trade')
+
+  release()
+  await expect(hero).toContainText('safe to trade')
+})
+
 test('safety 500 while other routes are 200 shows feed degraded, not safe to trade', async ({ page }) => {
   await mockApi(page)
   await page.route('**/api/safety', route => route.fulfill({ status: 500, json: { detail: 'safety failure' } }))

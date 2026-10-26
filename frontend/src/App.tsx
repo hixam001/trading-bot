@@ -93,8 +93,11 @@ export default function App() {
         severity: auto ? 'warning' : 'critical',
         label: auto ? 'buy pause' : 'manual stop',
         action: auto ? 'exits allowed · buys paused' : 'no trades allowed',
-        canBuy: !auto,
-        canSell: true,
+        // §84: manual stop freezes BUYS AND SELLS; the auto breaker pauses
+        // entries but keeps de-risking exits available. This used to be
+        // `!auto`, which advertised buys as allowed during a manual stop.
+        canBuy: false,
+        canSell: auto,
         detail: auto
           ? 'auto breaker active · de-risk exits only'
           : 'manual stop engaged · all trading frozen',
@@ -115,7 +118,10 @@ export default function App() {
     // safety) or WebSocket fail. Secondary feeds like system status (status.error)
     // intentionally do NOT trip the global offline banner; they render localized
     // ErrorPanels in their respective tabs per DESIGN.md §3.3 (§81 Phase H-4).
-    if (!connected || liveBook.error || safety.error || (!safety.loading && !safety.data)) {
+    // §84: "safe to trade" may never render while a primary feed is still
+    // loading — an absent payload is not evidence that breakers are clear.
+    if (!connected || liveBook.error || safety.error
+        || !liveBook.data || !safety.data) {
       return {
         state: 'offline' as const,
         severity: 'offline' as const,
@@ -213,6 +219,12 @@ export default function App() {
         e.preventDefault()
         list.jumpBottom()
       } else if (key === 'Enter') {
+        // §84: let a focused button/link perform its native activation.
+        // The global handler used to toggle the list row as well, hijacking
+        // Enter from every control on the page.
+        const target = e.target
+        if (target instanceof HTMLElement
+            && target.closest('button, a, [role="button"], [role="tab"], [role="menuitem"]')) return
         e.preventDefault()
         list.toggle()
       }
