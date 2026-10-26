@@ -73,6 +73,13 @@ async def test_login_success_sets_httponly_cookie(client):
     assert "httponly" in set_cookie_header
     assert "samesite=lax" in set_cookie_header
     assert "max-age=3600" in set_cookie_header
+    # §84: Expires must be a real future GMT date, never the raw `3600`.
+    assert "expires=3600" not in set_cookie_header
+    from email.utils import parsedate_to_datetime
+    expires_raw = set_cookie_header.split("expires=", 1)[1].split(";", 1)[0]
+    expires_at = parsedate_to_datetime(expires_raw)
+    assert expires_at > __import__("datetime").datetime.now(
+        __import__("datetime").timezone.utc) + __import__("datetime").timedelta(seconds=3500)
 
 
 @pytest.mark.asyncio
@@ -206,3 +213,22 @@ async def test_session_status_endpoint(client):
     assert r3.json()["auth_type"] == "cookie"
     assert r3.json()["expires_in"] <= 3600
 
+
+
+@pytest.mark.asyncio
+async def test_signing_key_eviction_drops_oldest_not_current():
+    """§84: eviction is FIFO, never an arbitrary set.pop()."""
+    from collections import OrderedDict
+    from api import auth
+
+    original = auth._ACTIVE_SIGNING_KEYS
+    try:
+        auth._ACTIVE_SIGNING_KEYS = OrderedDict()
+        secrets_used = [f"key-{i:03d}-" + "x" * 40 for i in range(101)]
+        for secret in secrets_used:
+            auth.create_session_token(secret)
+        assert len(auth._ACTIVE_SIGNING_KEYS) == 100
+        assert secrets_used[0] not in auth._ACTIVE_SIGNING_KEYS
+        assert secrets_used[-1] in auth._ACTIVE_SIGNING_KEYS
+    finally:
+        auth._ACTIVE_SIGNING_KEYS = original

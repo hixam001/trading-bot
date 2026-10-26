@@ -21,6 +21,7 @@ import hmac
 import secrets
 import time
 from collections import OrderedDict, defaultdict
+from datetime import datetime, timedelta, timezone
 
 from fastapi import HTTPException, Request, Response
 
@@ -46,7 +47,10 @@ def _derive_session_key(secret: str) -> bytes:
     return hashlib.sha256((secret + ":session_auth_key_v1").encode("utf-8")).digest()
 
 
-_ACTIVE_SIGNING_KEYS: set[str] = set()
+# Ordered oldest -> newest so eviction drops the least-recently-used key, not
+# an arbitrary one (a set's pop() could discard the CURRENT ADMIN_TOKEN's key
+# while keeping long-dead rotations, breaking logout revocation).
+_ACTIVE_SIGNING_KEYS: OrderedDict[str, None] = OrderedDict()
 
 
 def create_session_token(secret: str | None = None) -> str:
@@ -58,9 +62,10 @@ def create_session_token(secret: str | None = None) -> str:
     configured = secret if secret is not None else config.ADMIN_TOKEN
     if not configured or len(configured) < 32:
         raise ValueError("Cannot create session token: ADMIN_TOKEN is not configured or shorter than 32 characters")
-    _ACTIVE_SIGNING_KEYS.add(configured)
+    _ACTIVE_SIGNING_KEYS[configured] = None
+    _ACTIVE_SIGNING_KEYS.move_to_end(configured)
     if len(_ACTIVE_SIGNING_KEYS) > 100:
-        _ACTIVE_SIGNING_KEYS.pop()
+        _ACTIVE_SIGNING_KEYS.popitem(last=False)
     now = int(time.time())
     nonce = secrets.token_hex(16)
     payload = f"{now}.{nonce}"
@@ -247,7 +252,10 @@ def set_session_cookie(
         key=config.SESSION_COOKIE_NAME,
         value=session_token,
         max_age=age,
-        expires=age,
+        # §84: Starlette's `expires` is a DATE, not a number of seconds.
+        # Passing the int emitted `Expires=3600` (an invalid date near 1970),
+        # so clients could treat the fresh cookie as already expired.
+        expires=datetime.now(timezone.utc) + timedelta(seconds=age),
         path="/",
         httponly=True,
         secure=secure,
