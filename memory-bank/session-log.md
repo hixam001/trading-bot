@@ -1,3 +1,24 @@
+## Memory-bank update — 2026-10-27 (§85 Post-§84 re-audit: CI key parsing, ambiguous sends, break-state truth, provider lifecycle, restore/backup integrity & operator login)
+
+- **Task**: fix the failing CI CLI test, then audit the post-§84 tree for silent-wrong-state bugs across execution, liveness, provider lifecycle, reconcile/backup, DB accounting, operator scripts, deployment ports, and frontend auth; every fix carries a regression test.
+- **High-impact fixes**:
+  - Valid `--key` values starting with `-` are normalized in both state CLIs; the CI failure is fixed.
+  - An ambiguous `send_transaction` result now resolves the already-signed signature on-chain: landed fills are journaled as filled, landed failures are explicit, and unknown outcomes stay unresolved without a re-send (no duplicate fill, no hidden fill).
+  - Malformed break state (`taking` not bool, non-finite `break_until`, wrong JSON shape) fails the rule and reports `on_break: True`; it can no longer read as clear.
+  - One provider and one thinker are built per cycle, reused, and closed in `finally`; keyword scans advance rotation; `SocialReader` is cached by config + class and closed with the process.
+  - Reconcile accepts the real `{"records": [...]}` ledger, recognizes `recorded/sent/confirmed/OPEN/PARTIAL` statuses, rejects malformed journals, and exits `2` on discrepancies / `1` on unreadable input; unavailable RPC data is `SKIPPED`, never fake success. Failed wallet checks preserve the old baseline.
+- **Integrity fixes**:
+  - Backup refuses corrupt state JSON; DB wipes are transactional; Postgres reset uses aware datetimes; stats no longer double counts entry cost.
+  - Corrupt commit logs refuse to open; preflight `RuntimeError` blocks the order; single-RPC sell consensus requires exactly one usable result; token balances are returned only when both programs were read.
+  - Restore without a target DB warns loudly; operator scripts refuse unreadable balances, pass decoded transactions/intents, and load `.env` before alert config; compose pins API `PORT=8000`.
+  - Replay harness skips non-object candidate snapshots instead of crashing.
+- **Frontend/auth**:
+  - New `LoginGate` appears on `HTTP 403`, posts the operator token to `/api/auth/login`, and reloads into the HttpOnly session; the token is never stored client-side.
+  - Session cookies are `SameSite=None; Secure` only for an HTTPS cross-origin dashboard; same-origin stays `Lax`.
+- **Tests**: backend **1254 passed**, 0 failed; `pip check`, `pip-audit`, `npm audit --omit=dev` clean; `tsc` + `npm run build` clean; Playwright **40/40**; gitleaks binary absent locally (CI scans).
+- **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
+- **Constraints**: no changes to signing, sizing, rule thresholds, risk flags, or arming switches. `backend/requirements.lock` was dirty before this work and remains excluded.
+
 ## Memory-bank update — 2026-10-26 (§84 Post-§83 re-audit: proof truth, execution integrity, LLM/data resilience & frontend honesty)
 
 - **Task**: audit the post-§83 tree for silent-wrong-state bugs across proof/journal truth, retro binding, LLM fail-soft behavior, external-data honesty, live execution accounting, frontend keyboard/risk state, and auth cookie/key handling; fix each with regression tests, one phase per commit.

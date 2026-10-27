@@ -89,6 +89,8 @@ threshold changes; agent layers between gate and action (the reference bot does
 this — we deliberately don't).
 
 ## Mandatory Pre-Commit and Pre-Push Verification Gate
+**BINDING INVARIANT: no git push on any branch — including documentation-only changes — until the full gate passes locally AND GitHub Actions is green. A red check blocks the push; fix it, never bypass it.**
+
 Before ANY commit or git push to the repository, the automated verification gate must pass cleanly.
 Run the canonical verification script from the repository root:
 

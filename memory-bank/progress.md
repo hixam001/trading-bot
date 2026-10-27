@@ -1,6 +1,17 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §85 Post-§84 Re-Audit: CI key parsing, ambiguous sends, break-state truth, provider lifecycle, restore/backup integrity & operator login (2026-10-27):
+      1. `--key` values beginning with `-` are normalized to `--key=VALUE` in restore/backup CLIs; the `test_audit_81_e` CI failure is fixed with a deterministic regression test.
+      2. Ambiguous sends resolve the already-signed signature on-chain: landed fills are journaled, failed landings are explicit, and unresolved signatures never trigger a re-send.
+      3. Break-state readers reject malformed state instead of silently reporting "not on break"; the gate fails and disclosure reports `on_break: True`.
+      4. The live cycle reuses and closes one provider/thinker pair, keyword discovery advances its rotation, and `SocialReader` is shared behind a keyed cache with `aclose()`.
+      5. Reconcile accepts the real ledger shape/statuses, rejects malformed journals, reports `RECONCILE SKIPPED` honestly, and exits `2`/`1` for discrepancies/unreadable data; failed wallet checks no longer overwrite the snapshot.
+      6. Backup refuses corrupt state; DB wipe is transactional; Postgres reset uses aware datetimes; stats no longer double counts; corrupt commit logs and preflight errors are contained; single-RPC sell consensus is exact and token balances require both programs.
+      7. Operator scripts fail closed on unreadable balances, pass decoded transactions and required intents, load `.env` before alerts, and compose pins API `PORT=8000`.
+      8. Dashboard login gate handles `HTTP 403` with `/api/auth/login`; session cookies switch to `SameSite=None; Secure` only for HTTPS cross-origin split deployments.
+      9. Verification: backend **1254 passed**, 0 failed; prepush gate 9/9 local steps clean; Playwright **40/40**; gitleaks absent locally (CI runs it).
+     10. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §84 Post-§83 Re-Audit: proof truth, execution integrity, LLM/data resilience & frontend honesty (2026-10-26, phases A–G):
       1. §84-A: `/api/exits.json` uses the real sell-clip constant and true cooldown minutes; `decision_commits.created_at`/`tick_ts` use the CommitLog seal time carried on `OrderResult.commit_sealed_at`, restoring time-ordering proof.
       2. §84-B: retro matcher accepts only real base58 signatures (never synthetic `live-*`/`ledger-*` mirror IDs), rejects mint mismatches, and both DB backends skip fills already bound by a commit signature.

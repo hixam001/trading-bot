@@ -1,3 +1,68 @@
+## §85 — Post-§84 Re-Audit: CI Key Parsing, Ambiguous Sends, Break-State Truth, Provider Lifecycle, Restore/Backup Integrity & Operator Login (2026-10-27)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `87b0053` (§84 complete)
+- Baseline suite: **1229 passed**, 0 failed (102 warnings)
+- Final suite: **1254 passed**, 0 failed (102 warnings in 17.16s; +25 tests)
+- Pre-push gate: **9/9 local steps clean** — pytest, `pip check`, `pip-audit`, AST keypair isolation, `tsc --noEmit`, `npm run build`, `npm audit --omit=dev`, Playwright **40/40**, gitleaks skipped (binary absent locally; CI workflow unchanged)
+- `backend/requirements.lock` was dirty before this work (pre-existing) and is deliberately excluded from this batch
+
+### Fixed Defects
+1. **CI failure — valid `--key` beginning with `-`**:
+   - `scripts/restore_state.py` and `scripts/backup_state.py` now normalize `--key VALUE` to `--key=VALUE` via `_normalize_argv()` before `parse_args`. A legitimate Fernet key starting with `-` was parsed as an option and the CLI exited 2 (`argument --key: expected one argument`), failing `test_audit_81_e::test_cli_exit_codes`.
+   - Regression: `test_cli_accepts_key_starting_with_dash` uses a deterministic base64 key whose first character is `-`.
+2. **Ambiguous send could duplicate or hide a fill (`executor._broadcast_and_confirm`)**:
+   - If `send_transaction` returns no signature, the executor looks up the already-signed `signed_swap.signature`: missing status → failed `send outcome unresolved (signature not found on-chain)`; on-chain error → `landed-failed (fee paid)` with the error journaled; confirmed/finalized → filled; otherwise the normal `confirm_signature` path. It never re-sends.
+   - Tests: `test_ambiguous_send_resolves_landed_fill_and_journals_it`, `test_ambiguous_send_with_unknown_signature_stays_unresolved`.
+3. **Malformed break state read as clear (`rule_engine/liveness.py`, `rules.not_on_break`, disclosure)**:
+   - `_read()` validates a dict payload, bool `taking`, and finite non-bool numeric `break_until`; anything else raises `RuntimeError`. The gate returns a failed `break state unreadable — …` result and disclosure reports `on_break: True` instead of silently publishing "not on break".
+   - Parametrized tests cover lists, missing fields, string/int `taking`, junk timestamps, and NaN.
+4. **Provider/thinker churn and repeated keyword queries (`run_live_cycle.py`, discovery, social)**:
+   - `run_cycle(once=False, provider=None, thinker=None)` builds one provider and thinker for the process; the main loop passes both into every cycle and closes them in `finally` (guarded `aclose`).
+   - `KeywordScanner.scan` advances `next_rotation()` after each scan.
+   - `SocialReader` is shared through `_reader_for()` keyed by config + the class itself; it gains `aclose()`, and the key class component keeps monkeypatched readers from leaking across tests. `read_social_one`/`enrich_social` use it, still fail-soft.
+   - Tests: rotation advance; provider/thinker reuse asserted through `test_pipeline_parity.py`; social staging suite green.
+5. **Reconcile accepted a nonexistent ledger shape and lied about skipped checks (`restore_state.py`)**:
+   - `run_reconcile` accepts `{"records": [...]}` or a bare list, recognizes `recorded/sent/confirmed/OPEN/PARTIAL/open/partial`, and returns `{"checked": False, "error": ...}` for non-list/non-dict/mint-less records instead of treating an empty read as clean.
+   - `--reconcile-only` exits `2` on discrepancies, `1` on unreadable journal, `0` when clean/SKIPPED. Unavailable RPC balances print `RECONCILE SKIPPED` (never a fake SUCCESS). Combined restore+`--reconcile` still exits 0.
+   - `reconcile.check_wallet_drop` now returns early on a failed check (`skipped=True`) without overwriting `wallet_snapshot.json`.
+   - Tests in `test_audit_82_f.py` cover the real ledger shape, chain-below-journal, unreadable journal exit 1, discrepancy exit 2, and snapshot preservation.
+6. **Backup/DB/accounting integrity**:
+   - `backup_state.py`: corrupt state JSON raises `RuntimeError` and refuses to write an incomplete archive; prune warning uses `%s`; dead locals removed.
+   - `db.wipe_paper_book`: deletes + cash update wrapped in one transaction with rollback.
+   - `db_pg.reset_book`: uses timezone-aware `_now()` datetime, not an ISO string.
+   - `stats`: sums `position_size_usd` directly; the old entry-cost computation double counted deployed value.
+   - `commit_log._load`: corrupt/wrong-shape JSON raises instead of sealing over it; `place_buy` converts preflight `RuntimeError` into a blocked result.
+   - `solana`: `SIM_SELL_ALLOW_SINGLE_RPC` requires exactly one usable quote result; `get_token_balances` returns balances only when both token programs were read (one unreadable program = unknown, not partial).
+   - `restore_state` warns loudly when the archive contains `trading_bot.db` but no `--target-db-path` was supplied.
+7. **Operator scripts and deployment ports**:
+   - `inspect_live_quote.py` now builds the required `TradeIntent` for `simulate_and_assert` and reports PASS only when the simulation verdict is PASS; a missing intent previously raised inside the broad except and still exited 0.
+   - `dry_run_guard.py` decodes the base64 transaction to `VersionedTransaction` before inspection.
+   - `ack_wallet_change.py` raises on an unreadable USDC balance instead of acknowledging `0.0`.
+   - `send_test_alert.py` imports `config` before `alerts`, so `.env` is loaded before alert channels are read.
+   - `docker-compose.yml` pins the API service `PORT=8000`, matching the loopback port mapping and healthcheck (previously a non-8000 `API_PORT` in `.env` made the container listen elsewhere).
+   - `replay_harness.py` skips non-object `candidate_snapshot` rows instead of crashing on `.items()`.
+8. **Frontend operator login + split-deploy cookies**:
+   - New `frontend/src/components/LoginGate.tsx` appears when any data feed returns `HTTP 403`; it posts `{token}` to `/api/auth/login` with credentials and reloads into the HttpOnly cookie session. The token is never written to storage.
+   - `api/auth.py` selects `SameSite=None; Secure` only when the request is HTTPS and the `Origin` host differs from the API host; default/same-origin stays `Lax`. This makes the documented Vercel split deployment actually able to keep a session.
+   - E2E: `operator login gate › 403 feeds prompt for the operator token and exchange it for a session`.
+
+### Documentation Updated
+- `handoff.md` §85 (this section)
+- `memory-bank/activeContext.md` — current §85 entry; prior §84 moved to Prior
+- `memory-bank/progress.md` — §85 work item
+- `memory-bank/decisionLog.md` — decision #91
+- `memory-bank/session-log.md` — §85 session entry
+- `memory-bank/systemPatterns.md` — binding push-gate invariant (any branch, docs included)
+- `docs/11_DEPLOYMENT.md`, `docs/13_ORACLE_DEPLOY_GUIDE.md` — split-mode login/cookie behavior
+- `docs/15_BACKUP_RESTORE.md` — reconcile exit codes and `RECONCILE SKIPPED` semantics
+
+### Constraints & Invariants Preserved
+- No changes to wallet signing, sizing, rule thresholds, risk flags, or hardcoded arming switches.
+- Unknown blockhash/decimals/break state/balances stay unknown and fail closed; an ambiguous send is resolved against the chain, never retried blindly.
+- The operator token is never persisted client-side; session cookies remain HttpOnly.
+- Every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
+
 ## §84 — Post-§83 Re-Audit: Proof Truth, Execution Integrity, LLM/Data Resilience & Frontend Honesty (2026-10-26)
 
 ### Baseline & Measured Suite Counts
