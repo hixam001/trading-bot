@@ -22,6 +22,7 @@ import secrets
 import time
 from collections import OrderedDict, defaultdict
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, Response
 
@@ -232,17 +233,41 @@ def _is_request_https(request: Request | None) -> bool:
     return getattr(config, "FORCE_HTTPS", True)
 
 
+def _cookie_samesite(request: Request | None) -> str:
+    """SameSite=None for an HTTPS cross-origin dashboard, Lax otherwise.
+
+    Split deployments (dashboard on Vercel, API on another host) are documented
+    in docs/13 and use credentialed CORS. A Lax cookie is never attached to
+    those cross-site requests, so login appeared to succeed and the next poll
+    still returned 403. SameSite=None requires Secure, so it is only selected
+    when the request is HTTPS.
+    """
+    if request is None or not _is_request_https(request):
+        return "lax"
+    origin = request.headers.get("origin")
+    if not origin:
+        return "lax"
+    try:
+        origin_host = urlsplit(origin).hostname
+    except ValueError:
+        return "lax"
+    request_host = request.url.hostname
+    if origin_host and request_host and origin_host != request_host:
+        return "none"
+    return "lax"
+
+
 def set_session_cookie(
     response: Response,
     session_token: str,
     request: Request | None = None,
     max_age: int | None = None,
 ) -> None:
-    """Set HttpOnly, SameSite=Lax, Secure session cookie with expiration.
+    """Set HttpOnly, SameSite, Secure session cookie with expiration.
 
     Guarantees:
       - httponly=True: JavaScript cannot read the token (mitigates XSS theft).
-      - samesite="lax": Browser will not send cookie on cross-site subrequests (mitigates CSRF).
+      - samesite: "lax" by default; "none" only for HTTPS cross-origin split deployments.
       - secure=True: Forced whenever HTTPS or proxy indicates TLS (exempts unencrypted loopback dev).
       - max_age: Cookie automatically dropped by browser after expiration.
     """
@@ -259,7 +284,7 @@ def set_session_cookie(
         path="/",
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=_cookie_samesite(request),
     )
 
 
@@ -274,7 +299,7 @@ def clear_session_cookie(
         path="/",
         httponly=True,
         secure=secure,
-        samesite="lax",
+        samesite=_cookie_samesite(request),
     )
 
 

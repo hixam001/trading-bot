@@ -135,3 +135,23 @@ def test_reconcile_is_idempotent(tmp_path):
     assert logc.reconcile_orphaned() == 1
     assert logc.reconcile_orphaned() == 0             # second pass heals nothing
     assert logc.all()[0]["status"] == "failed"
+
+
+def test_corrupt_log_refuses_to_seal_and_is_not_overwritten(tmp_path):
+    """A corrupt commit log must never be replaced by a fresh one: that
+    silently erases the audit trail of every prior seal."""
+    path = tmp_path / "commits.json"
+    path.write_text("{not json", encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="unreadable"):
+        CommitLog(path).seal("buy", {"mint": "M"})
+
+    assert path.read_text(encoding="utf-8") == "{not json"
+
+
+def test_wrong_shape_log_refuses_to_seal(tmp_path):
+    path = tmp_path / "commits.json"
+    path.write_text('{"commits": []}', encoding="utf-8")
+
+    with pytest.raises(RuntimeError, match="malformed"):
+        CommitLog(path).seal("buy", {"mint": "M"})

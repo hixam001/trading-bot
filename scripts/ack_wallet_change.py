@@ -83,8 +83,10 @@ async def fetch_live_balances() -> tuple[float, float]:
     # solana.get_token_balance returns float | None
     usdc_bal = await solana.get_token_balance(address, _BACKEND_USDC_MINT)
     if usdc_bal is None:
-        log.warning("USDC balance returned None; defaulting to 0.0")
-        usdc_bal = 0.0
+        raise RuntimeError(
+            f"Failed to fetch USDC balance for {address} from RPC; refusing to "
+            "acknowledge a baseline from incomplete data."
+        )
 
     return usdc_bal, sol_bal
 

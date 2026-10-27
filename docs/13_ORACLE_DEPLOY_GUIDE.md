@@ -249,7 +249,10 @@ serve the live book publicly instead, set `LIVE_BOOK_PUBLIC=true` in `.env`.
    the engine's `FRONTEND_ORIGIN=https://<vercel-domain>` and rebuild.
    Notes: Vercel Hobby is nominally non-commercial — Cloudflare Pages is
    the clause-free alternative (same settings). WS always connects straight
-   to the engine; Vercel never proxies it.
+   to the engine; Vercel never proxies it. The login session cookie is
+   issued `SameSite=None; Secure` automatically when the request Origin is
+   a different HTTPS host, so credentialed reads work in split mode; the
+   default same-origin deployment stays `SameSite=Lax`.
 
 Since the bot is a single-operator research tool, option 1 is the sane
 default: one URL, one service, zero moving parts. Use option 2 only if you

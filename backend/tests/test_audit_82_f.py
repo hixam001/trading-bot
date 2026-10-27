@@ -227,3 +227,85 @@ def test_post_restore_banner_prints_reconcile_only(restore_env, capsys):
     assert f"python scripts/restore_state.py --reconcile-only --target-state-dir {target_state}" in captured.out
     # Must NOT contain `<archive> ... --reconcile`
     assert f"{archive} --target-state-dir {target_state} --reconcile" not in captured.out
+
+
+# ---------------------------------------------------------------------------
+# Reconcile must understand the REAL ExecutionLedger shape, not the legacy
+# bare-list fixture, and must never print a clean bill of health for drift.
+# ---------------------------------------------------------------------------
+
+MINT_OPEN = "MintOpen11111111111111111111111111111111111"
+
+
+def _real_ledger(state_dir, status="confirmed", tokens=10.0):
+    (state_dir / "executions.json").write_text(json.dumps({
+        "records": [{
+            "kind": "buy", "idempotency_key": "k1", "mint": MINT_OPEN,
+            "usd_size": 25.0, "tokens_out": tokens, "price_usd": 2.5,
+            "signature": "SIG", "status": status, "ts": 100.0,
+        }]
+    }), encoding="utf-8")
+
+
+def _arm_chain(monkeypatch, balances):
+    import live_execution.solana as solana_mod
+    import live_execution.wallet as wallet_mod
+
+    monkeypatch.setattr(wallet_mod, "load_keypair", lambda: object())
+    monkeypatch.setattr(wallet_mod, "pubkey_string", lambda p: "WALLET")
+
+    async def fake_balances(addr):
+        return balances
+
+    monkeypatch.setattr(solana_mod, "get_token_balances", fake_balances)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_reads_real_ledger_records_shape(tmp_path, monkeypatch):
+    _real_ledger(tmp_path)
+    _arm_chain(monkeypatch, {MINT_OPEN: 10.0})
+
+    report = await restore_state.run_reconcile(tmp_path)
+
+    assert report["checked"] is True
+    assert report["discrepancies"] == []
+    assert not report.get("error")
+
+
+@pytest.mark.asyncio
+async def test_reconcile_flags_chain_below_real_ledger(tmp_path, monkeypatch):
+    _real_ledger(tmp_path)
+    _arm_chain(monkeypatch, {MINT_OPEN: 4.0})
+
+    report = await restore_state.run_reconcile(tmp_path)
+
+    assert report["checked"] is True
+    assert [d["kind"] for d in report["discrepancies"]] == ["chain_below_journal"]
+
+
+@pytest.mark.asyncio
+async def test_reconcile_unreadable_journal_is_an_error(tmp_path, monkeypatch):
+    (tmp_path / "executions.json").write_text('{"unexpected": []}', encoding="utf-8")
+    _arm_chain(monkeypatch, {})
+
+    report = await restore_state.run_reconcile(tmp_path)
+
+    assert report["checked"] is False
+    assert "unreadable" in report["error"]
+
+
+def test_reconcile_only_exits_nonzero_on_discrepancies(tmp_path):
+    with patch.object(restore_state, "run_reconcile", new_callable=AsyncMock) as rec, \
+         patch("sys.argv", ["restore_state.py", "--reconcile-only",
+                            "--target-state-dir", str(tmp_path)]):
+        rec.return_value = {"checked": True,
+                            "discrepancies": [{"kind": "vanished"}]}
+        assert restore_state.main() == 2
+
+
+def test_reconcile_only_exits_nonzero_on_unreadable_journal(tmp_path):
+    with patch.object(restore_state, "run_reconcile", new_callable=AsyncMock) as rec, \
+         patch("sys.argv", ["restore_state.py", "--reconcile-only",
+                            "--target-state-dir", str(tmp_path)]):
+        rec.return_value = {"checked": False, "error": "bad journal"}
+        assert restore_state.main() == 1

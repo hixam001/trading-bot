@@ -12,6 +12,7 @@ Findings tested:
 """
 from __future__ import annotations
 
+import base64
 from datetime import datetime, timezone
 import hashlib
 import io
@@ -495,6 +496,41 @@ def test_cli_exit_codes(sample_state_3files, keys):
     ]
     proc_fail = subprocess.run(cmd_failure, capture_output=True, text=True)
     assert proc_fail.returncode != 0
+
+
+def test_cli_accepts_key_starting_with_dash(sample_state_3files):
+    """A valid Fernet key may start with '-' and must not be read as an option."""
+    state_dir, db_path, backup_dir = sample_state_3files
+    dash_key = base64.urlsafe_b64encode(b"\xfa" + b"\x00" * 31).decode("utf-8")
+    secret_key = Fernet.generate_key().decode("utf-8")
+    assert dash_key.startswith("-")
+
+    archive = backup_state.create_backup(
+        state_dir=state_dir,
+        db_path=db_path,
+        backup_dir=backup_dir,
+        backup_key=dash_key,
+        secret_store_key=secret_key,
+    )
+
+    target_state = backup_dir / "dash_key_target_state"
+    target_state.mkdir()
+    cmd = [
+        sys.executable,
+        str(SCRIPTS_DIR / "restore_state.py"),
+        str(archive),
+        "--target-state-dir",
+        str(target_state),
+        "--key",
+        dash_key,
+        "--force",
+    ]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    assert proc.returncode == 0, f"CLI rejected dash-prefixed key: {proc.stderr}"
+
+    # Both CLIs normalize the same way, so backup accepts it too.
+    assert backup_state._normalize_argv(["--key", dash_key]) == [f"--key={dash_key}"]
+    assert restore_state._normalize_argv(["--key", dash_key]) == [f"--key={dash_key}"]
 
 
 def test_corrupt_sqlite_index_integrity_check_failure_aborts(sample_state_3files, keys):

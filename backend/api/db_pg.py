@@ -1475,11 +1475,6 @@ _ALLOWED_RESET_TABLES: frozenset[str] = frozenset({
 })
 
 
-def _now_iso() -> str:
-    """Return the current UTC timestamp formatted as ISO-8601 string (§77 E2)."""
-    return datetime.now(timezone.utc).isoformat()
-
-
 async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
     """Full operator reset: wipe all operational tables and restore the
     starting balance. This is a paper-trading maintenance function — it
@@ -1519,7 +1514,7 @@ async def reset_book(conn: asyncpg.Connection, initial_cash_usd: float) -> dict:
         # Restore the starting balance.
         await conn.execute(
             "UPDATE portfolio_state SET cash_usd = $1, updated_at = $2 WHERE id = 1",
-            initial_cash_usd, _now_iso(),
+            initial_cash_usd, _now(),
         )
 
     return {

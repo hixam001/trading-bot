@@ -285,7 +285,7 @@ async def get_multiple_accounts(
     is_sell = (side == "sell")
     if agreeing >= config.SIM_MIN_AGREEING_RPCS:
         return valid_results[0]["post_accounts"]
-    elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) >= 1:
+    elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) == 1:
         log.warning("SIM_SINGLE_RPC_SELL: pre-state fetch proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
         try:
             from alerts import alert_nowait, AlertEvent
@@ -371,7 +371,7 @@ async def simulate_transaction(
     is_sell = (side == "sell")
     if agreeing >= config.SIM_MIN_AGREEING_RPCS:
         return valid_results[0]
-    elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) >= 1:
+    elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) == 1:
         log.warning("SIM_SINGLE_RPC_SELL: sell proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
         try:
             from alerts import alert_nowait, AlertEvent
@@ -690,12 +690,13 @@ async def get_token_balances(address: str) -> Optional[dict[str, float]]:
 
     The chain is the sole authority on HOW MANY tokens the wallet actually
     holds — the journal is cross-checked against this every live cycle
-    (live_execution/reconcile.py). Returns None when no RPC answered at all:
-    callers must treat that as "unknown", never as "empty" (fail closed —
-    an empty read and an unreadable read must never be confused).
+    (live_execution/reconcile.py). Returns None when EITHER program's read
+    failed: a legacy-only answer must never masquerade as a complete book
+    (fail closed — an empty read and an unreadable read must never be
+    confused). {} means both programs answered and the wallet holds nothing.
     """
     balances: dict[str, float] = {}
-    any_ok = False
+    programs_ok = 0
     for program_id in (_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
         res = await rpc(
             "getTokenAccountsByOwner",
@@ -703,7 +704,7 @@ async def get_token_balances(address: str) -> Optional[dict[str, float]]:
         )
         if res is None:
             continue
-        any_ok = True
+        programs_ok += 1
         for entry in res.get("value") or []:
             try:
                 info = entry["account"]["data"]["parsed"]["info"]
@@ -716,7 +717,9 @@ async def get_token_balances(address: str) -> Optional[dict[str, float]]:
                     balances[mint] = balances.get(mint, 0.0) + float(ui)
             except (KeyError, TypeError, ValueError):
                 continue
-    return balances if any_ok else None
+    # Both programs are required: a legacy-only answer would silently hide
+    # token-2022 holdings, and reconcile would mistake them for vanished.
+    return balances if programs_ok == 2 else None
 
 
 async def is_blockhash_valid(blockhash: str, endpoints: Optional[list[str]] = None) -> bool | None:

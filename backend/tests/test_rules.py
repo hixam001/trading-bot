@@ -255,6 +255,27 @@ def test_not_on_break_blocks_entries_while_set():
         liveness.set_break(False)
 
 
+@pytest.mark.parametrize("payload", [
+    "[]",
+    "{}",
+    '{"taking": true}',
+    '{"taking": "yes", "break_until": 9999999999}',
+    '{"taking": 1, "break_until": 9999999999}',
+    '{"taking": true, "break_until": "soon"}',
+    '{"taking": true, "break_until": NaN}',
+])
+def test_not_on_break_blocks_on_malformed_state(payload, tmp_path, monkeypatch):
+    """A syntactically valid but malformed state file must fail CLOSED."""
+    path = tmp_path / "break_state.json"
+    path.write_text(payload, encoding="utf-8")
+    monkeypatch.setattr(config, "BREAK_STATE_FILE", str(path), raising=False)
+
+    r = rules_mod.not_on_break(make_candidate(), make_portfolio(), REGIME)
+
+    assert not r.passed
+    assert "unreadable" in r.detail
+
+
 # --- security_clear: None always passes (B10) --------------------------------
 
 def test_security_clear_pass_all_unknown():

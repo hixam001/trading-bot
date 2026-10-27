@@ -104,6 +104,9 @@ class SocialReader:
         """Cheap GET /models probe, cached per process like the thinker does."""
         return await self._groq.health()
 
+    async def aclose(self) -> None:
+        await self._groq.aclose()
+
     async def read(self, c: Candidate) -> Optional[tuple[str, str, LLMResult]]:
         """One social read. Returns (interest, note, usage) or None on any failure."""
         if not self.enabled or not await self.health():
@@ -119,6 +122,31 @@ class SocialReader:
         if not parsed:
             return None
         return parsed[0], parsed[1], result
+
+
+# §84: the social read runs once per all-passed candidate per tick. Building
+# a fresh SocialReader (and a fresh AsyncClient on first use) every call
+# leaked a connection pool per candidate. Reuse one reader for the process;
+# rebuild only when the configured endpoint/key/model changes (tests do).
+_shared_reader: Optional[SocialReader] = None
+_shared_reader_key: tuple = ()
+
+
+def _reader_for(client: Optional[httpx.AsyncClient] = None) -> SocialReader:
+    global _shared_reader, _shared_reader_key
+    if client is not None:
+        return SocialReader(client=client)
+    key = (
+        SocialReader,
+        config.SOCIAL_LLM_BASE_URL,
+        config.SOCIAL_LLM_API_KEY,
+        config.SOCIAL_LLM_MODEL,
+        config.SOCIAL_LLM_TIMEOUT_SECONDS,
+    )
+    if _shared_reader is None or _shared_reader_key != key:
+        _shared_reader = SocialReader()
+        _shared_reader_key = key
+    return _shared_reader
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +173,7 @@ async def read_social_one(c: Candidate,
     thinker runs without the social line. Never raises."""
     if not config.SOCIAL_LLM_API_KEY:
         return          # stage off — don't even build a reader
-    reader = SocialReader(client=client)
+    reader = _reader_for(client)
     if not reader.enabled:
         return
     try:
@@ -169,7 +197,7 @@ async def enrich_social(
 ) -> tuple[int, list[LLMResult]]:
     """Social-read the head of the board, fail-soft. Returns (applied count, usages).
     Disabled entirely (0 calls) when SOCIAL_LLM_API_KEY is empty."""
-    reader = SocialReader(client=client)
+    reader = _reader_for(client)
     if not reader.enabled:
         return 0, []
     picks = [c for c in candidates if c.social_interest is None]

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import base64
 import json
 import os
 import sys
@@ -26,6 +27,8 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 import config
+from solders.transaction import VersionedTransaction
+
 from data_providers.jupiter import JupiterProvider
 from live_execution import config as live_config
 from live_execution import solana, wallet
@@ -117,7 +120,8 @@ async def async_main(args: argparse.Namespace) -> int:
 
         # 3. Inspect swap transaction
         category = "inspect"
-        inspect_res = inspect_swap_transaction(swap_b64, payer_address) or {}
+        tx = VersionedTransaction.from_bytes(base64.b64decode(swap_b64))
+        inspect_res = inspect_swap_transaction(tx, payer_address) or {}
 
         # 4. Construct TradeIntent and simulate
         category = "simulate"

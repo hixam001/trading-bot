@@ -232,3 +232,39 @@ async def test_signing_key_eviction_drops_oldest_not_current():
         assert secrets_used[-1] in auth._ACTIVE_SIGNING_KEYS
     finally:
         auth._ACTIVE_SIGNING_KEYS = original
+
+
+@pytest.mark.parametrize(
+    ("origin", "expected"),
+    [
+        ("https://dashboard.vercel.app", "samesite=none"),
+        ("https://bot.example.com", "samesite=lax"),
+    ],
+)
+def test_https_cookie_samesite_tracks_cross_origin_dashboard(origin, expected):
+    """Split deployments need None; same-origin keeps Lax."""
+    from starlette.requests import Request
+    from starlette.responses import Response
+    from api import auth
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/auth/login",
+        "scheme": "https",
+        "server": ("bot.example.com", 443),
+        "headers": [
+            (b"host", b"bot.example.com"),
+            (b"origin", origin.encode()),
+        ],
+    }
+    resp = Response()
+    auth.set_session_cookie(
+        resp,
+        auth.create_session_token(),
+        request=Request(scope),
+    )
+    raw = resp.headers["set-cookie"].lower()
+    assert expected in raw
+    if expected == "samesite=none":
+        assert "secure" in raw

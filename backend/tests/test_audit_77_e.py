@@ -113,11 +113,11 @@ async def test_db_pg_reset_book_transaction_and_timestamp():
     assert len(update_calls) == 1
     query, args = update_calls[0]
     assert args[0] == 1000.0
-    # args[1] must be a valid ISO format timestamp
-    iso_ts = args[1]
+    # args[1] must be a real datetime for the TIMESTAMPTZ parameter —
+    # passing an ISO string makes asyncpg reject the statement.
     from datetime import datetime
-    parsed = datetime.fromisoformat(iso_ts)
-    assert parsed.year >= 2026
+    assert isinstance(args[1], datetime)
+    assert args[1].year >= 2026
 
 
 # --- E3: WebSocket per-IP cap -------------------------------------------------

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import base64
 import json
 import sys
 from pathlib import Path
@@ -16,6 +17,10 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 import pytest
+from solders.hash import Hash
+from solders.message import Message
+from solders.pubkey import Pubkey
+from solders.transaction import VersionedTransaction
 
 import config
 from live_execution import jupiter_client
@@ -72,12 +77,21 @@ async def test_dry_run_guard_success_and_refusal(monkeypatch, capsys):
     monkeypatch.setattr(dry_run_guard.solana, "get_mint_decimals", AsyncMock(return_value=9))
     monkeypatch.setattr(dry_run_guard.wallet, "public_address", lambda: "11111111111111111111111111111111")
     monkeypatch.setattr(dry_run_guard, "_get_json", AsyncMock(return_value=clean_quote))
-    monkeypatch.setattr(dry_run_guard, "_build_swap_transaction", AsyncMock(return_value="dummy_b64_tx"))
-    monkeypatch.setattr(
-        dry_run_guard,
-        "inspect_swap_transaction",
-        lambda tx, payer: {"priority_fee_lamports": 5000, "compute_unit_limit": 200000, "compute_unit_price": 25000},
-    )
+    dummy_payer = Pubkey.from_string("11111111111111111111111111111111")
+    dummy_tx_b64 = base64.b64encode(
+        bytes(VersionedTransaction.populate(
+            Message.new_with_blockhash([], dummy_payer, Hash.default()),
+            [],
+        ))
+    ).decode()
+    monkeypatch.setattr(dry_run_guard, "_build_swap_transaction", AsyncMock(return_value=dummy_tx_b64))
+    inspected = []
+
+    def fake_inspect(tx, payer):
+        inspected.append(tx)
+        return {"priority_fee_lamports": 5000, "compute_unit_limit": 200000, "compute_unit_price": 25000}
+
+    monkeypatch.setattr(dry_run_guard, "inspect_swap_transaction", fake_inspect)
 
     class FakeProvider:
         async def get_current_price(self, mint, dec):
@@ -108,6 +122,7 @@ async def test_dry_run_guard_success_and_refusal(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "VERDICT: PASSED" in out
     assert "SOL decrease:          5000 lamports" in out
+    assert inspected and isinstance(inspected[0], VersionedTransaction)
     assert not signing_called
 
     # 2. Clean run (JSON format)

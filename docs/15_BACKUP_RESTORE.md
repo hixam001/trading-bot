@@ -188,6 +188,10 @@ Operators should periodically practice a restore drill in a scratch directory to
      ```bash
      docker compose run --rm live python scripts/restore_state.py --reconcile-only --target-state-dir /app/state
      ```
+   - `--reconcile-only` exits `0` when clean, `2` when chain/journal discrepancies are found, and `1`
+     when the ledger cannot be read. If RPC balances are unavailable (or the state has no wallet address),
+     it prints `RECONCILE SKIPPED`, does not claim success, and exits `0` so a network outage does not
+     masquerade as a state discrepancy. Resolve any `MISMATCH` lines before clearing the kill switch.
 4. **Clear the kill switch** (only after human verification):
    ```bash
    docker compose run --rm live python backend/live_execution/scripts/confirm_trade.py resume

@@ -115,7 +115,7 @@ def prune_retention(backup_dir: Path, now_dt: Optional[datetime] = None) -> list
                 deleted.append(p)
                 log.info("Retention prune deleted: %s", p.name)
             except OSError as e:
-                log.warning("Failed to prune %s: %e", p, e)
+                log.warning("Failed to prune %s: %s", p, e)
     return deleted
 
 
@@ -155,8 +155,12 @@ def create_backup(
                     json.loads(raw_text)  # Validate JSON parses
                     data = raw_text.encode("utf-8")
                 except Exception as e:
-                    log.error("Failed reading/parsing state file %s: %s", p, e)
-                    continue
+                    # Fail closed: silently skipping a corrupt state file
+                    # produces a "successful" backup with holes in the book.
+                    raise RuntimeError(
+                        f"state file {p} is unreadable or invalid JSON ({e}) — "
+                        f"refusing to write an incomplete backup"
+                    ) from e
 
                 arcname = f"state/{p.name}"
                 ti = tarfile.TarInfo(name=arcname)
@@ -188,17 +192,10 @@ def create_backup(
             if is_denylisted(db_path.name):
                 log.warning("Denylist skipping DB: %s", db_path.name)
             else:
-                db_bytes_io = io.BytesIO()
-                # Use sqlite3.Connection.backup() API into memory
                 src_conn = sqlite3.connect(str(db_path))
-                mem_dst = sqlite3.connect(":memory:")
                 try:
-                    src_conn.backup(mem_dst)
-                    # Dump memory DB to bytes
-                    dst_dump = io.BytesIO()
-                    for line in mem_dst.iterdump():
-                        dst_dump.write(f"{line}\n".encode("utf-8"))
-                    # Also write raw sqlite file bytes using backup API to a temp file
+                    # Write a consistent raw SQLite image via the backup API
+                    # (never copy live WAL files).
                     temp_backup_path = backup_dir / f".tmp_db_{ts_str}.sqlite"
                     temp_backup_path.parent.mkdir(parents=True, exist_ok=True)
                     file_dst = sqlite3.connect(str(temp_backup_path))
@@ -220,7 +217,6 @@ def create_backup(
                         "sha256": sha256_bytes(db_data),
                     })
                 finally:
-                    mem_dst.close()
                     src_conn.close()
 
         # 3. MANIFEST.json
@@ -253,13 +249,33 @@ def create_backup(
     return out_file
 
 
+def _normalize_argv(argv: list[str]) -> list[str]:
+    """Attach the value to ``--key`` so Fernet keys starting with ``-`` parse.
+
+    argparse treats a token beginning with ``-`` as an option, so a valid
+    urlsafe-base64 Fernet key such as ``-opUFe...`` was rejected with
+    "expected one argument". The value is known to belong to ``--key``
+    whenever it is not already in ``--key=VALUE`` form.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--key" and i + 1 < len(argv):
+            out.append(f"--key={argv[i + 1]}")
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create encrypted state backup")
     parser.add_argument("--state-dir", type=Path, default=None)
     parser.add_argument("--db-path", type=Path, default=None)
     parser.add_argument("--backup-dir", type=Path, default=None)
     parser.add_argument("--key", type=str, default=None)
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_argv(sys.argv[1:]))
 
     # Resolve default paths
     backend_dir = Path(__file__).resolve().parent.parent / "backend"

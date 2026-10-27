@@ -438,6 +438,37 @@ test.describe('pages (tabs)', () => {
   })
 })
 
+test.describe('operator login gate', () => {
+  test('403 feeds prompt for the operator token and exchange it for a session', async ({ page }) => {
+    await page.route('**/api/**', (route) =>
+      route.fulfill({
+        status: 403,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'invalid operator token' }),
+      }),
+    )
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ status: 'authenticated', expires_in: 3600 }),
+      }),
+    )
+
+    await page.goto(APP)
+    const gate = page.getByTestId('login-gate')
+    await expect(gate).toBeVisible({ timeout: 15_000 })
+
+    const token = 'A'.repeat(32)
+    await gate.locator('#operator-token').fill(token)
+    const [request] = await Promise.all([
+      page.waitForRequest('**/api/auth/login'),
+      gate.getByRole('button', { name: 'authenticate' }).click(),
+    ])
+    expect(request.postDataJSON()).toEqual({ token })
+  })
+})
+
 test.describe('panel error states (DESIGN.md §3.3)', () => {
   test('system tab shows an explicit error panel when only its feed fails', async ({ page }) => {
     await page.route('**/api/system-status*', (route) => route.abort())

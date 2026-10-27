@@ -118,6 +118,9 @@ cluster-wide revocation across restarts should rotate `ADMIN_TOKEN` / `SESSION_S
    list is supported; add `http://localhost:5173` for dev).
 5. WebSockets connect directly to the engine (`wss://<engine-host>/ws/feed`);
    no Vercel involvement, works on all plans.
+6. Log in with the operator token on the dashboard. The session cookie is
+   emitted `SameSite=None; Secure` when the login Origin differs from the
+   API host (HTTPS split mode), and `SameSite=Lax` for same-origin.
 
 Keep-alive (free-tier engines that sleep): an external cron (cron-job.org /
 GitHub Actions) pinging `/api/system-status` every 5–10 min prevents

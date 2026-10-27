@@ -193,7 +193,12 @@ def already_held(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult
 
 def not_on_break(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     from rule_engine import liveness
-    on_break = liveness.is_on_break()
+    try:
+        on_break = liveness.is_on_break()
+    except RuntimeError as exc:
+        # Corrupt/malformed state is not "awake" — block entries loudly.
+        return RuleResult("not_on_break", False,
+                          f"break state unreadable — {exc}", value=False)
     ok = not on_break
     if ok:
         detail = "awake"

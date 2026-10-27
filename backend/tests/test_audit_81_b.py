@@ -287,3 +287,27 @@ def test_b5_ack_wallet_change_script_isolation(tmp_path):
     assert data.get("reason") == "manual operator deposit for test"
     assert data.get("acknowledged_by") == "operator"
 
+
+
+def test_failed_check_does_not_overwrite_snapshot(tmp_path):
+    """A ledger read failure must preserve the baseline; overwriting it would
+    hide the outflow that the failed check was supposed to detect."""
+    snap_file = tmp_path / "wallet_snapshot.json"
+    snap_file.write_text(json.dumps({"ts": 100.0, "usdc": 100.0, "sol": 1.0}))
+
+    class BrokenLedger:
+        def _load(self):
+            raise RuntimeError("ledger corrupt")
+
+    res = check_wallet_drop(
+        current_usdc=10.0,
+        current_sol=0.5,
+        ledger=BrokenLedger(),
+        state_dir=tmp_path,
+        now_fn=lambda: 200.0,
+    )
+
+    assert res.get("skipped") is True
+    assert "check_failed" in res.get("reason", "")
+    saved = json.loads(snap_file.read_text())
+    assert saved == {"ts": 100.0, "usdc": 100.0, "sol": 1.0}

@@ -36,9 +36,18 @@ class CommitLog:
         if not self.path.is_file():
             return []
         try:
-            return json.loads(self.path.read_text())
-        except (ValueError, OSError):
-            return []
+            data = json.loads(self.path.read_text())
+        except (ValueError, OSError) as exc:
+            raise RuntimeError(
+                f"commit log at {self.path} is unreadable ({exc}) — refusing "
+                f"to seal or overwrite its history"
+            ) from exc
+        if not isinstance(data, list):
+            raise RuntimeError(
+                f"commit log at {self.path} is malformed (expected a list, "
+                f"got {type(data).__name__}) — refusing to overwrite its history"
+            )
+        return data
 
     def _save(self, commits) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

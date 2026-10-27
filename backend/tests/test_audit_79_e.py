@@ -542,3 +542,48 @@ def test_pre_restore_snapshot_includes_uncheckpointed_wal_rows(
         sconn.close()
     assert count == 1, "pre-restore snapshot lost the uncheckpointed WAL row"
 
+
+
+def test_backup_refuses_corrupt_state_file(tmp_path, keys):
+    """A corrupt state JSON must abort the backup — silently omitting it
+    would produce a 'successful' archive missing part of the book."""
+    key_backup, key_secret = keys
+    state_dir = tmp_path / "state"
+    state_dir.mkdir()
+    (state_dir / "executions.json").write_text("{not valid json", encoding="utf-8")
+    db_path = tmp_path / "trading_bot.db"
+    conn = sqlite3.connect(str(db_path))
+    conn.execute("CREATE TABLE t (id INTEGER);")
+    conn.commit()
+    conn.close()
+    backup_dir = tmp_path / "backups"
+
+    with pytest.raises(RuntimeError, match="unreadable or invalid JSON"):
+        backup_state.create_backup(
+            state_dir=state_dir,
+            db_path=db_path,
+            backup_dir=backup_dir,
+            backup_key=key_backup,
+            secret_store_key=key_secret,
+        )
+
+
+def test_restore_without_target_db_warns_loudly(sample_state, keys, capsys):
+    """A DB-bearing archive restored without --target-db-path must say the
+    database was skipped instead of looking like a complete restore."""
+    state_dir, db_path, backup_dir = sample_state
+    key_backup, key_secret = keys
+    archive = backup_state.create_backup(
+        state_dir=state_dir, db_path=db_path, backup_dir=backup_dir,
+        backup_key=key_backup, secret_store_key=key_secret,
+    )
+    target_state = backup_dir / "state_only_restore"
+    target_state.mkdir()
+
+    restore_state.restore_backup(
+        archive_path=archive, target_state_dir=target_state,
+        target_db_path=None, backup_key=key_backup, force=True,
+    )
+
+    out = capsys.readouterr().out
+    assert "DATABASE WAS NOT RESTORED" in out

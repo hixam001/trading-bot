@@ -12,6 +12,7 @@ file is corrupt, it fails closed (refuses to trade) until human intervention.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
@@ -40,13 +41,36 @@ def _read() -> Optional[dict]:
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text())
+        state = json.loads(path.read_text())
     except (ValueError, OSError) as exc:
         # Corrupt state must never silently mean "awake".
         raise RuntimeError(
             f"break state at {path} is corrupt ({exc}) — refusing to "
             f"trade until a human inspects it"
         )
+    # Syntactically valid JSON is not enough: a list, scalar, missing key or
+    # wrong type would otherwise read as "awake" (or crash the gate). The
+    # schema is exactly what _write persists.
+    if not isinstance(state, dict):
+        raise RuntimeError(
+            f"break state at {path} is malformed (expected an object, got "
+            f"{type(state).__name__}) — refusing to trade until a human "
+            f"inspects it"
+        )
+    taking = state.get("taking")
+    until = state.get("break_until")
+    valid_until = (
+        isinstance(until, (int, float))
+        and not isinstance(until, bool)
+        and math.isfinite(until)
+    )
+    if not isinstance(taking, bool) or not valid_until:
+        raise RuntimeError(
+            f"break state at {path} is malformed (taking must be a boolean "
+            f"and break_until a finite number) — refusing to trade until a "
+            f"human inspects it"
+        )
+    return state
 
 
 MIN_BREAK_MINUTES: int = 5

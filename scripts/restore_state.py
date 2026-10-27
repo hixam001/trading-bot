@@ -338,7 +338,13 @@ def restore_backup(
                     finally:
                         conn.close()
                 else:
-                    log.info("SQLite DB in archive skipped (no target DB path specified)")
+                    # Never let a DB-bearing archive look fully restored when
+                    # the book was silently left behind.
+                    print("WARNING: archive contains trading_bot.db but no "
+                          "--target-db-path was given — the DATABASE WAS NOT "
+                          "RESTORED. Re-run with --target-db-path <path> to "
+                          "restore the book.")
+                    log.warning("SQLite DB in archive skipped: no target DB path specified")
 
     except Exception as exc:
         # Clean up any staged files
@@ -440,26 +446,40 @@ async def run_reconcile(state_dir: Path) -> dict[str, Any]:
 
     if executions_file.is_file():
         try:
-            records = json.loads(executions_file.read_text(encoding="utf-8"))
+            data = json.loads(executions_file.read_text(encoding="utf-8"))
+            # Real ledgers write {"records": [...]}; older fixtures wrote a
+            # bare list. Anything else cannot be reconciled — fail loudly
+            # instead of reporting a clean, empty book.
+            records = data.get("records") if isinstance(data, dict) else data
+            if not isinstance(records, list):
+                raise ValueError("expected a record list or a {'records': [...]} object")
+            open_statuses = {
+                "recorded", "sent", "confirmed",       # ExecutionLedger._OPEN
+                "OPEN", "PARTIAL", "open", "partial",  # legacy operators
+            }
             for r in records:
-                if r.get("kind") == "buy" and r.get("status") in ("OPEN", "PARTIAL", "open", "partial"):
-                    mint = r.get("mint")
-                    if not mint:
-                        continue
-                    tokens = float(r.get("tokens_out") or 0.0)
-                    cost = float(r.get("usd_size") or 0.0)
-                    if mint in meta:
-                        meta[mint]["tokens"] += tokens
-                        meta[mint]["cost"] += cost
-                    else:
-                        meta[mint] = {
-                            "tokens": tokens,
-                            "cost": cost,
-                            "price_usd": float(r.get("price_usd") or 0.0),
-                            "opened_ts": float(r.get("ts") or 0.0),
-                        }
+                if not isinstance(r, dict):
+                    raise ValueError("execution record is not an object")
+                if r.get("kind") != "buy" or r.get("status") not in open_statuses:
+                    continue
+                mint = r.get("mint")
+                if not mint:
+                    raise ValueError("open buy record has no mint")
+                tokens = float(r.get("tokens_out") or 0.0)
+                cost = float(r.get("usd_size") or 0.0)
+                if mint in meta:
+                    meta[mint]["tokens"] += tokens
+                    meta[mint]["cost"] += cost
+                else:
+                    meta[mint] = {
+                        "tokens": tokens,
+                        "cost": cost,
+                        "price_usd": float(r.get("price_usd") or 0.0),
+                        "opened_ts": float(r.get("ts") or 0.0),
+                    }
         except Exception as e:
             log.error("Failed loading executions.json for reconcile: %s", e)
+            return {"checked": False, "error": f"executions.json unreadable: {e}"}
 
     try:
         from live_execution import wallet, solana
@@ -475,16 +495,40 @@ async def run_reconcile(state_dir: Path) -> dict[str, Any]:
 
         report = reconcile(meta, balances, exclude_mints=frozenset({"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"}))
         log.info("Reconciliation check completed: %s", report)
-        if report.get("discrepancies"):
+        if not report.get("checked"):
+            # RPC outage is not a clean bill of health.
+            print("RECONCILE SKIPPED: on-chain balances unavailable — "
+                  "the restored journal was NOT verified against chain.")
+        elif report.get("discrepancies"):
             print("RECONCILE WARNING: Found discrepancies between restored journal and chain:")
             for d in report["discrepancies"]:
                 print(f"  - {d}")
         else:
-            print("RECONCILE SUCCESS: Restored state matches chain balances or balances unavailable.")
+            print("RECONCILE SUCCESS: Restored state matches chain balances.")
         return report
     except Exception as e:
         log.warning("Could not complete reconciliation: %s", e)
         return {"checked": False, "error": str(e)}
+
+
+def _normalize_argv(argv: list[str]) -> list[str]:
+    """Attach the value to ``--key`` so Fernet keys starting with ``-`` parse.
+
+    argparse treats a token beginning with ``-`` as an option, so a valid
+    urlsafe-base64 Fernet key such as ``-opUFe...`` was rejected with
+    "expected one argument". The value is known to belong to ``--key``
+    whenever it is not already in ``--key=VALUE`` form.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(argv):
+        if argv[i] == "--key" and i + 1 < len(argv):
+            out.append(f"--key={argv[i + 1]}")
+            i += 2
+        else:
+            out.append(argv[i])
+            i += 1
+    return out
 
 
 def main() -> int:
@@ -496,11 +540,15 @@ def main() -> int:
     parser.add_argument("--force", action="store_true", help="Force overwrite non-empty target directory")
     parser.add_argument("--reconcile", action="store_true", help="Run read-only reconciliation check")
     parser.add_argument("--reconcile-only", action="store_true", help="Run read-only reconciliation check without restoring backup")
-    args = parser.parse_args()
+    args = parser.parse_args(_normalize_argv(sys.argv[1:]))
 
     if args.reconcile_only:
-        asyncio.run(run_reconcile(args.target_state_dir))
-        return 0
+        report = asyncio.run(run_reconcile(args.target_state_dir))
+        # An operator script must not report success when reconciliation
+        # found drift or could not read the journal.
+        if report.get("error"):
+            return 1
+        return 2 if report.get("discrepancies") else 0
 
     if not args.archive:
         parser.error("archive is required unless --reconcile-only is specified")

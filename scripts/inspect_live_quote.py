@@ -172,11 +172,23 @@ async def inspect_direction(name: str, input_mint: str, output_mint: str, amount
     if guard_error:
         print(f"REASON: {guard_error}")
 
-    # Run simulation if sim_guard is available
-    sim_verdict = "SKIPPED (Phase B pending)"
+    from live_execution.trade_intent import TradeIntent
+
+    intent = TradeIntent(
+        side="buy" if input_mint == USDC_MINT else "sell",
+        wallet=wallet_pubkey,
+        input_mint=input_mint,
+        output_mint=output_mint,
+        in_amount_raw=amount_raw,
+        slippage_bps=int(quote.get("slippageBps", live_config.SLIPPAGE_BPS)),
+        min_out_raw=int(quote.get("otherAmountThreshold", 0)),
+        reference_price_usd=None,
+    )
+
+    sim_verdict = "REFUSED (sim_guard unavailable)"
     try:
         from live_execution import sim_guard
-        sim_res = await sim_guard.simulate_and_assert(swap_b64, quote, wallet_pubkey)
+        await sim_guard.simulate_and_assert(swap_b64, quote, wallet_pubkey, intent)
         sim_verdict = "PASS"
     except ImportError:
         pass
@@ -184,8 +196,9 @@ async def inspect_direction(name: str, input_mint: str, output_mint: str, amount
         sim_verdict = f"REFUSED ({e})"
 
     print(f"SIMULATION VERDICT:    {sim_verdict}")
-    print(f"OVERALL VERDICT:       {'PASS' if guard_verdict == 'PASS' and 'REFUSED' not in sim_verdict else 'REFUSED'}")
-    return guard_verdict == "PASS"
+    passed = guard_verdict == "PASS" and sim_verdict == "PASS"
+    print(f"OVERALL VERDICT:       {'PASS' if passed else 'REFUSED'}")
+    return passed
 
 
 async def main():

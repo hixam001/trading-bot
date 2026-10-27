@@ -871,8 +871,13 @@ async def _snapshot_funnel(
     return row_id
 
 
-async def run_cycle(once: bool = False) -> dict:
-    """One full cycle. Returns a step-by-step outcome record, refusals included."""
+async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
+    """One full cycle. Returns a step-by-step outcome record, refusals included.
+
+    ``provider``/``thinker`` are owned by the main loop so a long-running
+    process reuses one HTTP client pool (and the discovery rotation state)
+    instead of constructing and leaking a new stack every tick.
+    """
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
     # Item 3: heal any commit whose memo went on-chain but whose fill never
     # followed (historical orphans predate the post-memo fail() wiring). Cheap
@@ -930,7 +935,8 @@ async def run_cycle(once: bool = False) -> dict:
     # fetch + blocklist + FAKE-CHART filter (A7 parity — the live cycle
     # previously skipped it) + live-only enrichment. Fail-soft per feed.
     from decision_pipeline import enrich_candidates, read_candidates
-    candidates = await read_candidates(build_provider())
+    provider = provider or build_provider()
+    candidates = await read_candidates(provider)
     await enrich_candidates(candidates)
 
     regime = compute_market_regime(candidates)
@@ -985,7 +991,7 @@ async def run_cycle(once: bool = False) -> dict:
                         "thinker (non-fatal)", exc_info=True)
             brain_result = None
 
-    thinker = Thinker()
+    thinker = thinker or Thinker()
     outcome = {"entries": [], "exits": [], "regime_ok": regime.regime_ok,
                "candidates": len(candidates),
                # A2/A4 observability: how the journal compared to chain truth
@@ -1281,6 +1287,11 @@ def main() -> None:
         # here would hand the scanner a throwaway dict on a cold start and
         # it would never see the cycle's high-water marks).
         exit_task: asyncio.Task | None = None
+        # One provider stack + one thinker for the whole process: the old
+        # per-tick build leaked an AsyncClient pool and reset the keyword
+        # scanner's rotation, so the same slice was scanned forever.
+        provider = build_provider()
+        thinker = Thinker()
         if not args.once:
             if not hasattr(run_cycle, "_hwm"):
                 # A7 (repo audit): restore high-water marks from the shared
@@ -1312,7 +1323,8 @@ def main() -> None:
                     pass
 
                 try:
-                    await run_cycle(once=args.once)
+                    await run_cycle(once=args.once, provider=provider,
+                                    thinker=thinker)
                 except Exception:
                     log.exception("cycle crashed - continuing")
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -1329,6 +1341,16 @@ def main() -> None:
         finally:
             if exit_task is not None:
                 exit_task.cancel()
+            close_provider = getattr(provider, "aclose", None)
+            if close_provider is not None:
+                try:
+                    await close_provider()
+                except Exception:
+                    log.warning("provider close failed", exc_info=True)
+            try:
+                await thinker.aclose()
+            except Exception:
+                log.warning("thinker close failed", exc_info=True)
 
     asyncio.run(loop())
 

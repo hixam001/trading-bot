@@ -278,3 +278,25 @@ async def test_research_enrich_missing_stays_none():
     # Case (d): missing buys/sells key in h6 stays None
     assert cand_missing_keys.buys_6h is None
     assert cand_missing_keys.sells_6h is None
+
+
+@pytest.mark.asyncio
+async def test_keyword_scanner_advances_rotation_after_each_scan():
+    """A scan must advance the keyword slice; otherwise the same pool slice
+    is fetched forever and the rotating discovery lens is dead."""
+    class _Response:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"pairs": []}
+
+    class _Client:
+        async def get(self, *args, **kwargs):
+            return _Response()
+
+    kd = KeywordScanner(_Client())
+    first = kd._rotated_queries()
+    await kd.scan()
+    assert kd._rotation == 1
+    assert kd._rotated_queries() != first

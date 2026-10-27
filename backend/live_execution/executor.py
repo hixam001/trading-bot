@@ -181,10 +181,44 @@ async def _broadcast_and_confirm(
             error=exc,
         )
     if not sent:
-        return OrderResult(status="failed", reason="every rpc refused the transaction", signature=signed_swap.signature)
-    conf = await solana.confirm_signature(sent)
-    if not conf["confirmed"]:
-        return OrderResult(status="failed", reason=conf["err"] or "unconfirmed", signature=sent)
+        # An ambiguous send (transport failure or "already processed") is not
+        # a definitive rejection: the signed transaction may have landed.
+        # Resolve the LOCAL signature before declaring failure — otherwise a
+        # real fill stays unjournaled and a retried buy could double-spend.
+        try:
+            status = await solana.get_signature_status(signed_swap.signature)
+        except Exception as exc:
+            log.warning("signature status lookup failed for %s: %s",
+                        signed_swap.signature[:16], exc)
+            status = None
+        if status is None:
+            return OrderResult(
+                status="failed",
+                reason="send outcome unresolved (signature not found on-chain)",
+                signature=signed_swap.signature,
+            )
+        if status.get("err"):
+            return OrderResult(
+                status="failed",
+                reason=f"landed-failed (fee paid): {status['err']}",
+                signature=signed_swap.signature,
+                error=status.get("err"),
+            )
+        if status.get("confirmationStatus") in ("confirmed", "finalized"):
+            conf = {"confirmed": True, "slot": status.get("slot"), "err": None}
+        else:
+            conf = await solana.confirm_signature(signed_swap.signature)
+            if not conf["confirmed"]:
+                return OrderResult(
+                    status="failed",
+                    reason=conf["err"] or "unconfirmed",
+                    signature=signed_swap.signature,
+                )
+        sent = signed_swap.signature
+    else:
+        conf = await solana.confirm_signature(sent)
+        if not conf["confirmed"]:
+            return OrderResult(status="failed", reason=conf["err"] or "unconfirmed", signature=sent)
     if sealed is not None and logc is not None:
         logc.bind(sealed["hash"], sent)
     return OrderResult(status="filled", signature=sent, slot=conf.get("slot"))
@@ -220,6 +254,9 @@ async def place_buy(
         status = "unarmed" if not config.LIVE_TRADING_ENABLED else "blocked"
         return OrderResult(**{**base.to_json(), "status": status, "reason": str(exc)})
     except kill_switch.KillSwitchTripped as exc:
+        return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
+    except RuntimeError as exc:
+        # Corrupt kill-switch/ledger state is a refusal, not a crash.
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
     try:
         kill_switch.assert_not_tripped()

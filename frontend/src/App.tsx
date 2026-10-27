@@ -10,6 +10,7 @@ import Performance from './components/Performance'
 import RefusalFunnel from './components/RefusalFunnel'
 import ShortcutOverlay from './components/ShortcutOverlay'
 import MintHistory from './components/MintHistory'
+import LoginGate from './components/LoginGate'
 import { Empty, ErrorPanel, LoadingPanel, Panel } from './components/ui'
 import Hero from './components/Hero'
 import AlertStrip from './components/AlertStrip'
@@ -57,6 +58,16 @@ export default function App() {
   const funnel = useApi<FunnelResponse>('/api/funnel', 15000)
   const safety = useApi<SafetyResponse>('/api/safety', 15000)
   const snapshots = useApi<FunnelSnapshotsResponse>('/api/funnel/snapshots?limit=300', 60000)
+  const authRequired = [
+    liveBook.error,
+    journal.error,
+    regimes.error,
+    status.error,
+    stats.error,
+    funnel.error,
+    safety.error,
+    snapshots.error,
+  ].some((err) => err === 'HTTP 403')
   const [feedFilter, setFeedFilter] = useState<FeedFilter>('all')
 
   // §63 operator upgrades: read-only command palette state. The palette
@@ -235,6 +246,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen flex flex-col">
+      {authRequired && <LoginGate />}
       <Hero
         equity={liveBook.data?.equity_usd}
         curve={(stats.data?.equity_curve ?? []).map((p) => p.equity_usd)}

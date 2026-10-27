@@ -16,7 +16,7 @@ from fastapi import APIRouter, Request
 import config
 from api import db
 from api.auth import require_local_or_admin
-from sizing import compute_entry_cost, compute_unrealized_pnl
+from sizing import compute_unrealized_pnl
 from promotion_gate import _max_drawdown_pct, _profit_factor
 
 from live_execution.wallet import get_wallet_cash_usd
@@ -83,7 +83,10 @@ async def get_stats(request: Request):
     total_spend_usd = 0.0
     open_positions_mark_usd = 0.0
     for t in open_trades:
-        total_spend_usd += compute_entry_cost(t.position_size_usd)
+        # position_size_usd is the ACTUAL cash out (ledger usd_size / fill
+        # actual), already net of fees and slippage. Grossing it up here
+        # double-counted entry costs on the performance panel.
+        total_spend_usd += t.position_size_usd
         mark_price = None
         if provider is not None:
             try:

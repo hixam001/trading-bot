@@ -51,7 +51,10 @@ def _regime() -> MarketRegime:
 
 def test_run_cycle_delegates_to_shared_read_stage():
     src = inspect.getsource(rlc.run_cycle)
-    assert "read_candidates(build_provider())" in src
+    assert "read_candidates(provider)" in src
+    # The provider is built once by the loop and passed in, so a long-running
+    # process does not leak a client pool (and rotation state) every tick.
+    assert "provider = provider or build_provider()" in src
     assert "enrich_candidates(candidates)" in src
 
 

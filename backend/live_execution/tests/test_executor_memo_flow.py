@@ -107,6 +107,104 @@ async def test_happy_path_memo_before_fill(env, monkeypatch):
     assert res.signature == "FILLSIG"
 
 
+async def test_ambiguous_send_resolves_landed_fill_and_journals_it(env, monkeypatch):
+    """A send that returns None ("already processed"/transport ambiguity) must
+    be resolved by signature status, not reported as a refusal. Otherwise the
+    buy lands on-chain but is never journaled and a retry can double-buy."""
+    order = []
+    _arm_balances(monkeypatch)
+
+    async def fake_memo(payer, seal_hash, endpoints=None):
+        order.append("memo")
+        return {"signature": "MEMOSIG", "slot": 5}
+
+    async def fake_quote(mint, decimals, usd, ledger=None):
+        order.append("quote")
+        return {"quote": {"priceImpactPct": "0.001"},
+                "tokens_out": 1.0, "price_usd": usd}
+
+    async def fake_build(quote, addr):
+        order.append("build")
+        return base64.b64encode(b"swap").decode()
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        order.append("sign")
+        return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True)
+
+    async def fake_send(signed, endpoints=None):
+        order.append("send")
+        return None
+
+    async def fake_status(sig, endpoints=None):
+        order.append("status")
+        return {"slot": 10, "err": None, "confirmationStatus": "confirmed"}
+
+    async def no_confirm(sig, timeout_s=None, endpoints=None):
+        raise AssertionError("already-confirmed status must not re-poll")
+
+    monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
+    monkeypatch.setattr(ex, "get_jupiter_quote", fake_quote)
+    monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
+    monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
+    monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send)
+    monkeypatch.setattr(ex.solana, "get_signature_status", fake_status)
+    monkeypatch.setattr(ex.solana, "confirm_signature", no_confirm)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
+                             idempotency_key="k-landed", ledger=ledger,
+                             reference_price_usd=1.0)
+
+    assert res.status == "filled"
+    assert res.signature == "FILLSIG"
+    assert order == ["memo", "quote", "build", "sign", "send", "status"]
+    records = ledger._load()
+    assert len(records) == 1
+    assert records[0]["signature"] == "FILLSIG"
+
+
+async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monkeypatch):
+    """No signature on-chain means we cannot prove a fill; fail closed and do
+    not journal a phantom position."""
+    order = []
+    _arm_balances(monkeypatch)
+
+    async def fake_memo(payer, seal_hash, endpoints=None):
+        return {"signature": "MEMOSIG", "slot": 5}
+
+    async def fake_quote(mint, decimals, usd, ledger=None):
+        return {"quote": {"priceImpactPct": "0.001"},
+                "tokens_out": 1.0, "price_usd": usd}
+
+    async def fake_build(quote, addr):
+        return base64.b64encode(b"swap").decode()
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True)
+
+    async def fake_send(signed, endpoints=None):
+        return None
+
+    async def fake_status(sig, endpoints=None):
+        return None
+
+    monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
+    monkeypatch.setattr(ex, "get_jupiter_quote", fake_quote)
+    monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
+    monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
+    monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send)
+    monkeypatch.setattr(ex.solana, "get_signature_status", fake_status)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
+                             idempotency_key="k-unknown", ledger=ledger,
+                             reference_price_usd=1.0)
+
+    assert res.status == "failed"
+    assert "unresolved" in res.reason
+    assert ledger._load() == []
+
+
 async def test_memo_failure_blocks_fill_entirely(env, monkeypatch):
     order = []
     _arm_balances(monkeypatch)
@@ -330,3 +428,18 @@ async def test_sell_quote_failure_returns_failed_not_nameerror(env, monkeypatch)
     assert res.status == "failed"
     assert "quote" in res.reason
     assert "send" not in calls
+
+
+async def test_corrupt_state_during_preflight_blocks_not_raises(env, monkeypatch):
+    def broken_preflight(*a, **k):
+        raise RuntimeError("kill switch state is corrupt")
+
+    monkeypatch.setattr(ex, "preflight", broken_preflight)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
+                             idempotency_key="k-corrupt", ledger=ledger,
+                             reference_price_usd=1.0)
+
+    assert res.status == "blocked"
+    assert "corrupt" in res.reason

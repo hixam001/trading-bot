@@ -60,6 +60,13 @@ async def replay() -> list[dict]:
             except (TypeError, ValueError):
                 snap = {}
 
+            if not isinstance(snap, dict):
+                results.append({
+                    "symbol": row["symbol"],
+                    "error": "candidate_snapshot is not a JSON object",
+                })
+                continue
+
             try:
                 cand = Candidate(**{k: v for k, v in snap.items()
                                     if k in Candidate.__dataclass_fields__})

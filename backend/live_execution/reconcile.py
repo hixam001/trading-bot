@@ -281,7 +281,12 @@ def check_wallet_drop(
                         log.error("Failed tripping kill switch on wallet drop: %s", exc)
 
         except Exception as exc:
+            # Never overwrite the baseline after a failed check: doing so
+            # would silently bless whatever outflow we could not evaluate.
             log.warning("reconcile: failed checking wallet drop: %s", exc)
+            result["skipped"] = True
+            result["reason"] = f"check_failed: {exc}"
+            return result
 
     # Save new snapshot atomically
     try:

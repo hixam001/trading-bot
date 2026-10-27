@@ -154,6 +154,9 @@ class KeywordScanner:
         """Rotated keyword slice + boost flags -> slot-composed board.
         Fail-soft -> []."""
         queries = self._rotated_queries()
+        # Advance for the next tick even if this scan fails mid-way; without
+        # this the rotation stayed on the same slice forever.
+        self.next_rotation()
         all_pairs: list[dict] = []
         now = time.monotonic()
 

@@ -72,7 +72,8 @@ def _break_state() -> dict:
         # corrupt state file — liveness raises RuntimeError
         return {"on_break": True, "reason": f"state corrupt: {exc}", "break_until_epoch": 0.0}
     except Exception as exc:
-        return {"on_break": False, "reason": f"state unavailable: {exc}", "break_until_epoch": 0.0}
+        # Fail closed like the gate: an unreadable break state is not "awake".
+        return {"on_break": True, "reason": f"state unavailable: {exc}", "break_until_epoch": 0.0}
 
 
 async def _sizing_truths() -> tuple[dict, dict]:

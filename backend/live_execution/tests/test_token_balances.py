@@ -101,3 +101,13 @@ async def test_malformed_entries_are_skipped_not_fatal(monkeypatch):
     })
     got = await solana.get_token_balances("OWNER")
     assert got == {"MINTB": 4.0}
+
+
+async def test_one_program_unreadable_is_unknown_not_partial(monkeypatch):
+    """A partial answer (one program down) must not be treated as full truth:
+    token-2022 holdings could be missing and reconcile would flag them gone."""
+    _patch_rpc(monkeypatch, {
+        solana._TOKEN_PROGRAM_ID: {"value": [_entry("MINTA", ui=1.0)]},
+        solana._TOKEN_2022_PROGRAM_ID: None,
+    })
+    assert await solana.get_token_balances("OWNER") is None

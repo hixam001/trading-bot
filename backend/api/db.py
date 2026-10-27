@@ -1526,14 +1526,21 @@ async def wipe_paper_book(
         cur = await conn.execute(f"DELETE FROM {table}")
         return max(cur.rowcount, 0)
 
-    counts["feed_events"] = await _del("feed_events")
-    counts["trades"]      = await _del("trades")
+    # One transaction: a mid-wipe failure must not leave the display half
+    # cleared while the cash row is still the old book.
+    await conn.execute("BEGIN")
+    try:
+        counts["feed_events"] = await _del("feed_events")
+        counts["trades"]      = await _del("trades")
 
-    await conn.execute(
-        "UPDATE portfolio_state SET cash_usd = ?, updated_at = ? WHERE id = 1",
-        (initial_cash_usd, _now_iso()),
-    )
-    await conn.commit()
+        await conn.execute(
+            "UPDATE portfolio_state SET cash_usd = ?, updated_at = ? WHERE id = 1",
+            (initial_cash_usd, _now_iso()),
+        )
+        await conn.commit()
+    except Exception:
+        await conn.rollback()
+        raise
 
     return {
         "reset": True,

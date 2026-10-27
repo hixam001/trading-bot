@@ -50,6 +50,7 @@ services:
       - engine_logs:/app/logs
     environment:
       - ROLE=api
+      - PORT=8000
       - DB_PATH=/app/data/trading_bot.db
       - LOG_DIR=/app/logs
       # Strip wallet key material so the internet-facing API process NEVER holds the signing key:
