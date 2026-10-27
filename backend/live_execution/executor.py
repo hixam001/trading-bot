@@ -321,7 +321,16 @@ async def place_buy(
     # tight as ever; a memo that cannot be confirmed blocks the fill entirely
     # (handoff §22 requirement 4).
     intent = dict(kind="buy", mint=mint, symbol=symbol, usd=usd)
-    sealed = logc.seal("buy", intent)
+    try:
+        sealed = logc.seal("buy", intent)
+    except Exception as exc:
+        # A corrupt/unwritable commit log must refuse the order BEFORE any
+        # memo, quote, signature, or broadcast — never crash the cycle and
+        # never execute a fill without its auditable seal.
+        log.error("commit log seal failed for buy %s: %s", mint[:8], exc,
+                  exc_info=True)
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": f"commit log unavailable: {exc}"})
     try:
         memo_res = await memo.publish_commit_memo(payer, sealed["hash"])
     except memo.MemoPublishError as exc:
@@ -502,7 +511,13 @@ async def place_sell(
     # quote -> build -> broadcast. A sell decision that cannot be committed
     # on-chain is not executed (handoff §22 requirement 4).
     intent = dict(kind="sell", mint=mint, symbol=symbol, fraction=frac)
-    sealed = logc.seal("sell", intent)
+    try:
+        sealed = logc.seal("sell", intent)
+    except Exception as exc:
+        log.error("commit log seal failed for sell %s: %s", mint[:8], exc,
+                  exc_info=True)
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": f"commit log unavailable: {exc}"})
     try:
         memo_res = await memo.publish_commit_memo(payer, sealed["hash"])
     except memo.MemoPublishError as exc:

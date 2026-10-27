@@ -3,7 +3,7 @@
 ### Baseline & Measured Suite Counts
 - Base HEAD: `87b0053` (§84 complete)
 - Baseline suite: **1229 passed**, 0 failed (102 warnings)
-- Final suite: **1254 passed**, 0 failed (102 warnings in 17.16s; +25 tests)
+- Final suite: **1256 passed**, 0 failed (102 warnings in 18.99s; +27 tests)
 - Pre-push gate: **9/9 local steps clean** — pytest, `pip check`, `pip-audit`, AST keypair isolation, `tsc --noEmit`, `npm run build`, `npm audit --omit=dev`, Playwright **40/40**, gitleaks skipped (binary absent locally; CI workflow unchanged)
 - `backend/requirements.lock` was dirty at the start; CI's `pip-audit` then flagged certifi/filelock/setuptools advisories, so the lock was bumped and included (certifi 2026.10.23, filelock 4.2.4, setuptools 84.2.1)
 
@@ -46,6 +46,9 @@
    - New `frontend/src/components/LoginGate.tsx` appears when any data feed returns `HTTP 403`; it posts `{token}` to `/api/auth/login` with credentials and reloads into the HttpOnly cookie session. The token is never written to storage.
    - `api/auth.py` selects `SameSite=None; Secure` only when the request is HTTPS and the `Origin` host differs from the API host; default/same-origin stays `Lax`. This makes the documented Vercel split deployment actually able to keep a session.
    - E2E: `operator login gate › 403 feeds prompt for the operator token and exchange it for a session`.
+9. **Commit-log seal containment (`executor.place_buy`/`place_sell`)**:
+   - A corrupt/unreadable `commits.json` made `CommitLog.seal()` raise `RuntimeError` out of both order entry points. Both seal calls are now contained: the executor logs the failure and returns `status="blocked"` with `commit log unavailable: …` before any memo, quote, signature, or broadcast.
+   - Regressions: `test_corrupt_commit_log_blocks_buy_before_memo` and `test_corrupt_commit_log_blocks_sell_before_memo` assert blocked status, no network/memo side effects, and the corrupt file left untouched for inspection.
 
 ### Documentation Updated
 - `handoff.md` §85 (this section)
@@ -56,6 +59,7 @@
 - `memory-bank/systemPatterns.md` — binding push-gate invariant (any branch, docs included)
 - `docs/11_DEPLOYMENT.md`, `docs/13_ORACLE_DEPLOY_GUIDE.md` — split-mode login/cookie behavior
 - `docs/15_BACKUP_RESTORE.md` — reconcile exit codes and `RECONCILE SKIPPED` semantics
+- `docs/14_SIGNING_GUARD.md` — corrupt/unwritable commit-log seals refuse before memo/sign/broadcast
 
 ### Constraints & Invariants Preserved
 - No changes to wallet signing, sizing, rule thresholds, risk flags, or hardcoded arming switches.

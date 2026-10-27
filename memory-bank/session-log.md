@@ -1,3 +1,9 @@
+## Memory-bank update — 2026-10-27 (§85-I commit-log seal containment)
+
+- **Task**: close the remaining §85 residual — `CommitLog.seal()` could still raise `RuntimeError` out of `place_buy`/`place_sell` when `commits.json` was corrupt or unreadable.
+- **Fix**: both seal calls are wrapped; failure logs and returns `blocked` with `commit log unavailable: …` before memo, quote, signing, or broadcast. The corrupt file is left untouched for operator inspection.
+- **Tests**: `test_corrupt_commit_log_blocks_buy_before_memo`, `test_corrupt_commit_log_blocks_sell_before_memo`; backend **1256 passed**, 0 failed.
+
 ## Memory-bank update — 2026-10-27 (§85 Post-§84 re-audit: CI key parsing, ambiguous sends, break-state truth, provider lifecycle, restore/backup integrity & operator login)
 
 - **Task**: fix the failing CI CLI test, then audit the post-§84 tree for silent-wrong-state bugs across execution, liveness, provider lifecycle, reconcile/backup, DB accounting, operator scripts, deployment ports, and frontend auth; every fix carries a regression test.

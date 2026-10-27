@@ -443,3 +443,40 @@ async def test_corrupt_state_during_preflight_blocks_not_raises(env, monkeypatch
 
     assert res.status == "blocked"
     assert "corrupt" in res.reason
+
+
+async def test_corrupt_commit_log_blocks_buy_before_memo(env, monkeypatch):
+    """A corrupt commits.json must refuse the buy before the memo, quote,
+    signature, or broadcast — never raise out of place_buy."""
+    order = []
+    _arm_balances(monkeypatch)
+    _arm_fill(monkeypatch, order)
+    corrupt = env / "commits.json"
+    corrupt.write_text("{not-json")
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,
+                             idempotency_key="k-corrupt-log", ledger=ledger,
+                             reference_price_usd=1.0)
+
+    assert res.status == "blocked"
+    assert "commit log" in res.reason
+    assert order == []
+    assert corrupt.read_text() == "{not-json"
+
+
+async def test_corrupt_commit_log_blocks_sell_before_memo(env, monkeypatch):
+    """Sell-side twin: no memo/sign/send when the commit log cannot be read."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls)
+    corrupt = env / "commits.json"
+    corrupt.write_text("{not-json")
+    ledger = _ledger_with_open_position(env, key="k-corrupt-sell-log")
+
+    res = await ex.place_sell("MINT", "SYM", 1.0, ledger=ledger)
+
+    assert res.status == "blocked"
+    assert "commit log" in res.reason
+    assert calls == []
+    assert corrupt.read_text() == "{not-json"
