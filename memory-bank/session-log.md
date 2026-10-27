@@ -17,7 +17,8 @@
   - Session cookies are `SameSite=None; Secure` only for an HTTPS cross-origin dashboard; same-origin stays `Lax`.
 - **Tests**: backend **1254 passed**, 0 failed; `pip check`, `pip-audit`, `npm audit --omit=dev` clean; `tsc` + `npm run build` clean; Playwright **40/40**; gitleaks binary absent locally (CI scans).
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
-- **Constraints**: no changes to signing, sizing, rule thresholds, risk flags, or arming switches. `backend/requirements.lock` was dirty before this work and remains excluded.
+- **Dependency lock**: CI `pip-audit` flagged certifi 2026.7.22, filelock 3.32.4, and setuptools 84.0.0; the pre-existing dirty `backend/requirements.lock` was completed and committed (2026.10.23 / 4.2.4 / 84.2.1), and CI went green.
+- **Constraints**: no changes to signing, sizing, rule thresholds, risk flags, or arming switches.
 
 ## Memory-bank update — 2026-10-26 (§84 Post-§83 re-audit: proof truth, execution integrity, LLM/data resilience & frontend honesty)
 

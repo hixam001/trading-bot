@@ -5,7 +5,7 @@
 - Baseline suite: **1229 passed**, 0 failed (102 warnings)
 - Final suite: **1254 passed**, 0 failed (102 warnings in 17.16s; +25 tests)
 - Pre-push gate: **9/9 local steps clean** — pytest, `pip check`, `pip-audit`, AST keypair isolation, `tsc --noEmit`, `npm run build`, `npm audit --omit=dev`, Playwright **40/40**, gitleaks skipped (binary absent locally; CI workflow unchanged)
-- `backend/requirements.lock` was dirty before this work (pre-existing) and is deliberately excluded from this batch
+- `backend/requirements.lock` was dirty at the start; CI's `pip-audit` then flagged certifi/filelock/setuptools advisories, so the lock was bumped and included (certifi 2026.10.23, filelock 4.2.4, setuptools 84.2.1)
 
 ### Fixed Defects
 1. **CI failure — valid `--key` beginning with `-`**:

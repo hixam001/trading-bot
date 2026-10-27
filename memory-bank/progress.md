@@ -11,7 +11,8 @@
       7. Operator scripts fail closed on unreadable balances, pass decoded transactions and required intents, load `.env` before alerts, and compose pins API `PORT=8000`.
       8. Dashboard login gate handles `HTTP 403` with `/api/auth/login`; session cookies switch to `SameSite=None; Secure` only for HTTPS cross-origin split deployments.
       9. Verification: backend **1254 passed**, 0 failed; prepush gate 9/9 local steps clean; Playwright **40/40**; gitleaks absent locally (CI runs it).
-     10. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
+     10. CI `pip-audit` flagged certifi/filelock/setuptools, so the pre-existing dirty `backend/requirements.lock` was bumped to certifi 2026.10.23, filelock 4.2.4, and setuptools 84.2.1; GitHub Actions then passed.
+     11. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §84 Post-§83 Re-Audit: proof truth, execution integrity, LLM/data resilience & frontend honesty (2026-10-26, phases A–G):
       1. §84-A: `/api/exits.json` uses the real sell-clip constant and true cooldown minutes; `decision_commits.created_at`/`tick_ts` use the CommitLog seal time carried on `OrderResult.commit_sealed_at`, restoring time-ordering proof.
       2. §84-B: retro matcher accepts only real base58 signatures (never synthetic `live-*`/`ledger-*` mirror IDs), rejects mint mismatches, and both DB backends skip fills already bound by a commit signature.
