@@ -19,7 +19,7 @@ Key invariants:
 from __future__ import annotations
 
 import asyncio
-from collections import defaultdict, deque
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -230,6 +230,7 @@ _sent_timestamps: deque[float] = deque(maxlen=100)
 
 # Cooldown and aggregation state
 _key_last_sent: dict[str, float] = {}
+_KEY_LAST_SENT_MAX: int = 4096
 _refusal_window_start: float = 0.0
 _refusal_count: int = 0
 _refusal_latest_msg: str = ""
@@ -429,6 +430,16 @@ async def _alert_worker_loop() -> None:
                 _last_sent_at = datetime.now(timezone.utc).isoformat()
                 _sent_timestamps.append(now)
                 _key_last_sent[item.key] = now
+                # Keys include per-mint identifiers; without a cap the
+                # cooldown map grows for every mint the process ever alerts
+                # on. Drop expired entries first, then the oldest keys.
+                if len(_key_last_sent) > _KEY_LAST_SENT_MAX:
+                    cutoff = now - 3600.0
+                    for key, ts in list(_key_last_sent.items()):
+                        if ts < cutoff:
+                            del _key_last_sent[key]
+                    while len(_key_last_sent) > _KEY_LAST_SENT_MAX:
+                        _key_last_sent.pop(next(iter(_key_last_sent)))
 
         except Exception as exc:
             # Alert worker must NEVER crash

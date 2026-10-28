@@ -5,15 +5,17 @@
 The system has two clearly separated responsibilities that must never be
 merged into one step:
 
-- **The rule engine decides.** A pure, deterministic, fully unit-tested
-  set of Python functions evaluates every candidate against a fixed set of
-  named checks. Given the same inputs, it always produces the same
-  verdict. It runs in microseconds, costs nothing, and requires no LLM call
-  to function.
-- **The LLM explains.** Its only job is to turn an already-computed
-  decision into a short, specific, grounded natural-language thesis. It
-  never overrides the rule engine's verdict, and it is structurally
-  prevented from asserting anything not present in the data it was handed.
+- **The rule engine decides eligibility.** A pure, deterministic, fully
+  unit-tested set of Python functions evaluates every candidate against a
+  fixed set of named checks. Given the same inputs, it always produces the
+  same verdict. It runs in microseconds, costs nothing, and requires no LLM
+  call to function.
+- **The LLM explains — and can only veto.** It runs after the gate on
+  candidates that already passed, writes the thesis, and must return a
+  valid `"buy"` verdict for an entry to proceed. A `"pass"`, malformed
+  response, or provider failure means no entry. It can never turn a
+  rule-engine rejection into an entry, size a trade, open/close a position,
+  or override numeric exits.
 
 This split is what makes the system's output trustworthy: a reader of the
 trade journal can always trace an "enter" or "reject" back to specific,
@@ -97,11 +99,18 @@ one definition of `all_passed` / `failed_rule_ids` /
 | `buy_pressure` | `buys_1h > sells_1h` | Raw transaction-count comparison, not dollar volume |
 | `not_newborn_fade` | `NOT (age_hours < config.NEWBORN_AGE_HOURS AND price_change_1h_pct <= -config.NEWBORN_FADE_PCT)` | A joint rule — young age alone or a dip alone doesn't fail it; the combination does. Protects against buying a fresh launch that's already crashing. |
 | `public_presence` | `has_twitter OR has_telegram OR has_website` | Any one channel is sufficient |
-| `market_regime_ok` | `regime.regime_ok` | Shared across every candidate evaluated in the same tick — see §3 |
-| `cash_available` | `portfolio.cash_usd >= intended_position_size_usd` | |
-| `exposure_cap` | `portfolio.held_usd_in_mint(candidate.mint_address) < config.MAX_EXPOSURE_PER_MINT_USD` | Gates both first entries (starts at $0 exposure) and scale-ins into an existing position uniformly |
-| `security_clear` | `NOT (mint_authority_revoked == False) AND NOT (is_likely_honeypot == True)` | **Only asserts when the underlying field is known.** `None` (unknown) always passes this rule — unknown is not the same claim as unsafe. |
-| `volume_mcap_ratio_ok` | `(volume_24h_usd / max(market_cap_usd, 1)) >= config.MIN_VOLUME_MCAP_RATIO` | Volume meaningfully below market cap is a manipulation/bundling signal |
+| `crowd_heat` | `config.CROWD_HEAT_MIN <= heat <= config.CROWD_HEAT_MAX` | `heat` comes from the fomo.fun board when the staged pipeline spent the metered lookup; otherwise it falls back to the documented presence proxy (20 + 8 per channel). Deliberately skipped lookups journal `evaluated=False` and can never contribute to a pass. |
+| `cash_available` | `portfolio.cash_usd >= intended_position_size_usd` | The live cycle swaps this for its own cash-floor variant (`LIVE_ACTIVE_RULES`) |
+| `already_held` | `portfolio.held_usd_in_mint(candidate.mint_address) <= 0` | One position per name, structurally — no pyramiding/scale-ins |
+| `security_clear` | Fails only on **known-bad** values: `mint_authority_revoked == False`, `freeze_authority_revoked == False`, `is_likely_honeypot == True`, a dangerous Token-2022 extension, or `transfer_fee_bps > config.MAX_TRANSFER_FEE_BPS` | `None` (unknown) always passes this rule — unknown is not the same claim as unsafe. |
+| `not_on_break` | `NOT liveness.is_on_break()` | Operator break / loop liveness gate; corrupt break state fails closed |
+
+`market_regime_ok` is still computed and journaled for observability, but it is
+**retired from the active gate** (`ACTIVE_RULES`); regime context is carried in
+the journal/LLM prompt rather than blocking entries. The active list is
+`liquidity_floor, volume_alive, buy_pressure, not_newborn_fade,
+public_presence, crowd_heat, cash_available, already_held, security_clear,
+not_on_break` — see `backend/rule_engine/rules.py`.
 
 Every rule is a pure function with no side effects, tested independently
 with hand-built fixtures covering both its pass and fail branch — this is
@@ -110,17 +119,24 @@ decision-makers, not advisory input to something else.
 
 ### 2.4 What happens with the result
 
-- **`all_passed == True`** → the candidate proceeds to the entry path
-  (§52: the live cycle's sizing + `place_order`; historically the paper
-  engine's `open_position`). No open position may exist for this mint —
-  the `already_held` rule makes one-position-per-name structural.
+- **`all_passed == True`** → the candidate proceeds to the post-gate LLM
+  veto, then the entry path (§52: the live cycle's sizing + `place_order`;
+  historically the paper engine's `open_position`). No open position may
+  exist for this mint — the `already_held` rule makes one-position-per-name
+  structural.
 - **`all_passed == False`** → the candidate is rejected. It is still logged
   as a full feed event with every `RuleResult` attached (not just the
-  first failure), and still sent to the LLM narrator (§4.1), so the
-  journal shows exactly why every rejection happened, in the same detail
-  as every acceptance.
+  first failure), so the journal shows exactly why every rejection happened.
+  No per-candidate LLM call is spent on it; the deterministic template (or
+  an already-paid board-level brain verdict) supplies the thesis, with the
+  template source tagged `template:rules-refused`.
 
-## 3. Market regime gate
+## 3. Market regime context (retired entry gate)
+
+> **Status:** `market_regime_ok` is no longer in `ACTIVE_RULES`. The
+> computation below still runs once per tick, is journaled, and is shown on
+> the dashboard, but it does not block entries. The active rule set is in
+> §2.3.
 
 ### 3.1 Purpose
 
@@ -193,168 +209,109 @@ on its own timeline, separate from trade-level analysis.
 
 ## 4. The LLM's role
 
-### 4.1 Narration (every gate decision)
-
-Given an already-computed `GateDecision`, the LLM's only task is producing
-a short thesis grounded strictly in the rule results it was handed:
-
-```
-You are narrating a trading decision that has ALREADY been made by a
-deterministic rule system. Do not second-guess the verdict. Do not invent
-information not present below. Write 1-2 sentences explaining the decision
-using ONLY the rule results and numbers given.
-
-Verdict: {"ENTER" if gate_decision.all_passed else "REJECT"}
-Rules checked:
-{for each RuleResult: "- {rule_id}: {'PASS' if passed else 'FAIL'} ({detail})"}
-
-If REJECT: name the specific failing rule(s), using their actual numbers.
-If ENTER: state which factors support entry, using actual numbers.
-Do not mention any check not listed above.
-```
-
-Validation on the response is minimal by design, since there's no
-pass/fail field to parse anymore (the verdict is already known): confirm
-the returned text is non-empty, and run a lightweight check that it
-doesn't reference terms tied to rules absent from this candidate's actual
-rule list (e.g. flag if "honeypot" or "mint authority" appear in the
-thesis but `security_clear` wasn't in the rules passed to the prompt).
-
-This design is what prevents the earlier class of grounding failure
-structurally rather than through instruction alone: the LLM is narrating
-data it was handed, not producing an open-ended risk assessment from
-scratch, so there's no gap for it to fill with plausible-sounding but
-unsupported claims.
-
-### 4.2 Optional advisory deep-dive (later phase, not part of initial build)
-
-For candidates that already passed the deterministic gate, an optional
-second LLM pass can add judgment on top — cross-referencing the ingested
-knowledge base for patterns the rule engine doesn't capture, or (in a
-future extension) live web search for recent news/context. This step can
-only **add** a risk flag and lower displayed confidence; it can never flip
-a rule-engine rejection into an acceptance, and it can never force-close a
-position the rule engine's exit checks didn't flag. This preserves the
-deterministic gate as the sole source of truth for what actually happens
-to the paper portfolio, while still allowing room for softer judgment to
-be visible in the record.
-
-## 5. Trading engine: unified entry and scale-in
-
-One function handles both new entries and adding to existing winners,
-differentiated only by what `exposure_cap` (§2.3) checks against:
+The deterministic gate is the sole authority on **eligibility**. The main LLM
+runs only *after* that gate has accepted a candidate, and it holds a veto: the
+live cycle's entry condition is
 
 ```python
-async def decide_and_act(
-    candidate: Candidate,
-    portfolio: PortfolioState,
-    regime: MarketRegime,
-    conn: aiosqlite.Connection,
-) -> GateDecision:
-    gate = evaluate_gate(candidate, portfolio, regime, ACTIVE_RULES)
+entry_allowed = gate.all_passed and think.wants_entry
+```
 
-    if gate.all_passed:
-        existing = portfolio.get_open_trade_for_mint(candidate.mint_address)
-        if existing is None:
-            await engine.open_position(conn, candidate, gate)
-        else:
-            await engine.scale_into_position(conn, existing, candidate, gate)
+A `pass`, a malformed response, or an unavailable provider therefore blocks
+the entry (fail-closed). The LLM can never turn a rule-engine rejection into
+an entry. Its output is also the thesis stored in the decision feed and journal.
 
-    return gate  # always logged, regardless of outcome
+### 4.1 Post-gate verdict and grounded thesis
+
+The thinker is handed the candidate snapshot plus the full rule breakdown and
+must return strict JSON: `verdict` (`"buy"` | `"pass"`), `thesis`,
+`invalidation`, and optional operator-break fields. Only a valid `"buy"`
+verdict sets `think.wants_entry`. Every gate survivor is sent to the LLM; a
+provider failure degrades to a deterministic fallback whose verdict is forced
+to `"pass"`, so an outage cannot create an entry. Grounding checks flag thesis
+text that references rules absent from the candidate's actual rule list, and
+the model/usage is recorded in `llm_call_usage`.
+
+### 4.2 Reference-style brain
+
+With `LLM_BRAIN=1` (the default in live mode), the cycle makes one richer
+tick-level reasoning call instead of one call per candidate. The brain's
+per-candidate overrides are mapped onto the same `ThinkResult` shape, so the
+entry rule is unchanged: `gate.all_passed and think.wants_entry`. Malformed
+or missing brain output degrades to the per-candidate thinker; if that also
+fails, the template fallback passes (no entry).
+
+## 5. Trading engine: entry path
+
+There is no scale-in: `already_held` makes one-position-per-name structural,
+so a held mint fails the gate before sizing or execution. The gate is
+followed by the post-gate LLM veto and then sizing and execution:
+
+```python
+# live cycle: LIVE_ACTIVE_RULES swaps cash_available for the equity floor
+gate = evaluate_gate(candidate, portfolio, regime, LIVE_ACTIVE_RULES)
+think = await think_candidate(candidate, thinker)   # fail-closed fallback
+entry_allowed = gate.all_passed and think.wants_entry
+
+if entry_allowed:
+    await place_order(candidate, gate, think)   # live: sizing + risk budget + executor
+# always journaled, pass or fail
 ```
 
 ### 5.1 Atomicity and idempotency (applies to every state-changing function here)
 
-Every function that both changes cash balance and writes/updates a trade
-row must do so in a way that survives a crash between the two writes
-without corrupting the record:
+The live execution ledger is the money authority. Every state transition is
+an idempotent append persisted with one atomic rewrite:
 
-- Write the state-changing row first, using a conditional write whose
-  `WHERE` clause makes a repeated attempt a no-op (e.g. closing a trade
-  updates `WHERE trade_id = ? AND is_open = 1` and returns the affected row
-  count).
-- Check whether the write actually affected a row. If it affected zero
-  rows, the operation already happened (a retry or race) — log this and do
-  **not** re-apply the cash change.
-- Only touch cash after confirming the state write actually took effect.
+- Both buy paths look up the caller-supplied idempotency key and refuse a
+  replay before any network call. `reduce_position` appends one FIFO close
+  record and marks the matched buy closed in the same write. `_save` writes
+  a temp file and `os.replace`s it, so a crash leaves the previous complete
+  ledger, never a half-written one.
+- A corrupt or unreadable ledger raises and refuses to trade. It is never
+  treated as empty, which would forget open exposure and idempotency
+  history.
+- The shared `trades` table is a one-way observability mirror (ledger → DB).
+  A mirror failure never changes the money record.
 
-This applies identically to `open_position`, `close_position`, and the new
-`scale_into_position` — all three combine a cash change with a trade-state
-change, and all three must follow this pattern without exception. This is
-the single most consequential correctness property in the system: a
-mistake here silently fabricates or destroys paper money, which corrupts
-every downstream statistic, the promotion gate, and the daily learning
-loop.
+Database write paths that combine a state row with a cash change follow the
+same discipline: write the state first with a conditional `WHERE` that makes
+a retry a no-op, check the affected row count, and only then adjust cash.
+This is the single most consequential correctness property in the system: a
+mistake here silently fabricates or destroys money, which corrupts every
+downstream statistic, the promotion gate, and the daily learning loop.
 
 ### 5.2 Exit conditions
 
-Checked each tick against every open position, independent of the entry
-rule engine:
+Checked each cycle against every open position, independent of the entry rule
+engine (`backend/rule_engine/exits.py`). Evaluation order is fixed: **risk-off
+beats profit**. A stop, trail, liquidity break, invalidation, or stale timer
+closes the position fully; only the take-profit ladder trims.
 
-- **Take-profit**: unrealized gain ≥ `config.TAKE_PROFIT_PCT`.
-- **Stop-loss**: unrealized loss ≥ `config.STOP_LOSS_PCT`.
-- **Timeout**: held longer than `config.MAX_HOLD_HOURS`.
+- **`exit_stop_loss`** — net unrealized loss at/below `config.STOP_LOSS_PCT`.
+- **`exit_trail_give_back`** — once up `EXIT_TRAIL_ACTIVATION_PCT` or better,
+  close when price gives back `EXIT_TRAIL_GIVE_BACK_PP` points off the
+  high-water mark.
+- **`exit_liquidity_break`** — pool below `EXIT_LIQUIDITY_FLOOR_USD`.
+- **`exit_thesis_invalidated`** — 6h dump at/below `EXIT_INVALIDATION_CHG6H_PCT`
+  with sellers leading by `EXIT_INVALIDATION_SELL_MULT`.
+- **`exit_stale_thesis`** — held long, flat, and the tape has dried up.
+- **`exit_take_profit`** — the `EXIT_TP_LADDER` trims: +100% / +300% / +900%
+  of cost, taking 33% / 33% / 50% of the remaining position.
 
-All three checks use `compute_unrealized_pnl()`, which itself accounts for
-simulated round-trip slippage and fees so the displayed unrealized P&L
-reflects a realistic estimate of what would actually be received on exit,
-not a naive mark-to-market number.
+The gain/loss checks use `compute_unrealized_pnl()`, which accounts for
+slippage and fees so the decision reflects what would actually be received on
+exit, not a naive mark-to-market number. Live sells additionally pass the sell
+risk gate and the `EXIT_SLIPPAGE_LADDER_BPS` ladder.
 
-### 5.3 Partial position scaling — elevated priority (revised)
+### 5.3 Partial trims and high-water marks
 
-A closer read of the reference system's live decision stream shows that
-the majority of its ongoing reasoning is about *existing* positions —
-trimming a fraction on a structural breakdown, adding more to a winner on
-a confirmed volume/trend reclaim — not new entries. This was originally
-scoped as low-priority future work in this project; that scoping is
-revised here, because it's clearly more central to how a mature version of
-this system actually behaves day-to-day than a binary open/close model
-captures.
-
-This does **not** need to be built in the initial pass (§5.2's binary
-model is a reasonable, simpler starting point, and the calibration window
-should run against something stable before adding this complexity), but
-the trading engine should be designed with the seam for it from the start
-rather than retrofitted later:
-
-```python
-async def scale_out_partial(
-    conn: aiosqlite.Connection,
-    trade: Trade,
-    fraction: float,          # e.g. 0.33 to trim a third
-    exit_price: float,
-    exit_reason: str,
-) -> Trade:
-    """
-    Closes `fraction` of an open position, leaving the remainder open with
-    an adjusted position_size_usd/quantity. Follows the exact same
-    atomicity discipline as close_position() (§5.1): the state write
-    (reducing the trade's size) must be confirmed before any cash is
-    credited, and a repeated call for an already-trimmed fraction must be
-    a safe no-op, not a double-credit.
-    """
-```
-
-Two new triggers become possible once this exists, both driven by the same
-rule-engine philosophy as everything else in this document — fixed,
-numeric, checkable conditions, not LLM judgment calls:
-
-- **Structural trim**: reduce a position by a configured fraction if price
-  closes below a tracked recent local low (a "shelf" level) while still
-  showing an overall unrealized gain — locking in some profit without
-  fully exiting a thesis that may still be intact.
-- **Confirmed add**: increase an existing position (still gated by
-  `exposure_cap`, §2.3) if volume reclaims a configured level alongside a
-  positive short-term trend confirmation.
-
-Both require tracking a short rolling price/volume history per open
-position (not currently part of the data model) — this is new scope, and
-should be estimated and scheduled deliberately rather than assumed free.
-Recommended sequencing: build this only after the binary-exit version has
-run through a full 10-day calibration cycle and produced a real track
-record to compare against — introducing partial-exit complexity before the
-simpler model has a baseline makes it impossible to tell whether a change
-in outcomes came from the new logic or from normal market variance.
+Partial trims are real (the take-profit ladder) and the live executor's
+`reduce_position` supports fractional sells. There are no scale-ins or adds:
+`already_held` makes one-position-per-name structural, so a second entry for a
+held mint is never authorized. High-water marks are persisted on the
+shared trades mirror and re-seeded at cycle start (`run_live_cycle._hwm_for_cycle`),
+so a restart — or `--once` — cannot reset a trailing stop to entry price.
 
 ### 5.4 Future scaling note: direct RPC/mempool subscriptions
 
@@ -363,11 +320,11 @@ subscriptions for lower-latency order/mempool tracking, rather than relying
 solely on periodic polling of REST APIs. This is real infrastructure
 sophistication appropriate for a system running significant real capital
 at meaningful frequency — it is **not appropriate or necessary for this
-project's current scope** (local, paper-trading, free-tier REST APIs,
-tick interval measured in tens of seconds to minutes). Documented here as
-a known future scaling path, in the same category as
-`05_VERIFICATION_APPENDIX.md`'s commit-reveal mechanism: relevant once
-real capital and real latency sensitivity are in play, not before.
+project's current scope** (periodic polling of free-tier REST APIs at a tick
+measured in tens of seconds to minutes). Documented here as a known future
+scaling path, in the same category as `05_VERIFICATION_APPENDIX.md`'s
+commit-reveal mechanism: relevant once real capital and real latency
+sensitivity are in play, not before.
 
 ## 6. Data provider abstraction
 
@@ -414,9 +371,10 @@ actually strong at:
 
 ## 7. API layer
 
-FastAPI, entirely read-only with respect to trading decisions and safety
-flags — every endpoint reports state, none of them can open, close, or
-modify a trade, or change `PAPER_TRADING_ONLY`.
+FastAPI. Trading, portfolio, and safety state are read-only over HTTP: no
+endpoint can open or close a position, place an order, or flip a safety flag.
+The only mutating routes are operator authentication, knowledge-base
+ingestion, and the explicitly authorized admin reset.
 
 | Endpoint | Purpose |
 |---|---|
@@ -430,13 +388,13 @@ modify a trade, or change `PAPER_TRADING_ONLY`.
 | `GET /api/system-status` | Main LLM reachability, active provider, per-provider daily call counts |
 | `GET /api/safety` | Read-only kill/breaker/P&L/blocklist/break state + symptom alerts; live-book access policy |
 | `GET /api/funnel` | Server-classified recent decision counts and refusal rate |
-| `GET /api/funnel/snapshots` | Stored engine funnel observations, oldest-first (no frontend synthesis) |
+| `GET /api/funnel/snapshots` | Stored engine funnel observations, oldest-first; limit 1–1000 (no frontend synthesis) |
 | `WS /ws/feed` | Real-time push of new feed events as ticks happen |
 | `POST /api/auth/login` | Secure operator login with time-lock bot verification; issues HttpOnly cookie |
 | `POST /api/auth/logout` | Session invalidation and cookie clearing |
-| `GET /api/auth/me` | Current session status and operator authentication verification |
-| `POST /api/knowledge-base/ingest` | Secure knowledge document ingestion with type, size, and content inspection |
-| `POST /api/admin/reset-wallet` | Operator-authorized wallet balance reset with strict input bounds |
+| `GET /api/auth/session` | Current session status and remaining lifetime |
+| `POST /api/knowledge-base/ingest` | Secure knowledge document ingestion with type, size, and content inspection (operator-authorized) |
+| `POST /api/admin/reset` | **Operator-only mutation** requiring `X-Admin-Token`: reset the book (`reset_book`), wipe paper display rows (`wipe_paper`), or prune (`prune_only`) |
 
 ## 8. Frontend
 
@@ -450,8 +408,9 @@ React dashboard, dark theme, dense/terminal-style layout:
   original thesis next to its actual outcome and reflection.
 - **Stats dashboard** — equity curve, win rate, profit factor, drawdown,
   learning-window progress.
-- **Market regime panel** — recent regime history, so "why did the bot go
-  quiet for an hour" is answerable from the dashboard itself.
+- **Market regime panel** — recent regime history, so the market backdrop
+  behind a quiet period is visible even though the regime no longer gates
+  entries.
 - **Promotion gate panel** — a status display, never a control.
 - **Knowledge base panel** — static + ingested content, dynamic stats.
 - **System status** — LLM connectivity (DeepSeek / Groq), active model,
@@ -485,9 +444,9 @@ React dashboard, dark theme, dense/terminal-style layout:
 Defense-in-depth principles implemented across all layers of the application:
 
 1. **Authentication & Session Lifecycle**:
-   - Authentication tokens are issued exclusively as `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies.
+   - Authentication tokens are issued exclusively as `HttpOnly`, `SameSite=Lax`, `Path=/` cookies.
    - Client scripts cannot access session tokens (preventing exfiltration via XSS).
-   - Sessions expire after 15 minutes of inactivity or 24 hours total duration.
+   - Sessions have a **1-hour absolute lifetime** (`SESSION_MAX_AGE_SECONDS=3600`); there is no rolling/idle refresh. Logging in again issues a fresh cookie; an `X-Admin-Token` header authenticates individual requests without creating one.
 2. **Access Control & Row-Level Security**:
    - Every state-reading and state-mutating route verifies operator authorization.
    - For PostgreSQL/Supabase, Row-Level Security (RLS) policies restrict reads and writes to authorized operator roles.
@@ -496,7 +455,7 @@ Defense-in-depth principles implemented across all layers of the application:
    - Elevated/system attributes (e.g. `role`, `is_admin`, `user_id`, `status`) are stripped and discarded.
 4. **Server-Side Rate Limiting**:
    - Sliding-window token bucket middleware protects API routes from abuse and denial of service.
-   - Strict per-IP rate limits: 5 req/min on auth, 10 req/min on AI/LLM, 20 req/min on writes, 120 req/min on reads.
+   - Strict per-IP rate limits: 5 req/min on auth, 20 req/min on paid/AI and RPC-backed endpoints, 120 req/min on general reads.
 5. **Bot Protection**:
    - Cryptographic challenge-response and time-lock mechanisms in `backend/api/bot_protection.py`.
    - Rejects automated requests completing below the human latency threshold (2.0s).
@@ -517,7 +476,7 @@ Defense-in-depth principles implemented across all layers of the application:
     - FastAPI middleware strictly forces HTTPS and issues HTTP 308 Permanent Redirects (preserving HTTP request method and body) on all non-loopback traffic and proxied HTTP requests (`X-Forwarded-Proto: http`, `X-Forwarded-Ssl: off`, `Forwarded: proto=http`).
     - Local loopback connections (`localhost`, `127.0.0.1`, `::1`) are exempted for development ease-of-use and hermetic test runs.
     - Security headers enforce HTTP Strict Transport Security (`Strict-Transport-Security: max-age=63072000; includeSubDomains; preload`) and CSP `upgrade-insecure-requests` to automatically upgrade legacy mixed-content subresources to HTTPS and WSS.
-    - Container entrypoint specifies `--proxy-headers --forwarded-allow-ips='*'` to trust upstream reverse-proxy TLS termination.
+    - Container entrypoint uses `--proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"`; the default is `127.0.0.1,172.16.0.0/12,::1/128`, not a wildcard.
 11. **Production Deployment Hardening (Debug Mode, Sourcemaps, Dotfiles)**:
     - FastAPI debug flag (`DEBUG=false`) disables Python exception tracebacks in error responses; Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` are disabled in production to eliminate schema/endpoint discovery.
     - Client build (`vite.config.ts`) strictly sets `build.sourcemap = false` to guarantee no `.map` files are generated. Application static fallback explicitly rejects any request ending in `.map` with 404 Not Found.

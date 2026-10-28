@@ -44,6 +44,7 @@ from live_execution.jupiter_executor import (
     default_ledger,
     default_queue,
     get_jupiter_quote,
+    has_valid_reference_price,
     preflight,
     sign_after_checks,
 )
@@ -310,8 +311,9 @@ async def place_buy(
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": f"insufficient USDC: {usdc_bal:.2f} < {usd:.2f}"})
 
-    # §81 Phase C-6: Fail closed on missing/invalid reference price BEFORE publishing commit memo
-    if reference_price_usd is None or reference_price_usd <= 0:
+    # §81 Phase C-6: Fail closed on missing/invalid reference price BEFORE publishing commit memo.
+    # NaN/inf pass a bare `<= 0` check and detonate in math.floor later.
+    if not has_valid_reference_price(reference_price_usd):
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": "no reference price available for buy (fail closed)"})
 
@@ -414,7 +416,7 @@ async def place_buy(
             log.warning(
                 "fill actuals unreadable for %s — journaling the quote "
                 "snapshot (usd=%.2f)", outcome.signature[:16], usd)
-        rec = ledger.record_buy(
+        ledger.record_buy(
             idempotency_key=idempotency_key,
             mint=mint, usd_size=usd_actual, tokens_out=tokens_actual,
             price_usd=(usd_actual / tokens_actual) if tokens_actual > 0
@@ -467,6 +469,11 @@ async def place_sell(
     position_amount = amounts.get(mint, 0.0)
     if position_amount <= 0:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": "no position to sell"})
+    if (not isinstance(fraction, (int, float))
+            or isinstance(fraction, bool)
+            or not math.isfinite(fraction)):
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": f"invalid sell fraction {fraction!r} (must be finite)"})
     frac = min(max(fraction, 0.01), 1.0)
     sell_amount = position_amount * frac
     if sell_amount <= 0:
@@ -541,6 +548,7 @@ async def place_sell(
     last_blockhash: Optional[str] = None
     last_error_reason: str = ""
     rung_notes: list[str] = []
+    proceeds_usd: float = 0.0
 
     for attempt_idx, slippage_rung in enumerate(ladder, start=1):
         if attempt_idx > 1 and last_sig:
@@ -552,7 +560,7 @@ async def place_sell(
                     logc.note(sealed["hash"], f"previous signature {last_sig} landed on-chain — stopping ladder")
                     logc.bind(sealed["hash"], last_sig)
                     actuals = await _fill_actuals("sell", mint, last_sig, owner=addr)
-                    proceeds_actual = actuals["usdc_delta"] or (proceeds_usd if "proceeds_usd" in locals() else 0.0)
+                    proceeds_actual = actuals["usdc_delta"] or proceeds_usd
                     tokens_sold_actual = actuals["tokens_delta"] or sell_amount
                     try:
                         ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close, rule_id=rule_id)
@@ -647,7 +655,11 @@ async def place_sell(
         proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
 
         min_out_raw = None
-        if reference_price_usd is not None and reference_price_usd > 0:
+        ref_ok = (isinstance(reference_price_usd, (int, float))
+                  and not isinstance(reference_price_usd, bool)
+                  and math.isfinite(reference_price_usd)
+                  and reference_price_usd > 0)
+        if ref_ok:
             min_out_raw = math.floor(
                 sell_amount * reference_price_usd * (1.0 - config.SELL_MAX_PRICE_DEVIATION)
                 * (10 ** USDC_DECIMALS)
@@ -668,7 +680,7 @@ async def place_sell(
             in_amount_raw=amount_raw,
             slippage_bps=slippage_rung,
             min_out_raw=min_out_raw,
-            reference_price_usd=reference_price_usd,
+            reference_price_usd=reference_price_usd if ref_ok else None,
         )
 
         try:

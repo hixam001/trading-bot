@@ -43,6 +43,10 @@ async def rpc(
                 body = resp.json()
             except (httpx.HTTPError, ValueError):
                 continue
+            if not isinstance(body, dict):
+                log.info("[solana] %s returned a non-object body from %s",
+                         method, endpoint)
+                continue
             if body.get("error") or body.get("result") is None:
                 log.info("[solana] %s refused by %s: %s", method, endpoint, body.get("error"))
                 continue
@@ -262,9 +266,12 @@ async def get_multiple_accounts(
             if resp.status_code != 200:
                 raise SimulationError(f"{ep}: HTTP {resp.status_code}")
             body = resp.json()
+            if not isinstance(body, dict):
+                raise SimulationError(f"{ep}: malformed getMultipleAccounts response")
             if body.get("error") or body.get("result") is None:
                 raise SimulationError(f"{ep}: {body.get('error')}")
-            val = body["result"].get("value")
+            result = body["result"]
+            val = result.get("value") if isinstance(result, dict) else None
             if not isinstance(val, list):
                 raise SimulationError(f"{ep}: malformed getMultipleAccounts response")
             return {"endpoint": ep, "err": None, "post_accounts": val}
@@ -339,10 +346,12 @@ async def simulate_transaction(
             if resp.status_code != 200:
                 raise SimulationError(f"{endpoint}: HTTP {resp.status_code}")
             body = resp.json()
+            if not isinstance(body, dict):
+                raise SimulationError(f"{endpoint}: malformed simulateTransaction response")
             if body.get("error"):
                 raise SimulationError(f"{endpoint}: {body.get('error')}")
             result = body.get("result", {})
-            value = result.get("value")
+            value = result.get("value") if isinstance(result, dict) else None
             if not isinstance(value, dict):
                 raise SimulationError(f"{endpoint}: malformed result value")
             return {
@@ -441,6 +450,15 @@ async def send_raw_transaction_detailed(
                     "err": None,
                 })
                 continue
+            if not isinstance(body, dict):
+                attempts.append({
+                    "endpoint": endpoint,
+                    "kind": "transport",
+                    "code": None,
+                    "message": "non-object JSON-RPC response",
+                    "err": None,
+                })
+                continue
 
             result = body.get("result")
             if isinstance(result, str) and result:
@@ -486,7 +504,7 @@ async def send_raw_transaction(
 
     # If EVERY attempt returned kind == "rpc_error", raise SendRejected
     if outcome.attempts and all(a.get("kind") == "rpc_error" for a in outcome.attempts):
-        from live_execution.exit_errors import SendRejected, is_already_processed
+        from live_execution.exit_errors import is_already_processed
         # A transaction that is "already processed" has landed — treat as ambiguous
         # (return None) so last_sig is kept and get_signature_status decides.
         if any(is_already_processed(a) for a in outcome.attempts):
@@ -510,16 +528,15 @@ async def confirm_signature(
     that is never confirmed is NOT a fill and must never be journalled.
     Returns {confirmed: bool, slot: int|None, err: str|None}.
     """
-    deadline = asyncio.get_event_loop().time() + (timeout_s or config.CONFIRM_TIMEOUT_SECONDS)
-    while asyncio.get_event_loop().time() < deadline:
+    deadline = asyncio.get_running_loop().time() + (timeout_s or config.CONFIRM_TIMEOUT_SECONDS)
+    while asyncio.get_running_loop().time() < deadline:
         res = await rpc(
             "getSignatureStatuses",
             [[signature], {"searchTransactionHistory": False}],
             endpoints=endpoints,
         )
-        values = (res or {}).get("value") or []
-        if values and values[0]:
-            status = values[0]
+        status = _first_signature_status(res)
+        if status is not None:
             if status.get("err"):
                 return {"confirmed": False, "slot": status.get("slot"), "err": str(status["err"])}
             if status.get("confirmationStatus") in ("confirmed", "finalized"):
@@ -534,19 +551,21 @@ async def confirm_signature(
         [[signature], {"searchTransactionHistory": True}],
         endpoints=endpoints,
     )
-    values = (res or {}).get("value") or []
-    if values and values[0]:
-        status = values[0]
-        if not status.get("err") and status.get("confirmationStatus") in ("confirmed", "finalized"):
-            return {"confirmed": True, "slot": status.get("slot"), "err": None}
+    status = _first_signature_status(res)
+    if (status is not None and not status.get("err")
+            and status.get("confirmationStatus") in ("confirmed", "finalized")):
+        return {"confirmed": True, "slot": status.get("slot"), "err": None}
     return {"confirmed": False, "slot": None, "err": "not confirmed before timeout"}
 
 
 async def get_sol_balance(address: str) -> float | None:
     res = await rpc("getBalance", [address])
-    if not res:
+    if not isinstance(res, dict):
         return None
-    return int(res.get("value", 0)) / LAMPORTS_PER_SOL
+    value = res.get("value")
+    if not isinstance(value, int) or isinstance(value, bool):
+        return None
+    return value / LAMPORTS_PER_SOL
 
 
 async def get_mint_decimals(mint: str) -> int | None:
@@ -556,18 +575,22 @@ async def get_mint_decimals(mint: str) -> int | None:
     lesson).
     """
     res = await rpc("getTokenSupply", [mint])
-    if not res:
+    if not isinstance(res, dict):
         return None
-    dec = (res.get("value") or {}).get("decimals")
-    return int(dec) if isinstance(dec, int) else None
+    value = res.get("value")
+    dec = value.get("decimals") if isinstance(value, dict) else None
+    if not isinstance(dec, int) or isinstance(dec, bool) or dec < 0:
+        return None
+    return dec
 
 
 async def latest_blockhash(endpoint: str) -> str | None:
     """Fresh blockhash for hand-built transactions (drill/devnet use)."""
     res = await rpc("getLatestBlockhash", [{"commitment": "confirmed"}], endpoints=[endpoint])
-    if not res:
+    if not isinstance(res, dict):
         return None
-    return (res.get("value") or {}).get("blockhash")
+    value = res.get("value")
+    return value.get("blockhash") if isinstance(value, dict) else None
 
 
 async def get_transaction(sig: str) -> dict | None:
@@ -654,6 +677,8 @@ async def get_usdc_balance(address: str) -> float | None:
                 body = resp.json()
             except (httpx.HTTPError, ValueError):
                 continue
+            if not isinstance(body, dict):
+                continue
             result = body.get("result")
             if isinstance(result, dict) and isinstance(result.get("value"), dict):
                 value = result["value"]
@@ -663,7 +688,11 @@ async def get_usdc_balance(address: str) -> float | None:
                 except (TypeError, ValueError):
                     continue
                 return raw_amount / (10 ** decimals)
-            err_msg = str(((body.get("error") or {}).get("message")) or "").lower()
+            err_msg = str(
+                (body.get("error") or {}).get("message")
+                if isinstance(body.get("error"), dict)
+                else (body.get("error") or "")
+            ).lower()
             # A7 (repo audit): ONLY "account not found" maps to a 0.0
             # balance. "invalid param" is a malformed-REQUEST error — the
             # old code reported it as "wallet holds $0", conflating an RPC
@@ -704,8 +733,14 @@ async def get_token_balances(address: str) -> Optional[dict[str, float]]:
         )
         if res is None:
             continue
+        if not isinstance(res, dict):
+            continue
+        entries = res.get("value")
+        if not isinstance(entries, list) or any(
+                not isinstance(e, dict) for e in entries):
+            continue
         programs_ok += 1
-        for entry in res.get("value") or []:
+        for entry in entries:
             try:
                 info = entry["account"]["data"]["parsed"]["info"]
                 mint = str(info["mint"])
@@ -727,8 +762,18 @@ async def is_blockhash_valid(blockhash: str, endpoints: Optional[list[str]] = No
     Returns True if valid, False if expired, None on RPC failure.
     """
     res = await rpc("isBlockhashValid", [blockhash, {"commitment": "confirmed"}], endpoints=endpoints)
-    if res is not None and "value" in res:
-        return bool(res["value"])
+    if isinstance(res, dict):
+        value = res.get("value")
+        if isinstance(value, bool):
+            return value
+    return None
+
+
+def _first_signature_status(res) -> dict | None:
+    """Shape-safe first entry from a getSignatureStatuses result."""
+    values = res.get("value") if isinstance(res, dict) else None
+    if isinstance(values, list) and values and isinstance(values[0], dict):
+        return values[0]
     return None
 
 
@@ -741,9 +786,6 @@ async def get_signature_status(signature: str, endpoints: Optional[list[str]] = 
         [[signature], {"searchTransactionHistory": True}],
         endpoints=endpoints,
     )
-    values = (res or {}).get("value") or []
-    if values and values[0]:
-        return values[0]
-    return None
+    return _first_signature_status(res)
 
 

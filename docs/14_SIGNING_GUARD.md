@@ -2,7 +2,7 @@
 
 ## Overview
 
-The signing guard implemented in [`backend/live_execution/jupiter_executor.py`](backend/live_execution/jupiter_executor.py) (`inspect_swap_transaction`) and [`backend/live_execution/sim_guard.py`](backend/live_execution/sim_guard.py) (`simulate_and_assert`) protects the bot's wallet against malicious payloads, compromised swap quotes, and blind-signing drain attacks before any transaction is signed with the wallet's private key.
+The signing guard implemented in [`backend/live_execution/jupiter_executor.py`](../backend/live_execution/jupiter_executor.py) (`inspect_swap_transaction`) and [`backend/live_execution/sim_guard.py`](../backend/live_execution/sim_guard.py) (`simulate_and_assert`) protects the bot's wallet against malicious payloads, compromised swap quotes, and blind-signing drain attacks before any transaction is signed with the wallet's private key.
 
 ---
 
@@ -14,7 +14,7 @@ The static guard performs strict structural analysis on the deserialized Solana 
    - The fee payer account (account 0) must strictly match the loaded keypair address (`payer_pubkey`). Transactions attempting to use the wallet as fee payer for unauthorized third parties fail closed.
 
 2. **Program Allowlist Enforcement:**
-   - Every program invoked at the top level must belong to [`APPROVED_SWAP_PROGRAM_IDS`](backend/live_execution/config.py).
+   - Every program invoked at the top level must belong to [`APPROVED_SWAP_PROGRAM_IDS`](../backend/live_execution/config.py).
    - Unknown or unapproved third-party programs immediately trigger an `ExecutionError`.
 
 3. **Instruction-Level Deny-by-Default (Per-Program Discriminants):**
@@ -122,7 +122,7 @@ To protect against malicious routes, compromised quote APIs, and hidden CPI drai
 Enforced synchronously before any signing operation. Evaluates all outer instructions, verifies every program ID against `APPROVED_SWAP_PROGRAM_IDS`, enforces owner equality on all token account initializations, restricts `CreateAccount` size and lamports, and caps total top-level SOL outflow.
 
 ### Layer 2: Pre-Sign Simulation with Balance-Delta Assertions
-Implemented in [`backend/live_execution/sim_guard.py`](backend/live_execution/sim_guard.py).
+Implemented in [`backend/live_execution/sim_guard.py`](../backend/live_execution/sim_guard.py).
 Before signing, the transaction is simulated against independent Solana RPC nodes using `simulateTransaction` with `sigVerify: false`, `replaceRecentBlockhash: true`, and account post-state inspection:
 - **Local Intent Binding (`TradeIntent`):** The guard does not trust numbers from the Jupiter API quote. It compares the quote against a local `TradeIntent` created by the bot:
   1. `inAmount` matches locally calculated raw input amount.
@@ -167,7 +167,7 @@ To prevent position lock-in during market volatility or slippage spikes, the exi
 - **Single Commit Hash:** All retry attempts append audit notes via `CommitLog.note(digest, text)` under the original commit hash; no duplicate memo or new hash is published. Reason string tracks rung notes across attempts.
 
 ### Layer 3: RPC Preflight on Broadcast
-In [`backend/live_execution/solana.py`](backend/live_execution/solana.py), `send_checked_swap` guarantees that only a `SignedSwap` object with `_checked=True` (produced exclusively by `sign_after_checks`) can be submitted. It delegates to `send_raw_transaction` which enforces:
+In [`backend/live_execution/solana.py`](../backend/live_execution/solana.py), `send_checked_swap` guarantees that only a `SignedSwap` object with `_checked=True` (produced exclusively by `sign_after_checks`) can be submitted. It delegates to `send_raw_transaction` which enforces:
 ```json
 {
   "encoding": "base64",
@@ -191,7 +191,7 @@ Even with all three defensive layers active, specific residual risks inherent to
 2. **Simulation vs. Landing-Time State Drift:**
    - On-chain state can change between the moment of simulation and the moment the transaction lands in a validator's block (e.g. extreme slippage, sandwich attacks, or liquidity pool depletion). Quoted slippage limits (`otherAmountThreshold`) bound this loss, and Layer 3 preflight catches errors if pool state changes drastically.
 3. **Compromised RPC Endpoints:**
-   - A malicious or compromised RPC node could falsify simulation results. This is mitigated by dual-RPC consensus verification in [`backend/live_execution/solana.py`](backend/live_execution/solana.py), but remains a residual risk if both configured RPC endpoints share an upstream provider or infrastructure.
+   - A malicious or compromised RPC node could falsify simulation results. This is mitigated by dual-RPC consensus verification in [`backend/live_execution/solana.py`](../backend/live_execution/solana.py), but remains a residual risk if both configured RPC endpoints share an upstream provider or infrastructure.
 
 ---
 

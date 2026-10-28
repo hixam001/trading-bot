@@ -166,7 +166,7 @@ def check_wallet_drop(
 
     Evaluates two independent balance channels:
       1. USDC channel: actual USDC delta vs ledger (opens spend USDC, closes return USDC).
-         Tolerance: UNEXPLAINED_OUTFLOW_USD (default $10.00).
+         Tolerance: UNEXPLAINED_OUTFLOW_USD (default $5.00).
       2. SOL channel: actual SOL delta vs gas burn (0.003 SOL/record + 0.02 SOL buffer).
 
     Fails closed on unreadable balances: if either current_usdc or current_sol is None,

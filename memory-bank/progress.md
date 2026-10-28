@@ -1,6 +1,18 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §86 Post-§85 Audit: fail-closed malformed RPC/state, non-finite money math, `--once` HWM restore & documentation truth (2026-10-28):
+      1. Kill-switch state requires a JSON object with a real boolean `tripped`; list/scalar/`{}`/non-bool values now raise instead of reading as CLEAR, while `{"tripped": false}` remains valid.
+      2. `preflight` rejects bool and NaN/inf `usd_size`; shared `has_valid_reference_price()` guards both confirmed-trade and `place_buy` paths before memo/network; `place_sell` rejects non-finite fractions and degrades a non-finite reference price to the no-reference quote path.
+      3. `execute_confirmed_trade` resolves an ambiguous (`None`) send through the already-signed signature: unknown → unresolved, landed error → `landed-failed (fee paid)`, confirmed → journaled, otherwise confirm-poll. Never re-sends.
+      4. `solana` rejects non-object JSON bodies and malformed result/status shapes across RPC, simulation, send, confirmation, balance, decimals, blockhash, and token-balance paths; `get_token_balances` is all-or-nothing across both token programs; `is_blockhash_valid` returns `None` for non-bool values.
+      5. `onchain_security` uses `_as_dict()` guards for RPC bodies/results and survives non-dict extension state and non-numeric active transfer fees.
+      6. `run_live_cycle._hwm_for_cycle()` seeds the process-wide high-water map on first use, so `--once` restores trailing marks instead of resetting them.
+      7. Alert cooldown keys are pruned hourly and capped at 4096; `HEARTBEAT_STALE_SECONDS` is a real config setting read from `.env`.
+      8. `.env.example` lists missing operator knobs and the full Supabase migration sequence; README states the committed armed state, retired Ollama claims, correct cookie/rate-limit facts, endpoint table, funnel limit, **1,338** tests, 40 Playwright specs, and correct live-cycle commands.
+      9. Docs 01/02/06/11/13/14/15 and memory-bank systemPatterns/techContext were aligned with the active rule set, post-gate LLM veto, live ledger, API mutations, sessions, deployment, and restore paths.
+     10. Verification: backend **1338 passed**, 0 failed; `pip check`/`pip-audit` clean (msgpack 1.2.2 → 1.2.4 for CVE-2026-114613); TypeScript/build/audit clean; Playwright **40/40**; prepush **9/9**; gitleaks absent locally (CI runs it).
+     11. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §85 Post-§84 Re-Audit: CI key parsing, ambiguous sends, break-state truth, provider lifecycle, restore/backup integrity & operator login (2026-10-27):
       1. `--key` values beginning with `-` are normalized to `--key=VALUE` in restore/backup CLIs; the `test_audit_81_e` CI failure is fixed with a deterministic regression test.
       2. Ambiguous sends resolve the already-signed signature on-chain: landed fills are journaled, failed landings are explicit, and unresolved signatures never trigger a re-send.

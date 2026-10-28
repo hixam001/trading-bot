@@ -26,8 +26,7 @@ model (DeepSeek by default) performs a pre-trade think/veto stage, narrates
 decisions, and advances position write-ups — it never sizes, opens, closes,
 or overrides numeric exits. No local model is required: all LLM work goes
 through cloud APIs (DeepSeek / Groq). **Ollama is no longer part of the
-stack** (a legacy offline fallback remains in code but nothing starts or
-requires it).
+stack**; no `OLLAMA_*` variable is read.
 
 Everything is journaled to SQLite (or optional Supabase Postgres) and shown
 on a React dashboard served by the backend itself.
@@ -41,19 +40,20 @@ on a React dashboard served by the backend itself.
   It cannot touch real funds by construction.
 - `backend/live_execution/` is the only real-execution code (a subpackage
   INSIDE backend/ so the engine deploys as one module — the shared brain
-  still never imports it, test-pinned). It ships with
-  `LIVE_TRADING_ENABLED = False` and `REQUIRE_MANUAL_CONFIRMATION = True`
-  hardcoded — deliberately **not** settable via environment variables, so one
-  stray `.env` line can never arm it. A kill switch, daily-loss breaker,
-  per-trade/per-day caps, wallet identity pin, and an idempotency ledger
-  guard it.
+  still never imports it, test-pinned). **This clone is ARMED**
+  (`LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False`),
+  hardcoded and deliberately **not** settable via environment variables, so
+  one stray `.env` line can never arm it. If you do not intend to trade real
+  money, flip `LIVE_TRADING_ENABLED = False` before running anything. A kill
+  switch, daily-loss breaker, per-trade/per-day caps, wallet identity pin,
+  and an idempotency ledger guard it.
 - Secrets live only in the gitignored root `.env` and (for live) a keypair
   file outside the repo **or** the `WALLET_KEYPAIR_JSON` env channel
   (in-memory only) for file-less hosts. API keys and keypair material are
   redacted from logs.
 - **Platform security hardening (10-rule defense-in-depth)**:
-  - Auth tokens stored exclusively in secure, `HttpOnly`, `SameSite=Lax`, `Path=/api` cookies with 15-minute idle expiration (never in `localStorage`).
-  - Strict server-side sliding-window rate limiting across all endpoints (auth: 5/min, AI: 10/min, mutations: 20/min, reads: 120/min).
+  - Auth tokens stored exclusively in secure, `HttpOnly`, `SameSite=Lax`, `Path=/` cookies with a **1-hour absolute lifetime** (no rolling/idle refresh); never in `localStorage`.
+  - Strict server-side sliding-window rate limiting across all endpoints (auth: 5/min, paid/AI: 20/min, general reads: 120/min).
   - Server-side cryptographic challenge-response and time-lock bot protection.
   - Parameterized database queries across SQLite and PostgreSQL/Supabase with strict column whitelisting against SQL injection.
   - Strict mass-assignment protection with Pydantic extra-field stripping on all write routes.
@@ -122,7 +122,7 @@ arm flags) are deliberately hardcoded in `backend/config.py` /
 | `FOMO_PRIVY_REFRESH_TOKEN` | optional | REAL crowd-conviction feed (fomo.fun board). Since §47 the board is read through the FREE local Scrapling transport (curl-cffi Chrome TLS first, stealth browser fallback) — no paid key needed; `FIRECRAWL_API_KEY`/`SCRAPING*_API_KEY` are shadow-week failover only. The scrape runs only AFTER a candidate passes every other rule (quota saver); rejects journal crowd_heat as "not evaluated". The rotated-token sidecar is stored **encrypted at rest** (`SECRET_STORE_KEY`/`SECRET_STORE_KEY_FILE`, §54) |
 | `BRAVE_SEARCH_API_KEY`, `SEARXNG_URL` | optional | §51 FREE web-search evidence chain: Brave first (~1,000 free searches/month, auto credit), then your self-hosted SearXNG sidecar (keyless, unlimited), then Firecrawl last-resort. At least one configured = stage on; empty everywhere = off |
 | `SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS_API_KEY` | optional | stealth-scrape failover chain for the crowd feed (auto-benching on 402/429) — shadow-week backup for the free §47 transport |
-| `USE_SUPABASE_DB`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run `migrations/supabase/001_init.sql` once first) |
+| `USE_SUPABASE_DB`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run **all** files in `migrations/supabase/` in order, `001`–`006`, once first) |
 | `TICK_INTERVAL_SECONDS`, `MAX_CANDIDATES_PER_TICK`, `INITIAL_CASH_USD` | optional | cycle cadence + the historical equity-curve anchor (defaults 60 / 20 / 1000) |
 | `WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL` | live only | see [Live trading](#live-trading-operator-armed) |
 
@@ -144,19 +144,20 @@ stage degrades to deterministic template passes that can never produce a buy.
 - Every call is accounted for (tokens, latency, cost estimate, degradation
   reason) in the `llm_call_usage` table; degradation is always honest and
   logged.
-- **Ollama is retired** from the stack: nothing starts it and nothing
-  requires it. (Legacy `OLLAMA_*` settings remain in `.env.example` purely
-  for offline compatibility of an old fallback path.)
+- **Ollama is retired** from the stack: nothing starts it, nothing requires
+  it, and no `OLLAMA_*` variable is read.
 
 ## Dashboard & API
 
-The backend serves the built React dashboard and a set of read-only JSON
-feeds (no endpoint can change trading state):
+The backend serves the built React dashboard and JSON feeds. No endpoint can
+place or close a trade; operator-only mutations are `/api/admin/reset` (wipes
+the book), `/api/knowledge-base/ingest`, and the auth login/logout/signup
+routes.
 
 | Endpoint | Content |
 |---|---|
 | `http://localhost:8000/` | dashboard: live decision feed (WS), holdings, journal, stats, regime, status |
-| `/api/auth/login`, `/api/auth/logout`, `/api/auth/me` | secure cookie session management with rolling 15-minute TTL & bot time-lock challenge |
+| `/api/auth/login`, `/api/auth/logout`, `/api/auth/session` | secure cookie session management (1-hour absolute TTL) & bot time-lock challenge |
 | `/api/stats` | five-number portfolio truth: cash, equity, total spend, realized + unrealized P&L |
 | `/api/feed`, `/api/events.json` | per-candidate decision events (ENTER/PASS + full rule breakdown) |
 | `/api/holdings`, `/api/journal` | open positions (live marks) / closed trades |
@@ -168,24 +169,26 @@ feeds (no endpoint can change trading state):
 | `/api/proof.json`, `/api/verify.json`, `/api/binding.json`, `/api/reasoning.json` | the decision-proof surface: commit seals, on-chain memo verification, fill binding, per-decision provenance |
 | `/api/system-status` | health: provider call counters, LLM state |
 | `/api/safety` | read-only safety state + actionable alerts; live-book access policy |
+| `/api/admin/reset` | **operator-only mutation**: wipe the book (requires `X-Admin-Token`) |
 | `/api/funnel` | bounded decision funnel, server-classified refusal rate |
-| `/api/funnel/snapshots` | persisted engine observations, oldest-first; limit 1–2000 |
+| `/api/funnel/snapshots` | persisted engine observations, oldest-first; limit 1–1000 |
 | `/api/promotion-gate` | READ-ONLY live-readiness report (never writes, ever) |
 | `/api/knowledge-base`, `/api/knowledge-base/ingest` | knowledge base content + secure file ingestion (.md, .txt, .json, .csv) |
 
 ## Tests
 
-891 tests cover the rule engine, exit engine, money math (hand-computed
+1,338 backend tests cover the rule engine, exit engine, money math (hand-computed
 expectations), the atomic open/close journal, LLM provider swap, crowd feed,
 risk budget × calibration, thesis restatement, the live-execution safety
 model, cookie session authentication, access control and RLS, mass assignment
 prevention, server-side rate limiting, bot protection, parameterized SQL queries,
 input validation, XSS prevention, file upload security, HTTPS/TLS enforcement,
 production deployment hardening, production error shielding / secret redaction,
-and rotating logging / security monitoring (913 tests in total).
+and rotating logging / security monitoring. The Playwright E2E suite adds 40
+browser specs.
 
 ```bash
-.venv/bin/python -m pytest -q                            # full suite (~34s)
+.venv/bin/python -m pytest -q                            # full suite (~21s)
 cd backend && ../.venv/bin/python -m pytest tests/ -q    # backend only
 cd backend && ../.venv/bin/python -m pytest live_execution/tests/ -q   # live package only
 ```
@@ -222,14 +225,14 @@ on-chain commit memo published BEFORE every fill (commit–reveal proof).
 ### Arming procedure (what the operator did — human-only, in order)
 
 1. Ran the **devnet drill** until it passed 100%:
-   `python run_live_cycle.py --drill` (exercises wallet load, identity pin,
+   `.venv/bin/python backend/run_live_cycle.py --drill` (exercises wallet load, identity pin,
    chain reads, sign/send/confirm, and the commit-memo path — devnet only,
    no Jupiter, no tokens). Passed 5/5 on 2026-08-28 (handoff §31).
 2. Funded the **mainnet** wallet (0.03 SOL + $3–5 USDC) and pointed `.env` at
    it (`WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL`).
 3. Hand-edited `live_execution/config.py`: `LIVE_TRADING_ENABLED = True`,
    `REQUIRE_MANUAL_CONFIRMATION = False` — and committed that state.
-4. Supervised one cycle: `python run_live_cycle.py --once`.
+4. Supervised one cycle: `.venv/bin/python backend/run_live_cycle.py --once`.
 
 Rollback is one line: `LIVE_TRADING_ENABLED = False`. A test
 (`test_safety_flags_match_the_committed_state`) pins the committed flag
@@ -278,7 +281,7 @@ cd backend && ../.venv/bin/python -m uvicorn api.main:app --port 8000
 cd frontend && npm install && npm run dev      # http://localhost:5173
 
 # One autonomous live-style decision cycle (ARMED in this repo — real money if a funded wallet is configured):
-python run_live_cycle.py --once
+.venv/bin/python backend/run_live_cycle.py --once
 ```
 
 ## Logs & state

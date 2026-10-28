@@ -82,6 +82,29 @@ async def test_seed_is_fail_soft(_db, monkeypatch):
     assert hwm == {"keep": 1.0}
 
 
+async def test_once_mode_seeds_hwm_on_first_use(monkeypatch):
+    """§86: seeding used to live only in the long-running startup, so
+    `--once` never restored trailing marks. _hwm_for_cycle must seed on the
+    first call, then reuse the same dict."""
+    calls = []
+
+    async def fake_seed(existing):
+        calls.append(existing)
+        return {MINT: 2.0}
+
+    monkeypatch.setattr(rlc, "_seed_hwm_from_mirror", fake_seed)
+    monkeypatch.delattr(rlc.run_cycle, "_hwm", raising=False)
+
+    hwm = await rlc._hwm_for_cycle()
+    assert hwm == {MINT: 2.0}
+    assert calls == [{}]
+    assert rlc.run_cycle._hwm is hwm
+
+    again = await rlc._hwm_for_cycle()
+    assert again is hwm
+    assert len(calls) == 1
+
+
 # --- §84: a new peak is persisted, not just kept in memory -------------------
 
 async def test_scan_persists_new_high_water_to_mirror(_db, monkeypatch):

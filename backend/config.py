@@ -174,6 +174,11 @@ TRUSTED_PROXY_CIDRS: str = os.getenv(
 SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "admin_session")
 SESSION_MAX_AGE_SECONDS: int = int(os.getenv("SESSION_MAX_AGE_SECONDS", "3600"))  # 1 hour
 
+# Heartbeat freshness threshold used by the API's stale-heartbeat watcher.
+# Defined here so setting it in .env actually takes effect (previously only
+# api.main read it via getattr with a silent default).
+HEARTBEAT_STALE_SECONDS: float = float(os.getenv("HEARTBEAT_STALE_SECONDS", "300"))
+
 # §38 finding F4: hard cap on one ingested knowledge document (chars).
 # Rejects oversized payloads before they touch disk, the DB, or prompt context.
 MAX_INGEST_CHARS: int = int(os.getenv("MAX_INGEST_CHARS", "200000"))

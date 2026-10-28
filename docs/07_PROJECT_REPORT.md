@@ -1,5 +1,12 @@
 # 07 — Project Report
 
+> **Historical report (2026-09-14).** The rule set and execution model changed
+> after this report: `exposure_cap` and `volume_mcap_ratio_ok` were deleted;
+> `crowd_heat`, `already_held`, and `not_on_break` are now active;
+> `market_regime_ok` is retired from the gate; and the live engine replaced
+> paper trading. See `docs/01_ARCHITECTURE.md` §2.3 and
+> `docs/02_FEATURE_LIST.md` for the current state.
+
 **trading-bot** — an AI-assisted trading research system for Solana
 memecoins, with a paper-trading pipeline and an operator-ARMED real-money
 execution package. Report updated 2026-09-14 from the current main branch

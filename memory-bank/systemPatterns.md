@@ -10,21 +10,27 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
 - rule_engine/rules.py — 10 pure functions → RuleResult(id, passed, detail
   with real numbers, value)
 - rule_engine/gate.py evaluate_gate() — runs ALL rules unconditionally (no
-  short-circuit); all_passed = AND = the entire entry decision
-- llm/thinker.py — evaluates each candidate BEFORE rules; entry requires
-  model buy AND all-rules-pass (think→gate intersection)
-- llm/narrator.py — receives only the GateDecision; prompt forbids
-  second-guessing; output validated for groundedness; flags recorded
+  short-circuit); all_passed = AND = the entire eligibility decision
+- llm/thinker.py — runs ONLY on candidates that passed the gate; required
+  post-gate veto: entry = all_rules_pass AND model `buy`. A provider failure
+  forces `pass` (no entry). The reference-style brain (`llm_brain.py`) maps
+  onto the same veto.
+- llm/narrator.py — post-close reflection and grounded thesis validation;
+  prompt forbids inventing checks; flags recorded
 
 ## Key patterns
-1. **Atomicity (§5.1):** conditional state write FIRST (WHERE clause makes
-   retry a no-op) → rowcount decides → cash adjusted only after rowcount==1.
-   Rowcount is the sole authority. Backstops: partial UNIQUE index
-   (one open position per mint); scale-in cap enforced inside UPDATE WHERE.
+1. **Atomicity:** the live `ExecutionLedger` rewrites its JSON through a
+   temp file + `os.replace()` (atomic on POSIX) and refuses to trade on a
+   corrupt/unreadable file; idempotency keys are checked before any send.
+   The trades table mirror is observability only — the ledger is the money
+   authority. Operator CLIs are expected to run with the bot stopped; there
+   is no cross-process lock on the ledger (documented, not accidental).
 2. **Fail closed:** provider fields missing → None → numeric rules FAIL
    ("unavailable"); security None → PASS (unknown ≠ unsafe). Never coerce.
 3. **Once-per-tick regime:** compute_market_regime() over the whole batch,
-   one market_regime row per tick, shared verdict for every candidate.
+   one market_regime row per tick. `market_regime_ok` is retired from the
+   active gate; the verdict is journaled as market context, not an entry
+   blocker.
 4. **Provider discipline:** one shared httpx.AsyncClient; bounded retries;
    distinct 429 backoff + counters; 401/403 non-retryable ProviderAuthError;
    token_security session-disables itself after first auth failure.
@@ -32,8 +38,10 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
    refuses without decimals (regression-tested against a real 1000× bug).
 6. **Grounding validation:** thesis checked against rule-derived vocabulary,
    invented rule-ids, and number echo; flags recorded on feed events.
-7. **Read-only boundary:** promotion gate + all API endpoints report state;
-   nothing outside run_live_cycle.py may change trade/cash state.
+7. **Read-only boundary:** promotion gate + portfolio/safety API endpoints
+   report state. The only mutations are auth login/logout, KB ingestion, and
+   `POST /api/admin/reset` (requires `X-Admin-Token`); no endpoint can open,
+   close, or alter a trade.
 8. **Exit engine (§5.2):** 6 rules — stop (−20%), HWM trail (50%/40pp),
    liquidity break (<$8k), invalidation (−25%&1.4×sells), stale (14d),
    TP ladder (+100/300/900 trims). Dedicated 15s fast exit scanner to avoid

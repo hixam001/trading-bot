@@ -101,7 +101,7 @@ scp /home/hixam/.config/solana/mainnet-wallet.json \
 Four lines differ from your laptop's `.env` (edit on the VM):
 
 ```ini
-FRONTEND_ORIGIN=http://<PUBLIC_IP>:8000        # or https://bot.example.com after Step 7
+FRONTEND_ORIGIN=https://bot.example.com          # after Step 7; before that use http://127.0.0.1:8000 via SSH tunnel
 WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair  # the container mount, not the host path
 FOMO_PRIVY_STATE_FILE=/app/data/.fomo_privy.json # rotated Privy token must survive
 DB_PATH=/app/data/trading_bot.db                 # already forced by compose, keep anyway
@@ -240,9 +240,11 @@ serve the live book publicly instead, set `LIVE_BOOK_PUBLIC=true` in `.env`.
 **You have two options; the default needs zero extra work:**
 
 1. **Single-origin (recommended, default):** the Docker build already
-   compiles the React dashboard and bakes it into the image; the engine
-   serves it at `http://<PUBLIC_IP>:8000/` (same origin, no CORS, WS just
-   works). **Nothing to deploy separately.**
+   compiles the React dashboard and bakes it into the image; Caddy serves it
+   at `https://bot.example.com/` (same origin, no CORS, WS just works).
+   Before the TLS proxy exists, reach the loopback-bound API through an SSH
+   tunnel: `ssh -L 8000:127.0.0.1:8000 ubuntu@<PUBLIC_IP>` then open
+   `http://127.0.0.1:8000/`. **Nothing to deploy separately.**
 2. **Split deploy (optional):** Vercel Hobby (free) — import the GitHub
    repo, Root Directory = `frontend`, env `VITE_API_BASE_URL=https://<host>`
    (the engine URL), build command `npm run build`, output `dist`. Then set
@@ -264,10 +266,20 @@ want a vanity domain decoupled from the engine.
 # On the LAPTOP — one armed cycle only, ever:
 ./stop.sh
 
-# On the VM — state backup (Supabase already holds the book remotely;
-# these volumes hold the live-execution state + rotated Privy token):
-docker run --rm -v trading-bot_engine_state:/s1 -v trading-bot_engine_data:/s2 \
-  -v /opt/trading-bot:/out alpine tar czf /out/state-backup-$(date +%F).tgz /s1 /s2
+# On the VM — encrypted state + DB backup via the in-image script.
+# It writes into the engine_backups volume (mounted at /app/backups) with
+# retention pruning and refuses to write an incomplete archive:
+docker compose exec live python scripts/backup_state.py --backup-dir /app/backups
+
+# Whole-volume snapshot (compose project prefix included; list the four
+# volumes with `docker volume ls | grep engine_`):
+docker run --rm \
+  -v trading-bot_engine_state:/s1:ro \
+  -v trading-bot_engine_data:/s2:ro \
+  -v trading-bot_engine_logs:/s3:ro \
+  -v trading-bot_engine_backups:/s4:ro \
+  -v /opt/trading-bot:/out alpine \
+  tar czf /out/state-backup-$(date +%F).tgz /s1 /s2 /s3 /s4
 
 # Updates:
 cd /opt/trading-bot/app && git pull

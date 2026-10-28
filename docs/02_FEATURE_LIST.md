@@ -22,7 +22,7 @@ progress (updated as items complete).
 | # | Requirement | Status |
 |---|---|---|
 | B1 | `RuleResult`, `GateDecision`, `RuleFn`, `evaluate_gate()` implemented per architecture §2 | DONE |
-| B2–B11 | All 10 individual rule functions + unit tests, both branches each (incl. joint `not_newborn_fade`, zero/nonzero `exposure_cap`, `None`-passes-`security_clear`) | DONE |
+| B2–B11 | All 10 active rule functions + unit tests, both branches each (incl. joint `not_newborn_fade`, `already_held` one-position-per-name, `crowd_heat` band and deferred lookup, `not_on_break` fail-closed, `None`-passes-`security_clear`) | DONE |
 | B12 | No short-circuiting: every rule evaluated and logged even after an earlier rule fails | DONE (`test_gate_no_short_circuit_all_rules_present_on_failure`) |
 | B13 | `Candidate` model with all new fields (`buys_1h`, `sells_1h`, presence channels, security fields) | DONE |
 
@@ -36,32 +36,33 @@ progress (updated as items complete).
 | C4 | Starting thresholds documented in `config.py` as placeholders needing calibration | DONE |
 | C5 | `GET /api/market-regime` endpoint | DONE |
 
-## D. LLM narration and advisory layer
+## D. LLM verdict and thesis layer
 
 | # | Requirement | Status |
 |---|---|---|
-| D1 | Narration prompt implemented exactly per architecture §4.1 (verdict pre-decided, rules-only grounding) | DONE |
+| D1 | Post-gate verdict + grounded thesis per architecture §4.1 (rules decide eligibility; LLM may veto a survivor, never admit a rejection) | DONE (`llm/thinker.py`, `entry_allowed = gate.all_passed and think.wants_entry`) |
 | D2 | Validation: non-empty thesis; flag (not silently drop) any mention of a rule/term not present in the candidate's actual rule list | DONE (rule-derived vocabulary + invented-rule check + numeric echo check; flags recorded on feed events) |
 | D3 | Persistent `httpx.AsyncClient`, reused across calls (no per-call client construction) | DONE |
-| D4 | Ollama health check + `GET /api/system-status` surfacing it | DONE |
+| D4 | Main-LLM health surfaced by `GET /api/system-status` | DONE (DeepSeek/Groq; Ollama retired §52 — no local provider is probed) |
 | D5 | Per-trade post-close reflection: fire-and-forget async task, never blocks the tick loop | DONE |
 | D6 | Reflection text stored on the `Trade` record and surfaced in the journal | DONE |
-| D7 | *(Later phase)* Optional advisory deep-dive step: can add risk flags/lower confidence, cannot override a rule-engine verdict in either direction | NOT STARTED (deliberately post-calibration) |
+| D7 | Reference-style single-call brain (`LLM_BRAIN=1`) mapped onto the same post-gate veto | DONE (`llm/llm_brain.py`; malformed output degrades to the per-candidate thinker) |
+| D8 | *(Later phase)* Additional advisory deep-dive that can add risk flags/lower confidence | NOT STARTED (deliberately post-calibration; the D1 veto already gates entries) |
 
 
-## E. Paper trading engine
+## E. Live execution book (paper engine retired §52)
 
 | # | Requirement | Status |
 |---|---|---|
-| E1 | `open_position()` — atomic, idempotent (write-then-check pattern, cash only touched after confirmed state write) | DONE (`try_insert_open_trade` + partial UNIQUE index backstop) |
-| E2 | `close_position()` — same atomicity pattern; double-close test proves cash credited exactly once | DONE |
-| E3 | `scale_into_position()` — new function, same atomicity discipline as E1/E2 (exposure cap enforced atomically in the UPDATE's WHERE clause) | DONE |
-| E4 | `decide_and_act()` — unified entry point routing to E1 or E3 based on existing exposure | DONE |
-| E5 | `compute_unrealized_pnl()` / `compute_realized_pnl()` — pure functions, tested with known-correct expected outputs, raise on invalid input rather than returning 0 | DONE |
-| E6 | `check_exit_conditions()` — take-profit, stop-loss, timeout, in that order | SUPERSEDED by the §5.2 reference-bot exit engine (`rule_engine/exits.py::evaluate_exits` + `sell_risk_gate`); the price-only probe was deleted as dead code |
-| E7 | `PAPER_TRADING_ONLY` asserted at runtime inside every position-opening function (belt-and-suspenders, not just checked once upstream) | RETIRED (§52): the paper engine was deleted; `config.assert_paper_trading_only()` had no caller and was removed. Live arming is `LIVE_TRADING_ENABLED` in `live_execution/config.py` |
-| E8 | *(Post-calibration)* `scale_out_partial()` — trims a fraction of an open position on a structural-trim trigger | NOT STARTED (per §5.3 sequencing) |
-| E9 | *(Post-calibration)* Rolling price/volume history per open position | NOT STARTED |
+| E1 | `ExecutionLedger.record_buy()` — idempotency key + atomic temp-file/`os.replace` JSON persistence; corrupt ledger refuses to trade | DONE (`live_execution/models.py`, `test_live_execution_ledger.py`) |
+| E2 | `reduce_position()` — FIFO partial/full close, `full_close` clamp, PnL realized against cost, one save | DONE |
+| E3 | Pre-trade guards: kill switch, daily-loss breaker, position/exposure caps, wallet pin, commit memo | DONE (`jupiter_executor.preflight`, `executor.place_buy/place_sell`) |
+| E4 | Single confirmed-trade path (`place_buy`/`place_sell` → `execute_confirmed_trade`) with ambiguous-send resolution by signature status | DONE (`test_executor_memo_flow.py`, `test_jupiter_executor.py`) |
+| E5 | `compute_unrealized_pnl()` / `compute_realized_pnl()` — pure functions with known-correct expectations, invalid input rejected | DONE (`backend/sizing.py`) |
+| E6 | Exit engine: stop/trail/liquidity/invalidation/stale full closes + take-profit ladder trims | DONE (`rule_engine/exits.py`, `test_exit_engine.py`) |
+| E7 | Live arming hardcoded (`LIVE_TRADING_ENABLED`, `REQUIRE_MANUAL_CONFIRMATION`), never env-settable | DONE (`live_execution/config.py`, pinned by `test_safety_flags_match_the_committed_state`) |
+| E8 | Partial trims of an open position | DONE (TP ladder + `reduce_position(fraction)`) |
+| E9 | High-water marks survive restart and `--once` | DONE (mirror persistence + `run_live_cycle._hwm_for_cycle`) |
 
 ## F. Knowledge base
 
@@ -71,7 +72,7 @@ progress (updated as items complete).
 | F2 | `ingest_file()` — single-file ingestion, filename sanitized, empty content rejected | DONE |
 | F3 | `scripts/ingest_directory.py` — bulk ingestion CLI | DONE |
 | F4 | `POST /api/knowledge-base/ingest` — bulk/batch ingestion via API | DONE |
-| F5 | Digest generation at ingest time, stored alongside raw source | DONE (Ollama in live mode; labeled extractive fallback otherwise) |
+| F5 | Digest generation at ingest time, stored alongside raw source | DONE (main cloud LLM when available; labeled extractive fallback otherwise — no local/Ollama path) |
 | F6 | `get_context()` injects digests (not raw files) into prompts, bounded by a configured char budget | DONE |
 | F7 | Truncation drops whole documents, never cuts mid-document | DONE |
 | F8 | Dynamic stats: win rate by liquidity bucket, age bucket, computed from real trade history | DONE |
@@ -93,7 +94,7 @@ progress (updated as items complete).
 | # | Requirement | Status |
 |---|---|---|
 | H1 | All endpoints listed in architecture §7 implemented | DONE |
-| H2 | Every endpoint read-only with respect to trades/safety flags | DONE (only POST is KB ingestion) |
+| H2 | No endpoint can open, close, or modify a trade or safety flag; operator mutations are limited to auth, KB ingestion, and `POST /api/admin/reset` (requires `X-Admin-Token`) | DONE (`test_admin_reset.py`, `test_authz_surface.py`) |
 | H3 | `WS /ws/feed` pushes new feed events in real time | DONE |
 | H4 | Pagination on `feed`, `journal` endpoints | DONE (+ tests) |
 | H5 | SQLite in WAL mode; tick loop writes, API reads, without blocking each other | DONE |
@@ -111,7 +112,7 @@ progress (updated as items complete).
 |---|---|---|
 | J1 | Every rule function: unit tests, both branches | DONE (73 tests passing) |
 | J2 | Money-math functions: known-correct expected outputs + edge cases | DONE |
-| J3 | Atomicity: double-close and double-open tests | DONE (incl. crash-replay + scale-in cap + PAPER_TRADING_ONLY assertion) |
+| J3 | Atomicity: crash-replay and double-close protections on the ledger | DONE (live `ExecutionLedger` temp-file + `os.replace`; exit/TP tests assert no double-credit) |
 | J4 | API routes: shape/pagination tests against a seeded test DB | DONE |
 | J5 | End-to-end mock-mode smoke test covering a full tick cycle | DONE (entries, forced exits, cash conservation, once-per-tick regime) |
 
@@ -129,7 +130,7 @@ progress (updated as items complete).
 
 | # | Requirement | Status |
 |---|---|---|
-| L1 | Cookie-based session authentication: HttpOnly, SameSite=Lax, 15m idle / 24h absolute expiration | DONE (`backend/api/auth.py`, `backend/api/routes/auth.py`, `test_cookie_auth.py`) |
+| L1 | Cookie-based session authentication: HttpOnly, SameSite=Lax, `Path=/`, 1-hour absolute lifetime (no rolling refresh) | DONE (`backend/api/auth.py`, `backend/api/routes/auth.py`, `test_cookie_auth.py`) |
 | L2 | Access control & record ownership: authorization checks on all ID endpoints + Supabase RLS | DONE (`migrations/supabase/006_rls_policies.sql`, `test_authz_surface.py`) |
 | L3 | Mass assignment defense: Pydantic extra-field stripping (`extra="ignore"`) on all write schemas | DONE (`test_mass_assignment.py`) |
 | L4 | Server-side rate limiting: sliding window token bucket middleware across all route tiers | DONE (`backend/api/rate_limiter.py`, `test_rate_limiting.py`) |

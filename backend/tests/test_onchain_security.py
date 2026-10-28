@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 import config
 import data_providers.onchain_security as ocs
 from data_providers.base import _looks_like_quota_error
@@ -174,6 +176,44 @@ async def test_non_mint_parsed_account_is_unusable(monkeypatch):
     })
     flags = await ocs.get_authority_flags(MINT)
     assert flags == {}
+
+
+@pytest.mark.parametrize("payload", [[1], "string", 123, 1.5, None])
+async def test_non_object_json_body_is_unknown_not_a_crash(monkeypatch, payload):
+    """§86: a 200 with valid JSON that is not an object used to raise
+    AttributeError inside the fallback, crashing the security stage."""
+    _install(monkeypatch,
+             {"https://api.mainnet-beta.solana.com": [
+                 FakeResponse(200, payload)]})
+    assert await ocs.get_authority_flags(MINT) == {}
+
+
+@pytest.mark.parametrize("payload", [[1], "string", 123, 1.5, None])
+async def test_extension_fetch_non_object_json_is_unknown(monkeypatch, payload):
+    ocs._MINT_EXTENSION_CACHE.clear()
+    _install(monkeypatch,
+             {"https://api.mainnet-beta.solana.com": [
+                 FakeResponse(200, payload)]})
+    assert await ocs.get_mint_extension_flags(MINT) == {}
+
+
+def test_extension_parser_survives_non_dict_state_and_bad_fee():
+    """§86: a non-dict extension state raised AttributeError; a non-numeric
+    ACTIVE fee raised ValueError even when the scheduled fee was valid."""
+    data = {
+        "program": "spl-token-2022",
+        "parsed": {"info": {"extensions": [
+            {"extension": "transferFeeConfig", "state": [1, 2]},
+            {"extension": "transferFeeConfig", "state": {
+                "olderTransferFee": {"transferFeeBasisPoints": "bad"},
+                "newerTransferFee": {"transferFeeBasisPoints": "250"},
+            }},
+        ]}},
+    }
+    out = ocs.parse_mint_extensions(data)
+    assert out["program"] == "spl-token-2022"
+    assert out["transfer_fee_bps"] == 250
+    assert any("250 bps" in d for d in out["dangerous_extensions"])
 
 
 # --- quota-body sniff (Birdeye fast-fail) --------------------------------------

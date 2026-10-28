@@ -339,7 +339,7 @@ def _verify_binding_checks(tx: dict, commit_payload: dict,
     block_time = tx.get("blockTime")
     if block_time is not None and commit_created_at:
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
             commit_ts = datetime.fromisoformat(
                 commit_created_at.replace("Z", "+00:00")).timestamp()
             ordering_ok = commit_ts < block_time

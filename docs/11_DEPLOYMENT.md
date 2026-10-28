@@ -23,7 +23,7 @@ docker volume create bot_state bot_data bot_logs
 
 docker run -d --name trading-bot \
   --env-file .env \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   -v bot_state:/app/backend/live_execution/state \
   -v bot_data:/app/data \
   -v bot_logs:/app/logs \
@@ -31,6 +31,10 @@ docker run -d --name trading-bot \
   -e LOG_DIR=/app/logs \
   trading-bot
 ```
+
+The dashboard binds to loopback only; reach it through an SSH tunnel
+(`ssh -L 8000:127.0.0.1:8000 user@host`) or a TLS-terminating reverse proxy.
+`docker compose` already enforces `127.0.0.1:${API_PORT:-8000}:8000`.
 
 or `docker compose up -d --build` (compose file wires the volumes + env_file
 + the §51 `searxng` sidecar — the keyless self-hosted search hop; set
@@ -59,7 +63,7 @@ If running a single container without `ROLE`, both run in the same container, em
 The entrypoint starts the API always (under `ROLE=api`), and the live cycle **only if** `ROLE=live` (or single-container fallback), the hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True, AND a wallet secret is configured — the same double-gate as `start.sh`.
 
 #### Reverse Proxy & Trusted Subnets (`TRUSTED_PROXY_CIDRS`) (§78 F4)
-When running behind a reverse proxy (e.g. Caddy, Traefik, Nginx) on a Docker bridge network, configure `TRUSTED_PROXY_CIDRS` (default: `127.0.0.1/32,::1/128,172.16.0.0/12,10.0.0.0/8`).
+When running behind a reverse proxy (e.g. Caddy, Traefik, Nginx) on a Docker bridge network, configure `TRUSTED_PROXY_CIDRS` (default: `127.0.0.1,172.16.0.0/12,::1/128`; `FORWARDED_ALLOW_IPS` is accepted as a legacy fallback).
 - The API only trusts `X-Forwarded-For` when the direct socket peer is inside these trusted CIDRs. Direct untrusted connections ignore XFF to defeat header spoofing.
 - In multi-hop XFF chains, the API selects the rightmost untrusted IP (standard proxy defense) to resolve real client identities for rate limiting and threat tracking.
 
@@ -106,7 +110,8 @@ those are inlined into the public JS bundle.
 
 **Session Revocation Durability (§78 E3):**
 Revocations are stored in memory and reset on process restart. An operator who needs immediate
-cluster-wide revocation across restarts should rotate `ADMIN_TOKEN` / `SESSION_SECRET`.
+cluster-wide revocation across restarts should rotate `ADMIN_TOKEN` (which
+also invalidates every existing cookie because sessions are derived from it).
 
 
 ## 3. Dashboard on Vercel (split mode)

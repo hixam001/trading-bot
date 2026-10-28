@@ -38,13 +38,29 @@ def _read(path: Path) -> Optional[dict]:
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text())
+        state = json.loads(path.read_text())
     except (ValueError, OSError) as exc:
         # Corrupt switch state must never silently mean "clear".
         raise RuntimeError(
             f"kill-switch state at {path} is corrupt ({exc}) — refusing to "
             f"trade until a human inspects it"
         )
+    # Shape validation is part of corruption: valid JSON that is not an
+    # object, or an object without a boolean "tripped", cannot be trusted.
+    # `bool(state.get("tripped"))` used to read {"tripped": 0} / [] / {} as
+    # CLEAR — a fail-open on the one gate that must never fail open.
+    if not isinstance(state, dict):
+        raise RuntimeError(
+            f"kill-switch state at {path} is corrupt (expected a JSON "
+            f"object, got {type(state).__name__}) — refusing to trade until "
+            f"a human inspects it"
+        )
+    if not isinstance(state.get("tripped"), bool):
+        raise RuntimeError(
+            f"kill-switch state at {path} is corrupt (missing boolean "
+            f"'tripped') — refusing to trade until a human inspects it"
+        )
+    return state
 
 
 def _write(tripped: bool, reason: str, state_dir: Optional[Path]) -> None:

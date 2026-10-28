@@ -176,7 +176,7 @@ Operators should periodically practice a restore drill in a scratch directory to
 2. **Execute restore**:
    ```bash
    docker compose run --rm live python scripts/restore_state.py /app/backups/state-YYYYMMDDTHHMMSSZ.tar.gz.enc \
-       --target-state-dir /app/state \
+       --target-state-dir /app/backend/live_execution/state \
        --target-db-path /app/data/trading_bot.db \
        --force \
        --reconcile
@@ -186,7 +186,7 @@ Operators should periodically practice a restore drill in a scratch directory to
    - If discrepancies appear, resolve manually before clearing the kill switch.
    - To re-run reconciliation at any time without re-restoring the archive, use `--reconcile-only`:
      ```bash
-     docker compose run --rm live python scripts/restore_state.py --reconcile-only --target-state-dir /app/state
+     docker compose run --rm live python scripts/restore_state.py --reconcile-only --target-state-dir /app/backend/live_execution/state
      ```
    - `--reconcile-only` exits `0` when clean, `2` when chain/journal discrepancies are found, and `1`
      when the ledger cannot be read. If RPC balances are unavailable (or the state has no wallet address),

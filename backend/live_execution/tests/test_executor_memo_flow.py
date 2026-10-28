@@ -367,6 +367,47 @@ def _ledger_with_open_position(env, key="kopen"):
     return ledger
 
 
+@pytest.mark.parametrize("fraction", [float("nan"), float("inf"), float("-inf")])
+async def test_sell_rejects_non_finite_fraction(env, fraction):
+    """§86: inf silently clamped to a full close; NaN crashed in int(). Both
+    are ambiguous operator intent and must block before any network call."""
+    ledger = _ledger_with_open_position(env)
+    res = await ex.place_sell("MINT", "SYM", fraction, ledger=ledger)
+    assert res.status == "blocked"
+    assert "fraction" in res.reason
+
+
+async def test_sell_non_finite_reference_price_does_not_crash(env, monkeypatch):
+    """A bad reference price degrades to the existing no-reference path (the
+    sell still self-consistency-checks the quote) instead of OverflowError."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls)
+    ledger = _ledger_with_open_position(env)
+
+    res = await ex.place_sell("MINT", "SYM", 1.0, ledger=ledger,
+                              reference_price_usd=float("inf"))
+
+    assert res.status == "filled"
+    assert res.reason in (None, "")
+
+
+async def test_buy_non_finite_reference_price_blocks_before_memo(env, monkeypatch):
+    order = []
+    _arm_balances(monkeypatch)
+    _arm_fill(monkeypatch, order)
+
+    res = await ex.place_buy(
+        "MINT", "SYM", 1.5, output_decimals=6,
+        idempotency_key="k-bad-ref", ledger=ExecutionLedger(env / "exec.json"),
+        reference_price_usd=float("nan"),
+    )
+
+    assert res.status == "blocked"
+    assert "reference price" in res.reason
+    assert order == []                      # no memo, quote, sign, or send
+
+
 async def test_buy_quote_failure_returns_failed_not_nameerror(env, monkeypatch):
     """A quote-phase ExecutionError must yield status='failed' — NOT crash the
     cycle with NameError (ExecutionError was used but never imported)."""

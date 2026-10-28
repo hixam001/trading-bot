@@ -108,6 +108,35 @@ def test_corrupt_kill_switch_state_fails_loudly(state):
         kill_switch.is_tripped(state)
 
 
+@pytest.mark.parametrize("payload", [
+    [1],                       # valid JSON, not an object
+    "clear",                   # scalar string
+    123,
+    1.5,
+    None,
+    {},                        # missing "tripped"
+    {"tripped": 0},            # falsy non-bool used to read as CLEAR
+    {"tripped": []},
+    {"tripped": None},
+    {"tripped": {}},
+    {"tripped": "false"},
+])
+def test_malformed_kill_switch_state_never_reads_as_clear(state, payload):
+    """§86: valid JSON with a non-bool "tripped" used to fail OPEN. The kill
+    switch is the one gate that must never treat corruption as clear."""
+    (state / "kill_switch.json").write_text(json.dumps(payload))
+    with pytest.raises(RuntimeError, match="corrupt"):
+        kill_switch.is_tripped(state)
+    with pytest.raises(RuntimeError, match="corrupt"):
+        kill_switch.assert_not_tripped(state)
+
+
+def test_explicit_false_tripped_is_still_valid_clear_state(state):
+    (state / "kill_switch.json").write_text(
+        json.dumps({"tripped": False, "reason": "", "ts": 1.0}))
+    assert kill_switch.is_tripped(state) is False
+
+
 def test_daily_breaker_trips_at_threshold_and_stays(state, tmp_path):
     clock = Clock()
     ledger = ExecutionLedger(tmp_path / "exec.json", now_fn=clock)

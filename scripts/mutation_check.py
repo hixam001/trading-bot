@@ -122,7 +122,7 @@ MUTATIONS: list[Mutation] = [
         phase="§81-C",
         mutation_id="81C_EXECUTOR_BUY_REF_PRICE",
         file_path="backend/live_execution/executor.py",
-        exact_old_text="if reference_price_usd is None or reference_price_usd <= 0:",
+        exact_old_text="if not has_valid_reference_price(reference_price_usd):",
         new_text="if False:",
         test_selector="backend/tests/test_audit_81_c.py",
         description="place_buy pre-memo reference price requirement disabled",

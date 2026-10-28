@@ -37,7 +37,6 @@ def price_from_quote(out_amount_raw: str | int, decimals: int) -> float:
     BARRON 96k%-P&L bug lived: assuming 9 decimals for every mint scaled
     6-decimal tokens' prices by 1000x.
     """
-    units = raw_units_for_one_token(decimals)
     try:
         out = int(out_amount_raw)
     except (TypeError, ValueError) as exc:

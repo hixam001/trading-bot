@@ -1,5 +1,12 @@
 # 06 — Reference Comparison: trading-bot vs the reference site
 
+> **Historical snapshot (2026-08-22).** The rule set and execution model have
+> changed since this comparison: `crowd_heat`, `already_held`, and
+> `not_on_break` are now active; `market_regime_ok` is retired from the gate;
+> the paper engine was deleted (§52) and this repository now executes live
+> through `backend/live_execution/`. See `docs/01_ARCHITECTURE.md` §2.3 and
+> `docs/02_FEATURE_LIST.md` for the current state.
+
 Checked 2026-08-22 against https://the reference site/, /proof, and its published
 `/api/public/verify.json`. Evidence includes independent local recomputation
 of two revealed commit hashes (see §2).
@@ -15,10 +22,10 @@ the reference bot' gate (from revealed commit payloads) vs ours:
 | 3 | `buy_pressure` | `1880 buys vs 6469 sells` | `buy_pressure` | YES — identical (tx counts, not dollars) |
 | 4 | `not_newborn_fade` | `age 1.4h, 1h 18.6%` | `not_newborn_fade` | YES — identical joint age+momentum condition |
 | 5 | `public_presence` | `twitter` | `public_presence` | YES — any-channel-passes; they name channels, we do too |
-| 6 | `crowd_heat` | `fomo 20` | *(none)* | DIVERGENT — see §3.2 |
+| 6 | `crowd_heat` | `fomo 20` | `crowd_heat` | ALIGNED since §44 — fomo.fun heat with a presence-proxy fallback; band-gated |
 | 7 | `cash_available` | `cash $55817.50` | `cash_available` | YES — identical |
-| 8 | `already_held` | `no size on` | `exposure_cap` + routing | PARTIAL — see §3.3 |
-| 9 | `not_on_break` | `awake` | *(none)* | DIVERGENT — see §3.4 |
+| 8 | `already_held` | `no size on` | `already_held` | ALIGNED — one position per name, no scale-ins |
+| 9 | `not_on_break` | `awake` | `not_on_break` | ALIGNED — operator break/liveness gate, fail-closed |
 | 10 | — | — | `market_regime_ok` | OUR ADDITION — retired from gate (observability only) |
 | 11 | — | — | `security_clear` | OUR ADDITION — ACTIVE in gate since 2026-08-29 (None-means-unknown semantics) |
 
@@ -46,8 +53,9 @@ Confirmed mechanics, all matching `05_VERIFICATION_APPENDIX.md`:
 - `verify.json` exposes wallet, executionPath steps, howToReplicate,
   totals {checked, verified, failed}, rows[]
 
-Conclusion: our appendix documented the real mechanism accurately, and its
-status (documented, NOT built — paper trading needs no public proof) stands.
+Conclusion: our appendix documented the real mechanism accurately. The
+mechanism is now built for live entries (`live_execution/memo.py` publishes a
+confirmed commit memo before the fill), so this is no longer paper-only theory.
 
 ## 3. Logic divergences — deliberate or noted
 
@@ -64,34 +72,26 @@ verdict. This is the project's core principle and stays non-negotiable —
 the reference bot demonstrates the alternative, not a defect in ours.
 
 ### 3.2 `crowd_heat` (fomo index)
-They gate on a 0–100 "fomo index" sourced from the fomo app (failed at
-index 20–22 in observed samples; bounds unknown from public data). We have
-no equivalent data source. Our `market_regime_ok` plays the same
-*"is now a good time to be deploying at all"* role at universe level.
-If a fomo-index source ever becomes available, a `crowd_heat` band rule is
-a natural addition — post-calibration, tested like every other rule.
+They gate on a 0–100 "fomo index" sourced from the fomo app. Since §44 this
+project consumes the same fomo.fun board (with a documented presence-proxy
+fallback) and gates on the configured act band. `market_regime_ok` remains
+universe-level observability, not a gate.
 
-### 3.3 `already_held` vs `exposure_cap`
+### 3.3 `already_held`
 Their gate blocks new buys whenever ANY size is held (`heldUsd > 0` fails).
-Ours routes held mints to `scale_into_position()` gated by
-`MAX_EXPOSURE_PER_MINT_USD` (§5 unified entry/scale-in). Intentional: the
-architecture spec explicitly wants add-to-winner support. Their live stream
-shows heavy position MANAGEMENT (BLOSSOM +301%, SEAL +513% "stalking",
-partial-language throughout), reinforcing §5.3's point that partial scaling
-(E8/E9) is where mature behavior lives — still post-calibration scope.
+Ours now does the same: `already_held` is active and there is no scale-in.
+Partial *exits* exist (take-profit ladder), but no adds.
 
 ### 3.4 `not_on_break`
-An operational liveness rule (the agent can be "on break"). Ours runs
-continuously; the fail-closed data path already stops trading when inputs
-disappear (empty batch → regime BAD → zero entries). A formal
-data-freshness/liveness rule is optional future polish, not correctness debt.
+An operational liveness rule (the agent can be "on break"). Ours implements
+the same gate (`rule_engine/liveness.py`), failing closed on corrupt state.
 
 ## 4. Everything else checked out
 
 - Rule detail style (short human strings with the real numbers) matches.
 - Every rejection logged at full detail matches their philosophy.
 - Their "stalking" state ≈ our feed/journal observation layer; no change needed.
-- Non-goals hold: they run REAL capital through Solana programs; we simulate
-  only. The proof mechanism exists there because there is something to prove;
-  per appendix, we adopt it only if a public track record with real capital
-  ever happens.
+- Non-goals have narrowed: the engine now executes real capital through
+  `backend/live_execution/`, with the same commit-reveal proof mechanism and a
+  signing guard. The comparison above predates that switch; treat §3 as the
+  historical rationale, not the current architecture.

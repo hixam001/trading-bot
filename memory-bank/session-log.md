@@ -1,3 +1,23 @@
+## Memory-bank update — 2026-10-28 (§86 Post-§85 audit: fail-closed malformed RPC/state, non-finite money math, `--once` HWM restore & documentation truth)
+
+- **Task**: audit the post-§85 tree for silent-wrong-state bugs across kill-switch parsing, money math, RPC shape handling, on-chain security parsing, HWM seeding, alert memory, config truth, and documentation; every fix carries a regression test.
+- **High-impact fixes**:
+  - Kill-switch state now requires a JSON object with a real boolean `tripped`; list/scalar/`{}`/`0`/`[]`/`"false"` raise instead of reading as CLEAR. An explicit `{"tripped": false}` remains valid.
+  - `preflight` rejects bool and NaN/inf `usd_size`; shared `has_valid_reference_price()` guards `execute_confirmed_trade` and `place_buy` before memo/network; `place_sell` rejects non-finite fractions (inf used to clamp to a full close, NaN crashed `int()`) and degrades a non-finite reference price to the no-reference quote path.
+  - `execute_confirmed_trade` no longer treats an ambiguous (`None`) send as a refusal: it checks the already-signed signature; unknown stays unresolved, landed errors are `landed-failed (fee paid)`, confirmed is journaled, otherwise it confirm-polls. It never re-sends.
+- **Resilience fixes**:
+  - `solana` rejects non-object JSON bodies and malformed result/status shapes across RPC, simulation, send, confirmation, balance, decimals, blockhash, and token-balance paths. `is_blockhash_valid` returns `None` for non-bool values; `get_token_balances` returns `None` unless every entry and both token programs are readable.
+  - `onchain_security` normalizes non-dict RPC/extension shapes; a non-numeric active transfer fee no longer raises when the scheduled fee is valid.
+  - `_hwm_for_cycle()` seeds the process-wide HWM map on first use, so `--once` restores trailing marks from the mirror instead of starting empty.
+  - Alert cooldown keys prune hourly and cap at 4096; `HEARTBEAT_STALE_SECONDS` is now a real `config.py` setting read from `.env`.
+- **Documentation/config**:
+  - README states the committed armed state, retired Ollama claims, cookie/rate-limit facts, Supabase migrations `001`–`006`, endpoint table, funnel limit 1000, **1,338** tests, 40 Playwright specs, and corrected live-cycle commands.
+  - `.env.example` lists missing operator knobs and the full migration sequence; docs 01/02/06/11/13/14/15 and memory-bank systemPatterns/techContext now match the live engine, active rules, post-gate LLM veto, ledger, API mutations, sessions, deployment, and restore paths.
+- **Tests**: backend **1338 passed**, 0 failed (102 warnings, +82 tests); 47 new cases in `test_audit_86.py` plus regressions in safety-model, jupiter-executor, executor-memo-flow, onchain-security, and HWM suites.
+- **Verification**: `pip check`/`pip-audit` clean after bumping msgpack 1.2.2 → 1.2.4 (CVE-2026-114613); `tsc --noEmit` + `npm run build` clean; `npm audit --omit=dev` 0 vulnerabilities; Playwright **40/40**; prepush **9/9**; gitleaks binary absent locally (CI scans).
+- **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
+- **Constraints**: no changes to signing, sizing, rule thresholds, risk flags, or arming switches. No cross-process ledger lock added (single-event-loop synchronous read-modify-write; operator CLIs run with the bot stopped, documented).
+
 ## Memory-bank update — 2026-10-27 (§85-I commit-log seal containment)
 
 - **Task**: close the remaining §85 residual — `CommitLog.seal()` could still raise `RuntimeError` out of `place_buy`/`place_sell` when `commits.json` was corrupt or unreadable.

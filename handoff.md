@@ -1,3 +1,76 @@
+## §86 — Post-§85 Audit: Fail-Closed Malformed RPC/State, Non-Finite Money Math, `--once` HWM Restore & Documentation Truth (2026-10-28)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `553b4ec` (§85-I)
+- Baseline suite: **1256 passed**, 0 failed (102 warnings)
+- Final suite: **1338 passed**, 0 failed (102 warnings in 17.7s; +82 tests)
+- Pre-push gate: **9/9 local steps clean** — pytest, `pip check`, `pip-audit`, AST keypair isolation, `tsc --noEmit`, `npm run build`, `npm audit --omit=dev`, Playwright **40/40**, gitleaks skipped (binary absent locally; CI workflow unchanged)
+- Local `pip-audit` flagged msgpack 1.2.2 (CVE-2026-114613), so `backend/requirements.lock` was bumped to `msgpack==1.2.4`; the audit is clean and the venv was updated to match.
+
+### Fixed Defects
+1. **Kill switch failed open on valid JSON (`live_execution/kill_switch.py`)**:
+   - `_read()` only caught JSON/OS errors. A file containing `[]`, a scalar, `{}`, or `{"tripped": 0}`/`[]`/`"false"` returned to callers, and `bool(state.get("tripped"))` read false — the one gate that must never fail open treated corruption as CLEAR.
+   - `_read()` now requires a JSON object with a real boolean `tripped`; anything else raises `RuntimeError`. `{"tripped": false}` remains a valid clear state.
+   - Tests: `test_malformed_kill_switch_state_never_reads_as_clear` (11 shapes), `test_explicit_false_tripped_is_still_valid_clear_state`.
+2. **Non-finite money math reached memo/sign/broadcast (`live_execution/jupiter_executor.py`, `executor.py`)**:
+   - `preflight` now rejects booleans and non-finite `usd_size`. Previously `True` counted as `$1`, and NaN passed both `<= 0` and `> MAX_TRADE_USD` before detonating in `Decimal`/`floor` math after the commit memo was paid.
+   - New `has_valid_reference_price()` (positive, finite, non-bool) is shared by `execute_confirmed_trade` and `executor.place_buy`; NaN/inf reference prices now refuse before any network call or memo publication.
+   - `executor.place_sell` rejects non-finite fractions before rounding: `inf` used to clamp to a full close and NaN crashed `int()`. A non-finite sell reference price degrades to the existing no-reference path (quote self-consistency still checked) instead of raising `OverflowError`.
+   - `proceeds_usd` is initialized before the ladder loop; the ambiguous-prior-signature branch no longer depends on a `"proceeds_usd" in locals()` probe.
+   - Tests: `test_non_finite_usd_refuses_before_network`, `test_non_finite_reference_price_refuses_before_network`, `test_sell_rejects_non_finite_fraction`, `test_sell_non_finite_reference_price_does_not_crash`, `test_buy_non_finite_reference_price_blocks_before_memo`.
+3. **`execute_confirmed_trade` re-sent after an ambiguous send (`jupiter_executor.py`)**:
+   - A `None` result from `send_checked_swap` was treated as "every rpc refused", even though "already processed"/transport ambiguity means the signed transaction may have landed. The live executor path had resolved this in §85, but this parallel path still raised immediately.
+   - It now resolves the local `signed_swap.signature` via `get_signature_status`: unknown → `send outcome unresolved (signature not found on-chain)`; on-chain error → `landed-failed (fee paid)`; confirmed/finalized → journaled as filled; otherwise it polls `confirm_signature`. It never re-sends.
+   - Tests: `test_ambiguous_send_resolves_landed_fill_and_journals_it`, `test_ambiguous_send_with_unknown_signature_fails_closed`.
+4. **Malformed RPC shapes crashed the live engine (`live_execution/solana.py`)**:
+   - `rpc()` skips a non-object JSON body instead of calling `.get` on a list/scalar; `get_multiple_accounts` and `simulate_transaction` raise `SimulationError` on non-object bodies and non-dict `result`; `send_raw_transaction_detailed` records a non-object body as a transport attempt.
+   - `confirm_signature` uses `get_running_loop()` and a new `_first_signature_status()` guard; a malformed `value` is unconfirmed instead of indexing a scalar.
+   - `get_sol_balance` requires an object result with a non-bool integer `value`; `get_mint_decimals` validates dict `value` and a non-bool, non-negative integer (zero stays valid); `latest_blockhash` requires a dict `value`; `is_blockhash_valid` returns `None` unless `value` is a real bool (previously `bool("false") == True`).
+   - `get_usdc_balance` skips non-object bodies and tolerates a non-object `error` ("rate limited", a code dict, a status int) instead of `.get`-crashing.
+   - `get_token_balances` requires both token programs to answer with a list of dict entries; a non-list or non-dict-containing value marks that program unread, so the function returns `None` rather than a partial balance.
+   - Tests: 47 cases in `backend/live_execution/tests/test_audit_86.py` (non-object bodies, scalars, malformed statuses/balances, non-bool blockhash validity).
+5. **On-chain security stage crashed on malformed JSON/extension state (`data_providers/onchain_security.py`)**:
+   - New `_as_dict()` shape guard is applied to RPC bodies, `result`, `value`, `data`, and `parsed`; a 200 response with valid non-object JSON is now "unknown" and the next endpoint is tried, instead of raising `AttributeError`.
+   - `parse_mint_extensions` treats a non-dict extension `state` as `{}` and only reports an ACTIVE transfer fee that actually parsed; a non-numeric active fee no longer raises `ValueError` when the scheduled fee is valid (the max of parseable fees is still gated).
+   - Tests: `test_non_object_json_body_is_unknown_not_a_crash`, `test_extension_fetch_non_object_json_is_unknown`, `test_extension_parser_survives_non_dict_state_and_bad_fee`.
+6. **`--once` lost trailing high-water marks (`run_live_cycle.py`)**:
+   - HWM seeding lived only in the long-running startup path; `--once` called `_manage` with `{}`, so a restart through the one-shot operator command could reset a trailing stop to entry price.
+   - New `_hwm_for_cycle()` seeds the process-wide map on first use and is called by `run_cycle`; both long-running and `--once` paths now start from the mirror DB marks.
+   - Test: `test_once_mode_seeds_hwm_on_first_use`.
+7. **Unbounded alert cooldown map (`alerts.py`)**:
+   - `_key_last_sent` grew once per mint ever alerted. It now prunes entries older than one hour and caps the map at 4096 keys.
+8. **Config truth (`config.py`, `.env.example`)**:
+   - `HEARTBEAT_STALE_SECONDS` is now defined in `backend/config.py` and read from `.env` (previously `api.main` used `getattr(..., 300)` on an attribute that did not exist, so the documented setting was silently ignored).
+   - `.env.example` now lists the operator knobs that were missing (session/rate/captcha/live-book/LLM-brain/alert-no-fills/wallet-scan/FOMO state) and corrects the Supabase migration instruction; internal config-only tuning keys remain intentionally omitted.
+9. **Docstring/pyflakes cleanup**:
+   - `reconcile.check_wallet_drop` docstring now says the real `$5.00` default; unused imports/locals removed in `alerts`, `sim_guard`, `proof`, `data_providers/jupiter`, and `solana`.
+   - `scripts/mutation_check.py` tracks the new `has_valid_reference_price(...)` buy guard so the §81-C mutation still proves the reference-price check is covered.
+
+### Documentation Updated
+- `handoff.md` §86 (this section)
+- `memory-bank/activeContext.md` — current §86 entry; prior §85 moved to Prior
+- `memory-bank/progress.md` — §86 work item
+- `memory-bank/decisionLog.md` — decision #93
+- `memory-bank/session-log.md` — §86 session entry
+- `memory-bank/systemPatterns.md` — post-gate LLM veto, live ledger authority, operator-only API mutations
+- `memory-bank/techContext.md` — current test/Playwright counts and cookie facts
+- `README.md` — committed armed state, retired Ollama claims, cookie/rate-limit facts, Supabase migrations `001`–`006`, endpoint table, funnel limit 1000, **1,338** tests, 40 Playwright specs, corrected live-cycle commands
+- `.env.example` — common-operator-settings scope, missing operator variables, Supabase migration instruction
+- `docs/01_ARCHITECTURE.md` — active rule table (`crowd_heat`, `already_held`, `not_on_break`; `market_regime_ok` retired), post-gate LLM veto and `LLM_BRAIN`, live entry/exit/partial-trim flow, HWM restore, endpoint table, `Path=/` / 1-hour sessions / rate tiers
+- `docs/02_FEATURE_LIST.md` — B/E/D/F/H/J/L sections rewritten to the current live engine
+- `docs/06_REFERENCE_COMPARISON.md` — historical-snapshot banner; current rule/execution alignment
+- `docs/11_DEPLOYMENT.md` — loopback publish port, trusted proxy CIDRs, `SESSION_SECRET` removal
+- `docs/13_ORACLE_DEPLOY_GUIDE.md` — HTTPS origin/SSH-tunnel access, backup/log volumes
+- `docs/15_BACKUP_RESTORE.md` — restore target `/app/backend/live_execution/state`
+- `docs/14_SIGNING_GUARD.md` — relative links fixed
+
+### Constraints & Invariants Preserved
+- No changes to wallet signing, sizing, rule thresholds, risk flags, or the hardcoded arming switches (`LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False` remain committed; `test_safety_flags_match_the_committed_state` pins them).
+- Unknown/malformed external data stays unknown and fails closed: bad kill-switch state, bad RPC shapes, bad reference prices/fractions, malformed balances/statuses.
+- An ambiguous send is resolved against its already-signed signature and never retried blindly.
+- No cross-process ledger locking was added. Ledger read-modify-write methods are synchronous inside one event loop; operator CLIs are expected to run with the bot stopped. This is now documented rather than implied.
+- Every push requires `./scripts/prepush_check.sh` to pass locally and GitHub Actions to be green; failures are fixed, never bypassed.
+
 ## §85 — Post-§84 Re-Audit: CI Key Parsing, Ambiguous Sends, Break-State Truth, Provider Lifecycle, Restore/Backup Integrity & Operator Login (2026-10-27)
 
 ### Baseline & Measured Suite Counts

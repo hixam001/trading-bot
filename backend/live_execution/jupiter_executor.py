@@ -58,6 +58,7 @@ from config import JUPITER_QUOTE_URL as _BACKEND_QUOTE_URL  # noqa: E402
 from config import USDC_MINT as _BACKEND_USDC_MINT  # noqa: E402
 
 import math
+from typing import Optional
 from live_execution import config  # noqa: E402
 from live_execution import kill_switch  # noqa: E402
 from live_execution import solana  # noqa: E402
@@ -110,6 +111,18 @@ def assert_decimals_known(output_decimals: int | None, mint: str) -> int:
     return output_decimals
 
 
+def has_valid_reference_price(value) -> bool:
+    """True only for a positive, finite numeric reference price.
+
+    NaN/inf pass a bare ``> 0`` check and detonate later in floor/Decimal
+    math — after the commit memo is already on-chain.
+    """
+    return (isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and math.isfinite(value)
+            and value > 0)
+
+
 def preflight(
     usd_size: float,
     output_mint: str,
@@ -131,7 +144,14 @@ def preflight(
             "A human must edit live_execution/config.py manually; there is "
             "deliberately no environment-variable bypass."
         )
-    if not isinstance(usd_size, (int, float)) or usd_size <= 0:
+    if not isinstance(usd_size, (int, float)) or isinstance(usd_size, bool):
+        raise Refusal(f"usd_size must be > 0, got {usd_size!r}")
+    # NaN defeats both the <=0 and >MAX checks; inf is caught by the cap but
+    # must still be rejected explicitly. Either would otherwise reach
+    # Decimal/floor math after a commit memo was already paid for.
+    if not math.isfinite(usd_size):
+        raise Refusal(f"usd_size must be finite, got {usd_size!r}")
+    if usd_size <= 0:
         raise Refusal(f"usd_size must be > 0, got {usd_size!r}")
     if usd_size > config.MAX_TRADE_USD:
         raise Refusal(
@@ -921,8 +941,10 @@ async def execute_confirmed_trade(
     payer = wallet.load_keypair()
     user_public_key = wallet.pubkey_string(payer)
 
-    # Reference price floor for buys (fail closed)
-    if reference_price_usd is None or reference_price_usd <= 0:
+    # Reference price floor for buys (fail closed). A NaN/inf reference
+    # price passes "is None or <= 0" but later explodes in math.floor —
+    # after memo publication. Reject it here instead.
+    if not has_valid_reference_price(reference_price_usd):
         raise Refusal("no reference price available for buy (fail closed)")
 
     min_out_raw = math.floor(
@@ -964,11 +986,36 @@ async def execute_confirmed_trade(
     except SendRejected as exc:
         raise ExecutionError(f"every rpc refused the transaction: {exc}") from exc
     if not sent:
-        raise ExecutionError("every rpc refused the transaction")
-    conf = await solana.confirm_signature(sent)
-    if not conf["confirmed"]:
-        raise ExecutionError(
-            f"not confirmed before timeout: {conf['err'] or 'unknown'}")
+        # An ambiguous send is not a definitive rejection: the signed
+        # transaction may have landed. Resolve the LOCAL signature before
+        # declaring failure — same rule as executor._broadcast_and_confirm.
+        # Without this, a real fill stays unjournaled and an operator retry
+        # can double-spend.
+        try:
+            status = await solana.get_signature_status(signature)
+        except Exception as exc:
+            log.warning("signature status lookup failed for %s: %s",
+                        signature[:16], exc)
+            status = None
+        if status is None:
+            raise ExecutionError(
+                "send outcome unresolved (signature not found on-chain)")
+        if status.get("err"):
+            raise ExecutionError(
+                f"landed-failed (fee paid): {status['err']}")
+        if status.get("confirmationStatus") in ("confirmed", "finalized"):
+            conf = {"confirmed": True, "slot": status.get("slot"), "err": None}
+        else:
+            conf = await solana.confirm_signature(signature)
+            if not conf["confirmed"]:
+                raise ExecutionError(
+                    f"not confirmed before timeout: {conf['err'] or 'unknown'}")
+        sent = signature
+    else:
+        conf = await solana.confirm_signature(sent)
+        if not conf["confirmed"]:
+            raise ExecutionError(
+                f"not confirmed before timeout: {conf['err'] or 'unknown'}")
     signature = sent
 
     record = ledger.record_buy(

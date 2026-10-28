@@ -45,6 +45,11 @@ def _put_extension_cache(mint: str, data: dict, now: float) -> None:
         _MINT_EXTENSION_CACHE.popitem(last=False)
 
 
+def _as_dict(value) -> dict:
+    """Shape guard for RPC bodies: malformed JSON types are unusable, not data."""
+    return value if isinstance(value, dict) else {}
+
+
 def parse_mint_authorities(info: dict) -> dict:
     """Pure: revoked-flags from a jsonParsed SPL mint account info object."""
     out = {"mint_authority_revoked": None, "freeze_authority_revoked": None}
@@ -105,7 +110,9 @@ def parse_mint_extensions(data: dict) -> dict:
         if not ext_name:
             continue
         ext_names.append(ext_name)
-        state = item.get("state") or {}
+        state = item.get("state")
+        if not isinstance(state, dict):
+            state = {}
 
         # 1. Known dangerous extension names
         if ext_name in VERIFIED_DANGEROUS_EXTENSIONS:
@@ -118,25 +125,29 @@ def parse_mint_extensions(data: dict) -> dict:
 
         # 3. transferFeeConfig over max_transfer_fee
         elif ext_name == "transferFeeConfig":
-            newer = state.get("newerTransferFee") or {}
-            older = state.get("olderTransferFee") or {}
+            newer = _as_dict(state.get("newerTransferFee"))
+            older = _as_dict(state.get("olderTransferFee"))
             # The OLDER fee is the one in force until the next epoch; `newer`
             # is only scheduled. Report the active fee but gate on the worst
             # of both so a pending hike cannot slip through.
             active = older.get("transferFeeBasisPoints")
             scheduled = newer.get("transferFeeBasisPoints")
             fees = []
+            active_fee = None
             for raw_fee in (active, scheduled):
                 if raw_fee is None:
                     continue
                 try:
-                    fees.append(int(raw_fee))
+                    fee = int(raw_fee)
                 except (ValueError, TypeError):
                     continue
+                if raw_fee is active:
+                    active_fee = fee
+                fees.append(fee)
             if fees:
                 gate_fee = max(fees)
-                transfer_fee_bps = (
-                    int(active) if active is not None else gate_fee)
+                transfer_fee_bps = (active_fee if active_fee is not None
+                                    else gate_fee)
                 if gate_fee > max_transfer_fee:
                     dangerous.append(
                         f"transferFeeConfig ({gate_fee} bps > {max_transfer_fee} bps)"
@@ -176,9 +187,12 @@ async def get_authority_flags(mint: str, timeout: float = 10.0) -> dict:
                     # mainnet-beta's rate-limited response: 200 + empty body.
                     # Not a parseable success — try the next endpoint.
                     continue
-                result = (resp.json() or {}).get("result") or {}
-                value = result.get("value") or {}
-                info = ((value.get("data") or {}).get("parsed") or {}).get("info")
+                body = _as_dict(resp.json())
+                result = _as_dict(body.get("result"))
+                value = _as_dict(result.get("value"))
+                data = _as_dict(value.get("data"))
+                parsed = _as_dict(data.get("parsed"))
+                info = parsed.get("info")
                 if not isinstance(info, dict):
                     continue
                 if info.get("type") is not None and info.get("type") != "mint":
@@ -216,13 +230,14 @@ async def get_mint_extension_flags(mint: str, timeout: float = 10.0) -> dict:
                 resp = await client.post(endpoint, json=payload)
                 if resp.status_code != 200 or not resp.text.strip():
                     continue
-                result = (resp.json() or {}).get("result") or {}
-                value = result.get("value") or {}
+                body = _as_dict(resp.json())
+                result = _as_dict(body.get("result"))
+                value = _as_dict(result.get("value"))
                 data = value.get("data")
                 if not isinstance(data, dict):
                     continue
-                info = (data.get("parsed") or {}).get("info")
-                if isinstance(info, dict) and info.get("type") not in (None, "mint"):
+                parsed_info = _as_dict(data.get("parsed")).get("info")
+                if isinstance(parsed_info, dict) and parsed_info.get("type") not in (None, "mint"):
                     continue
                 parsed = parse_mint_extensions(data)
                 _put_extension_cache(mint, parsed, now)

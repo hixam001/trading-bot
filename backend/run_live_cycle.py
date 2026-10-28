@@ -700,6 +700,19 @@ async def _seed_hwm_from_mirror(hwm: dict) -> dict:
     return hwm
 
 
+async def _hwm_for_cycle() -> dict:
+    """Return the process-wide high-water map, seeding it on first use.
+
+    Lives here (not only in the long-running startup) so ``--once`` also
+    restores mirror marks before its single ``_manage`` pass.
+    """
+    hwm = getattr(run_cycle, "_hwm", None)
+    if hwm is None:
+        hwm = await _seed_hwm_from_mirror({})
+        run_cycle._hwm = hwm
+    return hwm
+
+
 def _journal_meta(ledger: ExecutionLedger, flags: dict) -> dict:
     """Pure: rebuild {mint: {price_usd, tokens, cost, opened_ts}} from a
     FRESH ledger read, overlaying the cycle's chain-reconciliation flags
@@ -889,7 +902,7 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
     except Exception:
         log.warning("commit orphan reconciliation skipped", exc_info=True)
     portfolio, meta, chain_report = await _live_portfolio(ledger)
-    hwm: dict = getattr(run_cycle, "_hwm", {})
+    hwm = await _hwm_for_cycle()
     jupiter = JupiterProvider()
 
     await _manage(jupiter, ledger, hwm, meta)

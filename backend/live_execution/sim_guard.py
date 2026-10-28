@@ -14,7 +14,6 @@ from __future__ import annotations
 import base64
 import inspect
 import logging
-import math
 import struct
 from typing import Optional
 
@@ -24,7 +23,6 @@ from solders.transaction import VersionedTransaction
 from live_execution import config, solana
 from live_execution.jupiter_executor import (
     _ATA_PROGRAM_ID,
-    _BACKEND_USDC_MINT,
     _SPL_TOKEN_PROGRAM_ID,
     _TOKEN_2022_PROGRAM_ID,
     _WSOL_MINT,
@@ -165,7 +163,7 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
 
     try:
         quote_in_amount = int(quote.get("inAmount", -1))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError):
         _fail(f"quote inAmount invalid: {quote.get('inAmount')}")
 
     if quote_in_amount != intent.in_amount_raw:
@@ -177,7 +175,7 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
 
     try:
         quote_slippage = int(quote.get("slippageBps", -1))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError):
         _fail(f"quote slippageBps invalid: {quote.get('slippageBps')}")
 
     if quote_slippage != intent.slippage_bps:
@@ -185,7 +183,7 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
 
     try:
         out_amount = int(quote.get("outAmount", 0))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError):
         _fail(f"quote outAmount invalid: {quote.get('outAmount')}")
 
     if out_amount <= 0:
@@ -193,7 +191,7 @@ def validate_quote_against_intent(quote: dict, intent: TradeIntent) -> None:
 
     try:
         other_threshold = int(quote.get("otherAmountThreshold", -1))
-    except (TypeError, ValueError) as exc:
+    except (TypeError, ValueError):
         _fail(f"quote otherAmountThreshold invalid: {quote.get('otherAmountThreshold')}")
 
     # Self-consistency check:
@@ -268,7 +266,7 @@ async def simulate_and_assert(
         _refuse("quote missing inAmount or otherAmountThreshold (fail closed)")
 
     try:
-        in_amount = int(in_amount_raw)
+        int(in_amount_raw)
         other_amount_threshold = int(other_amount_threshold_raw)
     except (TypeError, ValueError) as exc:
         _refuse(f"unparseable quote amounts inAmount={in_amount_raw}, threshold={other_amount_threshold_raw}: {exc}")

@@ -22,7 +22,7 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 ## Commands
 - One click: ./start.sh | ./stop.sh
 - Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- All suites from repo root: env -u ADMIN_TOKEN pytest -q (1,066+ tests = backend + live_execution hermetic without .env)
+- All suites from repo root: env -u ADMIN_TOKEN pytest -q (1,338+ tests = backend + live_execution hermetic without .env)
 - Python dependency check: pip check && pip-audit -r backend/requirements.lock
 - Frontend typecheck & build: cd frontend && npx tsc --noEmit && npm run build
 - Frontend audit: cd frontend && npm audit --omit=dev
@@ -32,19 +32,19 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 - Deploy (Docker/VM): docker build -t trading-bot . && see docs/11_DEPLOYMENT.md
 
 ## Pre-Commit and Pre-Push Verification Pipeline
-MANDATORY: Every commit and push requires all 7 check suites to pass cleanly:
-1. `env -u ADMIN_TOKEN pytest -q` (1066+ hermetic tests green, no regressions)
+MANDATORY: every commit and push requires all check suites below to pass cleanly:
+1. `env -u ADMIN_TOKEN pytest -q` (1,338+ hermetic tests green, no regressions)
 2. `pip check` and `pip-audit -r backend/requirements.lock` (clean)
 3. AST isolation test (no `load_keypair` in `backend/api/`)
 4. `cd frontend && npx tsc --noEmit` (zero errors)
 5. `cd frontend && npm run build` (clean bundle)
 6. `cd frontend && npm audit --omit=dev` (zero vulns)
-7. `cd frontend && npm run test:e2e` (all 30 tests green)
+7. `cd frontend && npm run test:e2e` (all 40 Playwright specs green)
 8. `gitleaks git --verbose` (zero secrets)
 
 
 ## Security & Protection Architecture
-- Authentication: HttpOnly, SameSite=Lax, Path=/api secure cookies with 15m idle / 24h absolute expiration (`backend/api/auth.py`).
+- Authentication: HttpOnly, SameSite=Lax, `Path=/` secure cookies with a 1-hour absolute lifetime (`SESSION_MAX_AGE_SECONDS=3600`); no rolling/idle refresh (`backend/api/auth.py`).
 - Rate Limiting: in-memory sliding window token bucket middleware (`backend/api/rate_limiter.py`).
 - Bot Protection: HMAC-SHA256 time-lock challenge-response (`backend/api/bot_protection.py`).
 - Database: 100% parameterized queries in SQLite and PostgreSQL + column whitelisting against SQL injection.

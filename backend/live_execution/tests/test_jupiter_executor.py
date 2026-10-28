@@ -67,6 +67,37 @@ def test_zero_and_negative_usd_refuse_before_network(env, monkeypatch):
                 "MINT", 6, bad, idempotency_key="k3"))
 
 
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_non_finite_usd_refuses_before_network(env, monkeypatch, bad):
+    """§86: NaN compares False to both <=0 and >MAX, so it used to reach
+    Decimal()/floor math after the commit memo had already been paid."""
+    def _boom(*a, **k):
+        raise AssertionError("network call attempted after refusal!")
+    monkeypatch.setattr(je, "_post_json", _boom)
+    monkeypatch.setattr(je, "_get_json", _boom)
+    with pytest.raises(je.Refusal, match="usd_size"):
+        asyncio.run(je.execute_confirmed_trade(
+            "MINT", 6, bad, idempotency_key="k3-nonfinite"))
+
+
+def test_non_finite_reference_price_refuses_before_network(env, monkeypatch):
+    """A NaN/inf reference price must fail closed instead of exploding in
+    math.floor after the memo publication."""
+    monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
+    monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
+
+    def _boom(*a, **k):
+        raise AssertionError("network call attempted after refusal!")
+    monkeypatch.setattr(je, "_post_json", _boom)
+    monkeypatch.setattr(je, "_get_json", _boom)
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(je.Refusal, match="reference price"):
+            asyncio.run(je.execute_confirmed_trade(
+                "MINT", 6, 10.0, idempotency_key="k-ref",
+                reference_price_usd=bad))
+
+
 def test_unknown_decimals_refuses_before_network(env, monkeypatch):
     """THE carry-over from the BARRON 96k% bug: None decimals must refuse."""
     no_network(monkeypatch)
@@ -392,6 +423,70 @@ def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
     assert again["deduplicated"] is True
     assert again["signature"] == "SIG123"
     assert all(not c["url"].endswith("/swap") for c in calls)
+
+
+def _wire_ambiguous_send(monkeypatch, status, calls):
+    """Wire the mocked flow but make send_checked_swap return None."""
+    monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
+    monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        return le_solana.SignedSwap("SIG123", b"signed-tx", _checked=True)
+
+    async def ambiguous_send(signed, endpoints=None):
+        calls.append("send")
+        return None
+
+    async def fake_status(sig, endpoints=None):
+        calls.append("status")
+        return status
+
+    async def no_confirm(sig, timeout_s=None, endpoints=None):
+        raise AssertionError("already-resolved status must not re-poll")
+
+    monkeypatch.setattr(je, "sign_after_checks", fake_sign)
+    _wire_fake_network(monkeypatch, calls)
+    monkeypatch.setattr(le_solana, "send_checked_swap", ambiguous_send)
+    monkeypatch.setattr(le_solana, "get_signature_status", fake_status)
+    monkeypatch.setattr(le_solana, "confirm_signature", no_confirm)
+
+
+def test_ambiguous_send_resolves_landed_fill_and_journals_it(env, monkeypatch):
+    """§86: a None send ("already processed"/transport ambiguity) is not a
+    refusal. The signed tx may have landed; resolve its LOCAL signature so a
+    real fill is journaled instead of triggering a double-spend retry."""
+    calls: list = []
+    _wire_ambiguous_send(
+        monkeypatch,
+        {"slot": 10, "err": None, "confirmationStatus": "confirmed"},
+        calls,
+    )
+    ledger = ExecutionLedger(env / "executions.json")
+
+    result = asyncio.run(je.execute_confirmed_trade(
+        "MINT", 6, 10.0, idempotency_key="k-ambiguous",
+        ledger=ledger, reference_price_usd=1.0,
+    ))
+
+    assert result["status"] == "confirmed"
+    assert result["signature"] == "SIG123"
+    assert calls.count("send") == 1 and calls.count("status") == 1
+    rec = ledger.get_by_idempotency_key("k-ambiguous")
+    assert rec is not None and rec.signature == "SIG123"
+
+
+def test_ambiguous_send_with_unknown_signature_fails_closed(env, monkeypatch):
+    calls: list = []
+    _wire_ambiguous_send(monkeypatch, None, calls)
+    ledger = ExecutionLedger(env / "executions.json")
+
+    with pytest.raises(je.ExecutionError, match="unresolved"):
+        asyncio.run(je.execute_confirmed_trade(
+            "MINT", 6, 10.0, idempotency_key="k-ambiguous-unknown",
+            ledger=ledger, reference_price_usd=1.0,
+        ))
+
+    assert ledger.get_by_idempotency_key("k-ambiguous-unknown") is None
 
 
 def test_propose_then_approve_then_execute_consumes_confirmation(
