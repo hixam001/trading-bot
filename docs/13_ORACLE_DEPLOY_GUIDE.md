@@ -126,6 +126,38 @@ bot persists the fresh one; on the laptop it wrote to the repo root — in a
 container that filesystem dies on every rebuild. Point it at the
 `engine_data` volume (`/app/data`) so the auth chain survives rebuilds.
 
+## Step 5.5 — Preflight (do this before the first `up`)
+
+```bash
+cd /opt/trading-bot/app
+sudo apt-get install -y python3-cryptography   # once, if not already present
+python3 scripts/preflight_deploy.py
+```
+
+The preflight is read-only, opens **no network sockets**, and never prints a
+secret. It prints a PASS/WARN/FAIL table and exits **1** if any check fails:
+
+- `DATA_BACKEND=live`, the selected main-LLM provider key is present.
+- `ADMIN_TOKEN` >= 32 chars, `SEARXNG_SECRET` non-empty/non-default.
+- `BACKUP_ENCRYPTION_KEY` is a valid Fernet key and differs from
+  `SECRET_STORE_KEY`.
+- `FRONTEND_ORIGIN` is `https://` for public hosts (WARN while loopback-only).
+- `SOLANA_RPC_URL_2` exists and uses a different host from `SOLANA_RPC_URL`.
+- An alert channel is configured (`send_test_alert.py` uses the same one).
+- The host wallet bind source exists, is a regular file, mode 0600/0400, owner
+  uid **10001** — a FAIL prints the exact `chown`/`chmod` commands.
+- `docker compose config` parses and the `api` service has no non-empty
+  `WALLET_*` value.
+- `.env` is not group/world readable (WARN).
+
+**Do not run `docker compose up -d --build` while any line says FAIL.** WARNs
+are operator decisions; read them before arming.
+
+> In-image variant (after the image exists): `docker compose run --rm live
+> python scripts/preflight_deploy.py`. Run the host variant for the wallet
+> ownership/mode check — the container sees the bind target
+> (`/run/secrets/wallet_keypair`), not the host file.
+
 ## Step 6 — Run the engine
 
 ```bash

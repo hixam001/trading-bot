@@ -1,0 +1,328 @@
+"""
+§87 Phase F — deploy preflight checks.
+
+Hermetic: no docker daemon, no network. `check_compose` consumes a parsed
+`docker compose config` dict; the wallet owner is injected so the uid-10001
+contract is testable on any build user.
+"""
+from __future__ import annotations
+
+import pytest
+from cryptography.fernet import Fernet
+
+from scripts import preflight_deploy as pf
+
+
+def _env(**overrides) -> dict[str, str]:
+    env = {
+        "DATA_BACKEND": "live",
+        "MAIN_LLM_PROVIDER": "deepseek",
+        "DEEPSEEK_API_KEY": "sk-deepseek-test",
+        "ADMIN_TOKEN": "a" * 40,
+        "SEARXNG_SECRET": "b" * 40,
+        "BACKUP_ENCRYPTION_KEY": Fernet.generate_key().decode(),
+        "SECRET_STORE_KEY": "",
+        "FRONTEND_ORIGIN": "https://bot.example.com",
+        "SOLANA_RPC_URL": "https://mainnet.helius-rpc.com/?api-key=x",
+        "SOLANA_RPC_URL_2": "https://solana-mainnet.g.alchemy.com/v2/x",
+        "ALERT_NTFY_URL": "https://ntfy.sh",
+        "ALERT_NTFY_TOPIC": "private-abc123",
+        "WALLET_KEYPAIR_HOST_PATH": "secrets/wallet_keypair.json",
+        "EXPECTED_WALLET_ADDRESS": "ExpectedPubkey1111111111111111111111111",
+    }
+    env.update(overrides)
+    return env
+
+
+def _wallet(root, mode=0o600):
+    path = root / "secrets" / "wallet_keypair.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[1,2,3]")
+    path.chmod(mode)
+    return path
+
+
+def _compose(**api_env) -> dict:
+    return {"services": {
+        "api": {"environment": {"WALLET_KEYPAIR_PATH": "",
+                                "WALLET_KEYPAIR_JSON": "", **api_env}},
+        "live": {},
+        "searxng": {},
+    }}
+
+
+def _run(env, root, compose=None, **kw):
+    return pf.run_preflight(
+        env, root, compose_config=_compose() if compose is None else compose,
+        uid_reader=lambda p: 10001, **kw)
+
+
+def _status(checks, name):
+    return next(c.status for c in checks if c.name == name)
+
+
+# ---------------------------------------------------------------- happy path
+
+def test_all_good_preflight_passes(tmp_path):
+    _wallet(tmp_path)
+    env_file = tmp_path / ".env"
+    env_file.write_text("DATA_BACKEND=live\n")
+    env_file.chmod(0o600)
+
+    checks = _run(_env(), tmp_path, env_file=env_file)
+
+    assert all(c.status != pf.FAIL for c in checks), checks
+    assert {c.status for c in checks} <= {pf.PASS, pf.WARN}
+    assert _status(checks, "wallet file") == pf.PASS
+    assert _status(checks, "compose config") == pf.PASS
+
+
+# ---------------------------------------------------------------- env file
+
+def test_missing_env_file_is_a_fail(tmp_path):
+    check = pf.check_env_file(tmp_path / ".env")
+    assert check.status == pf.FAIL
+    assert "missing" in check.detail
+
+
+def test_group_readable_env_file_is_a_warning(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text("X=1\n")
+    env_file.chmod(0o644)
+    check = pf.check_env_file(env_file)
+    assert check.status == pf.WARN
+    assert "chmod 600" in check.detail
+
+
+def test_load_env_file_parses_quotes_comments_and_export(tmp_path):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# comment\n"
+        "export DATA_BACKEND=live\n"
+        "ADMIN_TOKEN='abc'\n"
+        'QUOTED="value"\n'
+        "EMPTY=\n"
+        "NOT A LINE\n"
+    )
+    env = pf.load_env_file(env_file)
+    assert env == {"DATA_BACKEND": "live", "ADMIN_TOKEN": "abc",
+                   "QUOTED": "value", "EMPTY": ""}
+
+
+# ---------------------------------------------------------------- data/LLM
+
+def test_data_backend_must_be_live():
+    assert pf.check_data_backend(_env(DATA_BACKEND="live")).status == pf.PASS
+    for bad in ("mock", "", "paper"):
+        assert pf.check_data_backend(_env(DATA_BACKEND=bad)).status == pf.FAIL
+
+
+def test_main_llm_key_follows_the_selected_provider():
+    assert pf.check_llm_key(_env()).status == pf.PASS
+    assert pf.check_llm_key(
+        _env(MAIN_LLM_PROVIDER="deepseek", DEEPSEEK_API_KEY="")).status == pf.FAIL
+    assert pf.check_llm_key(
+        _env(MAIN_LLM_PROVIDER="groq", GROQ_API_KEY="g")).status == pf.PASS
+    assert pf.check_llm_key(
+        _env(MAIN_LLM_PROVIDER="groq", GROQ_API_KEY="")).status == pf.FAIL
+    assert pf.check_llm_key(
+        _env(MAIN_LLM_PROVIDER="typo")).status == pf.FAIL
+
+
+# ---------------------------------------------------------------- secrets
+
+def test_admin_token_must_be_at_least_32_chars():
+    assert pf.check_admin_token(_env(ADMIN_TOKEN="a" * 32)).status == pf.PASS
+    assert pf.check_admin_token(_env(ADMIN_TOKEN="a" * 31)).status == pf.FAIL
+    assert pf.check_admin_token(_env(ADMIN_TOKEN="")).status == pf.FAIL
+
+
+def test_searxng_secret_rejects_empty_and_defaults():
+    assert pf.check_searxng_secret(_env(SEARXNG_SECRET="c" * 40)).status == pf.PASS
+    for bad in ("", "ultrasecretkey", "changeme", "secret"):
+        assert pf.check_searxng_secret(_env(SEARXNG_SECRET=bad)).status == pf.FAIL
+    assert pf.check_searxng_secret(_env(SEARXNG_SECRET="short")).status == pf.WARN
+
+
+def test_backup_key_must_be_valid_fernet_and_distinct():
+    good = Fernet.generate_key().decode()
+    assert pf.check_backup_key(_env(BACKUP_ENCRYPTION_KEY=good)).status == pf.PASS
+    assert pf.check_backup_key(_env(BACKUP_ENCRYPTION_KEY="")).status == pf.FAIL
+    assert pf.check_backup_key(_env(BACKUP_ENCRYPTION_KEY="not-a-key")).status == pf.FAIL
+    assert pf.check_backup_key(_env(
+        BACKUP_ENCRYPTION_KEY=good, SECRET_STORE_KEY=good)).status == pf.FAIL
+
+
+# ---------------------------------------------------------------- network config
+
+def test_frontend_origin_requires_https_for_public_hosts(tmp_path):
+    assert pf.check_frontend_origin(
+        _env(FRONTEND_ORIGIN="https://bot.example.com")).status == pf.PASS
+    assert pf.check_frontend_origin(
+        _env(FRONTEND_ORIGIN="http://bot.example.com")).status == pf.FAIL
+    assert pf.check_frontend_origin(
+        _env(FRONTEND_ORIGIN="http://localhost:8000,http://127.0.0.1:8000")
+    ).status == pf.WARN
+    assert pf.check_frontend_origin(
+        _env(FRONTEND_ORIGIN="https://localhost:8000")).status == pf.WARN
+    assert pf.check_frontend_origin(
+        _env(FRONTEND_ORIGIN="")).status == pf.WARN
+
+
+def test_secondary_rpc_must_have_a_different_host():
+    assert pf.check_secondary_rpc(_env()).status == pf.PASS
+    assert pf.check_secondary_rpc(
+        _env(SOLANA_RPC_URL_2="")).status == pf.FAIL
+    assert pf.check_secondary_rpc(_env(
+        SOLANA_RPC_URL="https://api.mainnet-beta.solana.com",
+        SOLANA_RPC_URL_2="https://api.mainnet-beta.solana.com/other-key",
+    )).status == pf.FAIL
+    assert pf.check_secondary_rpc(_env(
+        SOLANA_RPC_URL="", SOLANA_RPC_URL_2="https://x.example")).status == pf.FAIL
+
+
+def test_alert_channel_accepts_ntfy_or_telegram_only():
+    assert pf.check_alert_channel(_env()).status == pf.PASS
+    assert pf.check_alert_channel(_env(
+        ALERT_NTFY_TOPIC="",
+        ALERT_TELEGRAM_BOT_TOKEN="t", ALERT_TELEGRAM_CHAT_ID="c",
+    )).status == pf.PASS
+    assert pf.check_alert_channel(_env(
+        ALERT_NTFY_TOPIC="trading-bot")).status == pf.FAIL
+    assert pf.check_alert_channel(_env(
+        ALERT_NTFY_TOPIC="",
+        ALERT_TELEGRAM_BOT_TOKEN="t", ALERT_TELEGRAM_CHAT_ID="",
+    )).status == pf.FAIL
+    assert pf.check_alert_channel(_env(ALERT_NTFY_TOPIC="")).status == pf.FAIL
+
+
+# ---------------------------------------------------------------- wallet
+
+def test_wallet_good_file_passes_and_identity_warns_when_unset(tmp_path):
+    _wallet(tmp_path)
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet file") == pf.PASS
+    assert _status(checks, "wallet identity") == pf.PASS
+
+    checks = pf.check_wallet_file(
+        _env(EXPECTED_WALLET_ADDRESS=""), tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet identity") == pf.WARN
+
+
+def test_wallet_missing_file_fails_with_the_exact_fix(tmp_path):
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet file") == pf.FAIL
+    fix = next(c for c in checks if c.name == "wallet fix")
+    assert fix.status == pf.FAIL
+    assert "sudo chown 10001:10001" in fix.detail
+    assert "sudo chmod 600" in fix.detail
+
+
+def test_wallet_directory_is_not_a_keypair(tmp_path):
+    (tmp_path / "secrets" / "wallet_keypair.json").mkdir(parents=True)
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet file") == pf.FAIL
+    assert any("not a regular file" in c.detail for c in checks)
+
+
+@pytest.mark.parametrize("mode", [0o644, 0o640, 0o604, 0o777])
+def test_wallet_loose_mode_fails(tmp_path, mode):
+    _wallet(tmp_path, mode)
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet file") == pf.FAIL
+    assert any("mode" in c.detail for c in checks)
+
+
+def test_wallet_0400_is_accepted(tmp_path):
+    _wallet(tmp_path, 0o400)
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet file") == pf.PASS
+
+
+def test_wallet_wrong_owner_fails_with_chown(tmp_path):
+    _wallet(tmp_path)
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 1000)
+    assert _status(checks, "wallet file") == pf.FAIL
+    assert any("owner uid 1000" in c.detail for c in checks)
+    assert any("sudo chown 10001:10001" in c.detail for c in checks)
+
+
+def test_wallet_path_is_resolved_relative_to_root(tmp_path):
+    _wallet(tmp_path)
+    checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
+    assert str(tmp_path / "secrets" / "wallet_keypair.json") in (
+        next(c for c in checks if c.name == "wallet file").detail)
+
+
+# ---------------------------------------------------------------- compose
+
+def test_compose_good_config_passes():
+    checks = pf.check_compose(_compose())
+    assert _status(checks, "compose config") == pf.PASS
+    assert _status(checks, "api wallet isolation") == pf.PASS
+
+
+def test_compose_parse_error_fails():
+    checks = pf.check_compose(None, "no such service: searxng")
+    assert len(checks) == 1
+    assert checks[0].status == pf.FAIL
+    assert "searxng" in checks[0].detail
+
+
+def test_compose_missing_service_fails():
+    checks = pf.check_compose({"services": {"api": {}, "live": {}}})
+    assert checks[0].status == pf.FAIL
+    assert "searxng" in checks[0].detail
+
+
+def test_compose_api_wallet_leak_fails_without_printing_the_value():
+    checks = pf.check_compose(_compose(WALLET_KEYPAIR_JSON="SECRETVALUE"))
+    leak = next(c for c in checks if c.name == "api wallet isolation")
+    assert leak.status == pf.FAIL
+    assert "WALLET_KEYPAIR_JSON" in leak.detail
+    assert "SECRETVALUE" not in leak.detail
+
+
+def test_compose_api_env_list_form_is_supported():
+    config = {"services": {
+        "api": {"environment": ["WALLET_KEYPAIR_PATH=",
+                                "WALLET_KEYPAIR_JSON=", "ROLE=api"]},
+        "live": {}, "searxng": {},
+    }}
+    checks = pf.check_compose(config)
+    assert _status(checks, "api wallet isolation") == pf.PASS
+
+
+# ---------------------------------------------------------------- CLI
+
+def test_cli_returns_zero_when_every_check_passes(tmp_path, monkeypatch,
+                                                  capsys):
+    _wallet(tmp_path)
+    env_file = tmp_path / ".env"
+    env = _env()
+    env_file.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+    env_file.chmod(0o600)
+    monkeypatch.setattr(pf, "_default_uid", lambda p: 10001)
+
+    rc = pf.main(["--env-file", str(env_file), "--root", str(tmp_path),
+                  "--skip-compose"])
+
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "0 FAIL" in out
+    assert env["BACKUP_ENCRYPTION_KEY"] not in out, "secret leaked to output"
+
+
+def test_cli_returns_one_on_any_failure(tmp_path, capsys):
+    _wallet(tmp_path)
+    env = _env(DATA_BACKEND="mock")
+    env_file = tmp_path / ".env"
+    env_file.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
+    env_file.chmod(0o600)
+
+    rc = pf.main(["--env-file", str(env_file), "--root", str(tmp_path),
+                  "--skip-compose"])
+
+    out = capsys.readouterr().out
+    assert rc == 1
+    assert "DO NOT ARM" in out

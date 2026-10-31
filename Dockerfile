@@ -29,8 +29,18 @@ RUN pip install --no-cache-dir --no-deps -r /app/backend/requirements.lock
 # write its profile. ~+1.5 GB image. On linux/arm64: if patchright's patched
 # build is missing, fall back to `playwright install chromium` (official
 # arm64 build).
-RUN python -m patchright install --with-deps chromium \
-    || python -m patchright install chromium
+#
+# §87 F3: CI sets SKIP_BROWSER=1 so the QEMU linux/arm64 cross-build validates
+# the Python app layer without spending the job cap on the ~1.5 GB Chromium
+# tree. The operator's native ARM build (docker compose up --build) still
+# installs it. The browser is a fallback transport, not on the order path.
+ARG SKIP_BROWSER=0
+RUN if [ "$SKIP_BROWSER" = "1" ]; then \
+      echo "SKIP_BROWSER=1 — skipping patchright/chromium (CI ARM build check)"; \
+    else \
+      python -m patchright install --with-deps chromium \
+      || python -m patchright install chromium; \
+    fi
 
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
