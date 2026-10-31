@@ -1,3 +1,53 @@
+## §87 — Oracle Deploy Blockers, Unresolved-Buy Safety, Graceful Stop & Exit Resilience (2026-10-31)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `3afd3d7` (§86)
+- Baseline suite: **1338 passed**, 0 failed; `tsc --noEmit` clean at base
+- Final suite: **1412 passed**, 0 failed (102 warnings in 20.06s; +74 tests)
+- `npx tsc --noEmit`: clean; `npm run build`: clean (**211.13 kB JS / 65.08 kB gzip**)
+- Playwright: **40/40**; mutation harness: **29/29 CAUGHT**; pre-push gate: **9/9 local steps clean** (gitleaks binary absent locally; CI runs it)
+- Phase commits: `06bcbdd` A, `4ee4de8` B, `4c29aa0` C, `9c55e96` D1, `40ebe16` E, `9e0cb67` F, this commit G
+
+### Fixed Defects
+1. **Phase A — deploy blockers (`Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh`, docs)**:
+   - `/app/backups` is now created in the image, chmod 700, inside the existing `chown -R bot:bot /app`; the backup cron/wrapper uses `/opt/trading-bot/app` and `cd "$(dirname "$0")/.."` (cwd-independent).
+   - The wallet bind mount is enabled by default and parameterised (`${WALLET_KEYPAIR_HOST_PATH:-./secrets/wallet_keypair.json}:/run/secrets/wallet_keypair:ro`). The entrypoint requires `-f && -r` when a path is configured, prints `FATAL: wallet keypair not readable by uid <uid>: <ls -ld>` and exits **78** (EX_CONFIG) for a missing/directory/unreadable source. An unset path/JSON keeps the clean "not started" behaviour.
+   - `live` now has `restart: unless-stopped` (survives a daemon/VM reboot), `init: true` (tini forwards signals) and `stop_grace_period: 150s`. A disarmed/no-wallet `ROLE=live` container stays up with `tail -f /dev/null` (no restart flapping; healthcheck fails visibly).
+   - All three services use the `x-logging` anchor (json-file, 10 MB × 5). Static contract tests parse compose volumes against the Dockerfile `mkdir` list.
+2. **Phase B — graceful stop (`run_live_cycle.py`)**:
+   - `loop()` installs SIGTERM/SIGINT handlers setting an `asyncio.Event`; the tick sleep is interruptible (`wait_for(stop.wait(), timeout=TICK)`); a new cycle is never started after the flag. An in-flight cycle/order is allowed to finish.
+   - Shutdown order: acquire the loop-bound `_EXIT_LOCK` (so an in-flight sell completes), cancel/await the fast exit scanner, close provider/thinker, log `graceful shutdown complete`. Heartbeats are refreshed at read/brain/candidate stage boundaries via one `_beat()` helper; no hard cycle timeout cancels an order.
+   - Tests: real SIGTERM subprocess exits 0 and logs the line; an in-flight cycle finishes; a held `_EXIT_LOCK` delays cancellation; a stage boundary refreshes the heartbeat file.
+3. **Phase C — unresolved buys cannot become unmanaged holdings (`executor.py`, `jupiter_executor.py`, `models.py`, `run_live_cycle.py`, `reconcile.py`)**:
+   - `SignedSwap` exposes the transaction `recent_blockhash` (unparseable → `""`, unknown — never "expired").
+   - An ambiguous buy (signature known/status `None`, or confirmation timeout) writes a `pending_buy` ledger row `{kind:"buy", status:"pending", mint, usd_size, signature, blockhash, idempotency_key, commit_hash, ts}`. Pending rows are excluded from `_OPEN`/token/exit accounting and the mirror, but included in slot/exposure/daily-deploy caps and idempotency replay.
+   - `resolve_pending_buys()` runs at startup and the top of every cycle: confirmed → adopt **actual** fill deltas (quote fallback only when actuals unreadable, loud log; unknowable amounts stay pending), landed error → failed (fee paid), `is_blockhash_valid(...) is False` → expired with caps released, anything unknown/unreadable → stays pending and alerts after 5 minutes. `reconcile` raises a rate-limited per-mint `UNJOURNALED_HOLDING` for on-chain balances not explained by a pending buy, without inventing a cost basis.
+   - Both live execution paths mirror the same rules; `docs/14_SIGNING_GUARD.md` and `docs/01_ARCHITECTURE.md` document them.
+4. **Phase D1 — exit retry storm (`run_live_cycle.py`)**:
+   - Per-mint exit backoff after a non-filled result: 15/30/60/120/300 s, reset on `filled` or a position-size change; risk-off rules cap at 60 s. State is an in-memory module dict accessed under `_EXIT_LOCK`; the exit lock is loop-bound so separate test loops cannot poison the singleton.
+   - D2 (`EXIT_MAX_PRICE_IMPACT_PCT`) was **not** implemented: it remains the operator's decision (see decision log).
+5. **Phase E — small correctness fixes**:
+   - `perf_report.shadow_risk_flag_stats` imports `api.db` and logs the exception instead of swallowing a `NameError`; flag-outcome rows now reach the report.
+   - Zero/missing token quantity is never fabricated as `1.0`: portfolio pricing/exits skip the row, alert once per mint, and the close mirror closes with `exit_price_usd=None` (honest unknown) instead of inventing a price.
+   - `_book_meta_from_ledger()` is the single ledger→meta aggregation for `_live_portfolio` and `_journal_meta`; multi-row entry price is `cost / tokens` (not the first row's price).
+   - The dead outer `check_wallet_drop(None, None, …)` call is removed; unreadable balances are skipped, not re-checked with fabricated zeros.
+6. **Phase F — deploy preflight + CI (`scripts/preflight_deploy.py`, docs, workflow)**:
+   - New stdlib + `cryptography` CLI prints PASS/WARN/FAIL for `DATA_BACKEND=live`, selected LLM provider key, `ADMIN_TOKEN >= 32`, non-default `SEARXNG_SECRET`, valid `BACKUP_ENCRYPTION_KEY` distinct from `SECRET_STORE_KEY`, https `FRONTEND_ORIGIN` (loopback-only WARN), distinct-host `SOLANA_RPC_URL_2`, an alert channel, wallet file regular/0600-0400/uid 10001 with exact `chown` fix, `docker compose config`, API `WALLET_*` isolation, and `.env` mode (WARN). It opens no sockets, prints no secret values, and exits 1 on any FAIL.
+   - `docs/13_ORACLE_DEPLOY_GUIDE.md` step 5.5 runs it before `up`; CI gains a `docker-arm64` job that validates `docker compose config` with a dummy `.env` and cross-builds the image under QEMU. `SKIP_BROWSER=1` skips the ~1.5 GB patchright/Chromium layer to stay inside the 40-minute cap (the VM's native ARM build still installs it; the browser is a fallback transport, not on the order path).
+   - 29 hermetic unit tests cover every check as good/bad/missing, including compose env list/dict forms, wallet uid/mode/directory cases, and CLI exit codes.
+
+### Documentation & Memory
+- `docs/13_ORACLE_DEPLOY_GUIDE.md` — preflight step, uid-10001 ownership, reboot/graceful-stop/rollback/kill-switch drills, first-24h watch list.
+- `docs/15_BACKUP_RESTORE.md` — cron path, `--entrypoint python` operator commands (the service entrypoint ignores arguments), throwaway-directory restore drill, production restore/reconcile/clear sequence.
+- `handoff.md` §87 (this section); `memory-bank/activeContext.md`, `progress.md`, `decisionLog.md`, `session-log.md`, `systemPatterns.md` updated.
+- `docs/17_MUTATION_LOG.md` regenerated for §81–§87 (29 rows).
+
+### Constraints & Invariants Preserved
+- No changes to wallet signing, sizing, rule thresholds, risk flags, `LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False`, PaperTradingBanner removal, fomo.family Privy integration, Jupiter lite-api Swap V1, the pluggable cloud LLM, or `WALLET_DROP_TRIPS_KILL_SWITCH` default off.
+- Unknown stays unknown: pending buys, blockhash validity, token quantities, sold quantities and prices are never fabricated; zero is not `None`.
+- Hermetic tests only (network socket guard on). Every new money-path guard has a mutation row that is CAUGHT.
+- D2 remains operator-only. No cross-process ledger lock was added.
+
 ## §86 — Post-§85 Audit: Fail-Closed Malformed RPC/State, Non-Finite Money Math, `--once` HWM Restore & Documentation Truth (2026-10-28)
 
 ### Baseline & Measured Suite Counts

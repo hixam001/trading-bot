@@ -177,7 +177,7 @@ routes.
 
 ## Tests
 
-1,338 backend tests cover the rule engine, exit engine, money math (hand-computed
+1,412 backend tests cover the rule engine, exit engine, money math (hand-computed
 expectations), the atomic open/close journal, LLM provider swap, crowd feed,
 risk budget × calibration, thesis restatement, the live-execution safety
 model, cookie session authentication, access control and RLS, mass assignment

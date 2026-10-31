@@ -340,6 +340,93 @@ Kill switch / operator break still work from the VM shell (files under the
 `engine_state` volume). Oracle's idle-reclaim can never trigger — the bot
 produces CPU + network activity every 15–60 seconds, permanently.
 
+## Step 10 — Operator drills and the first-24h watch list
+
+Run these once on the VM **before** funding more than the micro-bootstrap
+amount. They verify the behaviours the container/compose changes rely on;
+none of them needs a code change.
+
+### 10.1 Reboot drill (A3)
+
+```bash
+sudo systemctl enable docker        # get.docker.com normally does this
+systemctl is-enabled docker         # must print: enabled
+sudo reboot
+```
+
+Wait ~2 minutes, SSH back in, then:
+
+```bash
+cd /opt/trading-bot/app
+docker compose ps                   # api, live, searxng all healthy
+docker compose logs live --tail=30  # live cycle resumed (ARMED banner/cycle lines)
+```
+
+`live` is `restart: unless-stopped` (§87 A3), so it returns after a daemon
+restart. `init: true` + a 150s `stop_grace_period` give the Python loop time to
+finish an in-flight order (§87 B). If `live` is missing or unhealthy after
+2 minutes, do **not** re-arm: inspect `docker compose logs live` and the
+heartbeat first.
+
+### 10.2 Graceful-stop drill (B)
+
+```bash
+time docker compose stop live       # must finish in < 150 s
+docker compose logs live --tail=40  # last line: "graceful shutdown complete"
+docker compose start live
+```
+
+The runner catches SIGTERM/SIGINT, finishes the current cycle (including a
+sign/send/ledger write), takes `_EXIT_LOCK` so the fast scanner cannot be
+cancelled mid-sell, then closes the provider/thinker. A stop that reaches
+150 s and prints no `graceful shutdown complete` means the process was
+SIGKILLed — treat that as an incident and inspect the last cycle lines.
+
+### 10.3 Rollback to the last good tag
+
+```bash
+cd /opt/trading-bot/app
+git fetch --tags
+git tag --sort=-creatordate | head
+git checkout <last-good-tag>
+docker compose up -d --build
+docker compose ps
+```
+
+Keep the VM's `.env` and the `secrets/` directory untouched. The state volumes
+survive the image rebuild; if the rollback crosses a state-schema change,
+restore the matching backup (docs/15) instead of guessing.
+
+### 10.4 Kill-switch manual trip / clear
+
+```bash
+# Trip (blocks every order path, including exits):
+docker compose exec -w /app/backend live python -m live_execution.scripts.confirm_trade \
+  kill "manual drill $(date -u +%FT%TZ)"
+
+# Confirm it is latched:
+docker compose exec -w /app/backend live python -m live_execution.scripts.confirm_trade list
+
+# Clear ONLY after checking the book and chain reconciliation:
+docker compose exec -w /app/backend live python -m live_execution.scripts.confirm_trade resume
+```
+
+A tripped switch is deliberately sticky: it survives restarts and must be
+cleared by a human (`resume`). `LIVE_TRADING_ENABLED` is still the outer gate.
+
+### 10.5 First-24h watch list
+
+| Signal | Where to look | What it means / action |
+|---|---|---|
+| Heartbeat age | `docker compose ps` (live healthy) and `docker compose exec live python -c "import os,time; p='/app/backend/live_execution/state/heartbeat.txt'; print(time.time()-os.path.getmtime(p))"` | Must stay < 300 s. A stale heartbeat raises `HEARTBEAT_STALE`; a hung cycle is surfaced this way, never by cancelling an order. |
+| Low USDC / low SOL | Alert channel; `LOW_USDC`, `LOW_SOL` | USDC below the minimum ticket floor or SOL below 2× `MIN_SOL_RESERVE` (default 0.01 SOL). Fund or stop; do not raise risk limits. |
+| No fills | Alert channel / `ALERT_NO_FILLS_HOURS` | After 6 h with ≥10 candidates and no fill, the bot alerts. Check whether the gate/model is refusing, not whether to loosen rules. |
+| Wallet drop | Alert channel; `WALLET_DROP` | Unexplained outflow above `$5` (alert-only unless the operator enabled the kill-switch option). Reconcile before resuming. |
+| Pending buys | `docker compose logs live \| grep -E "pending buy|LATE BUY ADOPTED"` | A pending row is counted against caps and is never priced/exited. Confirmed late land → `LATE BUY ADOPTED`; provably expired blockhash → released; unknown stays pending and alerts after 5 min. |
+| Unexplained holdings | Alert channel; `UNJOURNALED_HOLDING` | On-chain tokens with no ledger row and no pending buy. Never auto-added; inspect and repair manually. |
+| Exit failures | `docker compose logs live \| grep -E "backoff\|EXIT_UNRESOLVED"` | Per-mint retry backoff is 15/30/60/120/300 s (risk-off capped at 60 s); repeated failures are expected during a collapse, not a reason to disable the stop. |
+| Backup + restore | `docker compose logs live \| grep backup`; docs/15 drill | Run one manual backup and one throwaway-directory restore before trusting cron. |
+
 ## Quick troubleshooting
 
 | Symptom | Fix |

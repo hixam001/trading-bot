@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §87 Oracle deploy blockers, unresolved-buy safety, graceful stop & exit resilience (2026-10-31, phases A–G):
+      1. §87-A: `/app/backups` created/chmod 700 before the volume; wallet bind mount default-on with `WALLET_KEYPAIR_HOST_PATH`; entrypoint requires a readable regular file and exits 78 with the uid diagnostic; `live` is `unless-stopped` + `init: true` + 150s stop grace; disarmed live stays unhealthy instead of flapping; 10 MB × 5 log rotation; cwd-independent backup script and `/opt/trading-bot/app` cron path.
+      2. §87-B: SIGTERM/SIGINT event + interruptible tick sleep; no new cycle after the flag; in-flight order finishes; shutdown takes the loop-bound `_EXIT_LOCK`, then cancels the scanner and closes clients; stage-boundary heartbeats.
+      3. §87-C: ambiguous buys write a `pending_buy` row (blockhash included) excluded from token/exit accounting but counted against caps/idempotency; `resolve_pending_buys()` adopts confirmed late lands with actual deltas, fails landed errors, expires only on a provably invalid blockhash, leaves unknown pending with a 5-minute alert; reconcile raises `UNJOURNALED_HOLDING`.
+      4. §87-D1: per-mint exit backoff 15/30/60/120/300 s (risk-off 60s cap), reset on fill/size change, under `_EXIT_LOCK`. D2 was not implemented — operator decision pending.
+      5. §87-E: perf_report imports `db` and logs failures; zero/missing quantities are skipped/alerted and never priced or mirrored with a fabricated price; `_book_meta_from_ledger()` uses cost/tokens for multi-row positions; dead duplicate wallet-drop call removed.
+      6. §87-F: `scripts/preflight_deploy.py` checks env/secrets/LLM/RPC/origin/alert/wallet uid-mode/compose/API isolation, exits 1 on FAIL, no network/secrets; guide step 5.5; CI `docker-arm64` compose + QEMU build (`SKIP_BROWSER=1`, 40-minute cap).
+      7. §87-G: deploy guide reboot/graceful-stop/rollback/kill-switch/first-24h drills; backup guide cron + `--entrypoint python` operator commands and a throwaway-directory restore drill.
+      8. Verification: backend **1412 passed**, 0 failed; `tsc --noEmit` + `npm run build` clean (211.13 kB JS / 65.08 kB gzip); Playwright **40/40**; mutation **29/29 CAUGHT**; prepush **9/9**; gitleaks absent locally (CI runs it).
+      9. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §86 Post-§85 Audit: fail-closed malformed RPC/state, non-finite money math, `--once` HWM restore & documentation truth (2026-10-28):
       1. Kill-switch state requires a JSON object with a real boolean `tripped`; list/scalar/`{}`/non-bool values now raise instead of reading as CLEAR, while `{"tripped": false}` remains valid.
       2. `preflight` rejects bool and NaN/inf `usd_size`; shared `has_valid_reference_price()` guards both confirmed-trade and `place_buy` paths before memo/network; `place_sell` rejects non-finite fractions and degrades a non-finite reference price to the no-reference quote path.

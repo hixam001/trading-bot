@@ -134,31 +134,46 @@ Operators should periodically practice a restore drill in a scratch directory to
 
 ### Drill Procedure:
 
-1. **Select an archive**:
+> **Never use plain `docker compose run live python …` for operator scripts.**
+> The service has an ENTRYPOINT (`docker-entrypoint.sh`) that ignores command
+> arguments, so a plain `run` would start the live cycle instead of the script.
+> Always override it with `--entrypoint python` (restore) or use
+> `docker compose exec` against the running container (backup).
+
+1. **Select an archive** (inside the `live` container, where `/app/backups`
+   is the `engine_backups` volume):
    ```bash
-   LATEST_BACKUP=$(ls -t /app/backups/state-*.tar.gz.enc | head -n 1)
+   LATEST_BACKUP=$(docker compose exec -T live \
+     sh -c 'ls -t /app/backups/state-*.tar.gz.enc | head -n 1')
+   echo "$LATEST_BACKUP"
    ```
 
-2. **Restore into a scratch directory**:
+2. **Restore into a throwaway directory** (never the production state):
    ```bash
-   SCRATCH_DIR=$(mktemp -d /tmp/restore-drill-XXXXXX)
-   python scripts/restore_state.py "$LATEST_BACKUP" \
-       --target-state-dir "$SCRATCH_DIR/state" \
-       --target-db-path "$SCRATCH_DIR/trading_bot.db" \
+   sudo install -d -o 10001 -g 10001 /tmp/trading-bot-restore-drill
+   docker compose run --rm --entrypoint python \
+     -v /tmp/trading-bot-restore-drill:/drill \
+     live scripts/restore_state.py "$LATEST_BACKUP" \
+       --target-state-dir /drill/state \
+       --target-db-path /drill/trading_bot.db \
        --reconcile
    ```
 
 3. **Verify the drill results**:
-   - Confirm all files restored: `ls -la "$SCRATCH_DIR/state"`
-   - Confirm kill switch was engaged:
+   - Confirm all files restored: `sudo ls -la /tmp/trading-bot-restore-drill/state`
+   - Confirm the kill switch was engaged (the restore always trips it):
      ```bash
-     python -c "import sys; sys.path.insert(0, 'backend'); from live_execution import kill_switch; from pathlib import Path; assert kill_switch.is_tripped(Path('$SCRATCH_DIR/state')), 'Kill switch should be tripped'"
+     docker compose run --rm --entrypoint python \
+       -w /app/backend -v /tmp/trading-bot-restore-drill:/drill \
+       live -c "from live_execution import kill_switch; from pathlib import Path; assert kill_switch.is_tripped(Path('/drill/state')), 'Kill switch should be tripped'; print('kill switch tripped: OK')"
      ```
-   - Review reconciliation report printed to console.
+   - Review the reconciliation report printed to console.
+   - Confirm production was untouched: `docker compose ps` and
+     `docker compose logs live --tail=5`.
 
-4. **Clean up scratch directory**:
+4. **Clean up the scratch directory**:
    ```bash
-   rm -rf "$SCRATCH_DIR"
+   sudo rm -rf /tmp/trading-bot-restore-drill
    ```
 
 ---
@@ -169,13 +184,15 @@ Operators should periodically practice a restore drill in a scratch directory to
 > **MANDATORY OPERATOR WARNING:** State restored from backup.
 > **NEVER arm after restoring until reconcile reports clean.**
 
-1. **Stop the engine**:
+1. **Stop the engine** (graceful stop may take up to 150 s; §87 B):
    ```bash
    docker compose stop live api
    ```
-2. **Execute restore**:
+2. **Execute restore** (the `--entrypoint python` override is mandatory —
+   the normal entrypoint would start the live cycle instead):
    ```bash
-   docker compose run --rm live python scripts/restore_state.py /app/backups/state-YYYYMMDDTHHMMSSZ.tar.gz.enc \
+   docker compose run --rm --entrypoint python live \
+       scripts/restore_state.py /app/backups/state-YYYYMMDDTHHMMSSZ.tar.gz.enc \
        --target-state-dir /app/backend/live_execution/state \
        --target-db-path /app/data/trading_bot.db \
        --force \
@@ -186,7 +203,9 @@ Operators should periodically practice a restore drill in a scratch directory to
    - If discrepancies appear, resolve manually before clearing the kill switch.
    - To re-run reconciliation at any time without re-restoring the archive, use `--reconcile-only`:
      ```bash
-     docker compose run --rm live python scripts/restore_state.py --reconcile-only --target-state-dir /app/backend/live_execution/state
+     docker compose run --rm --entrypoint python live \
+       scripts/restore_state.py --reconcile-only \
+       --target-state-dir /app/backend/live_execution/state
      ```
    - `--reconcile-only` exits `0` when clean, `2` when chain/journal discrepancies are found, and `1`
      when the ledger cannot be read. If RPC balances are unavailable (or the state has no wallet address),
@@ -194,7 +213,8 @@ Operators should periodically practice a restore drill in a scratch directory to
      masquerade as a state discrepancy. Resolve any `MISMATCH` lines before clearing the kill switch.
 4. **Clear the kill switch** (only after human verification):
    ```bash
-   docker compose run --rm live python backend/live_execution/scripts/confirm_trade.py resume
+   docker compose run --rm --entrypoint python -w /app/backend live \
+       -m live_execution.scripts.confirm_trade resume
    ```
 5. **Resume operations**:
    ```bash
