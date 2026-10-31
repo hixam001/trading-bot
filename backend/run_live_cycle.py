@@ -52,7 +52,8 @@ from llm.thinker import (                        # noqa: E402
 )
 from llm.llm_brain import LLMBrainResult, LLMVerdict  # noqa: E402
 from models import Candidate, FeedEvent, PortfolioState, RuleResult, Trade  # noqa: E402
-from rule_engine.exits import ExitInput, evaluate_exits, sell_risk_gate  # noqa: E402
+from rule_engine.exits import (ExitInput, RISK_OFF_RULES, evaluate_exits,
+                                sell_risk_gate)  # noqa: E402
 from rule_engine.regime import MarketRegime, compute_market_regime  # noqa: E402
 from rule_engine.rules import ACTIVE_RULES, cash_available  # noqa: E402
 from api import db                                # noqa: E402
@@ -677,6 +678,66 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
     return PortfolioState(cash_usd=cash, open_positions=positions), meta, chain_report
 
 
+_exit_retry_state: dict[str, dict] = {}
+
+# §87 D1: a failed/unresolved sell is retried on a per-mint exponential
+# backoff instead of every 15s scan. Risk-off exits (stop/trail/liquidity/
+# invalidation) are capped at 60s so a cascade is never starved by a long
+# backoff earned on an optional trim.
+_EXIT_RETRY_BASE_SECONDS = 15.0
+_EXIT_RETRY_MAX_SECONDS = 300.0
+_EXIT_RETRY_RISK_OFF_MAX_SECONDS = 60.0
+_EXIT_RETRY_SCHEDULE = (15.0, 30.0, 60.0, 120.0, 300.0)
+
+
+def _exit_backoff_delay(failures: int, risk_off: bool) -> float:
+    """Delay before the next exit attempt after `failures` consecutive misses.
+
+    The schedule is the operator-specified 15/30/60/120/300s (not a literal
+    doubling at the last step); later failures stay at the 300s cap.
+    """
+    idx = min(max(int(failures) - 1, 0), len(_EXIT_RETRY_SCHEDULE) - 1)
+    delay = _EXIT_RETRY_SCHEDULE[idx]
+    if risk_off:
+        delay = min(delay, _EXIT_RETRY_RISK_OFF_MAX_SECONDS)
+    return delay
+
+
+def _exit_backoff_allows(mint: str, tokens: float, risk_off: bool,
+                         now: float | None = None) -> bool:
+    """True when this mint may attempt an exit now.
+
+    A change in position size (a partial fill or a chain clamp) is a new
+    situation and resets the backoff. A risk-off decision uses the 60s cap
+    even if the stored state was earned on a slower profit trim.
+    """
+    state = _exit_retry_state.get(mint)
+    if state is None:
+        return True
+    if abs(float(state.get("tokens") or 0.0) - float(tokens or 0.0)) > max(
+            1e-12, abs(float(tokens or 0.0)) * 1e-9):
+        _exit_retry_state.pop(mint, None)
+        return True
+    now = time.monotonic() if now is None else now
+    delay = _exit_backoff_delay(state.get("failures", 1), risk_off)
+    return (now - float(state.get("last_failure_ts") or 0.0)) >= delay
+
+
+def _note_exit_failure(mint: str, tokens: float, now: float | None = None) -> int:
+    """Record a failed exit attempt and return the new consecutive count."""
+    now = time.monotonic() if now is None else now
+    state = _exit_retry_state.setdefault(
+        mint, {"failures": 0, "last_failure_ts": now, "tokens": tokens})
+    state["failures"] = int(state.get("failures", 0)) + 1
+    state["last_failure_ts"] = now
+    state["tokens"] = tokens
+    return state["failures"]
+
+
+def _clear_exit_backoff(mint: str) -> None:
+    _exit_retry_state.pop(mint, None)
+
+
 async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, meta: dict) -> None:
     """Re-price every open position, run the reference exit rule set, route sells.
 
@@ -795,6 +856,17 @@ async def _scan_exits_for_position(
                  mint[:8], decision.rule_id, gate_note, decision.detail)
         return
     decision = gated
+    risk_off = decision.rule_id in RISK_OFF_RULES
+    # §87 D1: do not hammer a failing sell every scan. The decision is still
+    # evaluated and marks stay fresh; only the order attempt is deferred.
+    if not _exit_backoff_allows(mint, m["tokens"], risk_off):
+        state = _exit_retry_state.get(mint) or {}
+        wait = _exit_backoff_delay(state.get("failures", 1), risk_off)
+        elapsed = time.monotonic() - float(state.get("last_failure_ts") or 0.0)
+        log.info("EXIT BACKOFF %s [%s]: %d consecutive miss(es), next "
+                 "attempt in %.0fs", mint[:8], decision.rule_id,
+                 state.get("failures", 0), max(wait - elapsed, 0.0))
+        return
     try:
         result = await place_order(
             side="sell", mint=mint, symbol=mint[:6],
@@ -804,6 +876,7 @@ async def _scan_exits_for_position(
             reference_price_usd=price,
         )
     except Exception as exc:
+        _note_exit_failure(mint, m["tokens"])
         log.error("EXIT place_order failed unexpectedly for %s: %s", mint[:8], exc, exc_info=True)
         try:
             from alerts import alert_nowait, AlertEvent
@@ -816,6 +889,14 @@ async def _scan_exits_for_position(
             pass
         return
     log.info("sell -> %s %s", result.status, result.reason)
+    if result.status == "filled":
+        _clear_exit_backoff(mint)
+    else:
+        fails = _note_exit_failure(mint, m["tokens"])
+        log.warning("EXIT RETRY %s [%s]: %s — %d consecutive miss(es), "
+                    "next attempt in %.0fs", mint[:8], decision.rule_id,
+                    result.status, fails,
+                    _exit_backoff_delay(fails, risk_off))
     if result.status == "filled":
         # REF-R11: journal the sell's seal + memo into the public record.
         async with db.get_db() as conn:

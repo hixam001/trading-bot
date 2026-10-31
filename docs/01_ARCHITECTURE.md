@@ -312,6 +312,12 @@ slippage and fees so the decision reflects what would actually be received on
 exit, not a naive mark-to-market number. Live sells additionally pass the sell
 risk gate and the `EXIT_SLIPPAGE_LADDER_BPS` ladder.
 
+§87 D1: a failed or unresolved live sell is retried on a per-mint exponential
+backoff (15/30/60/120/300s) instead of every 15s scan. Pricing and rule
+evaluation still run each pass; only the order attempt is deferred. Risk-off
+rules cap the wait at 60s, and a fill or a position-size change resets the
+sequence. The state is in-memory and intentionally resets on restart.
+
 ### 5.3 Partial trims and high-water marks
 
 Partial trims are real (the take-profit ladder) and the live executor's

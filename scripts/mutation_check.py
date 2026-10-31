@@ -253,13 +253,22 @@ MUTATIONS: list[Mutation] = [
         description="Ambiguous buy pending-ledger write disabled",
     ),
     Mutation(
-        phase="§87-C",
-        mutation_id="87C_BLOCKHASH_EXPIRY_PREDICATE",
+        phase="§87-D",
+        mutation_id="87D_EXIT_BACKOFF_GUARD",
         file_path="backend/run_live_cycle.py",
-        exact_old_text="if valid is False:",
-        new_text="if True:",
-        test_selector="backend/tests/test_pending_buy_resolution.py",
-        description="Pending buy expiry forced true even when blockhash validity is unknown",
+        exact_old_text="if not _exit_backoff_allows(mint, m[\"tokens\"], risk_off):",
+        new_text="if False:",
+        test_selector="backend/tests/test_exit_backoff.py",
+        description="Failed-exit retry backoff disabled (sell hammered every scan)",
+    ),
+    Mutation(
+        phase="§87-D",
+        mutation_id="87D_RISK_OFF_BACKOFF_CAP",
+        file_path="backend/run_live_cycle.py",
+        exact_old_text="if risk_off:\n        delay = min(delay, _EXIT_RETRY_RISK_OFF_MAX_SECONDS)",
+        new_text="if False:\n        delay = min(delay, _EXIT_RETRY_RISK_OFF_MAX_SECONDS)",
+        test_selector="backend/tests/test_exit_backoff.py",
+        description="Risk-off exit backoff cap disabled (stop may wait 300s)",
     ),
 ]
 
