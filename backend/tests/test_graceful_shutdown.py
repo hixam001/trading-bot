@@ -139,7 +139,7 @@ async def test_exit_lock_held_by_a_sell_delays_scanner_cancellation():
     sell_finished = asyncio.Event()
 
     async def in_flight_sell_scanner():
-        async with rlc._EXIT_LOCK:
+        async with rlc._exit_lock():
             sell_started.set()
             await release_sell.wait()      # simulated sign/send/ledger write
             sell_finished.set()

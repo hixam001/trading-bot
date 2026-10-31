@@ -242,6 +242,25 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_audit_82_f.py",
         description="Partial promotion kill switch trip and rollback check disabled",
     ),
+    # §87-C
+    Mutation(
+        phase="§87-C",
+        mutation_id="87C_PENDING_BUY_WRITE",
+        file_path="backend/live_execution/executor.py",
+        exact_old_text="if outcome.unresolved and outcome.signature:",
+        new_text="if False:",
+        test_selector="backend/live_execution/tests/test_executor_memo_flow.py",
+        description="Ambiguous buy pending-ledger write disabled",
+    ),
+    Mutation(
+        phase="§87-C",
+        mutation_id="87C_BLOCKHASH_EXPIRY_PREDICATE",
+        file_path="backend/run_live_cycle.py",
+        exact_old_text="if valid is False:",
+        new_text="if True:",
+        test_selector="backend/tests/test_pending_buy_resolution.py",
+        description="Pending buy expiry forced true even when blockhash validity is unknown",
+    ),
 ]
 
 

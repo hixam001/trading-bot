@@ -821,7 +821,12 @@ async def sign_after_checks(
     signed = VersionedTransaction(tx.message, [payer])
     sig = str(signed.signatures[0])
     raw = bytes(signed)
-    return solana.SignedSwap(signature=sig, raw=raw, _checked=True)
+    try:
+        blockhash = str(tx.message.recent_blockhash)
+    except Exception:
+        blockhash = ""
+    return solana.SignedSwap(signature=sig, raw=raw, _checked=True,
+                             blockhash=blockhash)
 
 
 
@@ -974,6 +979,30 @@ async def execute_confirmed_trade(
         swap_b64, payer, intent=intent, quote=quote_result["quote"]
     )
     signature = signed_swap.signature
+    blockhash = getattr(signed_swap, "blockhash", "") or ""
+
+    def _record_pending(reason: str) -> None:
+        """§87 C parity with executor.place_buy: never let an ambiguous send
+        disappear. The pending row blocks a re-buy/cap breach until the
+        signature resolves (adopted, failed, or provably expired)."""
+        try:
+            ledger.record_pending_buy(
+                idempotency_key=idempotency_key,
+                mint=output_mint,
+                usd_size=usd_size,
+                tokens_out=quote_result["tokens_out"],
+                price_usd=quote_result["price_usd"],
+                signature=signature,
+                blockhash=blockhash,
+                reason=reason,
+            )
+            log.warning(
+                "PENDING BUY %s $%.2f sig %s: %s — journaled pending "
+                "(blockhash %s)", output_mint[:8], usd_size,
+                signature[:16], reason, blockhash or "unknown")
+        except Exception:
+            log.error("failed to journal pending buy for %s",
+                      output_mint[:8], exc_info=True)
 
     log.info(
         "EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s",
@@ -998,8 +1027,9 @@ async def execute_confirmed_trade(
                         signature[:16], exc)
             status = None
         if status is None:
-            raise ExecutionError(
-                "send outcome unresolved (signature not found on-chain)")
+            reason = "send outcome unresolved (signature not found on-chain)"
+            _record_pending(reason)
+            raise ExecutionError(reason)
         if status.get("err"):
             raise ExecutionError(
                 f"landed-failed (fee paid): {status['err']}")
@@ -1008,14 +1038,18 @@ async def execute_confirmed_trade(
         else:
             conf = await solana.confirm_signature(signature)
             if not conf["confirmed"]:
-                raise ExecutionError(
-                    f"not confirmed before timeout: {conf['err'] or 'unknown'}")
+                reason = (f"not confirmed before timeout: "
+                          f"{conf['err'] or 'unknown'}")
+                _record_pending(reason)
+                raise ExecutionError(reason)
         sent = signature
     else:
         conf = await solana.confirm_signature(sent)
         if not conf["confirmed"]:
-            raise ExecutionError(
-                f"not confirmed before timeout: {conf['err'] or 'unknown'}")
+            reason = (f"not confirmed before timeout: "
+                      f"{conf['err'] or 'unknown'}")
+            _record_pending(reason)
+            raise ExecutionError(reason)
     signature = sent
 
     record = ledger.record_buy(

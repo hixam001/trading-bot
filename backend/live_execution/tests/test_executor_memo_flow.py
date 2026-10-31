@@ -164,8 +164,10 @@ async def test_ambiguous_send_resolves_landed_fill_and_journals_it(env, monkeypa
 
 
 async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monkeypatch):
-    """No signature on-chain means we cannot prove a fill; fail closed and do
-    not journal a phantom position."""
+    """No signature on-chain means we cannot prove a fill; fail closed — but
+    §87 C journals a PENDING buy so a late land cannot become an unmanaged
+    holding. The pending row counts against caps/slots and blocks a re-buy,
+    while staying out of the open-position/token accounting."""
     order = []
     _arm_balances(monkeypatch)
 
@@ -180,7 +182,8 @@ async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monke
         return base64.b64encode(b"swap").decode()
 
     async def fake_sign(b64, payer, intent=None, quote=None):
-        return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True)
+        return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True,
+                                    blockhash="BH111")
 
     async def fake_send(signed, endpoints=None):
         return None
@@ -202,7 +205,17 @@ async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monke
 
     assert res.status == "failed"
     assert "unresolved" in res.reason
-    assert ledger._load() == []
+    records = ledger._load()
+    assert len(records) == 1
+    assert records[0]["status"] == "pending"
+    assert records[0]["signature"] == "FILLSIG"
+    assert records[0]["blockhash"] == "BH111"
+    # Pending is NOT an open position (no tokens/cost basis to price or exit)
+    # but it DOES hold a slot and count against exposure / today's deploy.
+    assert ledger.open_token_amounts() == {}
+    assert ledger.open_positions() == {"MINT": 1.5}
+    assert ledger.deployed_today_usd() == pytest.approx(1.5)
+    assert ledger.get_by_idempotency_key("k-unknown").status == "pending"
 
 
 async def test_memo_failure_blocks_fill_entirely(env, monkeypatch):

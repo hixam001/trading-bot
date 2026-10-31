@@ -67,7 +67,7 @@ from sizing import (                       # noqa: E402
 from live_execution import config as live_config  # noqa: E402
 from live_execution import solana, wallet         # noqa: E402
 from live_execution.commit_log import CommitLog   # noqa: E402
-from live_execution.executor import place_order   # noqa: E402
+from live_execution.executor import _fill_actuals, place_order   # noqa: E402
 from live_execution.models import ExecutionLedger  # noqa: E402
 
 log = logging.getLogger("run_live_cycle")
@@ -77,7 +77,26 @@ log = logging.getLogger("run_live_cycle")
 # concurrent passes could both read the same price/tokens before either's
 # ledger reduce lands and double-sell the same position. _manage acquires
 # this lock itself so the serialization cannot be forgotten at a call site.
-_EXIT_LOCK = asyncio.Lock()
+_EXIT_LOCK: asyncio.Lock | None = None
+_EXIT_LOCK_LOOP: asyncio.AbstractEventLoop | None = None
+
+
+def _exit_lock() -> asyncio.Lock:
+    """Return the exit lock bound to the CURRENT event loop.
+
+    `asyncio.Lock` binds to the first loop that awaits it, so a module-level
+    lock raises "bound to a different event loop" when tests (or an
+    embedder) restart the loop. A live process has exactly one loop, so this
+    helper is a stable singleton there while staying loop-safe elsewhere.
+    Creation is synchronous (no await between check and assignment), so two
+    tasks on the same loop can never create different locks.
+    """
+    global _EXIT_LOCK, _EXIT_LOCK_LOOP
+    loop = asyncio.get_running_loop()
+    if _EXIT_LOCK is None or _EXIT_LOCK_LOOP is not loop:
+        _EXIT_LOCK = asyncio.Lock()
+        _EXIT_LOCK_LOOP = loop
+    return _EXIT_LOCK
 
 # §57: mint decimals are immutable — memoize them so the fast exit scanner
 # (every EXIT_SCAN_INTERVAL_SECONDS) does not re-issue the same
@@ -300,7 +319,7 @@ async def _journal_live_commit(conn, symbol: str, mint_address: str,
                     exc_info=True)
 
 
-async def _reconcile_with_chain(meta: dict) -> dict:
+async def _reconcile_with_chain(meta: dict, ledger: ExecutionLedger | None = None) -> dict:
     """A2 (omo audit §28): cross-check the journal against chain truth.
 
     The chain is the sole authority on HOW MANY tokens the wallet holds; the
@@ -319,8 +338,194 @@ async def _reconcile_with_chain(meta: dict) -> dict:
     if balances is None:
         return {"checked": False, "discrepancies": [],
                 "reason": "token balances unreadable"}
+    pending_mints = frozenset(
+        r.mint for r in (ledger.pending_buys() if ledger is not None else []))
     return reconcile(meta, balances,
-                     exclude_mints=frozenset({paper_config.USDC_MINT}))
+                     exclude_mints=frozenset({paper_config.USDC_MINT,
+                                              paper_config.SOL_MINT}),
+                     pending_mints=pending_mints)
+
+
+async def _fail_pending_commit(record, reason: str) -> None:
+    """Mark the pending buy's commit row failed/expired (best-effort)."""
+    if not record.commit_hash:
+        return
+    try:
+        CommitLog(live_config.STATE_DIR / "commits.json").fail(
+            record.commit_hash, reason)
+    except Exception:
+        log.warning("pending-buy commit update failed for %s",
+                    record.commit_hash[:16], exc_info=True)
+
+
+async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
+    """§87 C: resolve buys whose send outcome was unknown when they were made.
+
+    Called at the top of every cycle and once at startup. Rules (fail closed):
+      * confirmed/finalized without err -> adopt with ACTUAL fill amounts
+        (same idempotency key), bind/journal the commit, INFO alert;
+      * status has err                  -> failed (fee paid), no position;
+      * status None + blockhash provably invalid -> expired (can never land);
+      * everything else (including an unreadable/unknown blockhash) stays
+        pending — unknown NEVER becomes "expired".
+
+    Returns {"adopted", "failed", "expired", "pending"} counts.
+    """
+    from types import SimpleNamespace
+
+    stats = {"adopted": 0, "failed": 0, "expired": 0, "pending": 0}
+    pending = ledger.pending_buys()
+    if not pending:
+        return stats
+    try:
+        payer = wallet.load_keypair()
+        owner = wallet.pubkey_string(payer)
+    except Exception:
+        owner = None
+    now = time.time()
+    for rec in pending:
+        sig = rec.signature or ""
+        status = None
+        if sig:
+            try:
+                status = await solana.get_signature_status(sig)
+            except Exception as exc:
+                log.warning("pending buy %s: status unreadable (%s) — left "
+                            "pending", sig[:16], exc)
+                status = None
+        if status is not None and status.get("err"):
+            reason = f"landed-failed (fee paid): {status['err']}"
+            ledger.settle_pending_buy(
+                rec.idempotency_key, "failed", reason=reason)
+            await _fail_pending_commit(rec, reason)
+            stats["failed"] += 1
+            log.error("PENDING BUY %s resolved FAILED: %s",
+                      rec.mint[:8], reason)
+            continue
+
+        if (status is not None
+                and status.get("confirmationStatus") in ("confirmed", "finalized")):
+            actuals = {"tokens_delta": None, "usdc_delta": None}
+            if sig and owner:
+                try:
+                    actuals = await _fill_actuals(
+                        "buy", rec.mint, sig, owner=owner)
+                except Exception as exc:
+                    log.warning(
+                        "pending buy %s: fill actuals unreadable (%s) — "
+                        "adopting with the stored quote snapshot",
+                        sig[:16], exc)
+            usd_actual = actuals["usdc_delta"]
+            tokens_actual = actuals["tokens_delta"]
+            if usd_actual is None:
+                usd_actual = (float(rec.usd_size)
+                              if rec.usd_size is not None
+                              and float(rec.usd_size) > 0 else None)
+            if tokens_actual is None:
+                tokens_actual = (float(rec.tokens_out)
+                                 if rec.tokens_out is not None
+                                 and float(rec.tokens_out) > 0 else None)
+            if usd_actual is None or tokens_actual is None:
+                log.error(
+                    "LATE BUY %s confirmed but cost/token amount is unknown "
+                    "(usd=%r tokens=%r) — leaving pending, NEVER fabricating "
+                    "a basis", rec.mint[:8], usd_actual, tokens_actual)
+                stats["pending"] += 1
+                continue
+            if actuals["usdc_delta"] is None or actuals["tokens_delta"] is None:
+                log.warning(
+                    "LATE BUY %s: fill actuals unreadable — adopting with the "
+                    "stored quote snapshot (usd=%.4f tokens=%.6f)",
+                    sig[:16], usd_actual, tokens_actual)
+            price = (float(usd_actual) / float(tokens_actual)
+                     if float(tokens_actual) > 0 else rec.price_usd)
+            ledger.settle_pending_buy(
+                rec.idempotency_key, "confirmed",
+                usd_size=usd_actual, tokens_out=tokens_actual,
+                price_usd=price, signature=sig)
+            if rec.commit_hash:
+                try:
+                    CommitLog(live_config.STATE_DIR / "commits.json").bind(
+                        rec.commit_hash, sig)
+                except Exception:
+                    log.warning("pending-buy commit bind failed for %s",
+                                rec.commit_hash[:16], exc_info=True)
+                result = SimpleNamespace(
+                    commit_hash=rec.commit_hash,
+                    commit_nonce=rec.commit_nonce,
+                    commit_payload=rec.commit_payload,
+                    commit_sealed_at=rec.commit_sealed_at,
+                    memo_signature=rec.memo_signature,
+                    memo_slot=rec.memo_slot,
+                    signature=sig,
+                )
+                try:
+                    async with db.get_db() as conn:
+                        await _journal_live_commit(
+                            conn, symbol=rec.mint[:6],
+                            mint_address=rec.mint, verdict="buy",
+                            entry_allowed=True, result=result)
+                except Exception:
+                    log.warning("pending-buy commit journaling failed for %s",
+                                sig[:16], exc_info=True)
+            stats["adopted"] += 1
+            log.error(
+                "LATE BUY ADOPTED %s $%.4f -> %.6f tokens sig %s (was "
+                "pending; position now managed by the exit engine)",
+                rec.mint[:8], float(usd_actual), float(tokens_actual), sig[:16])
+            try:
+                from alerts import alert_nowait, AlertEvent
+                alert_nowait(
+                    AlertEvent.INFO,
+                    (f"Late buy adopted for {rec.mint[:8]}: ${float(usd_actual):.2f}"
+                     f" -> {float(tokens_actual):.6f} tokens (sig {sig[:16]})"),
+                    key=f"late_buy_adopted:{rec.mint}",
+                )
+            except Exception:
+                pass
+            continue
+
+        if status is None:
+            valid = None
+            if rec.blockhash:
+                try:
+                    valid = await solana.is_blockhash_valid(rec.blockhash)
+                except Exception as exc:
+                    log.warning("pending buy %s: blockhash validity "
+                                "unreadable (%s) — unknown stays pending",
+                                sig[:16], exc)
+                    valid = None
+            if valid is False:
+                reason = ("pending buy expired: blockhash is provably "
+                          "invalid, transaction can never land")
+                ledger.settle_pending_buy(
+                    rec.idempotency_key, "expired", reason=reason)
+                await _fail_pending_commit(rec, reason)
+                stats["expired"] += 1
+                log.error("PENDING BUY %s EXPIRED (blockhash invalid); caps "
+                          "released", rec.mint[:8])
+                continue
+
+        # Still possibly landable, or validity unknown. Never expire on
+        # unknown data.
+        age = max(now - float(rec.ts or 0.0), 0.0)
+        log.info("pending buy %s still unresolved (age %.0fs, blockhash %s)",
+                 rec.mint[:8], age, rec.blockhash or "unknown")
+        if age >= 300.0:
+            try:
+                from alerts import alert_nowait, AlertEvent
+                alert_nowait(
+                    AlertEvent.EXIT_UNRESOLVED,
+                    (f"Buy still unresolved after {age/60.0:.0f} min for "
+                     f"{rec.mint[:8]} (sig {sig[:16]}, blockhash "
+                     f"{rec.blockhash or 'unknown'}) — left PENDING; a late "
+                     f"land is adopted, never an unmanaged holding"),
+                    key=f"pending_buy:{rec.mint}",
+                )
+            except Exception:
+                pass
+        stats["pending"] += 1
+    return stats
 
 
 async def _crosscheck_basis(meta: dict) -> list:
@@ -481,7 +686,7 @@ async def _manage(jupiter: JupiterProvider, ledger: ExecutionLedger, hwm: dict, 
     realizing −28%…−65% that gapped through the once-per-cycle scan), and two
     concurrent passes could double-sell one position.
     """
-    async with _EXIT_LOCK:
+    async with _exit_lock():
         for mint in list(meta.keys()):
             m = meta.get(mint) or {}
             await _scan_exits_for_position(jupiter, ledger, hwm, mint, m)
@@ -921,6 +1126,17 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
             log.info("reconciled %d orphaned published commit(s) -> failed/no-fill", healed)
     except Exception:
         log.warning("commit orphan reconciliation skipped", exc_info=True)
+    # §87 C: resolve any buy whose send outcome was unknown last cycle BEFORE
+    # the book is built. A late land is adopted (become a managed position);
+    # a provable expiry releases its caps; anything still unknown stays
+    # pending and keeps counting against slots/exposure. Fail-soft: a broken
+    # resolver must never stop the cycle (unknown simply stays unresolved).
+    try:
+        resolved = await resolve_pending_buys(ledger)
+        if any(resolved.values()):
+            log.info("pending-buy resolution: %s", resolved)
+    except Exception:
+        log.warning("pending-buy resolution skipped", exc_info=True)
     portfolio, meta, chain_report = await _live_portfolio(ledger)
     hwm = await _hwm_for_cycle()
     jupiter = JupiterProvider()
@@ -1263,7 +1479,7 @@ async def _graceful_shutdown(exit_task: asyncio.Task | None, provider,
     await it. Cancelling the scanner before taking the lock could kill it
     between broadcast and the ledger reduce — the exact double-fill hazard.
     """
-    async with _EXIT_LOCK:
+    async with _exit_lock():
         if exit_task is not None and not exit_task.done():
             exit_task.cancel()
             try:
@@ -1386,6 +1602,17 @@ def main() -> None:
                 run_cycle._chain_flags = {}
             ledger = ExecutionLedger(
                 live_config.STATE_DIR / "executions.json")
+            # §87 C: settle unresolved buys from the previous process BEFORE
+            # the exit scanner starts, so a late land is adopted as a managed
+            # position and a provable expiry releases its caps without waiting
+            # for the first full cycle. Fail-soft, same as the per-cycle call.
+            try:
+                resolved = await resolve_pending_buys(ledger)
+                if any(resolved.values()):
+                    log.info("startup pending-buy resolution: %s", resolved)
+            except Exception:
+                log.warning("startup pending-buy resolution skipped",
+                            exc_info=True)
             exit_task = asyncio.create_task(_exit_scan_loop(
                 ledger, run_cycle._hwm, run_cycle._chain_flags))
             log.info("fast exit scanner: every %.0fs (§57)",

@@ -70,6 +70,20 @@ class ExecutionRecord:
     # counting. Absent on pre-§50 rows (treated as unknown), buys, and
     # hand-written records — never fabricated.
     rule_id: Optional[str] = None
+    # §87 C: an ambiguous BUY (send outcome unresolved, or confirmation
+    # timeout) is recorded as a pending buy. A Solana tx stays landable until
+    # its blockhash expires, so dropping the row let a late fill become an
+    # unmanaged holding. Pending rows are excluded from open-position/token
+    # accounting but INCLUDED in slot/exposure/daily-deploy caps and the
+    # idempotency replay. blockhash "" means unknown (never "expired").
+    blockhash: str = ""
+    commit_hash: str = ""
+    commit_nonce: str = ""
+    commit_payload: dict = field(default_factory=dict)
+    commit_sealed_at: Optional[float] = None
+    memo_signature: str = ""
+    memo_slot: Optional[int] = None
+    reason: str = ""
 
     def to_json(self) -> dict:
         return asdict(self)
@@ -154,6 +168,94 @@ class ExecutionLedger:
         self.append(rec)
         return rec
 
+    def record_pending_buy(
+        self,
+        idempotency_key: str,
+        mint: str,
+        usd_size: float,
+        tokens_out: float,
+        price_usd: float,
+        signature: str,
+        blockhash: str = "",
+        commit_hash: str = "",
+        commit_nonce: str = "",
+        commit_payload: Optional[dict] = None,
+        commit_sealed_at: Optional[float] = None,
+        memo_signature: str = "",
+        memo_slot: Optional[int] = None,
+        reason: str = "",
+    ) -> ExecutionRecord:
+        """§87 C: journal an ambiguous buy BEFORE its outcome is known.
+
+        The row is deliberately NOT in `_OPEN` (no token/cost accounting, no
+        exit engine) but counts for idempotency and the preflight caps. A
+        later resolve flips it to confirmed (adopted) or failed/expired.
+        `tokens_out`/`price_usd` keep the quote snapshot only as a documented
+        FALLBACK for adoption when the confirmed tx's actuals are unreadable.
+        """
+        rec = ExecutionRecord(
+            kind="buy",
+            idempotency_key=idempotency_key,
+            mint=mint,
+            usd_size=usd_size,
+            tokens_out=tokens_out,
+            price_usd=price_usd,
+            signature=signature,
+            status="pending",
+            ts=self.now_fn(),
+            blockhash=blockhash or "",
+            commit_hash=commit_hash or "",
+            commit_nonce=commit_nonce or "",
+            commit_payload=dict(commit_payload or {}),
+            commit_sealed_at=commit_sealed_at,
+            memo_signature=memo_signature or "",
+            memo_slot=memo_slot,
+            reason=reason or "",
+        )
+        self.append(rec)
+        return rec
+
+    def pending_buys(self) -> list[ExecutionRecord]:
+        return [ExecutionRecord.from_json(r) for r in self._load()
+                if r.get("kind") == "buy"
+                and r.get("status") == "pending"]
+
+    def settle_pending_buy(
+        self,
+        idempotency_key: str,
+        status: str,
+        *,
+        usd_size: Optional[float] = None,
+        tokens_out: Optional[float] = None,
+        price_usd: Optional[float] = None,
+        signature: Optional[str] = None,
+        reason: Optional[str] = None,
+    ) -> bool:
+        """Resolve one pending buy in place, preserving its original key.
+
+        Only a row still `pending` is changed (an operator/another cycle may
+        already have resolved it). Returns True when this call settled it.
+        """
+        records = self._load()
+        for r in records:
+            if (r.get("kind") == "buy"
+                    and r.get("status") == "pending"
+                    and r.get("idempotency_key") == idempotency_key):
+                r["status"] = status
+                if usd_size is not None:
+                    r["usd_size"] = float(usd_size)
+                if tokens_out is not None:
+                    r["tokens_out"] = float(tokens_out)
+                if price_usd is not None:
+                    r["price_usd"] = float(price_usd)
+                if signature is not None:
+                    r["signature"] = str(signature)
+                if reason is not None:
+                    r["reason"] = str(reason)
+                self._save(records)
+                return True
+        return False
+
     def mark_close(self, mint: str, proceeds_usd: float) -> ExecutionRecord:
         """
         Close the OLDEST open buy of `mint` (FIFO), realize PnL against its
@@ -199,10 +301,16 @@ class ExecutionLedger:
         return None
 
     def open_positions(self) -> dict[str, float]:
-        """{mint: open cost basis} for buys not yet closed."""
+        """{mint: open cost basis} for buys not yet closed.
+
+        §87 C: pending buys are INCLUDED (a slot/exposure is already
+        committed while the send outcome is unknown), but they are absent
+        from `open_token_amounts` / `_OPEN`, so they never price or exit.
+        """
         out: dict[str, float] = {}
         for r in self._load():
-            if r["kind"] == "buy" and r["status"] in self._OPEN:
+            if (r["kind"] == "buy"
+                    and r["status"] in (*self._OPEN, "pending")):
                 out[r["mint"]] = out.get(r["mint"], 0.0) + r["usd_size"]
         return out
 
@@ -287,11 +395,17 @@ class ExecutionLedger:
         return out
 
     def deployed_today_usd(self) -> float:
-        """Sum of buy cost stamped today (UTC date) - feeds MAX_DAILY_DEPLOY_USD."""
+        """Sum of buy cost stamped today (UTC date) - feeds MAX_DAILY_DEPLOY_USD.
+
+        §87 C: pending buys count (funds may already have left the wallet).
+        An `expired` pending buy is provably unlandable, so its cost is
+        released from the daily cap.
+        """
         today = self._utc_date(self.now_fn())
         total = 0.0
         for r in self._load():
-            if r["kind"] == "buy" and self._utc_date(r["ts"]) == today:
+            if (r["kind"] == "buy" and r.get("status") != "expired"
+                    and self._utc_date(r["ts"]) == today):
                 total += float(r.get("usd_size") or 0.0)
         return total
 

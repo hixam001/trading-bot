@@ -131,6 +131,12 @@ class OrderResult:
     signature: str = ""
     slot: Optional[int] = None
     price_impact_pct: float = 0.0
+    # §87 C: a signature whose outcome is not yet known (send unresolved or
+    # confirmation timeout). The transaction may still land until its
+    # blockhash expires; the caller must journal a pending buy, never assume
+    # failure. blockhash "" means unknown.
+    blockhash: str = ""
+    unresolved: bool = False
     # REF-R11: the sealed decision behind this order + its on-chain memo.
     # Empty until the armed flow runs; carried so the bridge can journal the
     # EXACT seal (nonce/payload/hash) into the public decision record.
@@ -172,6 +178,7 @@ async def _broadcast_and_confirm(
     from live_execution.exit_errors import SendRejected
 
     signed_swap = await sign_after_checks(swap_b64, payer, intent=intent, quote=quote)
+    blockhash = getattr(signed_swap, "blockhash", "") or ""
     try:
         sent = await solana.send_checked_swap(signed_swap)
     except SendRejected as exc:
@@ -179,6 +186,7 @@ async def _broadcast_and_confirm(
             status="failed",
             reason=f"send refused: {exc}",
             signature=signed_swap.signature,
+            blockhash=blockhash,
             error=exc,
         )
     if not sent:
@@ -197,32 +205,66 @@ async def _broadcast_and_confirm(
                 status="failed",
                 reason="send outcome unresolved (signature not found on-chain)",
                 signature=signed_swap.signature,
+                blockhash=blockhash,
+                unresolved=True,
             )
         if status.get("err"):
             return OrderResult(
                 status="failed",
                 reason=f"landed-failed (fee paid): {status['err']}",
                 signature=signed_swap.signature,
+                blockhash=blockhash,
                 error=status.get("err"),
             )
         if status.get("confirmationStatus") in ("confirmed", "finalized"):
             conf = {"confirmed": True, "slot": status.get("slot"), "err": None}
         else:
-            conf = await solana.confirm_signature(signed_swap.signature)
+            try:
+                conf = await solana.confirm_signature(signed_swap.signature)
+            except Exception as exc:
+                return OrderResult(
+                    status="failed",
+                    reason=f"confirmation unreadable: {exc}",
+                    signature=signed_swap.signature,
+                    blockhash=blockhash,
+                    unresolved=True,
+                )
             if not conf["confirmed"]:
                 return OrderResult(
                     status="failed",
                     reason=conf["err"] or "unconfirmed",
                     signature=signed_swap.signature,
+                    blockhash=blockhash,
+                    unresolved=True,
                 )
         sent = signed_swap.signature
     else:
-        conf = await solana.confirm_signature(sent)
+        try:
+            conf = await solana.confirm_signature(sent)
+        except Exception as exc:
+            return OrderResult(
+                status="failed",
+                reason=f"confirmation unreadable: {exc}",
+                signature=sent,
+                blockhash=blockhash,
+                unresolved=True,
+            )
         if not conf["confirmed"]:
-            return OrderResult(status="failed", reason=conf["err"] or "unconfirmed", signature=sent)
+            # An on-chain error is conclusive (fee paid, no tokens); a plain
+            # confirmation timeout is NOT — the tx may still land.
+            landed_err = bool(conf.get("err")) and (
+                conf["err"] != "not confirmed before timeout")
+            return OrderResult(
+                status="failed",
+                reason=conf["err"] or "unconfirmed",
+                signature=sent,
+                blockhash=blockhash,
+                unresolved=not landed_err,
+            )
     if sealed is not None and logc is not None:
         logc.bind(sealed["hash"], sent)
-    return OrderResult(status="filled", signature=sent, slot=conf.get("slot"))
+    return OrderResult(status="filled", signature=sent, slot=conf.get("slot"),
+                       blockhash=blockhash)
 
 
 async def place_buy(
@@ -404,14 +446,45 @@ async def place_buy(
         return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
                               "price_impact_pct": impact, **commit_fields})
 
+    if outcome.unresolved and outcome.signature:
+        # §87 C: the send outcome is NOT known. A Solana tx stays landable
+        # until its blockhash expires (~60-90s) — possibly AFTER the 60s poll.
+        # Journal a pending buy so a late fill cannot become an unmanaged
+        # holding: it blocks a re-buy / extra slot / exposure / daily cap now,
+        # and resolve_pending_buys adopts or expires it later.
+        ledger.record_pending_buy(
+            idempotency_key=idempotency_key,
+            mint=mint,
+            usd_size=usd,
+            tokens_out=q["tokens_out"],
+            price_usd=q["price_usd"],
+            signature=outcome.signature,
+            blockhash=outcome.blockhash,
+            commit_hash=sealed["hash"],
+            commit_nonce=sealed["nonce"],
+            commit_payload=intent,
+            commit_sealed_at=sealed.get("sealed_at"),
+            memo_signature=memo_res["signature"],
+            memo_slot=memo_res["slot"],
+            reason=outcome.reason,
+        )
+        log.warning(
+            "PENDING BUY %s $%.2f sig %s: %s — journaled pending (blockhash "
+            "%s); a late land is adopted by resolve_pending_buys, never "
+            "treated as failed", mint[:8], usd, outcome.signature[:16],
+            outcome.reason, outcome.blockhash or "unknown")
+
     if outcome.status == "filled":
         # A4 (repo audit): prefer the ACTUAL amounts read off the confirmed
         # tx — real slippage means the fill rarely equals the quote, and the
         # ledger is the money authority. An unreadable tx journals the quote
         # snapshot (and logs loudly), never a guess.
         actuals = await _fill_actuals("buy", mint, outcome.signature, owner=addr)
-        usd_actual = actuals["usdc_delta"] or usd
-        tokens_actual = actuals["tokens_delta"] or q["tokens_out"]
+        usd_actual = (actuals["usdc_delta"]
+                      if actuals["usdc_delta"] is not None else usd)
+        tokens_actual = (actuals["tokens_delta"]
+                         if actuals["tokens_delta"] is not None
+                         else q["tokens_out"])
         if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
             log.warning(
                 "fill actuals unreadable for %s — journaling the quote "
@@ -431,7 +504,10 @@ async def place_buy(
         # Honest journal: a commit whose fill did not confirm is marked failed
         # so the dashboard shows WHY the enter didn't execute (commit_log
         # contract: a skipped trade must be as visible as an executed one).
-        logc.fail(sealed["hash"], outcome.reason or "fill not confirmed")
+        note = outcome.reason or "fill not confirmed"
+        if outcome.unresolved:
+            note += " — pending buy recorded for late resolution"
+        logc.fail(sealed["hash"], note)
     outcome.commit_hash = sealed["hash"]
     outcome.commit_nonce = sealed["nonce"]
     outcome.commit_payload = intent

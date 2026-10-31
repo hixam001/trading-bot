@@ -71,6 +71,9 @@ class SignedSwap:
     signature: str
     raw: bytes
     _checked: bool = False
+    # §87 C: the transaction's recent_blockhash, so an ambiguous buy can be
+    # proved expired later ("" means unparseable/unknown — never "expired").
+    blockhash: str = ""
 
 
 async def send_checked_swap(

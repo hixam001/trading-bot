@@ -17,12 +17,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 # ---------------------------------------------------------------------------
 
 def test_docker_compose_live_restart_policy():
-    """F1: docker-compose.yml 'live' service must have restart: on-failure."""
+    """F1/§87-A3: the live service must restart after a daemon restart too.
+
+    `on-failure` is NOT restarted when the Docker daemon itself restarts, so
+    a host reboot could leave the armed bot down. `unless-stopped` keeps the
+    service up across daemon restarts while still honoring a manual stop.
+    """
     compose_path = REPO_ROOT / "docker-compose.yml"
     assert compose_path.exists()
     data = yaml.safe_load(compose_path.read_text(encoding="utf-8"))
     live = data.get("services", {}).get("live", {})
-    assert live.get("restart") == "on-failure", "live service restart policy must be 'on-failure'"
+    assert live.get("restart") == "unless-stopped", "live service restart policy must be 'unless-stopped'"
 
 
 # ---------------------------------------------------------------------------

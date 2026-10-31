@@ -114,6 +114,7 @@ class AlertEvent(str, Enum):
     SIM_REFUSAL = "SIM_REFUSAL"
     GUARD_REFUSAL = "GUARD_REFUSAL"
     EXIT_UNRESOLVED = "EXIT_UNRESOLVED"
+    UNJOURNALED_HOLDING = "UNJOURNALED_HOLDING"
     SIM_SINGLE_RPC_SELL = "SIM_SINGLE_RPC_SELL"
     SELL_NO_REF_PRICE = "SELL_NO_REF_PRICE"
     RPC_NOT_DIVERSE = "RPC_NOT_DIVERSE"
@@ -136,6 +137,7 @@ EVENT_DEFAULT_PRIORITY: dict[AlertEvent, AlertPriority] = {
     AlertEvent.SIM_REFUSAL: AlertPriority.HIGH,
     AlertEvent.GUARD_REFUSAL: AlertPriority.HIGH,
     AlertEvent.EXIT_UNRESOLVED: AlertPriority.HIGH,
+    AlertEvent.UNJOURNALED_HOLDING: AlertPriority.HIGH,
     AlertEvent.RPC_NOT_DIVERSE: AlertPriority.HIGH,
     AlertEvent.LOW_SOL: AlertPriority.HIGH,
     AlertEvent.LOW_USDC: AlertPriority.HIGH,

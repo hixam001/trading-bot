@@ -486,7 +486,14 @@ def test_ambiguous_send_with_unknown_signature_fails_closed(env, monkeypatch):
             ledger=ledger, reference_price_usd=1.0,
         ))
 
-    assert ledger.get_by_idempotency_key("k-ambiguous-unknown") is None
+    # §87 C: the ambiguous send is journaled PENDING (not dropped), so a late
+    # land is adopted later and a retry cannot double-buy. It has no tokens
+    # in the open accounting but holds a slot / counts against the caps.
+    rec = ledger.get_by_idempotency_key("k-ambiguous-unknown")
+    assert rec is not None and rec.status == "pending"
+    assert rec.signature == "SIG123"
+    assert ledger.open_token_amounts() == {}
+    assert ledger.open_positions() == {"MINT": 10.0}
 
 
 def test_propose_then_approve_then_execute_consumes_confirmation(

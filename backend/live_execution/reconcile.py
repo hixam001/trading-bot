@@ -46,13 +46,39 @@ log = logging.getLogger(__name__)
 # Relative tolerance for the chain-vs-journal comparison (float dust).
 REL_TOL = 1e-6
 
+# §87 C: an unjournaled on-chain holding is a HIGH alert, rate-limited per
+# mint (the alert worker's own cooldown also applies; this keeps repeated
+# reconcile passes from even enqueueing).
+UNJOURNALED_ALERT_COOLDOWN_SECONDS: float = 900.0
+_unjournaled_alert_last: dict[str, float] = {}
+
+
+def _alert_unjournaled(mint: str, amount: float, now: float) -> None:
+    last = _unjournaled_alert_last.get(mint, 0.0)
+    if now - last < UNJOURNALED_ALERT_COOLDOWN_SECONDS:
+        return
+    _unjournaled_alert_last[mint] = now
+    try:
+        from alerts import alert_nowait, AlertEvent
+        alert_nowait(
+            AlertEvent.UNJOURNALED_HOLDING,
+            (f"Unjournaled on-chain holding {mint[:8]} ({amount:.6f}) — "
+             f"no ledger cost basis; NOT added to the book. Inspect the "
+             f"wallet and resolve manually."),
+            key=f"unjournaled:{mint}",
+        )
+    except Exception:
+        log.warning("unjournaled holding alert enqueue failed", exc_info=True)
+
 
 def _close_enough(a: float, b: float) -> bool:
     return abs(a - b) <= max(REL_TOL * max(a, b), 1e-9)
 
 
 def reconcile(meta: dict, balances: Optional[dict],
-              exclude_mints: frozenset = frozenset()) -> dict:
+              exclude_mints: frozenset = frozenset(),
+              pending_mints: frozenset = frozenset(),
+              now_fn: Callable[[], float] = time.time) -> dict:
     """
     Cross-check journal positions against chain balances.
 
@@ -64,6 +90,9 @@ def reconcile(meta: dict, balances: Optional[dict],
     balances: {mint: ui_amount} from chain, or None when unreadable.
     exclude_mints: mints that are never positions (e.g. the USDC mint —
               dry powder, not a trade).
+    pending_mints: mints with a pending buy (ambiguous send) — an on-chain
+              balance there is EXPECTED, not an unexplained holding.
+    now_fn: clock for the per-mint unjournaled-alert cooldown (tests inject).
 
     Returns a report dict:
       {"checked": bool, "discrepancies": [{"mint", "kind", ...}]}
@@ -117,9 +146,14 @@ def reconcile(meta: dict, balances: Optional[dict],
     for mint, amount in balances.items():
         if mint in meta or mint in exclude_mints or amount <= 0:
             continue
+        if mint in pending_mints:
+            log.info("RECONCILE: on-chain holding %s (%.6f) is explained by "
+                     "a pending buy — awaiting resolution", mint[:8], amount)
+            continue
         log.warning("RECONCILE: unjournaled on-chain holding %s (%.6f) — "
                     "NOT added to the book (no cost basis; never fabricate)",
                     mint[:8], amount)
+        _alert_unjournaled(mint, amount, now_fn())
         report["discrepancies"].append({
             "mint": mint, "kind": "unjournaled", "chain": amount})
 

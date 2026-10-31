@@ -271,6 +271,14 @@ an idempotent append persisted with one atomic rewrite:
 - A corrupt or unreadable ledger raises and refuses to trade. It is never
   treated as empty, which would forget open exposure and idempotency
   history.
+- §87 C: an ambiguous buy (unknown send outcome or confirmation timeout) is
+  journaled `pending` instead of dropped. It blocks its idempotency key,
+  slot, exposure, and daily-deploy budget, but it carries no token amount in
+  the open book, so it is never priced or exited. `resolve_pending_buys()`
+  runs at startup and at the top of every cycle: a confirmed late land is
+  adopted with actual fill deltas, a landed error becomes failed, and only a
+  **provably** invalid blockhash (`False`, never `None`) marks it expired and
+  releases the daily cap. Anything unknown stays pending and alerts.
 - The shared `trades` table is a one-way observability mirror (ledger → DB).
   A mirror failure never changes the money record.
 

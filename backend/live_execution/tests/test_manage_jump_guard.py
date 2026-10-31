@@ -129,10 +129,10 @@ async def test_manage_takes_the_exit_lock(manage_env):
 
     t1 = asyncio.create_task(rlc._manage(SlowJupiter(), ledger, hwm, meta))
     await started.wait()                  # first pass holds the lock mid-pricing
-    assert rlc_mod._EXIT_LOCK.locked()
+    assert rlc_mod._exit_lock().locked()
     t2 = asyncio.create_task(rlc._manage(StubJupiter(0.02), ledger, hwm, meta))
     await asyncio.sleep(0.05)             # let t2 actually reach the lock
-    assert rlc_mod._EXIT_LOCK.locked()    # still held by t1
+    assert rlc_mod._exit_lock().locked()  # still held by t1
     release.set()                         # let the first pass finish
     await asyncio.gather(t1, t2)
     # t2 ran after t1 — serialized, both completed, no exception escaped.
