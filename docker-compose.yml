@@ -6,6 +6,14 @@
 # must NEVER reset real-money safety state or wipe audit logs. For managed
 # Postgres instead of SQLite set USE_SUPABASE_DB=1 + SUPABASE_DB_URL in .env.
 # ============================================================================
+# §87 A4: bound Docker's default json-file log growth (no rotation by default;
+# the Oracle boot volume is only ~47 GB). Applied to every service.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # §51 — FREE web-search transport hop 2 (keyless, unlimited). Self-hosted
   # SearXNG answering format=json for the engine's staged web-evidence
@@ -19,6 +27,7 @@ services:
     image: searxng/searxng:2026.10.9-f4822b3fc
     container_name: trading-bot-searxng
     restart: unless-stopped
+    logging: *logging
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET must be set in .env to a non-default secret (run openssl rand -hex 32)}
     volumes:
@@ -33,6 +42,7 @@ services:
     image: trading-bot:latest
     container_name: trading-bot-api
     restart: unless-stopped
+    logging: *logging
     depends_on:
       - searxng
     ports:
@@ -69,7 +79,14 @@ services:
     build: .
     image: trading-bot:latest
     container_name: trading-bot-live
-    restart: on-failure
+    # §87 A3: `on-failure` is NOT restarted after a Docker daemon restart
+    # (host reboot), so a maintenance reboot silently left the engine down.
+    # §87 B: tini (init) forwards SIGTERM to Python and the grace period lets
+    # an in-flight order/ledger write finish instead of being SIGKILLed.
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 150s
+    logging: *logging
     depends_on:
       - searxng
     env_file:
@@ -83,10 +100,10 @@ services:
       - engine_logs:/app/logs
       # State backups volume (§79 Phase E).
       - engine_backups:/app/backups
-      # Alternative secret channel (preferred on a VM): bind-mount a chmod-600
-      # keypair file read-only and point WALLET_KEYPAIR_PATH at it:
-      #   - ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro
-      #   WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair
+      # §87 A2: wallet keypair, one documented path. The host file must be
+      # owned by the container uid (10001) and mode 0600/0400 — a bind mount
+      # preserves host uid/mode, and wallet.py refuses group/world bits.
+      - ${WALLET_KEYPAIR_HOST_PATH:-./secrets/wallet_keypair.json}:/run/secrets/wallet_keypair:ro
     environment:
       - ROLE=live
       - DB_PATH=/app/data/trading_bot.db

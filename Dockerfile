@@ -40,9 +40,10 @@ COPY backend/docker-entrypoint.sh /app/docker-entrypoint.sh
 # Non-root runtime; pre-create runtime directories with secure permissions (§70, §74).
 # The operator mounts state/secrets readable by uid 10001.
 RUN useradd --uid 10001 --create-home bot \
-    && mkdir -p /app/logs /app/data /app/backend/live_execution/state /app/backend/knowledge_base/ingested \
+    && mkdir -p /app/logs /app/data /app/backups /app/backend/live_execution/state /app/backend/knowledge_base/ingested \
     && chmod +x /app/docker-entrypoint.sh \
     && chmod 750 /app/logs \
+    && chmod 700 /app/backups \
     && (chmod -R 755 /ms-playwright 2>/dev/null || true) \
     && chown -R bot:bot /app
 USER bot

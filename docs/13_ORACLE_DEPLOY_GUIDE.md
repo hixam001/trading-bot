@@ -43,6 +43,10 @@ ssh -i <your-key> ubuntu@<PUBLIC_IP>
 sudo apt-get update && sudo apt-get -y upgrade
 # Docker (arm64 builds come automatically)
 curl -fsSL https://get.docker.com | sudo sh
+# get.docker.com normally enables the daemon, but VERIFY: a disabled daemon
+# stays down after an Oracle maintenance reboot.
+sudo systemctl enable --now docker
+systemctl is-enabled docker              # must print: enabled
 sudo usermod -aG docker ubuntu && exit
 ssh -i <your-key> ubuntu@<PUBLIC_IP>   # re-login to pick up the docker group
 docker run --rm hello-world           # sanity check
@@ -76,7 +80,7 @@ sudo netfilter-persistent save
 
 ```bash
 # On the VM:
-mkdir -p /opt/trading-bot/secrets && cd /opt/trading-bot
+mkdir -p /opt/trading-bot && cd /opt/trading-bot
 
 # EITHER clone (if the repo is reachable from the VM):
 git clone <your-repo-url> app && cd app
@@ -84,6 +88,7 @@ git clone <your-repo-url> app && cd app
 # OR from the laptop (excludes venv/logs; .env handled next step):
 #   rsync -av --exclude .venv --exclude logs --exclude .run \
 #     --exclude 'trading_bot.db' ./ ubuntu@<PUBLIC_IP>:/opt/trading-bot/app/
+mkdir -p /opt/trading-bot/app/secrets
 ```
 
 Secrets (NEVER commit these; they live only on the VM):
@@ -92,8 +97,16 @@ Secrets (NEVER commit these; they live only on the VM):
 # From the laptop — the .env and the wallet keypair:
 scp .env ubuntu@<PUBLIC_IP>:/opt/trading-bot/app/.env
 scp /home/hixam/.config/solana/mainnet-wallet.json \
-    ubuntu@<PUBLIC_IP>:/opt/trading-bot/secrets/wallet_keypair.json
-# then on the VM: chmod 600 both files
+    ubuntu@<PUBLIC_IP>:/opt/trading-bot/app/secrets/wallet_keypair.json
+
+# On the VM — the container runs as uid 10001, and a bind mount preserves
+# the HOST file's owner/mode. wallet.py rejects group/world bits, and the
+# container user must be able to read the file at all:
+sudo chown 10001:10001 /opt/trading-bot/app/secrets/wallet_keypair.json
+sudo chmod 600 /opt/trading-bot/app/secrets/wallet_keypair.json
+sudo chown 10001 /opt/trading-bot/app/secrets
+sudo chmod 700 /opt/trading-bot/app/secrets
+sudo chmod 600 /opt/trading-bot/app/.env
 ```
 
 ## Step 5 — Edit the VM's `.env` for server mode
@@ -103,6 +116,7 @@ Four lines differ from your laptop's `.env` (edit on the VM):
 ```ini
 FRONTEND_ORIGIN=https://bot.example.com          # after Step 7; before that use http://127.0.0.1:8000 via SSH tunnel
 WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair  # the container mount, not the host path
+WALLET_KEYPAIR_HOST_PATH=/opt/trading-bot/app/secrets/wallet_keypair.json  # host side of the bind mount (default matches this)
 FOMO_PRIVY_STATE_FILE=/app/data/.fomo_privy.json # rotated Privy token must survive
 DB_PATH=/app/data/trading_bot.db                 # already forced by compose, keep anyway
 ```
@@ -123,10 +137,14 @@ docker compose up -d --build
 - `docker-compose.yml` splits the system into two isolated services from the same image (§77 B2):
   - **`api`**: Runs the dashboard and REST API. Mounts state `:ro` and has **zero wallet secrets**. The dashboard process can run on an unprivileged host with zero key material.
   - **`live`**: Autonomous trade execution engine (`run_live_cycle.py`). Mounts state `rw` and holds the signing key. No ports exposed.
-- The keypair must be bind-mounted read-only into the `live` container — under the
-  `live` service in `docker-compose.yml`, add:
-    `- ./secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro`
-  (the commented block in the compose file already shows this exact mount). Ensure `chmod 600 ./secrets/wallet_keypair.json` (loose permissions are rejected at startup).
+- The keypair is bind-mounted read-only into the `live` container by default
+  (parameterised by `WALLET_KEYPAIR_HOST_PATH`, default
+  `./secrets/wallet_keypair.json`, target `/run/secrets/wallet_keypair`).
+  The image runs as **uid 10001**; a bind mount keeps the host file's uid and
+  mode. `wallet.py` refuses group/world bits, so the host file must be owned
+  by 10001 and mode 0600 (Step 4). The entrypoint tests `-f && -r` first and
+  exits **78** with a `FATAL: wallet keypair not readable by uid 10001`
+  message instead of claiming the engine is armed.
 - The entrypoint starts the API under `ROLE=api`, and the live cycle under `ROLE=live` because the repo
   is ARMED and the wallet is configured — same double-gate as `start.sh`.
 

@@ -74,12 +74,21 @@ The image contains **zero secrets**; everything arrives at runtime.
 **Solana wallet keypair — set exactly ONE channel:**
 
 1. `WALLET_KEYPAIR_PATH` — **preferred**. A `chmod 600` JSON byte-array file
-   OUTSIDE the repo (e.g. `/opt/trading-bot/secrets/wallet_keypair.json`),
+   OUTSIDE the image (e.g. `/opt/trading-bot/app/secrets/wallet_keypair.json`),
    bind-mounted read-only into the container:
-   `-v /opt/trading-bot/secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro`
+   `-v /opt/trading-bot/app/secrets/wallet_keypair.json:/run/secrets/wallet_keypair:ro`
    `-e WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair`
+   The compose file does this by default via
+   `${WALLET_KEYPAIR_HOST_PATH:-./secrets/wallet_keypair.json}`.
    The material never appears in `docker inspect` or process env.
-   **Permission check:** `wallet.load_keypair()` enforces strict file permissions (`st_mode & 0o077 == 0`). Group- or world-accessible files (e.g. 0644) are rejected with a fatal error.
+   **Ownership + permission check:** the image runs as uid **10001**, and a
+   bind mount preserves host ownership/mode. Run
+   `sudo chown 10001:10001 /opt/trading-bot/app/secrets/wallet_keypair.json &&
+   sudo chmod 600 /opt/trading-bot/app/secrets/wallet_keypair.json`.
+   `wallet.load_keypair()` enforces strict file permissions (`st_mode & 0o077 == 0`).
+   Group- or world-accessible files (e.g. 0644) are rejected with a fatal error,
+   and an unreadable file makes `docker-entrypoint.sh` exit 78
+   (`FATAL: wallet keypair not readable by uid 10001`) instead of arming.
 2. `WALLET_KEYPAIR_JSON` — the keypair JSON **directly in the environment**,
    for hosts that cannot mount files (Render/Koyeb/Railway). Parsed in-memory
    by `live_execution/wallet.py`; never written to disk, never logged (a log

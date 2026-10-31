@@ -51,8 +51,8 @@ Use the host-side wrapper `deploy/backup.sh` to trigger backups via cron.
 
 ### Sample Crontab Entry (`crontab -e`):
 ```bash
-# Run backup daily at 03:00 UTC
-0 3 * * * cd /opt/trading-bot && ./deploy/backup.sh >> /var/log/trading-bot-backup.log 2>&1
+# Run backup daily at 03:00 UTC (repo is cloned at /opt/trading-bot/app)
+0 3 * * * cd /opt/trading-bot/app && ./deploy/backup.sh >> /var/log/trading-bot-backup.log 2>&1
 ```
 
 ### Retention Policy:

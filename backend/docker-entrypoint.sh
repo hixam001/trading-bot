@@ -25,10 +25,29 @@ fi
 # Audit A8: anchor regex on actual assignment value, ignoring comments like '# was True'.
 ARMED="$(grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b' live_execution/config.py 2>/dev/null || true)"
 
+# §87 A2: a bind-mounted keypair keeps the HOST file's uid/mode. The image
+# runs as uid 10001, so a root/ubuntu-owned chmod-600 file is readable on the
+# host but NOT in the container. Test readability here, before claiming
+# "ARMED + wallet configured" — a directory at the mount source (Docker's
+# fallback when a bind source is missing) and an unreadable file both fail
+# with the same config-error exit (78, sysexits EX_CONFIG). An UNSET path or
+# JSON channel keeps the original clean "not started" behaviour.
+wallet_path_invalid() {
+  [ -n "${WALLET_KEYPAIR_PATH:-}" ] \
+    && { [ ! -f "${WALLET_KEYPAIR_PATH}" ] || [ ! -r "${WALLET_KEYPAIR_PATH}" ]; }
+}
+
+fatal_wallet_path() {
+  echo "[entrypoint] FATAL: wallet keypair not readable by uid $(id -u): ${WALLET_KEYPAIR_PATH}" >&2
+  ls -ld "${WALLET_KEYPAIR_PATH}" >&2 2>/dev/null || echo "[entrypoint] (path does not exist)" >&2
+  echo "[entrypoint] Fix: sudo chown 10001:10001 <host-keypair> && sudo chmod 600 <host-keypair>" >&2
+  exit 78
+}
+
 WALLET_OK=0
 if [ -n "${WALLET_KEYPAIR_JSON:-}" ]; then
   WALLET_OK=1
-elif [ -n "${WALLET_KEYPAIR_PATH:-}" ] && [ -f "${WALLET_KEYPAIR_PATH}" ]; then
+elif [ -n "${WALLET_KEYPAIR_PATH:-}" ] && [ -f "${WALLET_KEYPAIR_PATH}" ] && [ -r "${WALLET_KEYPAIR_PATH}" ]; then
   WALLET_OK=1
 fi
 
@@ -44,17 +63,28 @@ if [ "$ROLE" = "api" ]; then
   exec uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"
 elif [ "$ROLE" = "live" ]; then
   echo "[entrypoint] starting in LIVE-only role"
+  if wallet_path_invalid; then
+    fatal_wallet_path
+  fi
   if [ "${ARMED:-0}" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
     echo "[entrypoint] ARMED + wallet configured — starting live decision cycle"
     exec python run_live_cycle.py
   else
-    echo "[entrypoint] live cycle NOT started (disarmed or no wallet configured) — shutting down cleanly"
-    exit 0
+    # §87 A3: `restart: unless-stopped` also restarts after exit 0, so a
+    # disarmed/no-wallet live container must NOT exit (else it flaps forever).
+    # Stay up; the absent heartbeat makes the healthcheck fail, so
+    # `docker compose ps` shows an unhealthy container for the operator.
+    echo "[entrypoint] live cycle NOT started (disarmed or no wallet configured) — staying up without a heartbeat (healthcheck will fail)" >&2
+    exec tail -f /dev/null
   fi
 fi
 
 # Fallback: single-container behaviour when ROLE is unset (with explicit security warning)
 echo "[entrypoint] WARNING: ROLE unset — running unified api + live in single container (wallet key shares process space with web server)"
+
+if wallet_path_invalid; then
+  fatal_wallet_path
+fi
 
 LIVE_PID=""
 API_PID=""

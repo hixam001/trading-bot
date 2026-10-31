@@ -6,18 +6,26 @@ set -euo pipefail
 # Usage:
 #   ./deploy/backup.sh [extra options passed to backup_state.py]
 #
-# Sample crontab (e.g. daily at 03:00 UTC):
-#   0 3 * * * cd /opt/trading-bot && ./deploy/backup.sh >> /var/log/trading-bot-backup.log 2>&1
+# Sample crontab (e.g. daily at 03:00 UTC), repo cloned at /opt/trading-bot/app:
+#   0 3 * * * cd /opt/trading-bot/app && ./deploy/backup.sh >> /var/log/trading-bot-backup.log 2>&1
 #
 # Optional Offsite Replication:
 #   If OFFSITE_REMOTE is set (e.g. "s3:my-backup-bucket/trading-bot") and rclone
 #   is installed on the host, backups will be synchronized offsite automatically.
 #   NEVER hardcode credentials or secrets into this file.
 
+# §87 A5: always run from the repo root (where docker-compose.yml lives), no
+# matter which cwd cron/operator used.
+cd "$(dirname "$0")/.."
+
 echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Starting trading-bot state backup..."
 
-# Execute backup inside the running live container
-docker compose exec -T live python scripts/backup_state.py "$@"
+# Execute backup inside the running live container. A failed exec MUST fail
+# the wrapper (cron then reports it) instead of printing "finished".
+if ! docker compose exec -T live python scripts/backup_state.py "$@"; then
+  echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] ERROR: backup failed" >&2
+  exit 1
+fi
 
 # Optional offsite replication using rclone
 if [ -n "${OFFSITE_REMOTE:-}" ]; then

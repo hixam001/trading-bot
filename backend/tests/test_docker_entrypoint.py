@@ -36,6 +36,12 @@ sleep "${STUB_API_SLEEP:-0}"
 exit "${STUB_API_RC:-0}"
 """
 
+_TAIL_STUB = """#!/usr/bin/env bash
+echo "TAIL_CALLED: $*" >> "$CALLS"
+sleep "${STUB_TAIL_SLEEP:-0}"
+exit "${STUB_TAIL_RC:-0}"
+"""
+
 pytestmark = pytest.mark.skipif(
     shutil.which("bash") is None, reason="bash unavailable"
 )
@@ -53,7 +59,8 @@ def _run(tmp_path, *, armed: bool, kp_path: str = "", kp_json: str = "",
     )
     binp = tmp_path / "bin"
     binp.mkdir()
-    for name, body in (("python", _PY_STUB), ("uvicorn", _UVICORN_STUB)):
+    for name, body in (("python", _PY_STUB), ("uvicorn", _UVICORN_STUB),
+                       ("tail", _TAIL_STUB)):
         p = binp / name
         p.write_text(body)
         p.chmod(0o755)
@@ -133,7 +140,8 @@ def test_disarmed_with_true_in_comment_does_not_start_live_cycle(tmp_path):
     )
     binp = tmp_path / "bin"
     binp.mkdir()
-    for name, body in (("python", _PY_STUB), ("uvicorn", _UVICORN_STUB)):
+    for name, body in (("python", _PY_STUB), ("uvicorn", _UVICORN_STUB),
+                       ("tail", _TAIL_STUB)):
         p = binp / name
         p.write_text(body)
         p.chmod(0o755)
@@ -172,11 +180,46 @@ def test_disarmed_with_wallet_does_not_start_the_live_cycle(tmp_path):
 
 
 def test_armed_keypair_path_must_actually_exist(tmp_path):
-    """A configured-but-missing keypair file must not count as a wallet."""
-    _, out, calls = _run(tmp_path, armed=True,
-                         kp_path=str(tmp_path / "absent.json"))
+    """A configured-but-missing keypair path is a config error (§87 A2)."""
+    status, out, calls = _run(tmp_path, armed=True,
+                             kp_path=str(tmp_path / "absent.json"))
+    assert status == 78
+    assert "FATAL: wallet keypair not readable" in out
     assert "PYTHON_CALLED" not in calls
+    assert "NOT started" not in out
+
+
+def test_wallet_path_that_is_a_directory_exits_78(tmp_path):
+    """A missing Docker bind source becomes a root-owned directory. That is
+    not a readable keypair file and must abort with EX_CONFIG (78), not arm."""
+    kp_dir = tmp_path / "kpdir"
+    kp_dir.mkdir()
+    status, out, calls = _run(tmp_path, armed=True, kp_path=str(kp_dir))
+    assert status == 78
+    assert "FATAL: wallet keypair not readable by uid" in out
+    assert "PYTHON_CALLED" not in calls
+
+
+@pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0,
+    reason="root can read a 0000 file; permission case is not observable",
+)
+def test_unreadable_wallet_file_exits_78(tmp_path):
+    kp = tmp_path / "kp.json"
+    kp.write_text("[1,2,3]")
+    kp.chmod(0o000)
+    status, out, calls = _run(tmp_path, armed=True, kp_path=str(kp))
+    assert status == 78
+    assert "FATAL: wallet keypair not readable" in out
+    assert "PYTHON_CALLED" not in calls
+
+
+def test_unset_wallet_path_keeps_clean_not_started_behaviour(tmp_path):
+    """No path and no JSON: not a config error — the normal unarmed fallback."""
+    status, out, calls = _run(tmp_path, armed=True)
+    assert status == 0
     assert "NOT started" in out
+    assert "PYTHON_CALLED" not in calls
 
 
 def test_armed_with_existing_keypair_file_starts_the_live_cycle(tmp_path):
@@ -240,6 +283,31 @@ def test_role_live_starts_only_live_cycle(tmp_path):
     assert "LIVE-only role" in out
     assert "PYTHON_CALLED: run_live_cycle.py" in calls
     assert "UVICORN_CALLED" not in calls
+
+
+def test_role_live_disarmed_stays_up_without_heartbeat(tmp_path):
+    """§87 A3: `restart: unless-stopped` restarts even after exit 0, so the
+    disarmed live container must stay up (healthcheck fails instead of
+    flapping). It must never start the trading cycle."""
+    status, out, calls = _run(tmp_path, armed=False, role="live")
+    assert status == 0
+    assert "NOT started" in out
+    assert "staying up without a heartbeat" in out
+    assert "TAIL_CALLED: -f /dev/null" in calls
+    assert "PYTHON_CALLED" not in calls
+
+
+def test_role_live_armed_with_unreadable_wallet_exits_78(tmp_path):
+    kp = tmp_path / "kp.json"
+    kp.write_text("[1,2,3]")
+    kp.chmod(0o000)
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root can read a 0000 file")
+    status, out, calls = _run(tmp_path, armed=True, kp_path=str(kp),
+                             role="live")
+    assert status == 78
+    assert "FATAL: wallet keypair not readable" in out
+    assert "PYTHON_CALLED" not in calls
 
 
 def test_role_unset_warns_about_shared_process_space(tmp_path):
