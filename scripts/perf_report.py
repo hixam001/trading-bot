@@ -30,6 +30,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import logging
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,8 @@ for p in (str(BACKEND),):
         sys.path.insert(0, p)
 
 LEDGER_PATH = BACKEND / "live_execution" / "state" / "executions.json"
+
+log = logging.getLogger(__name__)
 
 
 # _ts_epoch: epoch seconds from a record timestamp — epoch float/int for
@@ -273,10 +276,13 @@ async def shadow_risk_flag_stats(since_ts: float | None = None) -> dict[str, dic
                 })
 
     flag_outcomes: dict[str, list[dict]] = {}
+    from api import db
     try:
         async with db.get_db() as conn:
             feed = await db.get_feed_events(conn, limit=2000)
     except Exception:
+        log.warning("shadow risk-flag feed unreadable — flag outcomes empty",
+                    exc_info=True)
         feed = []
 
     mint_flags: dict[str, set[str]] = {}

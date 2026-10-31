@@ -194,10 +194,14 @@ async def _mirror_live_trades(portfolio: PortfolioState) -> None:
         log.warning("live trades mirror failed (non-fatal)", exc_info=True)
 
 
-async def _mirror_live_close(mint: str, exit_price_usd: float,
+async def _mirror_live_close(mint: str, exit_price_usd: float | None,
                              pnl_usd: float, rule_id: str) -> None:
     """§52 Phase B: close the mirrored trade row on a full live close.
-    pnl_pct is derived from the ledger's own cost basis (authoritative)."""
+    pnl_pct is derived from the ledger's own cost basis (authoritative).
+
+    E2 (§87): `exit_price_usd=None` closes the row with an explicitly
+    unknown price rather than fabricating one when the sold quantity is
+    unknown; the realized P&L (ledger truth) is still written."""
     try:
         async with db.get_db() as conn:
             rows = await db.get_open_trades(conn)
@@ -564,6 +568,66 @@ async def _crosscheck_basis(meta: dict) -> list:
     return checks
 
 
+_unresolved_qty_alerted: set[str] = set()
+
+
+def _alert_unresolved_quantity(mint: str) -> None:
+    """E2 (§87): a journal row with no token quantity is not $1/1 token.
+
+    Alert once per mint per process; the position is skipped by pricing and
+    exits until an operator resolves the ledger.
+    """
+    if mint in _unresolved_qty_alerted:
+        return
+    _unresolved_qty_alerted.add(mint)
+    log.error("manage %s: journal has no token quantity (unresolved "
+              "quantity) — skipped for pricing/exits, operator review",
+              mint[:8])
+    try:
+        from alerts import alert_nowait, AlertEvent
+        alert_nowait(
+            AlertEvent.EXIT_UNRESOLVED,
+            (f"Unresolved quantity for {mint[:8]}: the journal row has no "
+             f"token amount. Position skipped for pricing/exits (never "
+             f"invented). Inspect the ledger and repair the row."),
+            key=f"unresolved_quantity:{mint}",
+        )
+    except Exception:
+        log.warning("unresolved-quantity alert enqueue failed", exc_info=True)
+
+
+def _book_meta_from_ledger(ledger: ExecutionLedger) -> dict:
+    """E3 (§87): ONE ledger→meta aggregation for the cycle and the scanner.
+
+    Multi-row positions sum cost/tokens and derive the entry price as
+    cost/tokens (the old code kept the FIRST row's price, so a second buy at
+    a different price skewed every stop/trail measured from it).
+    """
+    meta: dict = {}
+    for r in ledger._load():   # same package — internal read is accepted
+        if r.get("kind") != "buy" or r.get("status") not in ledger._OPEN:
+            continue
+        mint = r.get("mint")
+        if not mint:
+            continue
+        tokens = float(r.get("tokens_out") or 0.0)
+        cost = float(r.get("usd_size") or 0.0)
+        if mint in meta:
+            meta[mint]["tokens"] += tokens
+            meta[mint]["cost"] += cost
+            continue
+        meta[mint] = {
+            "price_usd": float(r.get("price_usd") or 0.0),
+            "tokens": tokens,
+            "cost": cost,
+            "opened_ts": float(r.get("ts") or 0.0),
+        }
+    for m in meta.values():
+        if m["tokens"] > 0:
+            m["price_usd"] = m["cost"] / m["tokens"]
+    return meta
+
+
 async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict, dict]:
     """PortfolioState for the gate built from the LIVE ledger (read-only).
 
@@ -579,30 +643,17 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
     Returns (portfolio, {mint: {price_usd, tokens, opened_ts, ...}} metadata,
     chain reconciliation report).
     """
-    meta: dict = {}
-    for r in ledger._load():   # same package - internal read is acceptable
-        if r.get("kind") != "buy" or r.get("status") not in ledger._OPEN:
-            continue
-        mint = r["mint"]
-        price = float(r.get("price_usd") or 0)
-        tokens = float(r.get("tokens_out") or 0)
-        if mint in meta:
-            m = meta[mint]
-            m["tokens"] += tokens
-            m["cost"] += float(r.get("usd_size") or 0)
-            continue
-        meta[mint] = {
-            "price_usd": price,
-            "tokens": tokens,
-            "cost": float(r.get("usd_size") or 0),
-            "opened_ts": float(r.get("ts") or 0),
-        }
-    chain_report = await _reconcile_with_chain(meta)
+    meta: dict = _book_meta_from_ledger(ledger)
+    chain_report = await _reconcile_with_chain(meta, ledger=ledger)
     positions: list[Trade] = []
     for mint, m in meta.items():
         if m.get("chain_excluded"):
             continue   # chain says the tokens are gone — not a position today
-        qty = m["tokens"] or 1.0
+        if float(m.get("tokens") or 0.0) <= 0:
+            # E2: zero tokens is NOT one token. Skip pricing/exit evaluation
+            # (and the mirror) until the row has a real quantity.
+            _alert_unresolved_quantity(mint)
+            continue
         positions.append(Trade(
             trade_id=f"live-{mint[:8]}",
             symbol=mint[:6],
@@ -610,7 +661,7 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
             opened_at=_iso(m["opened_ts"]), 
             entry_price_usd=m["price_usd"],
             position_size_usd=m["cost"],
-            quantity=qty,
+            quantity=float(m["tokens"]),
             candidate_snapshot={}, 
             thesis="live book", 
             is_open=True,
@@ -670,11 +721,10 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
     except Exception as exc:
         log.warning("live USDC balance unavailable (%s) - cash=0 "
                     "(no entries this cycle)", exc)
-        try:
-            from live_execution.reconcile import check_wallet_drop
-            check_wallet_drop(None, None, ledger=ledger)
-        except Exception:
-            pass
+        # E4 (§87): the inner block already ran check_wallet_drop with the
+        # balance it could read (None for each unreadable side). Re-running
+        # it here with (None, None) added nothing and hid which channel was
+        # unknown; unreadable balances are SKIPPED, not checked twice.
     return PortfolioState(cash_usd=cash, open_positions=positions), meta, chain_report
 
 
@@ -766,6 +816,11 @@ async def _scan_exits_for_position(
     """
     if m.get("chain_excluded"):
         return   # A2: chain says the tokens are gone — nothing to exit
+    if float(m.get("tokens") or 0.0) <= 0:
+        # E2: never price/exit an invented 1-token position. The row stays
+        # in the book (caps/slots) but is skipped until repaired.
+        _alert_unresolved_quantity(mint)
+        return
     try:
         dec = await _cached_decimals(mint)
         if dec is None:
@@ -809,7 +864,7 @@ async def _scan_exits_for_position(
     trade = Trade(
         trade_id=trade_id, symbol=mint[:6], mint_address=mint,
         opened_at=_iso(m["opened_ts"]), entry_price_usd=m["price_usd"],
-        position_size_usd=m["cost"], quantity=m["tokens"] or 1.0,
+        position_size_usd=m["cost"], quantity=float(m["tokens"]),
         candidate_snapshot={}, thesis="live book", is_open=True,
         high_water_usd=hwm[mint],
     )
@@ -923,12 +978,25 @@ async def _scan_exits_for_position(
         # clamped, skewing the mirrored realized_pnl_pct that calibration /
         # learning / perf_report consume. pnl_usd itself keeps the §50
         # full-cost write-off (dust); only the price must be the fill price.
-        sold_tokens = result.tokens or m.get("tokens") or 1.0
-        if sold_tokens <= 0:
-            sold_tokens = 1.0
+        sold_tokens = result.tokens
+        if sold_tokens is None or float(sold_tokens) <= 0:
+            sold_tokens = m.get("tokens")
+        try:
+            sold_tokens = (float(sold_tokens)
+                           if sold_tokens is not None else None)
+        except (TypeError, ValueError):
+            sold_tokens = None
+        exit_price = None
+        if (sold_tokens is not None and sold_tokens > 0
+                and result.usd_value is not None):
+            exit_price = result.usd_value / sold_tokens
+        else:
+            log.warning("mirror price for %s skipped: sold quantity/proceeds "
+                        "unknown (sold_tokens=%r, usd_value=%r) — closing the "
+                        "row without fabricating a price", mint[:8],
+                        sold_tokens, result.usd_value)
         await _mirror_live_close(mint,
-                                  exit_price_usd=result.usd_value
-                                  / sold_tokens,
+                                  exit_price_usd=exit_price,
                                   pnl_usd=pnl, rule_id=decision.rule_id)
         try:
             asyncio.create_task(_store_live_reflection(
@@ -1025,23 +1093,11 @@ def _journal_meta(ledger: ExecutionLedger, flags: dict) -> dict:
     (chain_excluded / chain_tokens) for any mint still present. The fast
     exit scanner must never price a stale position: after a close lands in
     the ledger, the next 15s scan re-derives the book from disk instead of
-    reusing the cycle's pre-close snapshot."""
-    meta: dict = {}
-    for r in ledger._load():   # same package — internal read is accepted
-        if r.get("kind") != "buy" or r.get("status") not in ledger._OPEN:
-            continue
-        mint = r.get("mint")
-        if mint in meta:
-            m = meta[mint]
-            m["tokens"] += float(r.get("tokens_out") or 0.0)
-            m["cost"] += float(r.get("usd_size") or 0.0)
-            continue
-        meta[mint] = {
-            "price_usd": float(r.get("price_usd") or 0.0),
-            "tokens": float(r.get("tokens_out") or 0.0),
-            "cost": float(r.get("usd_size") or 0.0),
-            "opened_ts": float(r.get("ts") or 0.0),
-        }
+    reusing the cycle's pre-close snapshot.
+
+    E3 (§87): the aggregation lives in `_book_meta_from_ledger`, shared with
+    the cycle so the two cadences can never disagree on entry price."""
+    meta = _book_meta_from_ledger(ledger)
     for mint, fl in (flags or {}).items():
         if mint in meta:
             meta[mint].update({k: v for k, v in fl.items()

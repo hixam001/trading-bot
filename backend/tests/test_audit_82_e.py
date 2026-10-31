@@ -30,11 +30,12 @@ def test_mutation_log_references_real_tests():
     referenced_tests = set(re.findall(r"`(test_\w+)`", content))
     assert len(referenced_tests) > 0, "No tests found in docs/17_MUTATION_LOG.md"
 
-    # Find all test definitions across backend/tests/
-    tests_dir = REPO_ROOT / "backend" / "tests"
+    # Find all test definitions across backend/ (mutation selectors may live
+    # in nested suites such as backend/live_execution/tests/).
+    backend_dir = REPO_ROOT / "backend"
     defined_tests = set()
 
-    for test_file in tests_dir.rglob("*.py"):
+    for test_file in backend_dir.rglob("*.py"):
         file_text = test_file.read_text(encoding="utf-8")
         for match in re.finditer(r"^\s*(?:async\s+)?def\s+(test_\w+)\s*\(", file_text, re.MULTILINE):
             defined_tests.add(match.group(1))
