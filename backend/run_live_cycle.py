@@ -30,6 +30,7 @@ import argparse
 import asyncio
 import json
 import logging
+import signal
 import sys
 import time
 from datetime import datetime, timezone
@@ -84,6 +85,25 @@ _EXIT_LOCK = asyncio.Lock()
 # change. Only non-None results are cached: unknown stays unknown (fail-
 # closed, retried next pass — never a guessed default, the decimals lesson).
 _DECIMALS_CACHE: dict[str, int] = {}
+
+
+def _beat() -> None:
+    """§87 B: refresh the liveness heartbeat.
+
+    Called at stage boundaries inside a cycle as well as once per loop tick.
+    A long brain/read stage therefore does not look like a hung process, and
+    a genuinely hung cycle is still surfaced by the existing
+    HEARTBEAT_STALE alert. This deliberately does NOT impose a hard timeout
+    that could cancel a cycle mid-order — sign/send/ledger is never
+    interrupted by the watchdog.
+    """
+    try:
+        hb_file = live_config.STATE_DIR / "heartbeat.txt"
+        tmp_hb = live_config.STATE_DIR / "heartbeat.txt.tmp"
+        tmp_hb.write_text(f"{int(time.time())}\n", encoding="utf-8")
+        tmp_hb.replace(hb_file)
+    except Exception:
+        pass
 
 
 async def _cached_decimals(mint: str) -> int | None:
@@ -951,6 +971,7 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
     provider = provider or build_provider()
     candidates = await read_candidates(provider)
     await enrich_candidates(candidates)
+    _beat()
 
     regime = compute_market_regime(candidates)
     # Persist the regime snapshot + a per-candidate decision feed so the
@@ -1003,6 +1024,7 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
             log.warning("brain call failed - falling back to per-candidate "
                         "thinker (non-fatal)", exc_info=True)
             brain_result = None
+    _beat()
 
     thinker = thinker or Thinker()
     outcome = {"entries": [], "exits": [], "regime_ok": regime.regime_ok,
@@ -1080,6 +1102,7 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
         except Exception:
             log.warning("feed journal failed for %s (non-fatal)",
                         c.symbol, exc_info=True)
+        _beat()
         if not entry_allowed:
             continue
         cash = portfolio.cash_usd
@@ -1231,6 +1254,37 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
 
 
 
+async def _graceful_shutdown(exit_task: asyncio.Task | None, provider,
+                             thinker) -> None:
+    """§87 B: stop the fast exit scanner WITHOUT interrupting an order.
+
+    Order matters: wait for `_EXIT_LOCK` first (an in-flight exit scan/sell
+    finishes its sign/send/ledger write), THEN cancel the scanner task and
+    await it. Cancelling the scanner before taking the lock could kill it
+    between broadcast and the ledger reduce — the exact double-fill hazard.
+    """
+    async with _EXIT_LOCK:
+        if exit_task is not None and not exit_task.done():
+            exit_task.cancel()
+            try:
+                await exit_task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                log.warning("exit scanner shutdown raised", exc_info=True)
+    close_provider = getattr(provider, "aclose", None)
+    if close_provider is not None:
+        try:
+            await close_provider()
+        except Exception:
+            log.warning("provider close failed", exc_info=True)
+    try:
+        await thinker.aclose()
+    except Exception:
+        log.warning("thinker close failed", exc_info=True)
+    log.info("graceful shutdown complete")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="reference-style live decision cycle")
     parser.add_argument("--once", action="store_true", help="run one cycle and exit")
@@ -1287,6 +1341,18 @@ def main() -> None:
         log.warning("wallet not loaded or pubkey unverified: %s", exc)
 
     async def loop() -> None:
+        # §87 B: SIGTERM/SIGINT set a flag; the running cycle is NEVER
+        # cancelled mid-order. Docker/tini forwards the signal, the loop
+        # sleeps interruptibly, and the finally block drains the exit
+        # scanner under _EXIT_LOCK before closing clients.
+        stop = asyncio.Event()
+        running_loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                running_loop.add_signal_handler(sig, stop.set)
+            except (NotImplementedError, RuntimeError, ValueError):
+                log.warning("signal handler for %s unavailable", sig.name)
+
         # §52 Phase B: the daily learning loop (G1–G3 + REF-R9 calibration
         # persistence) — ported from the paper tick so the LIVE book keeps
         # aggregate stats, rejection breakdowns and the published calibration.
@@ -1325,15 +1391,9 @@ def main() -> None:
             log.info("fast exit scanner: every %.0fs (§57)",
                      paper_config.EXIT_SCAN_INTERVAL_SECONDS)
         try:
-            while True:
+            while not stop.is_set():
                 # Update heartbeat file for process/container health checks (§77 B2)
-                try:
-                    hb_file = live_config.STATE_DIR / "heartbeat.txt"
-                    tmp_hb = live_config.STATE_DIR / "heartbeat.txt.tmp"
-                    tmp_hb.write_text(f"{int(time.time())}\n", encoding="utf-8")
-                    tmp_hb.replace(hb_file)
-                except Exception:
-                    pass
+                _beat()
 
                 try:
                     await run_cycle(once=args.once, provider=provider,
@@ -1350,20 +1410,15 @@ def main() -> None:
                         log.exception("daily learning failed (non-fatal)")
                 if args.once:
                     return
-                await asyncio.sleep(paper_config.TICK_INTERVAL_SECONDS)
-        finally:
-            if exit_task is not None:
-                exit_task.cancel()
-            close_provider = getattr(provider, "aclose", None)
-            if close_provider is not None:
+                # Interruptible sleep: a signal wakes this immediately, but a
+                # cycle already running was allowed to finish above.
                 try:
-                    await close_provider()
-                except Exception:
-                    log.warning("provider close failed", exc_info=True)
-            try:
-                await thinker.aclose()
-            except Exception:
-                log.warning("thinker close failed", exc_info=True)
+                    await asyncio.wait_for(stop.wait(),
+                                           timeout=paper_config.TICK_INTERVAL_SECONDS)
+                except asyncio.TimeoutError:
+                    pass
+        finally:
+            await _graceful_shutdown(exit_task, provider, thinker)
 
     asyncio.run(loop())
 
