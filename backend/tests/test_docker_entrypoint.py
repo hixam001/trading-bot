@@ -50,7 +50,7 @@ pytestmark = pytest.mark.skipif(
 def _run(tmp_path, *, armed: bool, kp_path: str = "", kp_json: str = "",
          live_rc: int = 0, live_sleep: int = 0,
          api_rc: int = 0, api_sleep: int = 0,
-         role: str = ""):
+         role: str = "", args: list[str] | None = None):
     """Run the entrypoint in a sandbox; return (exit_status, output, calls)."""
     app = tmp_path / "app"
     (app / "live_execution").mkdir(parents=True)
@@ -81,8 +81,8 @@ def _run(tmp_path, *, armed: bool, kp_path: str = "", kp_json: str = "",
         "PATH": f"{binp}{os.pathsep}{os.environ.get('PATH', '')}",
     }
     proc = subprocess.run(
-        ["bash", str(ENTRYPOINT)], env=env, capture_output=True,
-        text=True, timeout=60,
+        ["bash", str(ENTRYPOINT), *(args or [])], env=env,
+        capture_output=True, text=True, timeout=60,
     )
     return proc.returncode, proc.stdout + proc.stderr, calls.read_text()
 
@@ -315,3 +315,58 @@ def test_role_unset_warns_about_shared_process_space(tmp_path):
     status, out, calls = _run(tmp_path, armed=False, role="")
     assert "WARNING: ROLE unset" in out
     assert "shares process space" in out
+
+
+# --- §88 B: explicit commands never start the engine -------------------------
+
+def test_explicit_command_wins_over_an_armed_live_role(tmp_path):
+    """`docker compose run --rm live python /app/scripts/...` must execute the
+    operator command, never fall through to run_live_cycle.py. A second live
+    engine would be a second wallet signer."""
+    status, out, calls = _run(
+        tmp_path, armed=True, kp_json="[1,2,3]", role="live",
+        args=["python", "/app/scripts/preflight_deploy.py"],
+    )
+    assert status == 0
+    assert "PYTHON_CALLED: /app/scripts/preflight_deploy.py" in calls
+    assert "run_live_cycle.py" not in calls
+    assert "UVICORN_CALLED" not in calls
+    assert "ARMED + wallet configured" not in out
+
+
+def test_explicit_command_wins_even_without_a_role(tmp_path):
+    status, out, calls = _run(
+        tmp_path, armed=True, kp_json="[1,2,3]", role="",
+        args=["python", "-c", "print('operator')"],
+    )
+    assert status == 0
+    assert "PYTHON_CALLED: -c print('operator')" in calls
+    assert "run_live_cycle.py" not in calls
+    assert "UVICORN_CALLED" not in calls
+
+
+def test_no_doc_starts_the_engine_with_a_bare_compose_run():
+    """Static docs contract: operator commands must never be documented as a
+    plain `docker compose run [--rm] live python …` (which would start the
+    live engine before §88 B, and is still an unnecessary footgun)."""
+    import re
+    root = config.BASE_DIR.parent
+    docs = list((root / "docs").glob("*.md")) + [
+        root / "README.md", root / "handoff.md",
+    ]
+    forbidden = re.compile(r"docker compose run(?:\s+--rm)?\s+live\s+(?!-)")
+    offenders = []
+    for path in docs:
+        if not path.is_file():
+            continue
+        for lineno, line in enumerate(
+                path.read_text(encoding="utf-8").splitlines(), start=1):
+            if forbidden.search(line):
+                offenders.append(f"{path.relative_to(root)}:{lineno}: {line}")
+    assert not offenders, (
+        "bare `docker compose run … live <cmd>` in docs:\n"
+        + "\n".join(offenders)
+    )
+    text = "\n".join(p.read_text(encoding="utf-8")
+                     for p in docs if p.is_file())
+    assert "compose run --rm live python" not in text

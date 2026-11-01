@@ -22,6 +22,15 @@ if ! cd "$APP_DIR"; then
   exit 1
 fi
 
+# §88 B: an explicit command (compose `command:` or `docker compose run …
+# <cmd>`) is honoured BEFORE any role logic. Without this, `compose run live
+# python …` silently started a SECOND live engine — a second wallet signer —
+# instead of running the operator script. Relative paths resolve from
+# /app/backend; docs use absolute /app/scripts/… paths.
+if [ "$#" -gt 0 ]; then
+  exec "$@"
+fi
+
 # Audit A8: anchor regex on actual assignment value, ignoring comments like '# was True'.
 ARMED="$(grep -cE '^LIVE_TRADING_ENABLED\b[^=]*=[[:space:]]*True\b' live_execution/config.py 2>/dev/null || true)"
 

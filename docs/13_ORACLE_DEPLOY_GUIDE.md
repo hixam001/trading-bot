@@ -153,10 +153,10 @@ secret. It prints a PASS/WARN/FAIL table and exits **1** if any check fails:
 **Do not run `docker compose up -d --build` while any line says FAIL.** WARNs
 are operator decisions; read them before arming.
 
-> In-image variant (after the image exists): `docker compose run --rm live
-> python scripts/preflight_deploy.py`. Run the host variant for the wallet
-> ownership/mode check — the container sees the bind target
-> (`/run/secrets/wallet_keypair`), not the host file.
+> In-image variant (after the image exists):
+> `docker compose run --rm --entrypoint python live /app/scripts/preflight_deploy.py`.
+> Run the host variant for the wallet ownership/mode check — the container
+> sees the bind target (`/run/secrets/wallet_keypair`), not the host file.
 
 ## Step 6 — Run the engine
 
@@ -319,7 +319,7 @@ want a vanity domain decoupled from the engine.
 # On the VM — encrypted state + DB backup via the in-image script.
 # It writes into the engine_backups volume (mounted at /app/backups) with
 # retention pruning and refuses to write an incomplete archive:
-docker compose exec live python scripts/backup_state.py --backup-dir /app/backups
+docker compose exec live python /app/scripts/backup_state.py --backup-dir /app/backups
 
 # Whole-volume snapshot (compose project prefix included; list the four
 # volumes with `docker volume ls | grep engine_`):

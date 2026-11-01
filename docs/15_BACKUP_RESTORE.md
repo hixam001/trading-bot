@@ -134,11 +134,14 @@ Operators should periodically practice a restore drill in a scratch directory to
 
 ### Drill Procedure:
 
-> **Never use plain `docker compose run live python …` for operator scripts.**
-> The service has an ENTRYPOINT (`docker-entrypoint.sh`) that ignores command
-> arguments, so a plain `run` would start the live cycle instead of the script.
-> Always override it with `--entrypoint python` (restore) or use
-> `docker compose exec` against the running container (backup).
+> **Never start an operator script with a plain `docker compose run` against
+> the `live` service.** The service has an ENTRYPOINT
+> (`docker-entrypoint.sh`) that runs the live cycle when no command is given,
+> and an accidental second live engine is a second wallet signer. Always
+> override it with `--entrypoint python` (restore) or use
+> `docker compose exec` against the running container (backup). Since §88 B
+> an explicit command is executed instead of the engine, but the override
+> stays mandatory: it is unambiguous and works with older images.
 
 1. **Select an archive** (inside the `live` container, where `/app/backups`
    is the `engine_backups` volume):
@@ -153,7 +156,7 @@ Operators should periodically practice a restore drill in a scratch directory to
    sudo install -d -o 10001 -g 10001 /tmp/trading-bot-restore-drill
    docker compose run --rm --entrypoint python \
      -v /tmp/trading-bot-restore-drill:/drill \
-     live scripts/restore_state.py "$LATEST_BACKUP" \
+     live /app/scripts/restore_state.py "$LATEST_BACKUP" \
        --target-state-dir /drill/state \
        --target-db-path /drill/trading_bot.db \
        --reconcile
@@ -192,7 +195,7 @@ Operators should periodically practice a restore drill in a scratch directory to
    the normal entrypoint would start the live cycle instead):
    ```bash
    docker compose run --rm --entrypoint python live \
-       scripts/restore_state.py /app/backups/state-YYYYMMDDTHHMMSSZ.tar.gz.enc \
+       /app/scripts/restore_state.py /app/backups/state-YYYYMMDDTHHMMSSZ.tar.gz.enc \
        --target-state-dir /app/backend/live_execution/state \
        --target-db-path /app/data/trading_bot.db \
        --force \
@@ -204,7 +207,7 @@ Operators should periodically practice a restore drill in a scratch directory to
    - To re-run reconciliation at any time without re-restoring the archive, use `--reconcile-only`:
      ```bash
      docker compose run --rm --entrypoint python live \
-       scripts/restore_state.py --reconcile-only \
+       /app/scripts/restore_state.py --reconcile-only \
        --target-state-dir /app/backend/live_execution/state
      ```
    - `--reconcile-only` exits `0` when clean, `2` when chain/journal discrepancies are found, and `1`

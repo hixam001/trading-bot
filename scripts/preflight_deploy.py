@@ -11,7 +11,7 @@ Runs on the bare VM with the standard library + `cryptography` only:
 
     python3 scripts/preflight_deploy.py
     python3 scripts/preflight_deploy.py --env-file /opt/trading-bot/app/.env
-    docker compose run --rm live python scripts/preflight_deploy.py
+    docker compose run --rm --entrypoint python live /app/scripts/preflight_deploy.py
 
 The in-image variant sees the container's `/run/secrets/wallet_keypair`, not
 the host bind source; run it on the host when checking host ownership/mode.
