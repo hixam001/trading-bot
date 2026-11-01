@@ -47,6 +47,18 @@ FORBIDDEN_NTFY_TOPICS = frozenset({
     "test",
 })
 
+# Shell-exported values override .env for interpolation, matching compose.
+# Kept in one tuple so tests can isolate the process environment.
+ENV_OVERRIDE_KEYS = (
+    "DATA_BACKEND", "MAIN_LLM_PROVIDER", "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY", "ADMIN_TOKEN", "SEARXNG_SECRET",
+    "BACKUP_ENCRYPTION_KEY", "SECRET_STORE_KEY", "FRONTEND_ORIGIN",
+    "SOLANA_RPC_URL", "SOLANA_RPC_URL_2", "ALERT_NTFY_URL",
+    "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
+    "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
+    "WALLET_KEYPAIR_HOST_PATH", "EXPECTED_WALLET_ADDRESS",
+)
+
 DEFAULT_SEARXNG_SECRETS = frozenset({
     "ultrasecretkey",
     "searxng",
@@ -487,15 +499,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # Shell-exported values override .env for interpolation, matching compose.
     env = {**file_env}
-    for key in (
-        "DATA_BACKEND", "MAIN_LLM_PROVIDER", "DEEPSEEK_API_KEY",
-        "GROQ_API_KEY", "ADMIN_TOKEN", "SEARXNG_SECRET",
-        "BACKUP_ENCRYPTION_KEY", "SECRET_STORE_KEY", "FRONTEND_ORIGIN",
-        "SOLANA_RPC_URL", "SOLANA_RPC_URL_2", "ALERT_NTFY_URL",
-        "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
-        "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
-        "WALLET_KEYPAIR_HOST_PATH", "EXPECTED_WALLET_ADDRESS",
-    ):
+    for key in ENV_OVERRIDE_KEYS:
         if key in os.environ:
             env[key] = os.environ[key]
 

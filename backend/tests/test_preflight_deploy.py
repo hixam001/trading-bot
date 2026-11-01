@@ -303,12 +303,14 @@ def test_cli_returns_zero_when_every_check_passes(tmp_path, monkeypatch,
     env_file.write_text("".join(f"{k}={v}\n" for k, v in env.items()))
     env_file.chmod(0o600)
     monkeypatch.setattr(pf, "_default_uid", lambda p: 10001)
+    for key in pf.ENV_OVERRIDE_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
     rc = pf.main(["--env-file", str(env_file), "--root", str(tmp_path),
                   "--skip-compose"])
 
     out = capsys.readouterr().out
-    assert rc == 0
+    assert rc == 0, out
     assert "0 FAIL" in out
     assert env["BACKUP_ENCRYPTION_KEY"] not in out, "secret leaked to output"
 
