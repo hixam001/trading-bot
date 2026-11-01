@@ -45,7 +45,7 @@ class Thinker:
 async def fake_exit_scan(*args, **kwargs):
     await asyncio.Event().wait()
 
-async def fake_cycle(once=False, provider=None, thinker=None):
+async def fake_cycle(once=False, provider=None, thinker=None, stop=None):
     print("CYCLE_START", flush=True)
     delay = float(os.environ.get("CYCLE_SLEEP", "0"))
     if delay:

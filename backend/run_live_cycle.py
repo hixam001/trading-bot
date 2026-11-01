@@ -819,6 +819,11 @@ _exit_retry_state: dict[str, dict] = {}
 # backoff instead of every 15s scan. Risk-off exits (stop/trail/liquidity/
 # invalidation) are capped at 60s so a cascade is never starved by a long
 # backoff earned on an optional trim.
+# §88 F: set by the SIGTERM/SIGINT handler. An in-flight cycle may finish its
+# exits and management, but it must never START a new entry after this is set
+# (the operator asked the process to stop; a new buy would be a surprise fill).
+_STOP_EVENT = asyncio.Event()
+
 _EXIT_RETRY_BASE_SECONDS = 15.0
 _EXIT_RETRY_MAX_SECONDS = 300.0
 _EXIT_RETRY_RISK_OFF_MAX_SECONDS = 60.0
@@ -1331,13 +1336,19 @@ async def _snapshot_funnel(
     return row_id
 
 
-async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
+async def run_cycle(once: bool = False, provider=None, thinker=None,
+                    stop=None) -> dict:
     """One full cycle. Returns a step-by-step outcome record, refusals included.
 
     ``provider``/``thinker`` are owned by the main loop so a long-running
     process reuses one HTTP client pool (and the discovery rotation state)
     instead of constructing and leaking a new stack every tick.
+
+    ``stop`` is the shutdown event (§88 F). When set mid-cycle, exits and
+    position management still run, but no NEW entry is placed. Defaults to
+    the process-wide event the signal handler sets.
     """
+    stop_event = stop if stop is not None else _STOP_EVENT
     ledger = ExecutionLedger(live_config.STATE_DIR / "executions.json")
     # Item 3: heal any commit whose memo went on-chain but whose fill never
     # followed (historical orphans predate the post-memo fail() wiring). Cheap
@@ -1604,6 +1615,15 @@ async def run_cycle(once: bool = False, provider=None, thinker=None) -> dict:
         output_decimals = c.decimals
         if output_decimals is None:
             output_decimals = await _cached_decimals(c.mint_address)
+        # §88 F: a stop signal can arrive while this cycle is sizing. Never
+        # start a NEW entry after it — exits/management already ran above and
+        # an in-flight order is allowed to finish.
+        if stop_event.is_set():
+            log.info("entry skipped: shutting down")
+            outcome["entries"].append(
+                {"symbol": c.symbol, "status": "skipped",
+                 "reason": "shutting down"})
+            continue
         result = await place_order(
             side="buy", mint=c.mint_address, symbol=c.symbol, usd=usd,
             output_decimals=output_decimals,
@@ -1783,7 +1803,8 @@ def main() -> None:
         # cancelled mid-order. Docker/tini forwards the signal, the loop
         # sleeps interruptibly, and the finally block drains the exit
         # scanner under _EXIT_LOCK before closing clients.
-        stop = asyncio.Event()
+        stop = _STOP_EVENT
+        stop.clear()
         running_loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
@@ -1846,7 +1867,7 @@ def main() -> None:
 
                 try:
                     await run_cycle(once=args.once, provider=provider,
-                                    thinker=thinker)
+                                    thinker=thinker, stop=stop)
                 except Exception:
                     log.exception("cycle crashed - continuing")
                 today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
