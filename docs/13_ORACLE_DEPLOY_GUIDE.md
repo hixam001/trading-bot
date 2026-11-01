@@ -144,8 +144,12 @@ secret. It prints a PASS/WARN/FAIL table and exits **1** if any check fails:
 - `FRONTEND_ORIGIN` is `https://` for public hosts (WARN while loopback-only).
 - `SOLANA_RPC_URL_2` exists and uses a different host from `SOLANA_RPC_URL`.
 - An alert channel is configured (`send_test_alert.py` uses the same one).
-- The host wallet bind source exists, is a regular file, mode 0600/0400, owner
-  uid **10001** — a FAIL prints the exact `chown`/`chmod` commands.
+- `.env` selects exactly one wallet secret channel (`WALLET_KEYPAIR_PATH` or
+  `WALLET_KEYPAIR_JSON`); the JSON channel skips the host-file check.
+- For the file channel, the host bind source exists, is a regular file, mode
+  0600/0400, owner uid **10001** — a FAIL prints the exact `chown`/`chmod`
+  commands. Readability is tested only when the preflight itself runs as uid
+  **10001** or root (another local user cannot see the container's access).
 - `docker compose config` parses and the `api` service has no non-empty
   `WALLET_*` value.
 - `.env` is not group/world readable (WARN).

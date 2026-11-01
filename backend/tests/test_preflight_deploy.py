@@ -27,6 +27,7 @@ def _env(**overrides) -> dict[str, str]:
         "SOLANA_RPC_URL_2": "https://solana-mainnet.g.alchemy.com/v2/x",
         "ALERT_NTFY_URL": "https://ntfy.sh",
         "ALERT_NTFY_TOPIC": "private-abc123",
+        "WALLET_KEYPAIR_PATH": "/run/secrets/wallet_keypair",
         "WALLET_KEYPAIR_HOST_PATH": "secrets/wallet_keypair.json",
         "EXPECTED_WALLET_ADDRESS": "ExpectedPubkey1111111111111111111111111",
     }
@@ -252,6 +253,86 @@ def test_wallet_path_is_resolved_relative_to_root(tmp_path):
     checks = pf.check_wallet_file(_env(), tmp_path, uid_reader=lambda p: 10001)
     assert str(tmp_path / "secrets" / "wallet_keypair.json") in (
         next(c for c in checks if c.name == "wallet file").detail)
+
+
+# ---------------------------------------------------------------- wallet channel
+
+def test_wallet_channel_requires_exactly_one_channel():
+    assert pf.check_wallet_channel(_env()).status == pf.PASS
+    assert pf.check_wallet_channel(_env(
+        WALLET_KEYPAIR_PATH="",
+        WALLET_KEYPAIR_JSON="[1,2,3]")).status == pf.PASS
+    assert pf.check_wallet_channel(_env(
+        WALLET_KEYPAIR_JSON="[1,2,3]")).status == pf.WARN
+    assert pf.check_wallet_channel(_env(
+        WALLET_KEYPAIR_PATH="")).status == pf.FAIL
+
+
+def test_json_channel_skips_the_host_keypair_file_check(tmp_path):
+    """A JSON-channel deployment has no host keypair file; that must not FAIL."""
+    checks = _run(_env(WALLET_KEYPAIR_PATH="",
+                       WALLET_KEYPAIR_JSON="[1,2,3]"), tmp_path)
+    assert all(c.status != pf.FAIL for c in checks), checks
+    assert _status(checks, "wallet channel") == pf.PASS
+    assert _status(checks, "wallet file") == pf.PASS
+    assert "skipped" in next(
+        c for c in checks if c.name == "wallet file").detail
+
+
+def test_readability_checked_only_as_container_uid_or_root(tmp_path, monkeypatch):
+    """Running as ubuntu/1000 cannot read a 0600 file owned by 10001, but the
+    container can. The host-side os.access check must not FAIL there."""
+    _wallet(tmp_path)
+    monkeypatch.setattr(pf.os, "access", lambda path, mode: False)
+
+    def check(euid):
+        return pf.check_wallet_file(
+            _env(), tmp_path, uid_reader=lambda p: 10001,
+            euid_reader=lambda: euid)
+
+    assert _status(check(1000), "wallet file") == pf.PASS
+    for euid in (10001, 0):
+        checks = check(euid)
+        assert _status(checks, "wallet file") == pf.FAIL
+        assert "not readable" in next(
+            c for c in checks if c.name == "wallet file").detail
+
+
+def test_env_file_permission_error_is_reported_as_not_traversable(
+        tmp_path, monkeypatch):
+    env_file = tmp_path / ".env"
+    env_file.write_text("X=1\n")
+    real_stat = type(env_file).stat
+
+    def denied(self, *args, **kwargs):
+        if self == env_file:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(env_file), "stat", denied)
+    check = pf.check_env_file(env_file)
+    assert check.status == pf.FAIL
+    assert "directory not traversable" in check.detail
+
+
+def test_wallet_permission_error_is_reported_as_not_traversable(
+        tmp_path, monkeypatch):
+    wallet = _wallet(tmp_path)
+    real_stat = type(wallet).stat
+
+    def denied(self, *args, **kwargs):
+        if self == wallet:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(wallet), "stat", denied)
+    checks = pf.check_wallet_file(
+        _env(), tmp_path, uid_reader=lambda p: 10001,
+        euid_reader=lambda: 1000)
+    wallet_check = next(c for c in checks if c.name == "wallet file")
+    assert wallet_check.status == pf.FAIL
+    assert "directory not traversable" in wallet_check.detail
+    assert "missing" not in wallet_check.detail
 
 
 # ---------------------------------------------------------------- compose

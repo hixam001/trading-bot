@@ -2,8 +2,9 @@
 """
 scripts/preflight_deploy.py — §87 Phase F: pre-flight the VM before arming.
 
-Reads the deployment `.env` (plus exported environment overrides), inspects the
-host wallet bind source, and parses `docker compose config`. Every check is
+Reads the deployment `.env` (plus exported environment overrides), verifies
+the selected wallet secret channel, inspects the host wallet bind source for
+the file channel, and parses `docker compose config`. Every check is
 PASS / WARN / FAIL; the CLI exits 1 if ANY check fails. It never opens a
 network socket and never prints a secret value.
 
@@ -56,8 +57,18 @@ ENV_OVERRIDE_KEYS = (
     "SOLANA_RPC_URL", "SOLANA_RPC_URL_2", "ALERT_NTFY_URL",
     "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
     "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
-    "WALLET_KEYPAIR_HOST_PATH", "EXPECTED_WALLET_ADDRESS",
+    "WALLET_KEYPAIR_PATH", "WALLET_KEYPAIR_HOST_PATH",
+    "EXPECTED_WALLET_ADDRESS",
 )
+
+# The two wallet secret channels are mutually exclusive (see wallet.py):
+# WALLET_KEYPAIR_PATH is the mounted-file channel (preferred on a VM), and
+# WALLET_KEYPAIR_JSON is the in-memory env channel for hosts without mounts.
+# WALLET_KEYPAIR_PATH wins when both are set.
+WALLET_CHANNEL_PATH = "path"
+WALLET_CHANNEL_JSON = "json"
+WALLET_CHANNEL_BOTH = "both"
+WALLET_CHANNEL_NONE = "none"
 
 DEFAULT_SEARXNG_SECRETS = frozenset({
     "ultrasecretkey",
@@ -111,13 +122,40 @@ def _value(env: dict[str, str], key: str) -> str:
     return (env.get(key) or "").strip()
 
 
+def _current_euid() -> int:
+    """Effective uid, or 0 on platforms without geteuid (tests/Windows)."""
+    geteuid = getattr(os, "geteuid", None)
+    return geteuid() if geteuid is not None else 0
+
+
+def _not_traversable_detail(path: Path, euid: int) -> str:
+    return (
+        f"{path}: directory not traversable by uid {euid} — check the "
+        "execute (+x) permission on every parent directory"
+    )
+
+
 def check_env_file(path: Path) -> Check:
-    if not path.exists():
+    """Inspect the .env file without following an unreadable parent path.
+
+    `Path.exists()` swallows PermissionError and reports False, which used to
+    render a non-traversable directory as a false "file missing" FAIL. Stat
+    first so the operator gets the real cause.
+    """
+    euid = _current_euid()
+    try:
+        st = path.stat()
+    except FileNotFoundError:
         return _check("env file", FAIL,
                       f"{path} is missing — copy .env.example and fill it")
-    if not path.is_file():
+    except PermissionError:
+        return _check("env file", FAIL, _not_traversable_detail(path, euid))
+    except OSError as exc:
+        return _check("env file", FAIL,
+                      f"{path} cannot be inspected: {exc}")
+    if not stat.S_ISREG(st.st_mode):
         return _check("env file", FAIL, f"{path} is not a regular file")
-    mode = stat.S_IMODE(path.stat().st_mode)
+    mode = stat.S_IMODE(st.st_mode)
     if mode & 0o077:
         return _check("env file", WARN,
                       f"{path} is group/world readable (mode {mode:o}); "
@@ -287,23 +325,98 @@ def check_alert_channel(env: dict[str, str]) -> Check:
                   "or ALERT_TELEGRAM_BOT_TOKEN + ALERT_TELEGRAM_CHAT_ID")
 
 
+def wallet_channel(env: dict[str, str]) -> str:
+    """Which secret channel `.env` selects: path, json, both, or none."""
+    has_path = bool(_value(env, "WALLET_KEYPAIR_PATH"))
+    has_json = bool(_value(env, "WALLET_KEYPAIR_JSON"))
+    if has_path and has_json:
+        return WALLET_CHANNEL_BOTH
+    if has_json:
+        return WALLET_CHANNEL_JSON
+    if has_path:
+        return WALLET_CHANNEL_PATH
+    return WALLET_CHANNEL_NONE
+
+
+def check_wallet_channel(env: dict[str, str]) -> Check:
+    """`.env` must select exactly one wallet secret channel.
+
+    Without this check a JSON-channel deployment (no host keypair file) was
+    failed by the host-file check even though the engine signs fine, and a
+    no-channel deployment passed the host-file check while the engine would
+    refuse to start.
+    """
+    channel = wallet_channel(env)
+    if channel == WALLET_CHANNEL_NONE:
+        return _check(
+            "wallet channel", FAIL,
+            "no wallet configured: set exactly one of WALLET_KEYPAIR_PATH "
+            "(preferred, /run/secrets/wallet_keypair in compose) or "
+            "WALLET_KEYPAIR_JSON — the engine refuses to sign without one")
+    if channel == WALLET_CHANNEL_BOTH:
+        return _check(
+            "wallet channel", WARN,
+            "both WALLET_KEYPAIR_PATH and WALLET_KEYPAIR_JSON are set; "
+            "WALLET_KEYPAIR_PATH wins and the JSON material is ignored — "
+            "keep exactly one channel")
+    if channel == WALLET_CHANNEL_JSON:
+        return _check(
+            "wallet channel", PASS,
+            "WALLET_KEYPAIR_JSON (env) selected; no host keypair file needed")
+    return _check(
+        "wallet channel", PASS,
+        f"WALLET_KEYPAIR_PATH={_value(env, 'WALLET_KEYPAIR_PATH')} "
+        "(mounted secret file)")
+
+
+def _wallet_identity_check(env: dict[str, str]) -> Check:
+    if _value(env, "EXPECTED_WALLET_ADDRESS"):
+        return _check("wallet identity", PASS,
+                      "EXPECTED_WALLET_ADDRESS is set (pubkey pinned)")
+    return _check(
+        "wallet identity", WARN,
+        "EXPECTED_WALLET_ADDRESS is unset — the keypair's pubkey is not "
+        "pinned; set it before arming")
+
+
 def _default_uid(path: Path) -> int:
     return path.stat().st_uid
 
 
 def check_wallet_file(env: dict[str, str], root: Path,
-                      uid_reader=None) -> list[Check]:
-    """Host bind source checks: regular file, 0600/0400, uid 10001, readable."""
+                      uid_reader=None, euid_reader=None) -> list[Check]:
+    """Host bind source checks: regular file, 0600/0400, uid 10001, readable.
+
+    The host-side readability test is only meaningful when this process runs
+    as the container uid (10001) or root. An operator running the preflight
+    as their own account (e.g. ubuntu/1000) cannot read a chmod-600 file owned
+    by 10001 even though the container can; testing os.access there produced
+    a false FAIL. The ownership/mode checks still run for every euid.
+    """
     if uid_reader is None:
         uid_reader = _default_uid
+    if euid_reader is None:
+        euid_reader = _current_euid
+
+    checks: list[Check] = []
+    if wallet_channel(env) == WALLET_CHANNEL_JSON:
+        checks.append(_check(
+            "wallet file", PASS,
+            "skipped: WALLET_KEYPAIR_JSON channel is selected "
+            "(no host keypair file needed)"))
+        checks.append(_wallet_identity_check(env))
+        return checks
+
     configured = _value(env, "WALLET_KEYPAIR_HOST_PATH")
     host_path = configured or DEFAULT_WALLET_HOST_PATH
     path = Path(host_path)
     if not path.is_absolute():
         path = root / path
 
-    checks: list[Check] = []
-    if not path.exists():
+    euid = euid_reader()
+    try:
+        st = path.stat()
+    except FileNotFoundError:
         checks.append(_check(
             "wallet file", FAIL,
             f"{path} is missing — the compose bind mount needs a host file"))
@@ -312,7 +425,26 @@ def check_wallet_file(env: dict[str, str], root: Path,
             f"create {path}, then: sudo chown {EXPECTED_WALLET_UID}:"
             f"{EXPECTED_WALLET_UID} {path} && sudo chmod 600 {path}"))
         return checks
-    if not path.is_file():
+    except PermissionError:
+        checks.append(_check(
+            "wallet file", FAIL, _not_traversable_detail(path, euid)))
+        checks.append(_check(
+            "wallet fix", FAIL,
+            f"sudo chmod +x the parent directories of {path}, then: sudo "
+            f"chown {EXPECTED_WALLET_UID}:{EXPECTED_WALLET_UID} {path} && "
+            f"sudo chmod 600 {path}"))
+        return checks
+    except OSError as exc:
+        checks.append(_check(
+            "wallet file", FAIL, f"{path} cannot be inspected: {exc}"))
+        checks.append(_check(
+            "wallet fix", FAIL,
+            f"inspect {path} and its parent directories, then: sudo chown "
+            f"{EXPECTED_WALLET_UID}:{EXPECTED_WALLET_UID} {path} && "
+            f"sudo chmod 600 {path}"))
+        return checks
+
+    if not stat.S_ISREG(st.st_mode):
         checks.append(_check(
             "wallet file", FAIL,
             f"{path} is not a regular file (a missing bind source can become "
@@ -324,7 +456,6 @@ def check_wallet_file(env: dict[str, str], root: Path,
             f"sudo chmod 600 {path}"))
         return checks
 
-    st = path.stat()
     mode = stat.S_IMODE(st.st_mode)
     uid = uid_reader(path)
     problems: list[str] = []
@@ -333,8 +464,9 @@ def check_wallet_file(env: dict[str, str], root: Path,
     if uid != EXPECTED_WALLET_UID:
         problems.append(f"owner uid {uid} (container runs as "
                         f"{EXPECTED_WALLET_UID})")
-    if not os.access(path, os.R_OK):
-        problems.append("not readable by the current user")
+    # Only the container uid (or root) can answer "will the engine read it?".
+    if euid in (EXPECTED_WALLET_UID, 0) and not os.access(path, os.R_OK):
+        problems.append(f"not readable by uid {euid}")
 
     if problems:
         checks.append(_check("wallet file", FAIL,
@@ -348,15 +480,7 @@ def check_wallet_file(env: dict[str, str], root: Path,
             "wallet file", PASS,
             f"{path} regular, mode {mode:o}, uid {uid}"))
 
-    expected = _value(env, "EXPECTED_WALLET_ADDRESS")
-    if expected:
-        checks.append(_check("wallet identity", PASS,
-                             "EXPECTED_WALLET_ADDRESS is set (pubkey pinned)"))
-    else:
-        checks.append(_check(
-            "wallet identity", WARN,
-            "EXPECTED_WALLET_ADDRESS is unset — the keypair's pubkey is not "
-            "pinned; set it before arming"))
+    checks.append(_wallet_identity_check(env))
     return checks
 
 
@@ -437,6 +561,7 @@ def run_preflight(env: dict[str, str], root: Path,
                   compose_error: str = "",
                   env_file: Path | None = None,
                   uid_reader=None,
+                  euid_reader=None,
                   include_compose: bool = True) -> list[Check]:
     checks: list[Check] = []
     if env_file is not None:
@@ -450,8 +575,10 @@ def run_preflight(env: dict[str, str], root: Path,
         check_frontend_origin(env),
         check_secondary_rpc(env),
         check_alert_channel(env),
+        check_wallet_channel(env),
     ])
-    checks.extend(check_wallet_file(env, root, uid_reader=uid_reader))
+    checks.extend(check_wallet_file(env, root, uid_reader=uid_reader,
+                                    euid_reader=euid_reader))
     if include_compose:
         checks.extend(check_compose(compose_config, compose_error))
     return checks
