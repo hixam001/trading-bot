@@ -24,6 +24,7 @@ exercise the full flow on devnet with a throwaway keypair BEFORE mainnet.
 from __future__ import annotations
 
 import base64
+import inspect
 import logging
 from dataclasses import asdict, dataclass, field
 from typing import Optional
@@ -174,12 +175,23 @@ async def _broadcast_and_confirm(
     logc=None,
     sealed=None,
     quote: Optional[dict] = None,
+    on_signed=None,
 ) -> OrderResult:
-    """Sign after simulation checks, broadcast via send_checked_swap, confirm. Journal is the CALLER job."""
+    """Sign after simulation checks, broadcast via send_checked_swap, confirm.
+
+    `on_signed(signed_swap)` runs AFTER signing but BEFORE the send (§88 E),
+    so a process crash or an ambiguous send can never leave a signed
+    transaction with no ledger row. If it raises, the send is not attempted:
+    an unjournaled order is never broadcast.
+    """
     from live_execution.exit_errors import SendRejected
 
     signed_swap = await sign_after_checks(swap_b64, payer, intent=intent, quote=quote)
     blockhash = getattr(signed_swap, "blockhash", "") or ""
+    if on_signed is not None:
+        outcome = on_signed(signed_swap)
+        if inspect.isawaitable(outcome):
+            await outcome
     try:
         sent = await solana.send_checked_swap(signed_swap)
     except SendRejected as exc:
@@ -447,10 +459,43 @@ async def place_buy(
         reference_price_usd=reference_price_usd,
     )
 
+    pending_journaled = False
+
+    def _journal_pending(signed_swap) -> None:
+        """§88 E: the row exists before the first byte leaves this process.
+
+        A crash between signing and the outcome write used to lose the only
+        pointer to a possibly-landed transaction. The pending row blocks a
+        re-buy/cap breach immediately and is settled failed on a definitive
+        send failure or replaced by `record_buy` on a confirmed fill.
+        """
+        nonlocal pending_journaled
+        ledger.record_pending_buy(
+            idempotency_key=idempotency_key,
+            mint=mint,
+            usd_size=usd,
+            tokens_out=q["tokens_out"],
+            price_usd=q["price_usd"],
+            signature=getattr(signed_swap, "signature", "") or "",
+            blockhash=getattr(signed_swap, "blockhash", "") or "",
+            commit_hash=sealed["hash"],
+            commit_nonce=sealed["nonce"],
+            commit_payload=intent,
+            commit_sealed_at=sealed.get("sealed_at"),
+            memo_signature=memo_res["signature"],
+            memo_slot=memo_res["slot"],
+            reason="signed; send outcome not yet known",
+        )
+        pending_journaled = True
+        log.info(
+            "PENDING BUY %s $%.2f sig %s journaled BEFORE send",
+            mint[:8], usd, (getattr(signed_swap, "signature", "") or "")[:16])
+
     try:
         swap_b64 = await _build_swap_transaction(q["quote"], addr)
         outcome = await _broadcast_and_confirm(
-            swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=q["quote"]
+            swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed,
+            quote=q["quote"], on_signed=_journal_pending,
         )
     except Exception as exc:
         # ANY build/sign/broadcast error (ExecutionError or not) fails closed
@@ -460,34 +505,6 @@ async def place_buy(
         logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
         return OrderResult(**{**base.to_json(), "status": "failed", "reason": str(exc),
                               "price_impact_pct": impact, **commit_fields})
-
-    if outcome.unresolved and outcome.signature:
-        # §87 C: the send outcome is NOT known. A Solana tx stays landable
-        # until its blockhash expires (~60-90s) — possibly AFTER the 60s poll.
-        # Journal a pending buy so a late fill cannot become an unmanaged
-        # holding: it blocks a re-buy / extra slot / exposure / daily cap now,
-        # and resolve_pending_buys adopts or expires it later.
-        ledger.record_pending_buy(
-            idempotency_key=idempotency_key,
-            mint=mint,
-            usd_size=usd,
-            tokens_out=q["tokens_out"],
-            price_usd=q["price_usd"],
-            signature=outcome.signature,
-            blockhash=outcome.blockhash,
-            commit_hash=sealed["hash"],
-            commit_nonce=sealed["nonce"],
-            commit_payload=intent,
-            commit_sealed_at=sealed.get("sealed_at"),
-            memo_signature=memo_res["signature"],
-            memo_slot=memo_res["slot"],
-            reason=outcome.reason,
-        )
-        log.warning(
-            "PENDING BUY %s $%.2f sig %s: %s — journaled pending (blockhash "
-            "%s); a late land is adopted by resolve_pending_buys, never "
-            "treated as failed", mint[:8], usd, outcome.signature[:16],
-            outcome.reason, outcome.blockhash or "unknown")
 
     if outcome.status == "filled":
         # A4 (repo audit): prefer the ACTUAL amounts read off the confirmed
@@ -521,7 +538,22 @@ async def place_buy(
         # contract: a skipped trade must be as visible as an executed one).
         note = outcome.reason or "fill not confirmed"
         if outcome.unresolved:
-            note += " — pending buy recorded for late resolution"
+            # The pre-send row (§88 E) is already there and must STAY pending:
+            # the signed transaction can still land. resolve_pending_buys owns
+            # the adopt/fail/expire decision.
+            note += " — pending buy remains for late resolution"
+            log.warning(
+                "PENDING BUY %s $%.2f sig %s remains pending (blockhash %s): "
+                "%s", mint[:8], usd, (outcome.signature or "")[:16],
+                outcome.blockhash or "unknown", outcome.reason)
+        elif pending_journaled:
+            # A definitive failure (refused before broadcast, or a landed
+            # on-chain error) releases the pre-send row immediately.
+            ledger.settle_pending_buy(
+                idempotency_key, "failed", reason=note)
+            log.warning(
+                "PENDING BUY %s settled FAILED after definitive send outcome: "
+                "%s", mint[:8], note)
         logc.fail(sealed["hash"], note)
     outcome.commit_hash = sealed["hash"]
     outcome.commit_nonce = sealed["nonce"]

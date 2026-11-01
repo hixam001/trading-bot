@@ -154,6 +154,45 @@ class ExecutionLedger:
         signature: str,
         status: str = "confirmed",
     ) -> ExecutionRecord:
+        """Record a confirmed buy, replacing its pre-send pending row.
+
+        §88 E journals a pending row immediately after signing and BEFORE the
+        send. When the fill confirms, that same key must become ONE open buy:
+        appending a second row would leave the pending row first in the file,
+        so `get_by_idempotency_key` replay would keep reporting "pending" and
+        the same cost could be counted twice. Commit/memo metadata belongs to
+        the attempt, so it is carried over unchanged.
+        """
+        records = self._load()
+        for index, raw in enumerate(records):
+            if (raw.get("kind") == "buy"
+                    and raw.get("idempotency_key") == idempotency_key
+                    and raw.get("status") == "pending"):
+                pending = ExecutionRecord.from_json(raw)
+                rec = ExecutionRecord(
+                    kind="buy",
+                    idempotency_key=idempotency_key,
+                    mint=mint,
+                    usd_size=usd_size,
+                    tokens_out=tokens_out,
+                    price_usd=price_usd,
+                    signature=signature,
+                    status=status,
+                    # Keep the attempt's original timestamp/order: this is the
+                    # same trade, not a new one.
+                    ts=pending.ts,
+                    blockhash=pending.blockhash,
+                    commit_hash=pending.commit_hash,
+                    commit_nonce=pending.commit_nonce,
+                    commit_payload=pending.commit_payload,
+                    commit_sealed_at=pending.commit_sealed_at,
+                    memo_signature=pending.memo_signature,
+                    memo_slot=pending.memo_slot,
+                    reason=pending.reason,
+                )
+                records[index] = rec.to_json()
+                self._save(records)
+                return rec
         rec = ExecutionRecord(
             kind="buy",
             idempotency_key=idempotency_key,

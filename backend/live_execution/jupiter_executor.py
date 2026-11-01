@@ -992,29 +992,24 @@ async def execute_confirmed_trade(
     signature = signed_swap.signature
     blockhash = getattr(signed_swap, "blockhash", "") or ""
 
-    def _record_pending(reason: str) -> None:
-        """§87 C parity with executor.place_buy: never let an ambiguous send
-        disappear. The pending row blocks a re-buy/cap breach until the
-        signature resolves (adopted, failed, or provably expired)."""
-        try:
-            ledger.record_pending_buy(
-                idempotency_key=idempotency_key,
-                mint=output_mint,
-                usd_size=usd_size,
-                tokens_out=quote_result["tokens_out"],
-                price_usd=quote_result["price_usd"],
-                signature=signature,
-                blockhash=blockhash,
-                reason=reason,
-            )
-            log.warning(
-                "PENDING BUY %s $%.2f sig %s: %s — journaled pending "
-                "(blockhash %s)", output_mint[:8], usd_size,
-                signature[:16], reason, blockhash or "unknown")
-        except Exception:
-            log.error("failed to journal pending buy for %s",
-                      output_mint[:8], exc_info=True)
-
+    # §88 E parity with executor.place_buy: journal the pending row AFTER
+    # signing and BEFORE the first send attempt. If this write fails, the
+    # exception propagates and nothing is broadcast — an unjournaled order is
+    # never sent. A confirmed fill replaces this row (same key); a definitive
+    # send failure settles it failed; an ambiguous send leaves it pending.
+    ledger.record_pending_buy(
+        idempotency_key=idempotency_key,
+        mint=output_mint,
+        usd_size=usd_size,
+        tokens_out=quote_result["tokens_out"],
+        price_usd=quote_result["price_usd"],
+        signature=signature,
+        blockhash=blockhash,
+        reason="signed; send outcome not yet known",
+    )
+    log.info(
+        "PENDING BUY %s $%.2f sig %s journaled BEFORE send",
+        output_mint[:8], usd_size, signature[:16])
     log.info(
         "EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s",
         output_mint[:8], usd_size, quote_result["tokens_out"],
@@ -1024,7 +1019,10 @@ async def execute_confirmed_trade(
     try:
         sent = await solana.send_checked_swap(signed_swap)
     except SendRejected as exc:
-        raise ExecutionError(f"every rpc refused the transaction: {exc}") from exc
+        reason = f"every rpc refused the transaction: {exc}"
+        ledger.settle_pending_buy(
+            idempotency_key, "failed", reason=reason)
+        raise ExecutionError(reason) from exc
     if not sent:
         # An ambiguous send is not a definitive rejection: the signed
         # transaction may have landed. Resolve the LOCAL signature before
@@ -1038,29 +1036,28 @@ async def execute_confirmed_trade(
                         signature[:16], exc)
             status = None
         if status is None:
-            reason = "send outcome unresolved (signature not found on-chain)"
-            _record_pending(reason)
-            raise ExecutionError(reason)
-        if status.get("err"):
             raise ExecutionError(
-                f"landed-failed (fee paid): {status['err']}")
+                "send outcome unresolved (signature not found on-chain)")
+        if status.get("err"):
+            reason = f"landed-failed (fee paid): {status['err']}"
+            ledger.settle_pending_buy(
+                idempotency_key, "failed", reason=reason)
+            raise ExecutionError(reason)
         if status.get("confirmationStatus") in ("confirmed", "finalized"):
             conf = {"confirmed": True, "slot": status.get("slot"), "err": None}
         else:
             conf = await solana.confirm_signature(signature)
             if not conf["confirmed"]:
-                reason = (f"not confirmed before timeout: "
-                          f"{conf['err'] or 'unknown'}")
-                _record_pending(reason)
-                raise ExecutionError(reason)
+                raise ExecutionError(
+                    f"not confirmed before timeout: "
+                    f"{conf['err'] or 'unknown'}")
         sent = signature
     else:
         conf = await solana.confirm_signature(sent)
         if not conf["confirmed"]:
-            reason = (f"not confirmed before timeout: "
-                      f"{conf['err'] or 'unknown'}")
-            _record_pending(reason)
-            raise ExecutionError(reason)
+            raise ExecutionError(
+                f"not confirmed before timeout: "
+                f"{conf['err'] or 'unknown'}")
     signature = sent
 
     record = ledger.record_buy(

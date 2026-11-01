@@ -273,26 +273,28 @@ MUTATIONS: list[Mutation] = [
     ),
     # §87-C
     Mutation(
-        phase="§87-C",
-        mutation_id="87C_PENDING_BUY_WRITE",
+        phase="§88-E",
+        mutation_id="88E_PRE_SEND_PENDING_WRITE",
         file_path="backend/live_execution/executor.py",
-        exact_old_text="if outcome.unresolved and outcome.signature:",
-        new_text="if False:",
+        exact_old_text=(
+            "        ledger.record_pending_buy(\n"
+            "            idempotency_key=idempotency_key,\n"
+            "            mint=mint,"
+        ),
+        new_text=(
+            "        (lambda **kwargs: None)(\n"
+            "            idempotency_key=idempotency_key,\n"
+            "            mint=mint,"
+        ),
         test_selector="backend/live_execution/tests/test_executor_memo_flow.py",
-        description="Ambiguous buy pending-ledger write disabled",
+        description="Pre-send pending ledger write disabled (crash loses the signed tx)",
     ),
     Mutation(
         phase="§87-C",
         mutation_id="87C_BLOCKHASH_EXPIRY_PREDICATE",
         file_path="backend/run_live_cycle.py",
-        exact_old_text=(
-            "            if valid is False:\n"
-            "                reason = (\"pending buy expired: blockhash is provably \""
-        ),
-        new_text=(
-            "            if True:\n"
-            "                reason = (\"pending buy expired: blockhash is provably \""
-        ),
+        exact_old_text="                if valid is False:",
+        new_text="                if valid is not True:",
         test_selector="backend/tests/test_pending_buy_resolution.py",
         description="Pending buy expires on unknown blockhash validity (unknown != expired)",
     ),

@@ -219,6 +219,149 @@ async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monke
     assert ledger.get_by_idempotency_key("k-unknown").status == "pending"
 
 
+async def test_signed_buy_is_journaled_before_send_and_survives_a_crash(
+        env, monkeypatch):
+    """§88 E: the pending row must exist BEFORE the first send attempt.
+
+    A crash between signing and the outcome write used to lose the only
+    pointer to a possibly-landed transaction (unmanaged holding). The fake
+    send observes the ledger, then simulates process death.
+    """
+    order = []
+    _arm_balances(monkeypatch)
+
+    async def fake_memo(payer, seal_hash, endpoints=None):
+        order.append("memo")
+        return {"signature": "MEMOSIG", "slot": 5}
+
+    async def fake_quote(mint, decimals, usd, ledger=None):
+        order.append("quote")
+        return {"quote": {"priceImpactPct": "0.001"},
+                "tokens_out": 1.0, "price_usd": usd}
+
+    async def fake_build(quote, addr):
+        order.append("build")
+        return base64.b64encode(b"swap").decode()
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        order.append("sign")
+        return ex.solana.SignedSwap(
+            "CRASHSIG", b"raw", _checked=True, blockhash="BHCRASH")
+
+    ledger = ExecutionLedger(env / "exec.json")
+    observed = {}
+
+    async def crash_send(signed, endpoints=None):
+        order.append("send")
+        observed["pending"] = ledger.pending_buys()
+        raise KeyboardInterrupt("simulated process death")
+
+    monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
+    monkeypatch.setattr(ex, "get_jupiter_quote", fake_quote)
+    monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
+    monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
+    monkeypatch.setattr(ex.solana, "send_checked_swap", crash_send)
+
+    with pytest.raises(KeyboardInterrupt):
+        await ex.place_buy(
+            "MINT", "SYM", 1.5, output_decimals=6,
+            idempotency_key="k-crash", ledger=ledger,
+            reference_price_usd=1.0)
+
+    assert order == ["memo", "quote", "build", "sign", "send"]
+    [seen] = observed["pending"]
+    assert seen.signature == "CRASHSIG"
+    assert seen.blockhash == "BHCRASH"
+    rec = ledger.get_by_idempotency_key("k-crash")
+    assert rec.status == "pending"
+    assert rec.signature == "CRASHSIG"
+    assert rec.blockhash == "BHCRASH"
+    assert rec.commit_hash != "" and rec.memo_signature == "MEMOSIG"
+
+
+async def test_confirmed_fill_replaces_the_pre_send_pending_row(env, monkeypatch):
+    """§88 E: one key → one row. The fill updates the pending row in place
+    (commit/memo metadata preserved) instead of appending a second buy."""
+    order = []
+    _arm_balances(monkeypatch)
+    _arm_fill(monkeypatch, order)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy(
+        "MINT", "SYM", 1.5, output_decimals=6,
+        idempotency_key="k-fill", ledger=ledger,
+        reference_price_usd=1.0)
+
+    assert res.status == "filled"
+    records = ledger._load()
+    assert len(records) == 1
+    assert records[0]["idempotency_key"] == "k-fill"
+    assert records[0]["status"] == "confirmed"
+    assert records[0]["commit_hash"] == res.commit_hash
+    assert records[0]["memo_signature"] == "MEMOSIG"
+    assert records[0]["memo_slot"] == 5
+    assert ledger.get_by_idempotency_key("k-fill").status == "confirmed"
+    assert ledger.open_token_amounts() == {"MINT": pytest.approx(1.0)}
+
+
+async def test_definitive_send_rejection_settles_pending_row_failed(
+        env, monkeypatch):
+    """§88 E: a send refused before broadcast can never land; release the
+    pre-send row immediately instead of leaving a phantom pending buy."""
+    from live_execution.exit_errors import SendRejected
+
+    order = []
+    _arm_balances(monkeypatch)
+    _arm_fill(monkeypatch, order)
+
+    async def reject(signed, endpoints=None):
+        order.append("send")
+        raise SendRejected("every rpc refused", [])
+
+    monkeypatch.setattr(ex.solana, "send_checked_swap", reject)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    res = await ex.place_buy(
+        "MINT", "SYM", 1.5, output_decimals=6,
+        idempotency_key="k-rejected", ledger=ledger,
+        reference_price_usd=1.0)
+
+    assert res.status == "failed"
+    assert "send refused" in res.reason
+    records = ledger._load()
+    assert len(records) == 1
+    assert records[0]["status"] == "failed"
+    assert "send refused" in records[0]["reason"]
+    assert ledger.open_positions() == {}
+    # Failed attempts still count for the day (fees may have been paid); only
+    # a provably expired blockhash releases the cap.
+    assert ledger.deployed_today_usd() == pytest.approx(1.5)
+
+
+async def test_pending_journal_failure_blocks_the_send(env, monkeypatch):
+    """§88 E fail-closed: if the pre-send row cannot be written, nothing is
+    broadcast — an unjournaled order is never sent."""
+    order = []
+    _arm_balances(monkeypatch)
+    _arm_fill(monkeypatch, order)
+    ledger = ExecutionLedger(env / "exec.json")
+
+    def boom(**kwargs):
+        raise RuntimeError("ledger write failed")
+
+    monkeypatch.setattr(ledger, "record_pending_buy", boom)
+
+    res = await ex.place_buy(
+        "MINT", "SYM", 1.5, output_decimals=6,
+        idempotency_key="k-journal-fail", ledger=ledger,
+        reference_price_usd=1.0)
+
+    assert res.status == "failed"
+    assert "ledger write failed" in res.reason
+    assert "send" not in order
+    assert ledger._load() == []
+
+
 async def test_memo_failure_blocks_fill_entirely(env, monkeypatch):
     order = []
     _arm_balances(monkeypatch)

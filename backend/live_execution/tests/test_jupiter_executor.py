@@ -404,6 +404,9 @@ def test_full_mocked_flow_records_ledger_and_dedupes(env, monkeypatch):
 
     rec = ledger.get_by_idempotency_key("trade-1")
     assert rec is not None and rec.signature == "SIG123"
+    # §88 E: the pre-send pending row is replaced, never duplicated.
+    records = ledger._load()
+    assert len(records) == 1 and records[0]["status"] == "confirmed"
     assert ledger.total_open_exposure() == pytest.approx(10.0)
 
     swap_calls = [c for c in calls if c.get("url", "").endswith("/swap")]
@@ -494,6 +497,77 @@ def test_ambiguous_send_with_unknown_signature_fails_closed(env, monkeypatch):
     assert rec.signature == "SIG123"
     assert ledger.open_token_amounts() == {}
     assert ledger.open_positions() == {"MINT": 10.0}
+
+
+def test_signed_trade_is_journaled_before_send_and_survives_a_crash(
+        env, monkeypatch):
+    """§88 E: the second buy path journals the pending row BEFORE send too."""
+    from live_execution.exit_errors import SendRejected  # noqa: F401
+
+    monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
+    monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        return le_solana.SignedSwap(
+            "SIG123", b"signed-tx", _checked=True, blockhash="BHJ")
+
+    monkeypatch.setattr(je, "sign_after_checks", fake_sign)
+    calls: list[dict] = []
+    _wire_fake_network(monkeypatch, calls)
+    ledger = ExecutionLedger(env / "executions.json")
+    observed = {}
+
+    async def crash_send(signed, endpoints=None):
+        observed["pending"] = ledger.pending_buys()
+        raise KeyboardInterrupt("simulated process death")
+
+    monkeypatch.setattr(le_solana, "send_checked_swap", crash_send)
+
+    with pytest.raises(KeyboardInterrupt):
+        asyncio.run(je.execute_confirmed_trade(
+            "MINT", 6, 10.0, idempotency_key="k-crash",
+            ledger=ledger, reference_price_usd=1.0,
+        ))
+
+    [seen] = observed["pending"]
+    assert seen.signature == "SIG123"
+    assert seen.blockhash == "BHJ"
+    rec = ledger.get_by_idempotency_key("k-crash")
+    assert rec.status == "pending" and rec.signature == "SIG123"
+    assert ledger.open_token_amounts() == {}
+    assert ledger.open_positions() == {"MINT": 10.0}
+
+
+def test_definitive_send_rejection_settles_pending_row_failed(
+        env, monkeypatch):
+    from live_execution.exit_errors import SendRejected
+
+    monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
+    monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        return le_solana.SignedSwap("SIG123", b"signed-tx", _checked=True)
+
+    async def reject(signed, endpoints=None):
+        raise SendRejected("every rpc refused", [])
+
+    monkeypatch.setattr(je, "sign_after_checks", fake_sign)
+    calls: list[dict] = []
+    _wire_fake_network(monkeypatch, calls)
+    monkeypatch.setattr(le_solana, "send_checked_swap", reject)
+    ledger = ExecutionLedger(env / "executions.json")
+
+    with pytest.raises(je.ExecutionError, match="every rpc refused"):
+        asyncio.run(je.execute_confirmed_trade(
+            "MINT", 6, 10.0, idempotency_key="k-rejected",
+            ledger=ledger, reference_price_usd=1.0,
+        ))
+
+    records = ledger._load()
+    assert len(records) == 1
+    assert records[0]["status"] == "failed"
+    assert "every rpc refused" in records[0]["reason"]
+    assert ledger.open_positions() == {}
 
 
 def test_propose_then_approve_then_execute_consumes_confirmation(
