@@ -356,6 +356,13 @@ async def _reconcile_with_chain(meta: dict, ledger: ExecutionLedger | None = Non
                      pending_mints=pending_mints)
 
 
+# §88 D: one endpoint reporting "signature not found" while its blockhash is
+# invalid is not proof that the buy never landed — a lagging node may not have
+# seen the transaction yet. Re-query every distinct endpoint, and never expire
+# a row younger than this even when every endpoint still reports it unknown.
+PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0
+
+
 async def _fail_pending_commit(record, reason: str) -> None:
     """Mark the pending buy's commit row failed/expired (best-effort)."""
     if not record.commit_hash:
@@ -395,7 +402,10 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
     now = time.time()
     for rec in pending:
         sig = rec.signature or ""
+        age = (max(now - float(rec.ts), 0.0)
+               if rec.ts is not None else 0.0)
         status = None
+        status_requeried = False
         if sig:
             try:
                 status = await solana.get_signature_status(sig)
@@ -403,138 +413,180 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                 log.warning("pending buy %s: status unreadable (%s) — left "
                             "pending", sig[:16], exc)
                 status = None
-        if status is not None and status.get("err"):
-            reason = f"landed-failed (fee paid): {status['err']}"
-            ledger.settle_pending_buy(
-                rec.idempotency_key, "failed", reason=reason)
-            await _fail_pending_commit(rec, reason)
-            stats["failed"] += 1
-            log.error("PENDING BUY %s resolved FAILED: %s",
-                      rec.mint[:8], reason)
-            continue
 
-        if (status is not None
-                and status.get("confirmationStatus") in ("confirmed", "finalized")):
-            actuals = {"tokens_delta": None, "usdc_delta": None}
-            if sig and owner:
-                try:
-                    actuals = await _fill_actuals(
-                        "buy", rec.mint, sig, owner=owner)
-                except Exception as exc:
-                    log.warning(
-                        "pending buy %s: fill actuals unreadable (%s) — "
-                        "adopting with the stored quote snapshot",
-                        sig[:16], exc)
-            usd_actual = actuals["usdc_delta"]
-            tokens_actual = actuals["tokens_delta"]
-            if usd_actual is None:
-                usd_actual = (float(rec.usd_size)
-                              if rec.usd_size is not None
-                              and float(rec.usd_size) > 0 else None)
-            if tokens_actual is None:
-                tokens_actual = (float(rec.tokens_out)
-                                 if rec.tokens_out is not None
-                                 and float(rec.tokens_out) > 0 else None)
-            if usd_actual is None or tokens_actual is None:
-                log.error(
-                    "LATE BUY %s confirmed but cost/token amount is unknown "
-                    "(usd=%r tokens=%r) — leaving pending, NEVER fabricating "
-                    "a basis", rec.mint[:8], usd_actual, tokens_actual)
-                stats["pending"] += 1
-                continue
-            if actuals["usdc_delta"] is None or actuals["tokens_delta"] is None:
-                log.warning(
-                    "LATE BUY %s: fill actuals unreadable — adopting with the "
-                    "stored quote snapshot (usd=%.4f tokens=%.6f)",
-                    sig[:16], usd_actual, tokens_actual)
-            price = (float(usd_actual) / float(tokens_actual)
-                     if float(tokens_actual) > 0 else rec.price_usd)
-            ledger.settle_pending_buy(
-                rec.idempotency_key, "confirmed",
-                usd_size=usd_actual, tokens_out=tokens_actual,
-                price_usd=price, signature=sig)
-            if rec.commit_hash:
-                try:
-                    CommitLog(live_config.STATE_DIR / "commits.json").bind(
-                        rec.commit_hash, sig)
-                except Exception:
-                    log.warning("pending-buy commit bind failed for %s",
-                                rec.commit_hash[:16], exc_info=True)
-                result = SimpleNamespace(
-                    commit_hash=rec.commit_hash,
-                    commit_nonce=rec.commit_nonce,
-                    commit_payload=rec.commit_payload,
-                    commit_sealed_at=rec.commit_sealed_at,
-                    memo_signature=rec.memo_signature,
-                    memo_slot=rec.memo_slot,
-                    signature=sig,
-                )
-                try:
-                    async with db.get_db() as conn:
-                        await _journal_live_commit(
-                            conn, symbol=rec.mint[:6],
-                            mint_address=rec.mint, verdict="buy",
-                            entry_allowed=True, result=result)
-                except Exception:
-                    log.warning("pending-buy commit journaling failed for %s",
-                                sig[:16], exc_info=True)
-            stats["adopted"] += 1
-            log.error(
-                "LATE BUY ADOPTED %s $%.4f -> %.6f tokens sig %s (was "
-                "pending; position now managed by the exit engine)",
-                rec.mint[:8], float(usd_actual), float(tokens_actual), sig[:16])
-            try:
-                from alerts import alert_nowait, AlertEvent
-                alert_nowait(
-                    AlertEvent.INFO,
-                    (f"Late buy adopted for {rec.mint[:8]}: ${float(usd_actual):.2f}"
-                     f" -> {float(tokens_actual):.6f} tokens (sig {sig[:16]})"),
-                    key=f"late_buy_adopted:{rec.mint}",
-                )
-            except Exception:
-                pass
-            continue
-
-        if status is None:
-            valid = None
-            if rec.blockhash:
-                try:
-                    valid = await solana.is_blockhash_valid(rec.blockhash)
-                except Exception as exc:
-                    log.warning("pending buy %s: blockhash validity "
-                                "unreadable (%s) — unknown stays pending",
-                                sig[:16], exc)
-                    valid = None
-            if valid is False:
-                reason = ("pending buy expired: blockhash is provably "
-                          "invalid, transaction can never land")
+        # The status can change when §88 D re-queries every endpoint, so
+        # process it in a loop instead of duplicating the adopt/fail branches.
+        while True:
+            if status is not None and status.get("err"):
+                reason = f"landed-failed (fee paid): {status['err']}"
                 ledger.settle_pending_buy(
-                    rec.idempotency_key, "expired", reason=reason)
+                    rec.idempotency_key, "failed", reason=reason)
                 await _fail_pending_commit(rec, reason)
-                stats["expired"] += 1
-                log.error("PENDING BUY %s EXPIRED (blockhash invalid); caps "
-                          "released", rec.mint[:8])
-                continue
+                stats["failed"] += 1
+                log.error("PENDING BUY %s resolved FAILED: %s",
+                          rec.mint[:8], reason)
+                break
 
-        # Still possibly landable, or validity unknown. Never expire on
-        # unknown data.
-        age = max(now - float(rec.ts or 0.0), 0.0)
-        log.info("pending buy %s still unresolved (age %.0fs, blockhash %s)",
-                 rec.mint[:8], age, rec.blockhash or "unknown")
-        if age >= 300.0:
-            try:
-                from alerts import alert_nowait, AlertEvent
-                alert_nowait(
-                    AlertEvent.EXIT_UNRESOLVED,
-                    (f"Buy still unresolved after {age/60.0:.0f} min for "
-                     f"{rec.mint[:8]} (sig {sig[:16]}, blockhash "
-                     f"{rec.blockhash or 'unknown'}) — left PENDING; a late "
-                     f"land is adopted, never an unmanaged holding"),
-                    key=f"pending_buy:{rec.mint}",
-                )
-            except Exception:
-                pass
-        stats["pending"] += 1
+            if (status is not None
+                    and status.get("confirmationStatus") in ("confirmed", "finalized")):
+                actuals = {"tokens_delta": None, "usdc_delta": None}
+                if sig and owner:
+                    try:
+                        actuals = await _fill_actuals(
+                            "buy", rec.mint, sig, owner=owner)
+                    except Exception as exc:
+                        log.warning(
+                            "pending buy %s: fill actuals unreadable (%s) — "
+                            "adopting with the stored quote snapshot",
+                            sig[:16], exc)
+                usd_actual = actuals["usdc_delta"]
+                tokens_actual = actuals["tokens_delta"]
+                if usd_actual is None:
+                    usd_actual = (float(rec.usd_size)
+                                  if rec.usd_size is not None
+                                  and float(rec.usd_size) > 0 else None)
+                if tokens_actual is None:
+                    tokens_actual = (float(rec.tokens_out)
+                                     if rec.tokens_out is not None
+                                     and float(rec.tokens_out) > 0 else None)
+                if usd_actual is None or tokens_actual is None:
+                    log.error(
+                        "LATE BUY %s confirmed but cost/token amount is unknown "
+                        "(usd=%r tokens=%r) — leaving pending, NEVER fabricating "
+                        "a basis", rec.mint[:8], usd_actual, tokens_actual)
+                    stats["pending"] += 1
+                    break
+                if (actuals["usdc_delta"] is None
+                        or actuals["tokens_delta"] is None):
+                    log.warning(
+                        "LATE BUY %s: fill actuals unreadable — adopting with the "
+                        "stored quote snapshot (usd=%.4f tokens=%.6f)",
+                        sig[:16], usd_actual, tokens_actual)
+                price = (float(usd_actual) / float(tokens_actual)
+                         if float(tokens_actual) > 0 else rec.price_usd)
+                ledger.settle_pending_buy(
+                    rec.idempotency_key, "confirmed",
+                    usd_size=usd_actual, tokens_out=tokens_actual,
+                    price_usd=price, signature=sig)
+                if rec.commit_hash:
+                    try:
+                        CommitLog(live_config.STATE_DIR / "commits.json").bind(
+                            rec.commit_hash, sig)
+                    except Exception:
+                        log.warning("pending-buy commit bind failed for %s",
+                                    rec.commit_hash[:16], exc_info=True)
+                    result = SimpleNamespace(
+                        commit_hash=rec.commit_hash,
+                        commit_nonce=rec.commit_nonce,
+                        commit_payload=rec.commit_payload,
+                        commit_sealed_at=rec.commit_sealed_at,
+                        memo_signature=rec.memo_signature,
+                        memo_slot=rec.memo_slot,
+                        signature=sig,
+                    )
+                    try:
+                        async with db.get_db() as conn:
+                            await _journal_live_commit(
+                                conn, symbol=rec.mint[:6],
+                                mint_address=rec.mint, verdict="buy",
+                                entry_allowed=True, result=result)
+                    except Exception:
+                        log.warning("pending-buy commit journaling failed for %s",
+                                    sig[:16], exc_info=True)
+                stats["adopted"] += 1
+                log.error(
+                    "LATE BUY ADOPTED %s $%.4f -> %.6f tokens sig %s (was "
+                    "pending; position now managed by the exit engine)",
+                    rec.mint[:8], float(usd_actual), float(tokens_actual),
+                    sig[:16])
+                try:
+                    from alerts import alert_nowait, AlertEvent
+                    alert_nowait(
+                        AlertEvent.INFO,
+                        (f"Late buy adopted for {rec.mint[:8]}: "
+                         f"${float(usd_actual):.2f}"
+                         f" -> {float(tokens_actual):.6f} tokens (sig {sig[:16]})"),
+                        key=f"late_buy_adopted:{rec.mint}",
+                    )
+                except Exception:
+                    pass
+                break
+
+            if status is None:
+                valid = None
+                if rec.blockhash:
+                    try:
+                        valid = await solana.is_blockhash_valid(rec.blockhash)
+                    except Exception as exc:
+                        log.warning("pending buy %s: blockhash validity "
+                                    "unreadable (%s) — unknown stays pending",
+                                    sig[:16], exc)
+                        valid = None
+                if valid is False:
+                    # §88 D: one endpoint saying "not found" is not proof of
+                    # a non-land — a lagging node may already have it. Query
+                    # every distinct endpoint once; a found status is
+                    # re-processed above. Expire only when every endpoint
+                    # still reports unknown AND the row is >= 90s old.
+                    recheck_ok = True
+                    if sig and not status_requeried:
+                        status_requeried = True
+                        statuses = None
+                        try:
+                            statuses = await solana.get_signature_status_all(sig)
+                        except Exception as exc:
+                            log.warning(
+                                "pending buy %s: multi-endpoint status "
+                                "re-query failed (%s) — left pending",
+                                sig[:16], exc)
+                        if statuses is not None:
+                            found = next(
+                                (s for s in statuses if s is not None), None)
+                            if found is not None:
+                                status = found
+                                continue
+                        else:
+                            # The re-query itself failed: still unknown.
+                            recheck_ok = False
+                    if recheck_ok and age >= PENDING_EXPIRY_MIN_AGE_SECONDS:
+                        reason = (
+                            "pending buy expired: blockhash is provably "
+                            "invalid and every endpoint reports the signature "
+                            f"unknown after >= {PENDING_EXPIRY_MIN_AGE_SECONDS:.0f}s")
+                        ledger.settle_pending_buy(
+                            rec.idempotency_key, "expired", reason=reason)
+                        await _fail_pending_commit(rec, reason)
+                        stats["expired"] += 1
+                        log.error(
+                            "PENDING BUY %s EXPIRED (blockhash invalid, "
+                            "signature absent on every endpoint after %.0fs); "
+                            "caps released", rec.mint[:8], age)
+                        break
+                    log.info(
+                        "pending buy %s: blockhash invalid but age %.0fs < "
+                        "%.0fs — waiting before expiry (a late land is still "
+                        "possible)", rec.mint[:8], age,
+                        PENDING_EXPIRY_MIN_AGE_SECONDS)
+
+            # Still possibly landable, or validity unknown. Never expire on
+            # unknown data.
+            log.info("pending buy %s still unresolved (age %.0fs, blockhash %s)",
+                     rec.mint[:8], age, rec.blockhash or "unknown")
+            if age >= 300.0:
+                try:
+                    from alerts import alert_nowait, AlertEvent
+                    alert_nowait(
+                        AlertEvent.EXIT_UNRESOLVED,
+                        (f"Buy still unresolved after {age/60.0:.0f} min for "
+                         f"{rec.mint[:8]} (sig {sig[:16]}, blockhash "
+                         f"{rec.blockhash or 'unknown'}) — left PENDING; a late "
+                         f"land is adopted, never an unmanaged holding"),
+                        key=f"pending_buy:{rec.mint}",
+                    )
+                except Exception:
+                    pass
+            stats["pending"] += 1
+            break
     return stats
 
 

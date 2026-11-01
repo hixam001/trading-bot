@@ -202,18 +202,24 @@ async def test_landed_error_is_failed_and_commit_closed(env, monkeypatch):
 
 async def test_provably_invalid_blockhash_expires_and_releases_caps(
         env, monkeypatch):
-    ledger = env.ledger
+    import time as _time
+    old = _time.time() - 400.0
+    ledger = ExecutionLedger(env.dir / "exec_old.json", now_fn=lambda: old)
     _pending(ledger)
     assert ledger.deployed_today_usd() == 2.5
 
     async def status(sig, endpoints=None):
         return None
 
+    async def status_all(sig, endpoints=None):
+        return [None, None]
+
     async def invalid(blockhash, endpoints=None):
         assert blockhash == "BH1"
         return False
 
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
     monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
 
     stats = await rlc.resolve_pending_buys(ledger)
@@ -225,6 +231,91 @@ async def test_provably_invalid_blockhash_expires_and_releases_caps(
     assert ledger.open_positions() == {}
     [commit] = _FakeCommitLog.instances
     assert commit.fails and "blockhash" in commit.fails[0][1]
+
+
+async def test_invalid_blockhash_on_a_young_row_does_not_expire(
+        env, monkeypatch):
+    """§88 D: one endpoint's invalid blockhash is not enough inside 90 s."""
+    ledger = env.ledger
+    _pending(ledger)
+
+    async def status(sig, endpoints=None):
+        return None
+
+    async def status_all(sig, endpoints=None):
+        return [None, None]
+
+    async def invalid(blockhash, endpoints=None):
+        return False
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats == {"adopted": 0, "failed": 0, "expired": 0, "pending": 1}
+    assert ledger.get_by_idempotency_key("k1").status == "pending"
+    assert ledger.deployed_today_usd() == 2.5
+
+
+async def test_invalid_blockhash_recheck_adopts_a_lagging_endpoint_fill(
+        env, monkeypatch):
+    """The first endpoint says not-found; the re-query finds the landed fill."""
+    ledger = env.ledger
+    _pending(ledger)
+
+    async def status(sig, endpoints=None):
+        return None
+
+    async def status_all(sig, endpoints=None):
+        return [None, {"err": None, "confirmationStatus": "confirmed"}]
+
+    async def invalid(blockhash, endpoints=None):
+        return False
+
+    async def actuals(side, mint, sig, owner=None):
+        return {"usdc_delta": 2.7, "tokens_delta": 9.0}
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
+    monkeypatch.setattr(rlc, "_fill_actuals", actuals)
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats == {"adopted": 1, "failed": 0, "expired": 0, "pending": 0}
+    rec = ledger.get_by_idempotency_key("k1")
+    assert rec.status == "confirmed"
+    assert rec.tokens_out == pytest.approx(9.0)
+    assert ledger.open_token_amounts() == {"MINTAAA": pytest.approx(9.0)}
+
+
+async def test_invalid_blockhash_with_failed_recheck_stays_pending(
+        env, monkeypatch):
+    """An unreadable multi-endpoint re-query is unknown, never expired."""
+    import time as _time
+    old = _time.time() - 400.0
+    ledger = ExecutionLedger(env.dir / "exec_old.json", now_fn=lambda: old)
+    _pending(ledger)
+
+    async def status(sig, endpoints=None):
+        return None
+
+    async def status_all(sig, endpoints=None):
+        raise RuntimeError("all endpoints down")
+
+    async def invalid(blockhash, endpoints=None):
+        return False
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats == {"adopted": 0, "failed": 0, "expired": 0, "pending": 1}
+    assert ledger.get_by_idempotency_key("k1").status == "pending"
 
 
 async def test_unknown_blockhash_never_expires_and_alerts_after_5min(

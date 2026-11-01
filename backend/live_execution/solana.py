@@ -792,3 +792,27 @@ async def get_signature_status(signature: str, endpoints: Optional[list[str]] = 
     return _first_signature_status(res)
 
 
+async def get_signature_status_all(
+    signature: str, endpoints: Optional[list[str]] = None
+) -> list[dict | None]:
+    """Query EVERY distinct endpoint for one signature (§88 D).
+
+    `get_signature_status`/`rpc` stop at the first endpoint that answers, so a
+    lagging node can report "not found" while another node has the landed
+    transaction. This returns one entry per deduped endpoint in order; None
+    means that endpoint did not return a status (unknown/not found/RPC
+    failure). All-None is NOT proof of a non-land by itself — callers must
+    also satisfy their age guard before expiring a pending buy.
+    """
+    target = _dedup_endpoints_by_host(endpoints or config.RPC_URLS)
+
+    async def _one(endpoint: str) -> dict | None:
+        try:
+            return await get_signature_status(signature, endpoints=[endpoint])
+        except Exception as exc:
+            log.warning("[solana] status query failed on %s: %s", endpoint, exc)
+            return None
+
+    return list(await asyncio.gather(*(_one(ep) for ep in target)))
+
+
