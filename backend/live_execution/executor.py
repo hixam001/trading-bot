@@ -307,6 +307,20 @@ async def place_buy(
     except Exception as exc:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
 
+    # §88 A (defence in depth): preflight already refuses a pending mint, but
+    # this second check sits before the idempotency replay so a bug in the
+    # shared preflight can never let a second buy start while the first
+    # transaction is still unresolved.
+    try:
+        if mint in {r.mint for r in ledger.pending_buys()}:
+            return OrderResult(
+                **{**base.to_json(), "status": "blocked",
+                   "reason": (f"a pending buy for {mint} is unresolved — wait "
+                              f"for resolve_pending_buys")})
+    except RuntimeError as exc:
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": str(exc)})
+
     deployed = ledger.deployed_today_usd()
     if deployed + usd > config.MAX_DAILY_DEPLOY_USD:
         return OrderResult(**{**base.to_json(), "status": "blocked",

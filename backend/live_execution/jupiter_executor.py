@@ -159,6 +159,17 @@ def preflight(
             f"{config.MAX_TRADE_USD}"
         )
 
+    # §88 A: a pending buy is an unresolved on-chain commitment. It is not an
+    # open position (no tokens yet) but it MUST block another buy of the same
+    # mint — otherwise a retry with a fresh per-minute key double-buys while
+    # the first transaction is still landable.
+    pending_mints = {r.mint for r in ledger.pending_buys()}
+    if output_mint in pending_mints:
+        raise Refusal(
+            f"a pending buy for {output_mint} is unresolved — wait for "
+            f"resolve_pending_buys"
+        )
+
     open_pos = ledger.open_positions()
     exposure_after = ledger.total_open_exposure() + usd_size
     if exposure_after > config.MAX_TOTAL_EXPOSURE_USD:

@@ -186,6 +186,11 @@ async def _mirror_live_trades(portfolio: PortfolioState) -> None:
     try:
         async with db.get_db() as conn:
             for t in portfolio.open_positions:
+                # §88 A: a pending buy is gate-visible held cost only. It has
+                # no tokens, so it must never become a mirrored "position"
+                # (the holdings page / stats would price an invented size).
+                if float(t.quantity or 0.0) <= 0:
+                    continue
                 n = await db.try_insert_open_trade(conn, t)
                 if n:
                     log.info("live mirror: opened trade row for %s",
@@ -664,6 +669,34 @@ async def _live_portfolio(ledger: ExecutionLedger) -> tuple[PortfolioState, dict
             quantity=float(m["tokens"]),
             candidate_snapshot={}, 
             thesis="live book", 
+            is_open=True,
+        ))
+    # §88 A: unresolved pending buys are a committed slot/cost with no tokens
+    # yet. Show them to the GATE as held cost so `already_held` and the
+    # max-position accounting cannot authorize a second buy — but keep them
+    # out of `meta`, so `_manage`, exit pricing, and the trades mirror never
+    # see a zero-token "position". A pending mint that already has an open
+    # ledger row keeps the real position (the resolver will adopt the pending
+    # row separately).
+    pending_costs: dict[str, float] = {}
+    pending_opened: dict[str, float] = {}
+    for rec in ledger.pending_buys():
+        if rec.mint in meta:
+            continue
+        pending_costs[rec.mint] = pending_costs.get(rec.mint, 0.0) + float(
+            rec.usd_size or 0.0)
+        pending_opened.setdefault(rec.mint, float(rec.ts or 0.0))
+    for mint, cost in pending_costs.items():
+        positions.append(Trade(
+            trade_id=f"pending-{mint[:8]}",
+            symbol=mint[:6],
+            mint_address=mint,
+            opened_at=_iso(pending_opened.get(mint, 0.0)),
+            entry_price_usd=0.0,
+            position_size_usd=cost,
+            quantity=0.0,
+            candidate_snapshot={},
+            thesis="pending buy",
             is_open=True,
         ))
     cash = 0.0
