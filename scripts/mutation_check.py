@@ -314,6 +314,18 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_exit_backoff.py",
         description="Risk-off exit backoff cap disabled (stop may wait 300s)",
     ),
+    # §87-D2 (operator-approved 2026-11-01)
+    Mutation(
+        phase="§87-D2",
+        mutation_id="87D2_RISK_OFF_IMPACT_CEILING",
+        file_path="backend/live_execution/executor.py",
+        exact_old_text=(
+            "        risk_off_exit = isinstance(rule_id, str) and rule_id in RISK_OFF_RULES"
+        ),
+        new_text="        risk_off_exit = False",
+        test_selector="backend/live_execution/tests/test_executor_memo_flow.py",
+        description="Risk-off exit price-impact ceiling disabled (protective exit uses 2.5%)",
+    ),
     # §87-E
     Mutation(
         phase="§87-E",

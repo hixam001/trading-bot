@@ -318,6 +318,13 @@ evaluation still run each pass; only the order attempt is deferred. Risk-off
 rules cap the wait at 60s, and a fill or a position-size change resets the
 sequence. The state is in-memory and intentionally resets on restart.
 
+§87 D2 (operator-approved 2026-11-01): a protective exit whose `rule_id` is in
+`RISK_OFF_RULES` uses the hardcoded `EXIT_MAX_PRICE_IMPACT_PCT = 15.0%`
+price-impact ceiling instead of the 2.5% entry/trim ceiling, so a collapsing
+pool cannot block a stop at 3–15% impact. Quotes above 15% still refuse;
+`min_out_raw` and the slippage ladder are unchanged. An unknown/`None` rule
+ID keeps the 2.5% ceiling.
+
 ### 5.3 Partial trims and high-water marks
 
 Partial trims are real (the take-profit ladder) and the live executor's

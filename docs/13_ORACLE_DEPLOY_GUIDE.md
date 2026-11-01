@@ -424,7 +424,7 @@ cleared by a human (`resume`). `LIVE_TRADING_ENABLED` is still the outer gate.
 | Wallet drop | Alert channel; `WALLET_DROP` | Unexplained outflow above `$5` (alert-only unless the operator enabled the kill-switch option). Reconcile before resuming. |
 | Pending buys | `docker compose logs live \| grep -E "pending buy|LATE BUY ADOPTED"` | A pending row is counted against caps and is never priced/exited. Confirmed late land → `LATE BUY ADOPTED`; provably expired blockhash → released; unknown stays pending and alerts after 5 min. |
 | Unexplained holdings | Alert channel; `UNJOURNALED_HOLDING` | On-chain tokens with no ledger row and no pending buy. Never auto-added; inspect and repair manually. |
-| Exit failures | `docker compose logs live \| grep -E "backoff\|EXIT_UNRESOLVED"` | Per-mint retry backoff is 15/30/60/120/300 s (risk-off capped at 60 s); repeated failures are expected during a collapse, not a reason to disable the stop. |
+| Exit failures | `docker compose logs live \| grep -E "backoff\|EXIT_UNRESOLVED\|risk-off exit"` | Per-mint retry backoff is 15/30/60/120/300 s (risk-off capped at 60 s); repeated failures are expected during a collapse, not a reason to disable the stop. Risk-off exits may accept up to 15% price impact by design (`EXIT_MAX_PRICE_IMPACT_PCT`); entries and profit trims stay at 2.5%. |
 | Backup + restore | `docker compose logs live \| grep backup`; docs/15 drill | Run one manual backup and one throwaway-directory restore before trusting cron. |
 
 ## Quick troubleshooting

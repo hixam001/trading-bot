@@ -53,6 +53,7 @@ from live_execution.commit_log import CommitLog
 from live_execution.quote_params import build_quote_params
 from live_execution.venue import token_deltas_from_tx
 from live_execution.trade_intent import TradeIntent, usd_to_raw_amount
+from rule_engine.exits import RISK_OFF_RULES
 
 log = logging.getLogger(__name__)
 
@@ -723,10 +724,25 @@ async def place_sell(
             return OrderResult(**{**base.to_json(), "status": "failed", "reason": "no route quoted for this mint", **commit_fields})
 
         impact = quote_impact_pct(quote)
-        if impact > config.MAX_PRICE_IMPACT_PCT:
-            reason = f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"
+        # §87 D2 (operator-approved 2026-11-01): a protective exit must not
+        # be refused by the entry/trim impact ceiling while a pool collapses.
+        # Only RISK_OFF_RULES get the wider hardcoded ceiling; take-profit
+        # trims and sells with an unknown/None rule_id keep 2.5%.
+        risk_off_exit = isinstance(rule_id, str) and rule_id in RISK_OFF_RULES
+        impact_limit = (config.EXIT_MAX_PRICE_IMPACT_PCT if risk_off_exit
+                        else config.MAX_PRICE_IMPACT_PCT)
+        if impact > impact_limit:
+            reason = f"price impact {impact:.2f}% above floor {impact_limit}%"
             logc.fail(sealed["hash"], reason)
             return OrderResult(**{**base.to_json(), "status": "blocked", "reason": reason, **commit_fields})
+        if risk_off_exit and impact > config.MAX_PRICE_IMPACT_PCT:
+            log.warning(
+                "risk-off exit %s [%s] accepts %.2f%% price impact "
+                "(entry ceiling %.2f%%, exit ceiling %.2f%%)",
+                mint[:8], rule_id, impact,
+                config.MAX_PRICE_IMPACT_PCT,
+                config.EXIT_MAX_PRICE_IMPACT_PCT,
+            )
 
         proceeds_usd = int(out_raw) / raw_units(USDC_DECIMALS)
 

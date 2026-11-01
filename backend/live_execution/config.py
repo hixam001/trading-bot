@@ -198,6 +198,13 @@ EXPECTED_WALLET_ADDRESS: str = os.getenv("EXPECTED_WALLET_ADDRESS", "")
 # Quote guards (the reference EXECUTION_LIMITS parity).
 MAX_PRICE_IMPACT_PCT: float = 2.5      # block quotes above this impact
 
+# §87 D2 (operator-approved 2026-11-01): risk-off exits may accept a wider
+# price-impact ceiling than entries and profit trims. A stop/liquidity exit
+# on a collapsing pool at 15% impact is still better than being trapped
+# while the position goes to zero. Entries, take-profit trims and sells with
+# an unknown/None rule_id keep MAX_PRICE_IMPACT_PCT. Hardcoded, never env.
+EXIT_MAX_PRICE_IMPACT_PCT: float = 15.0
+
 # SOL reserve floor — fee-budget protection (REF-R11 micro-bootstrap, handoff
 # §26). The live wallet is operator-funded with a small SOL fee reserve
 # (0.03 SOL at bootstrap) plus separate USDC trading capital; a floor sized

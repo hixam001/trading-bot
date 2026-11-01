@@ -1,12 +1,12 @@
-## §87 — Oracle Deploy Blockers, Unresolved-Buy Safety, Graceful Stop & Exit Resilience (2026-10-31)
+## §87 — Oracle Deploy Blockers, Unresolved-Buy Safety, Graceful Stop & Exit Resilience (2026-10-31; D2 2026-11-01)
 
 ### Baseline & Measured Suite Counts
 - Base HEAD: `3afd3d7` (§86)
 - Baseline suite: **1338 passed**, 0 failed; `tsc --noEmit` clean at base
-- Final suite: **1412 passed**, 0 failed (102 warnings in 20.06s; +74 tests)
+- Final suite: **1421 passed**, 0 failed (102 warnings in 20.97s; +83 tests, including +9 for operator-approved D2)
 - `npx tsc --noEmit`: clean; `npm run build`: clean (**211.13 kB JS / 65.08 kB gzip**)
-- Playwright: **40/40**; mutation harness: **29/29 CAUGHT**; pre-push gate: **9/9 local steps clean** (gitleaks binary absent locally; CI runs it)
-- Phase commits: `06bcbdd` A, `4ee4de8` B, `4c29aa0` C, `9c55e96` D1, `40ebe16` E, `9e0cb67` F, this commit G
+- Playwright: **40/40**; mutation harness: **30/30 CAUGHT**; pre-push gate: **9/9 local steps clean** (gitleaks binary absent locally; CI runs it)
+- Phase commits: `06bcbdd` A, `4ee4de8` B, `4c29aa0` C, `9c55e96` D1, `40ebe16` E, `9e0cb67` F (+ `e53885e` test follow-up), `392a629` G, this commit D2
 
 ### Fixed Defects
 1. **Phase A — deploy blockers (`Dockerfile`, `docker-compose.yml`, `docker-entrypoint.sh`, docs)**:
@@ -25,7 +25,7 @@
    - Both live execution paths mirror the same rules; `docs/14_SIGNING_GUARD.md` and `docs/01_ARCHITECTURE.md` document them.
 4. **Phase D1 — exit retry storm (`run_live_cycle.py`)**:
    - Per-mint exit backoff after a non-filled result: 15/30/60/120/300 s, reset on `filled` or a position-size change; risk-off rules cap at 60 s. State is an in-memory module dict accessed under `_EXIT_LOCK`; the exit lock is loop-bound so separate test loops cannot poison the singleton.
-   - D2 (`EXIT_MAX_PRICE_IMPACT_PCT`) was **not** implemented: it remains the operator's decision (see decision log).
+   - D2 (operator-approved 2026-11-01): risk-off exits (`rule_id in RISK_OFF_RULES`) now use the hardcoded `EXIT_MAX_PRICE_IMPACT_PCT = 15.0` ceiling; entries, take-profit trims, and unknown/`None` rule IDs keep `MAX_PRICE_IMPACT_PCT = 2.5`. Quotes above 15% still block; `min_out_raw` and the slippage ladder are unchanged. A 2.5–15% risk-off impact logs a warning with both ceilings. Tests cover all five risk-off rule IDs at 10% impact, the 14.9%/15.1% boundary, a 10% take-profit trim, and a 10% sell with no rule ID (both remain blocked at 2.5% with the position intact). Mutation `87D2_RISK_OFF_IMPACT_CEILING` is CAUGHT.
 5. **Phase E — small correctness fixes**:
    - `perf_report.shadow_risk_flag_stats` imports `api.db` and logs the exception instead of swallowing a `NameError`; flag-outcome rows now reach the report.
    - Zero/missing token quantity is never fabricated as `1.0`: portfolio pricing/exits skip the row, alert once per mint, and the close mirror closes with `exit_price_usd=None` (honest unknown) instead of inventing a price.
@@ -40,13 +40,13 @@
 - `docs/13_ORACLE_DEPLOY_GUIDE.md` — preflight step, uid-10001 ownership, reboot/graceful-stop/rollback/kill-switch drills, first-24h watch list.
 - `docs/15_BACKUP_RESTORE.md` — cron path, `--entrypoint python` operator commands (the service entrypoint ignores arguments), throwaway-directory restore drill, production restore/reconcile/clear sequence.
 - `handoff.md` §87 (this section); `memory-bank/activeContext.md`, `progress.md`, `decisionLog.md`, `session-log.md`, `systemPatterns.md` updated.
-- `docs/17_MUTATION_LOG.md` regenerated for §81–§87 (29 rows).
+- `docs/17_MUTATION_LOG.md` regenerated for §81–§87 (30 rows, including `87D2_RISK_OFF_IMPACT_CEILING`).
 
 ### Constraints & Invariants Preserved
 - No changes to wallet signing, sizing, rule thresholds, risk flags, `LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False`, PaperTradingBanner removal, fomo.family Privy integration, Jupiter lite-api Swap V1, the pluggable cloud LLM, or `WALLET_DROP_TRIPS_KILL_SWITCH` default off.
 - Unknown stays unknown: pending buys, blockhash validity, token quantities, sold quantities and prices are never fabricated; zero is not `None`.
 - Hermetic tests only (network socket guard on). Every new money-path guard has a mutation row that is CAUGHT.
-- D2 remains operator-only. No cross-process ledger lock was added.
+- D2 was explicitly approved by the operator on 2026-11-01 and implemented exactly as proposed; no other threshold moved. No cross-process ledger lock was added.
 
 ## §86 — Post-§85 Audit: Fail-Closed Malformed RPC/State, Non-Finite Money Math, `--once` HWM Restore & Documentation Truth (2026-10-28)
 

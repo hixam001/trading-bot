@@ -1,3 +1,13 @@
+## Memory-bank update — 2026-11-01 (§87-D2 risk-off exit price-impact ceiling, operator-approved)
+
+- **Task**: implement the D2 decision the operator approved: protect a collapsing position from being trapped by the same 2.5% price-impact ceiling used for entries.
+- **Change**: `live_execution/config.py` adds the hardcoded `EXIT_MAX_PRICE_IMPACT_PCT = 15.0`. `place_sell` uses it only when `rule_id` is a member of `rule_engine.exits.RISK_OFF_RULES`; `exit_take_profit`, any other sell, and an unknown/`None` rule ID keep `MAX_PRICE_IMPACT_PCT = 2.5`. Quotes above 15% still block, and `min_out_raw` plus the slippage ladder are untouched. An accepted 2.5–15% risk-off impact logs a warning with both ceilings.
+- **Tests**: all five risk-off rule IDs fill at 10% impact; 14.9% fills and 15.1% blocks; a 10% take-profit trim and a 10% sell with no rule ID still block at 2.5%; the blocked trims leave the position intact.
+- **Mutation**: `87D2_RISK_OFF_IMPACT_CEILING` disables the risk-off branch; the new tests fail for it, so the harness reports **30/30 CAUGHT**.
+- **Tests**: backend **1421 passed**, 0 failed (+9 D2 tests over the §87 baseline); mutation **30/30**; prepush gate re-run before push.
+- **Docs**: `docs/14_SIGNING_GUARD.md`, `docs/01_ARCHITECTURE.md`, `docs/13_ORACLE_DEPLOY_GUIDE.md` (first-24h watch list), `handoff.md`, and the memory bank record the approved behavior and boundaries.
+- **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
+
 ## Memory-bank update — 2026-10-31 (§87 Oracle deploy blockers, unresolved-buy safety, graceful stop & exit resilience)
 
 - **Task**: implement master prompt §87 in phase order A→G, one commit per phase, with hermetic tests, mutation coverage for every new money-path guard, and docs/memory kept true.

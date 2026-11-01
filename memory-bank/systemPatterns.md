@@ -45,7 +45,9 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
 8. **Exit engine (§5.2):** 6 rules — stop (−20%), HWM trail (50%/40pp),
    liquidity break (<$8k), invalidation (−25%&1.4×sells), stale (14d),
    TP ladder (+100/300/900 trims). Dedicated 15s fast exit scanner to avoid
-   stop-loss gap risk.
+   stop-loss gap risk. Risk-off exits (`RISK_OFF_RULES`) use a hardcoded
+   15% price-impact ceiling (`EXIT_MAX_PRICE_IMPACT_PCT`, §87-D2); entries,
+   trims, and unknown rule IDs keep the 2.5% ceiling.
 9. **Failure contract discipline (§82 Phase A):** when changing a function's failure
    contract (e.g. from returning `None` on failure to raising an exception such as
    `SendRejected`), grep every single caller in the codebase to ensure all sites handle

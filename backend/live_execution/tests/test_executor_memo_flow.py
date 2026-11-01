@@ -20,6 +20,7 @@ import live_execution.config as le_config
 from live_execution import executor as ex
 from live_execution import memo as memo_mod
 from live_execution.models import ExecutionLedger
+from rule_engine.exits import RISK_OFF_RULES
 
 
 @pytest.fixture
@@ -330,7 +331,7 @@ async def test_disarmed_refuses_before_anything(env, monkeypatch):
 #    returning status="failed".
 # 2) the sell path quoted via POST; Jupiter's /swap/v1/quote is GET (POST 405).
 
-def _arm_sell_network(monkeypatch, calls):
+def _arm_sell_network(monkeypatch, calls, impact_pct="0.001"):
     """Mock memo + GET-quote + build + sign + send + confirm for the SELL path."""
 
     async def fake_memo(payer, seal_hash, endpoints=None):
@@ -341,7 +342,7 @@ def _arm_sell_network(monkeypatch, calls):
         calls.append({"verb": "get", "url": url, "params": params})
         if url.endswith("/quote"):
             # selling 1.0 token (6-dec mint) -> $1.20 USDC out
-            return {"outAmount": str(1_200_000), "priceImpactPct": "0.001"}
+            return {"outAmount": str(1_200_000), "priceImpactPct": impact_pct}
         raise AssertionError(f"unexpected GET {url}")
 
     async def fake_build(quote, addr):
@@ -463,6 +464,81 @@ async def test_sell_quote_uses_get_and_full_flow_fills(env, monkeypatch):
     assert quote_calls[0]["params"]["outputMint"] == ex._BACKEND_USDC_MINT
     assert res.usd_value == pytest.approx(1.20)
     assert ledger.open_token_amounts().get("MINT", 0.0) == 0.0
+
+
+@pytest.mark.parametrize("rule_id", sorted(RISK_OFF_RULES))
+async def test_risk_off_exit_accepts_impact_above_entry_ceiling(
+    env, monkeypatch, rule_id,
+):
+    """§87 D2: every RISK_OFF_RULES exit may pay up to 15% impact; a 10%
+    quote must fill instead of being refused by the 2.5% entry ceiling."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls, impact_pct="0.10")
+    ledger = _ledger_with_open_position(env)
+
+    res = await ex.place_sell("MINT", "SYM", 1.0, ledger=ledger, rule_id=rule_id)
+
+    assert res.status == "filled"
+    assert "send" in calls
+
+
+@pytest.mark.parametrize("impact_pct, expected", [
+    ("0.149", "filled"),
+    ("0.151", "blocked"),
+])
+async def test_risk_off_exit_impact_ceiling_is_15pct(
+    env, monkeypatch, impact_pct, expected,
+):
+    """The wider ceiling is exactly 15%, not unbounded."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls, impact_pct=impact_pct)
+    ledger = _ledger_with_open_position(env)
+
+    res = await ex.place_sell(
+        "MINT", "SYM", 1.0, ledger=ledger, rule_id="exit_liquidity_break",
+    )
+
+    assert res.status == expected
+    if expected == "blocked":
+        assert "15.0" in res.reason
+        assert "send" not in calls
+
+
+async def test_take_profit_trim_keeps_entry_impact_ceiling(env, monkeypatch):
+    """§87 D2 is risk-off only: a 10% trim quote still hits the 2.5% floor
+    and the position is left intact (no build/sign/send)."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls, impact_pct="0.10")
+    ledger = _ledger_with_open_position(env)
+
+    res = await ex.place_sell(
+        "MINT", "SYM", 0.33, ledger=ledger, rule_id="exit_take_profit",
+    )
+
+    assert res.status == "blocked"
+    assert "2.5" in res.reason
+    assert "build" not in calls
+    assert "send" not in calls
+    assert ledger.open_token_amounts().get("MINT", 0.0) == pytest.approx(1.0)
+
+
+async def test_sell_without_known_rule_keeps_entry_impact_ceiling(
+    env, monkeypatch,
+):
+    """An unknown/None rule_id must not get the risk-off exception."""
+    calls = []
+    _arm_balances(monkeypatch)
+    _arm_sell_network(monkeypatch, calls, impact_pct="0.10")
+    ledger = _ledger_with_open_position(env)
+
+    res = await ex.place_sell("MINT", "SYM", 1.0, ledger=ledger, rule_id=None)
+
+    assert res.status == "blocked"
+    assert "2.5" in res.reason
+    assert "send" not in calls
 
 
 async def test_sell_quote_failure_returns_failed_not_nameerror(env, monkeypatch):
