@@ -491,11 +491,39 @@ invent a cost basis when they are unreadable. Every attempt appends one JSON
 line to `/app/backend/live_execution/state/resolve_pending_buy_audit.log` (or
 the configured `--audit-log`). A nonzero exit means nothing changed.
 
+## First 48 hours — supervised burn-in
+
+The engine is armed from the first `up`, so treat the first two days as a
+supervised burn-in: every anomaly is handled by **stopping and inspecting**,
+never by widening a risk limit or clearing a breaker.
+
+| Window | Check | Pass condition |
+|---|---|---|
+| 0–2 h | `docker compose ps` + `docker compose logs live --tail=100` | api/live healthy; ARMED banner and cycle lines; no traceback |
+| 0–2 h | `send_test_alert.py` | one test alert arrives on the configured channel |
+| 2–24 h | `docker compose logs live --tail=300 \| grep -E "PENDING BUY\|LATE BUY\|ERROR\|Traceback"` | no unexplained pending rows; any pending row has a signature + blockhash and is handled per §10.6 |
+| 2–24 h | docs/15 backup + throwaway restore | backup completes; the restored ledger reconciles with no `MISMATCH` |
+| 24–48 h | one operator-approved real buy + sell on scratch state | fill lands, ledger row is confirmed, exit closes, commit is `bound` |
+| 48 h | repeat the reboot and graceful-stop drills (§10.1–10.2) | live returns; last line is `graceful shutdown complete`; no order cancelled mid-flight |
+
+Stop and inspect (do not "wait it out") if any of these appear:
+
+- three consecutive cycles with no heartbeat, or a heartbeat older than 300 s;
+- a kill-switch trip that was not operator-initiated;
+- `WALLET_DROP`, `UNJOURNALED_HOLDING`, or a pending buy older than 5 minutes;
+- a commit marked `failed` while the same signature is confirmed on-chain;
+- an exit retrying beyond the documented ladder.
+
+At the 48-hour mark, record the observed heartbeat, fill count, pending count,
+realized P&L, and any alerts in the operator log, then decide explicitly
+whether to keep the current caps. Do not raise caps during the burn-in.
+
 ## Quick troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | `docker compose build` fails on a pip wheel | switch Dockerfile base to `python:3.13-slim` (Step 6 note) |
+| `docker compose build` fails installing Chromium/patchright (ARM/QEMU) | rebuild without the browser: `SKIP_BROWSER=1 docker compose up -d --build`. The engine never launches a browser; only browser-driven helper scripts need it. |
 | Dashboard unreachable but VM pingable | you skipped ONE of the two firewalls — both the Security List (Console) AND iptables (Step 3) |
 | Live cycle "NOT started (no wallet)" | `WALLET_KEYPAIR_PATH` must be `/run/secrets/wallet_keypair` (in-container path) and the compose bind-mount must exist |
 | fomo token stops working after a rebuild | `FOMO_PRIVY_STATE_FILE` not pointed at `/app/data/...` (Step 5) |

@@ -38,7 +38,12 @@ services:
   # API service: web server and dashboard ONLY. Mounts state volume read-only (:ro).
   # NEVER receives wallet secret key material (WALLET_KEYPAIR_* are stripped).
   api:
-    build: .
+    build:
+      context: .
+      # §90-D1: let an operator/CI retry the image without the ARM Chromium
+      # install (the engine never launches a browser; only browser scripts do).
+      args:
+        SKIP_BROWSER: "${SKIP_BROWSER:-0}"
     image: trading-bot:latest
     container_name: trading-bot-api
     restart: unless-stopped
@@ -80,7 +85,12 @@ services:
   # Live execution service: runs the autonomous decision cycle (run_live_cycle.py).
   # Mounts state volume read-write (rw). Holds the signing key. Not exposed to the internet.
   live:
-    build: .
+    build:
+      context: .
+      # §90-D1: keep the escape hatch identical to the api service — compose
+      # builds the same image twice unless it is told otherwise.
+      args:
+        SKIP_BROWSER: "${SKIP_BROWSER:-0}"
     image: trading-bot:latest
     container_name: trading-bot-live
     # §87 A3: `on-failure` is NOT restarted after a Docker daemon restart

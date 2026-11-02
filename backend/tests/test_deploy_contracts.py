@@ -145,3 +145,13 @@ def test_live_service_declares_its_stop_signal():
     live = _compose()["services"]["live"]
     assert live["stop_signal"] == "SIGTERM"
     assert live["stop_grace_period"] == "150s"
+
+
+def test_compose_exposes_skip_browser_to_both_build_services():
+    """§90-D1: a Chromium install can fail under QEMU/ARM. Both services build
+    the same image, so both must accept SKIP_BROWSER=1 from the operator/CI."""
+    compose = _compose()
+    for name in ("api", "live"):
+        build = compose["services"][name]["build"]
+        assert isinstance(build, dict), f"{name} build is not a mapping"
+        assert build["args"]["SKIP_BROWSER"] == "${SKIP_BROWSER:-0}"
