@@ -15,7 +15,7 @@
       1. Preflight FAIL names `/run/secrets/wallet_keypair` as the in-container path and `WALLET_KEYPAIR_HOST_PATH` as the host side; the JSON-channel missing-source WARN now includes `install -m 600 -o 10001 /dev/null <path>` and `WALLET_KEYPAIR_HOST_PATH=/dev/null`.
       2. `--expire` refuses a landed signature with `the transaction landed (status ...): use --adopt-from-sig`; mutation `90B_EXPIRY_FOUND_STATUS` targets the new guard.
       3. docs/13 documents the placeholder, the crowd-feed/browser fallback truth, and the first-48-hours funding, live-log, heartbeat, alert, and no-cap-increase rules; docs/13 §10.6 and docs/15 name the landed refusal.
-      4. Verification: backend **1496 passed**, 0 failed; mutation **50/50 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; no money-path semantics changed.
+      4. Verification: backend **1496 passed**, 0 failed; mutation **50/50 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; no money-path semantics changed. Pushed `0044a0c`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green.
 - [x] §89 Launcher & Docker parity with §87/§88 (2026-11-02):
       1. §89-A: `stop.sh` gives the live cycle the same 150 s graceful window as compose (API 30 s); SIGTERM → wait → SIGKILL only as a reported incident; the live cycle stops before the API.
       2. §89-B: `pkill -f` removed; sweeps require `/proc/<pid>/cwd == $ROOT/backend` and a Python executable, so Docker container processes and stale/reused PIDs are never signalled.

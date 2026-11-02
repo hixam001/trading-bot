@@ -4,7 +4,7 @@
 - **Preflight (A)**: the FAIL detail now names `/run/secrets/wallet_keypair` as "the in-container path" and `WALLET_KEYPAIR_HOST_PATH` as the host side; the JSON-channel missing-source WARN includes the exact `install -m 600 -o 10001 /dev/null <path>` placeholder and `WALLET_KEYPAIR_HOST_PATH=/dev/null`.
 - **Operator expiry (B)**: a signature found on any endpoint now refuses with `the transaction landed (status ...): use --adopt-from-sig`; the mutation row targets the new `if landed is not None:` guard. `--force-expire` still skips only blockhash/age.
 - **Docs (D/E)**: docs/13 Step 5.5 documents the placeholder; the Chromium row states the browser is only a crowd-feed fallback and the bot is fully functional without it; the first-48-hours section adds loss-only funding, `docker compose logs -f live`, first-heartbeat confirmation, phone-confirmed test alert, and no cap increases until 48 h clean. docs/13 §10.6 and docs/15 name the landed refusal.
-- **Verification**: backend **1496 passed**, 0 failed; mutation **50/50 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; no new test functions (existing tests made stricter first); no money-path semantics changed.
+- **Verification**: backend **1496 passed**, 0 failed; mutation **50/50 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; no new test functions (existing tests made stricter first); no money-path semantics changed. Pushed `0044a0c`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green.
 
 ## Memory-bank update — 2026-11-02 (§90 pre-deploy hardening)
 

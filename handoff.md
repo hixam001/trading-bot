@@ -74,6 +74,8 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 - Mutation harness: **50/50 CAUGHT**; restorations verified clean.
 - Pre-push gate: **9/9 steps clean** (gitleaks absent locally; CI runs it); Playwright
   **40/40**; tsc/build clean.
+- Pushed `0044a0c`; GitHub Actions `Tests & Security Audit` (backend/frontend +
+  Docker ARM64 build/compose), `gitleaks`, and `CodeQL` are all green.
 - No money-path semantics changed: only operator messages, refusal text, tests, and docs.
 
 ## §89 — Launcher & Docker Parity with §87/§88 (2026-11-02)
