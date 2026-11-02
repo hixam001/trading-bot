@@ -194,7 +194,8 @@ def test_expire_refuses_when_any_endpoint_reports_the_signature(tmp_path):
     assert len(ledger.pending_buys()) == 1
     audit = _audit(tmp_path)[-1]
     assert audit["result"] == "refused"
-    assert "on-chain" in audit["reason"]
+    assert "the transaction landed" in audit["reason"]
+    assert "status" in audit["reason"]
     assert "--adopt-from-sig" in audit["reason"]
 
 

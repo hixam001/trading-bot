@@ -366,10 +366,9 @@ def check_wallet_channel(env: dict[str, str]) -> Check:
             and configured != CONTAINER_WALLET_PATH):
         return _check(
             "wallet channel", FAIL,
-            f"WALLET_KEYPAIR_PATH={configured!r} is not the in-container "
-            f"mount target {CONTAINER_WALLET_PATH!r}; set "
-            f"WALLET_KEYPAIR_PATH={CONTAINER_WALLET_PATH} and put the host "
-            "path in WALLET_KEYPAIR_HOST_PATH")
+            f"WALLET_KEYPAIR_PATH={configured!r} must be "
+            f"{CONTAINER_WALLET_PATH!r} — this is the in-container path; the "
+            "host side is WALLET_KEYPAIR_HOST_PATH")
     if channel == WALLET_CHANNEL_BOTH:
         return _check(
             "wallet channel", WARN,
@@ -421,10 +420,10 @@ def _json_bind_source_check(env: dict[str, str], root: Path) -> Check:
     except FileNotFoundError:
         return _check(
             "wallet file", WARN,
-            f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
-            f"source {path} is missing — Docker will create a directory "
-            "there; create a keypair file or point WALLET_KEYPAIR_HOST_PATH "
-            "at an existing file")
+            f"JSON channel selected but the compose bind mount still needs a "
+            f"host file: create an empty placeholder (install -m 600 -o "
+            f"10001 /dev/null {path}) or set "
+            "WALLET_KEYPAIR_HOST_PATH=/dev/null")
     except PermissionError:
         return _check(
             "wallet file", WARN,

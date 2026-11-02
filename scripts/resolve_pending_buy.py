@@ -281,12 +281,13 @@ async def resolve(args: argparse.Namespace, *,
                 rec, audit_path, ledger_path,
                 "no endpoint returned a status; refusing to expire on "
                 "unknown data", forced=forced, now_fn=now_fn)
-        if any(status is not None for status in statuses):
+        landed = next((status for status in statuses
+                       if status is not None), None)
+        if landed is not None:
             return _refuse_expire(
                 rec, audit_path, ledger_path,
-                "signature is present on-chain; do not expire — adopt the "
-                "confirmed fill with --adopt-from-sig",
-                forced=forced, now_fn=now_fn)
+                f"the transaction landed (status {landed!r}): use "
+                "--adopt-from-sig", forced=forced, now_fn=now_fn)
 
         reason = (
             "operator FORCE-expired pending buy: chain proof bypassed"

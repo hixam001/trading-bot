@@ -147,9 +147,11 @@ secret. It prints a PASS/WARN/FAIL table and exits **1** if any check fails:
 - `.env` selects exactly one wallet secret channel (`WALLET_KEYPAIR_PATH` or
   `WALLET_KEYPAIR_JSON`); the JSON channel does not require a keypair file.
 - `WALLET_KEYPAIR_PATH` must be exactly `/run/secrets/wallet_keypair` (the
-  compose mount target; the host side belongs in `WALLET_KEYPAIR_HOST_PATH`),
+  in-container path; the host side belongs in `WALLET_KEYPAIR_HOST_PATH`),
   and the JSON channel WARNs if the compose bind source is missing or not a
-  regular file.
+  regular file. Pre-create that mount source with
+  `sudo install -m 600 -o 10001 /dev/null <path>` or set
+  `WALLET_KEYPAIR_HOST_PATH=/dev/null`.
 - For the file channel, the host bind source exists, is a regular file, mode
   0600/0400, owner uid **10001** — a FAIL prints the exact `chown`/`chmod`
   commands. Readability is tested only when the preflight itself runs as uid
@@ -482,8 +484,9 @@ mandatory when stdin is not a TTY. `--expire` re-verifies the chain before
 changing anything: the stored blockhash must be provably invalid, **every**
 endpoint must report the signature absent, and the row must be at least
 `PENDING_EXPIRY_MIN_AGE_SECONDS` (90 s) old. A still-valid or unknown
-blockhash, a signature found on any endpoint, an RPC error, or a young row is
-refused with exit 1. `--force-expire` exists only for an RPC outage and skips
+blockhash, an RPC error, or a young row is refused with exit 1. A signature
+found on any endpoint refuses with `the transaction landed (status ...): use
+--adopt-from-sig`. `--force-expire` exists only for an RPC outage and skips
 **only** the blockhash/age gates — the all-endpoint-absent check still runs;
 forced expiries are audited with `"forced": true`. Adoption reads the
 **actual** token/USDC deltas from the confirmed transaction and refuses to
@@ -496,6 +499,14 @@ the configured `--audit-log`). A nonzero exit means nothing changed.
 The engine is armed from the first `up`, so treat the first two days as a
 supervised burn-in: every anomaly is handled by **stopping and inspecting**,
 never by widening a risk limit or clearing a breaker.
+
+- Fund the wallet with only what you accept losing. Do not top it up to "give
+  the strategy room" during the burn-in.
+- Keep `docker compose logs -f live` open and confirm the **first heartbeat**
+  before walking away.
+- Run `send_test_alert.py` and confirm the alert reaches the phone, not just
+  the command's exit code.
+- Do not raise any hardcoded cap until 48 h pass with a clean reconcile.
 
 | Window | Check | Pass condition |
 |---|---|---|
@@ -523,7 +534,7 @@ whether to keep the current caps. Do not raise caps during the burn-in.
 | Symptom | Fix |
 |---|---|
 | `docker compose build` fails on a pip wheel | switch Dockerfile base to `python:3.13-slim` (Step 6 note) |
-| `docker compose build` fails installing Chromium/patchright (ARM/QEMU) | rebuild without the browser: `SKIP_BROWSER=1 docker compose up -d --build`. The engine never launches a browser; only browser-driven helper scripts need it. |
+| `docker compose build` fails installing Chromium/patchright (ARM/QEMU) | rebuild without the browser: `SKIP_BROWSER=1 docker compose up -d --build`. The browser is only a fallback transport for the crowd feed (`backend/config.py` documents that the feed works 100% without a browser), so the bot is fully functional without it. |
 | Dashboard unreachable but VM pingable | you skipped ONE of the two firewalls — both the Security List (Console) AND iptables (Step 3) |
 | Live cycle "NOT started (no wallet)" | `WALLET_KEYPAIR_PATH` must be `/run/secrets/wallet_keypair` (in-container path) and the compose bind-mount must exist |
 | fomo token stops working after a rebuild | `FOMO_PRIVY_STATE_FILE` not pointed at `/app/data/...` (Step 5) |

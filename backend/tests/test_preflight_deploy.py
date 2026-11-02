@@ -277,13 +277,20 @@ def test_path_channel_must_use_the_container_mount_target():
         WALLET_KEYPAIR_PATH="/opt/trading-bot/app/secrets/wallet_keypair.json"))
     assert host_path.status == pf.FAIL
     assert pf.CONTAINER_WALLET_PATH in host_path.detail
-    assert "WALLET_KEYPAIR_HOST_PATH" in host_path.detail
+    assert "this is the in-container path" in host_path.detail
+    assert "host side is WALLET_KEYPAIR_HOST_PATH" in host_path.detail
 
     both = pf.check_wallet_channel(_env(
         WALLET_KEYPAIR_PATH="/opt/trading-bot/app/secrets/wallet_keypair.json",
         WALLET_KEYPAIR_JSON="[1,2,3]"))
     assert both.status == pf.FAIL
     assert pf.CONTAINER_WALLET_PATH in both.detail
+    assert "this is the in-container path" in both.detail
+
+    both_with_container_path = pf.check_wallet_channel(_env(
+        WALLET_KEYPAIR_JSON="[1,2,3]"))
+    assert both_with_container_path.status == pf.WARN
+    assert "exactly one channel" in both_with_container_path.detail
 
 
 def test_json_channel_warns_when_the_compose_bind_source_is_missing(tmp_path):
@@ -293,8 +300,10 @@ def test_json_channel_warns_when_the_compose_bind_source_is_missing(tmp_path):
     assert all(c.status != pf.FAIL for c in checks), checks
     assert _status(checks, "wallet channel") == pf.PASS
     assert _status(checks, "wallet file") == pf.WARN
-    assert "bind" in next(
-        c for c in checks if c.name == "wallet file").detail
+    detail = next(c for c in checks if c.name == "wallet file").detail
+    assert "bind" in detail
+    assert "install -m 600 -o 10001 /dev/null" in detail
+    assert "WALLET_KEYPAIR_HOST_PATH=/dev/null" in detail
 
 
 def test_json_channel_warns_when_the_compose_bind_source_is_a_directory(

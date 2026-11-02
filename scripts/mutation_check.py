@@ -552,9 +552,7 @@ MUTATIONS: list[Mutation] = [
         phase="§90-B",
         mutation_id="90B_EXPIRY_FOUND_STATUS",
         file_path="scripts/resolve_pending_buy.py",
-        exact_old_text=(
-            "        if any(status is not None for status in statuses):"
-        ),
+        exact_old_text="        if landed is not None:",
         new_text="        if False:",
         test_selector="backend/tests/test_resolve_pending_buy.py",
         description="Operator expire ignores a signature found on-chain",

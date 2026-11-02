@@ -218,8 +218,9 @@ Operators should periodically practice a restore drill in a scratch directory to
      with the engine stopped, resolve each one with `scripts/resolve_pending_buy.py` as documented in
      `docs/13_ORACLE_DEPLOY_GUIDE.md` §10.6. The tool re-verifies the blockhash, every-endpoint absence and
      the 90 s age gate before expiring; use `--force-expire` only when RPC reads are unavailable (it still
-     requires every endpoint to report the signature absent, and audits `forced: true`). Never delete or
-     hand-edit a pending row.
+     requires every endpoint to report the signature absent, and audits `forced: true`). A signature found
+     on any endpoint refuses with `the transaction landed (status ...): use --adopt-from-sig`. Never delete
+     or hand-edit a pending row.
 4. **Clear the kill switch** (only after human verification):
    ```bash
    docker compose run --rm --entrypoint python -w /app/backend live \

@@ -40,6 +40,42 @@
 - Unknown stays unknown: a missing/unreadable RPC answer refuses expiry, and a missing compose bind source is a WARN because the JSON channel can still sign.
 - Every push requires `./scripts/prepush_check.sh` to pass locally and GitHub Actions to be green; failures are fixed, never bypassed. Operator-only VM preflight, reboot, graceful-stop, backup/restore and the supervised real buy + sell on scratch state remain outstanding.
 
+## §90 follow-up — Literal spec audit of the pre-deploy hardening (2026-11-02)
+
+### Why
+A post-§90 audit re-read the master prompt against the shipped code. Behaviour was
+correct, but three operator-facing details were weaker than the specification: the
+JSON-channel WARN did not tell the operator how to create the compose bind source,
+the `--expire` refusal did not name the landed status, and the first-48-hours section
+did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap gate.
+
+### Fixed
+- `scripts/preflight_deploy.py`: the file/`both` FAIL now says exactly that
+  `/run/secrets/wallet_keypair` is the in-container path and the host side is
+  `WALLET_KEYPAIR_HOST_PATH`. The JSON-channel missing-source WARN now includes
+  `install -m 600 -o 10001 /dev/null <path>` and the `WALLET_KEYPAIR_HOST_PATH=/dev/null`
+  alternative.
+- `scripts/resolve_pending_buy.py`: a signature found on any endpoint refuses with
+  `the transaction landed (status ...): use --adopt-from-sig`, including the first
+  non-None status. Mutation `90B_EXPIRY_FOUND_STATUS` now mutates the new
+  `if landed is not None:` guard.
+- `docs/13_ORACLE_DEPLOY_GUIDE.md`: Step 5.5 documents the placeholder command; the
+  troubleshooting row states the browser is only a fallback transport for the crowd
+  feed (`backend/config.py` documents 100% functionality without it) and that the bot
+  is fully functional without it; the first-48-hours section adds the
+  loss-only funding rule, `docker compose logs -f live`, first-heartbeat confirmation,
+  `send_test_alert.py` reaching the phone, and the no-cap-increase-until-clean-48h rule.
+- `docs/13` §10.6 and `docs/15` name the landed-status refusal text.
+
+### Verification
+- Backend suite: **1496 passed**, 0 failed (102 warnings); no new test functions were
+  needed — the existing host-path, JSON-placeholder, and landed-status tests were made
+  stricter first and failed before the code/docs changes.
+- Mutation harness: **50/50 CAUGHT**; restorations verified clean.
+- Pre-push gate: **9/9 steps clean** (gitleaks absent locally; CI runs it); Playwright
+  **40/40**; tsc/build clean.
+- No money-path semantics changed: only operator messages, refusal text, tests, and docs.
+
 ## §89 — Launcher & Docker Parity with §87/§88 (2026-11-02)
 
 ### Baseline & Measured Suite Counts
