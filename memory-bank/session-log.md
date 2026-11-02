@@ -5,7 +5,7 @@
 - **Deploy truth (B/C)**: the entrypoint executes explicit argv before role logic, so a compose `run` command can no longer start a second engine. The preflight requires exactly one wallet channel (JSON skips the host file), reports an untraversable directory honestly, and only tests `os.access` as uid 10001/root.
 - **Shutdown + operator tool (F)**: SIGTERM/SIGINT set `_STOP_EVENT`; the entry boundary logs `entry skipped: shutting down` and skips the new buy while exits finish. New `scripts/resolve_pending_buy.py <key> --expire|--adopt-from-sig [SIG]` prompts unless `--yes`, refuses a non-TTY without it, requires actual fill deltas for adoption, and writes a JSON audit line.
 - **Docs (G)**: docs/01, docs/13 (§10.6 manual resolution), docs/15, handoff §88, memory-bank, and the §81–§88 mutation log.
-- **Verification**: backend **1460 passed**, 0 failed (+41 over 1419); mutation **44/44 CAUGHT** (14 new §88 rows); local prepush **9/9 clean** (gitleaks absent locally; CI runs it). No push yet — arm64 CI and operator-only VM drills remain unverified.
+- **Verification**: backend **1460 passed**, 0 failed (+41 over 1419); mutation **44/44 CAUGHT** (14 new §88 rows); local prepush **9/9 clean** (gitleaks absent locally; CI runs it). Pushed `0beb964`; GitHub Actions tests + Docker ARM64 build/compose, gitleaks, and CodeQL are green. Operator-only VM drills remain outstanding.
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
 
 ## Memory-bank update — 2026-11-01 (§87-D2 risk-off exit price-impact ceiling, operator-approved)

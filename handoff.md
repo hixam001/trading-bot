@@ -5,7 +5,7 @@
 - Baseline suite: **1419 passed**, 2 skipped; final suite: **1460 passed**, 0 failed (102 warnings in 20.48s; +41)
 - Mutation harness: **44/44 CAUGHT** after adding 14 §88 rows (the §88-E pre-send row was retargeted from §87-C)
 - Phase commits: `bc162e9` A, `e8ed1f4` B, `7632be7` C, `704bafd` D, `fd7641a` E, `2b99e81` F, this commit G
-- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it). No push occurred in this session; arm64 CI and the operator-only VM drills remain unverified.
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it). Pushed `0beb964`; GitHub Actions `Tests & Security Audit` (backend/frontend + Docker ARM64 build/compose), `gitleaks`, and `CodeQL` are all green. Operator-only VM drills remain outstanding.
 
 ### Fixed Defects
 1. **Phase A — a pending buy must block a second buy (`jupiter_executor.py`, `executor.py`, `run_live_cycle.py`)**:
