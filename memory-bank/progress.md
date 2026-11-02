@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §90 Pre-deploy hardening (2026-11-02, phases A–E):
+      1. §90-A: preflight FAILs unless `WALLET_KEYPAIR_PATH` is exactly `/run/secrets/wallet_keypair` (new `CONTAINER_WALLET_PATH`); the JSON channel WARNs when the compose bind source is missing or not a regular file instead of claiming PASS.
+      2. §90-B: operator `--expire` refuses unless the row is ≥ 90 s old, the stored blockhash is provably invalid, every deduped endpoint reports the signature absent, and every read succeeded; `--force-expire` skips only blockhash/age, still requires every-endpoint absence, and audits `forced: true`. One shared `PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0` in `live_execution.config`.
+      3. §90-C1: `record_buy`'s replacement branch writes `reason=""` instead of copying the pending row's unresolved note onto a confirmed fill.
+      4. §90-C2: explicit Jupiter ordering test `[sign, record_pending_buy, send_checked_swap]` plus mutation `90C2_JOURNAL_AFTER_SEND`.
+      5. §90-C3: `CommitLog.bind(..., allow_failed=True)` lets chain-proven automatic/operator adoption re-bind a commit previously marked failed, clearing the stale `fail_reason`; the default still refuses failed rows.
+      6. §90-D: both compose build stanzas pass `SKIP_BROWSER` (default 0) with a contract test; docs/13 gains the Chromium troubleshooting row and the supervised first-48-hours burn-in checklist.
+      7. §90-E: handoff §90, memory-bank, and the §81–§90 mutation log (50 rows).
+      8. Verification: backend **1496 passed**, 0 failed (+24 over the 1472/2-skipped baseline); mutation **50/50 CAUGHT** (6 new §90 rows); prepush gate re-run before push. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
+      9. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §89 Launcher & Docker parity with §87/§88 (2026-11-02):
       1. §89-A: `stop.sh` gives the live cycle the same 150 s graceful window as compose (API 30 s); SIGTERM → wait → SIGKILL only as a reported incident; the live cycle stops before the API.
       2. §89-B: `pkill -f` removed; sweeps require `/proc/<pid>/cwd == $ROOT/backend` and a Python executable, so Docker container processes and stale/reused PIDs are never signalled.

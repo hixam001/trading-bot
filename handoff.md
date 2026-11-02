@@ -1,3 +1,45 @@
+## §90 — Pre-Deploy Hardening: Wallet Mount Truth, Chain-Proven Expiry, Pending-Buy Audit Gaps & ARM Browser Escape (2026-11-02)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `e75101c` (§89 follow-up, green CI)
+- Baseline suite: **1472 passed**, 2 skipped; final suite: **1496 passed**, 0 failed (102 warnings in 33.32s; +24)
+- Mutation harness: **50/50 CAUGHT** (6 new §90 rows: A ×1, B ×4, C2 ×1)
+- Phase commits: `c3252e1` A, `f0eab1c` B, `7e6e6c3` C, `c74a192` D, this commit E
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it)
+- Playwright: **40/40**; `tsc --noEmit` + `npm run build` clean (211.13 kB JS / 65.08 kB gzip)
+
+### Fixed Defects
+1. **Phase A — preflight accepted a host path the container cannot read (`scripts/preflight_deploy.py`)**:
+   - The file channel compared `WALLET_KEYPAIR_PATH` only for presence. A host path such as `secrets/wallet_keypair.json` passed preflight but does not exist inside the `live` container, whose compose mount target is `/run/secrets/wallet_keypair`.
+   - The path channel and the ambiguous `both` channel now FAIL unless the value is exactly the new `CONTAINER_WALLET_PATH = "/run/secrets/wallet_keypair"`; the message points at `WALLET_KEYPAIR_HOST_PATH` for the host side.
+   - The JSON channel needs no keypair file, but compose still bind-mounts `WALLET_KEYPAIR_HOST_PATH`. A missing source (Docker silently creates a root-owned directory) or a non-regular file now WARNs instead of claiming PASS; a present regular file still passes.
+   - Tests: `backend/tests/test_preflight_deploy.py` (+4).
+2. **Phase B — operator expiry could release a still-landable buy (`scripts/resolve_pending_buy.py`, `backend/run_live_cycle.py`, `backend/live_execution/config.py`)**:
+   - `--expire` used to settle `expired` on the operator's word. It now refuses (exit 1, row untouched, audit `refused`) unless the row is at least `PENDING_EXPIRY_MIN_AGE_SECONDS` old, the stored blockhash is provably invalid (`is False`), every deduped endpoint reports the signature absent, and no read failed or returned unknown.
+   - A missing signature/blockhash, a still-valid or unknown blockhash, any endpoint reporting a status, an empty status list, or an RPC exception all refuse. A found status tells the operator to adopt instead.
+   - New `--force-expire` exists only for an RPC outage: it skips **only** the blockhash/age gates, still requires a stored signature and every endpoint reporting absent, and writes `forced: true` to the JSON audit line. It is in the same mutually exclusive argparse group as `--expire` (both together exit 2).
+   - The 90 s threshold now has one definition, `live_config.PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0`; the automatic resolver uses it instead of its private copy.
+   - Tests: `backend/tests/test_resolve_pending_buy.py` (+13).
+3. **Phase C — three pending-buy audit gaps (`models.py`, `jupiter_executor.py` tests, `commit_log.py`)**:
+   - **C1**: `ExecutionLedger.record_buy`'s replacement branch copied the pending row's `reason` ("send outcome not yet known") onto the confirmed fill. It now writes `reason=""`, so a settled row never claims an unresolved attempt.
+   - **C2**: the Jupiter confirmed-trade path had no explicit ordering test. `test_execute_orders_sign_then_journal_then_send` pins `[sign, record_pending_buy, send_checked_swap]`; mutation `90C2_JOURNAL_AFTER_SEND` moves the journal call inside the `try` after the send and the test fails.
+   - **C3**: chain-proven adoption could not re-bind a commit that expiry/orphan healing had already marked `failed`, so a late-landing fill stayed unproven. `CommitLog.bind(..., allow_failed=True)` is opt-in, clears the stale `fail_reason`, and is used only by the automatic resolver and the operator `--adopt-from-sig` path; the default still refuses failed rows.
+   - Tests: `test_commit_log.py` (+1), `test_jupiter_executor.py` (+1), `test_pending_buys_and_reconcile.py` (+1), `test_pending_buy_resolution.py` (+1), `test_resolve_pending_buy.py` (+1).
+4. **Phase D — ARM browser build escape hatch and burn-in runbook (`docker-compose.yml`, `docs/13_ORACLE_DEPLOY_GUIDE.md`)**:
+   - Both `api` and `live` build stanzas pass `SKIP_BROWSER: "${SKIP_BROWSER:-0}"`, so `SKIP_BROWSER=1 docker compose up -d --build` retries the image without the ARM/QEMU Chromium install. The engine never launches a browser; only browser-driven helper scripts need it. Default behavior is unchanged.
+   - The troubleshooting table gains the Chromium/patchright build-failure row with that exact command.
+   - New "First 48 hours — supervised burn-in" section: 0–2 h, 2–24 h, 24–48 h and 48 h checks (health/logs, test alert, pending-buy grep, backup + throwaway restore, one operator-approved buy + sell on scratch state, reboot/graceful-stop drills), an explicit stop-and-inspect list, and a rule not to raise caps during the burn-in.
+   - Tests: `backend/tests/test_deploy_contracts.py` (+1) asserts both services expose the build arg.
+5. **Phase E — documentation and memory**:
+   - `handoff.md` §90, memory-bank `progress`/`activeContext`/`session-log`/`decisionLog`, and `docs/17_MUTATION_LOG.md` regenerated for §81–§90 (50 rows).
+
+### Constraints & Invariants Preserved
+- No changes to `LIVE_TRADING_ENABLED=True` / `REQUIRE_MANUAL_CONFIRMATION=False`, the 11-rule gate, signing, sizing, thresholds, Jupiter lite-api Swap V1, or the fomo.family Privy path.
+- Pending-buy money semantics are unchanged except the named fixes: one key remains one row, a pending row is never a token position, and expiry still requires chain proof. `--force-expire` never skips the every-endpoint-absent check.
+- Preflight remains read-only (no network, no secret values printed). The new `WALLET_KEYPAIR_PATH` rule is a deployment-truth check, not a signing change; the engine still reads the same env var.
+- Unknown stays unknown: a missing/unreadable RPC answer refuses expiry, and a missing compose bind source is a WARN because the JSON channel can still sign.
+- Every push requires `./scripts/prepush_check.sh` to pass locally and GitHub Actions to be green; failures are fixed, never bypassed. Operator-only VM preflight, reboot, graceful-stop, backup/restore and the supervised real buy + sell on scratch state remain outstanding.
+
 ## §89 — Launcher & Docker Parity with §87/§88 (2026-11-02)
 
 ### Baseline & Measured Suite Counts
