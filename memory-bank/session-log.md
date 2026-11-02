@@ -6,7 +6,7 @@
 - **Pending-buy audit (C)**: a confirmed replacement row clears the pending `reason`; the Jupiter path has an explicit sign → journal → send ordering test with mutation `90C2_JOURNAL_AFTER_SEND`; chain-proven adoption may re-bind a commit marked failed via opt-in `bind(allow_failed=True)`, which clears `fail_reason` while the default still refuses failed rows.
 - **ARM/burn-in (D)**: both compose build stanzas pass `SKIP_BROWSER` (default 0), pinned by a source contract test; docs/13 has the Chromium build-failure fix and a supervised first-48-hours checklist that starts from the armed state and forbids raising caps during the burn-in.
 - **Docs/memory (E)**: handoff §90, progress/activeContext/session-log/decisionLog, and the §81–§90 mutation log (50 rows).
-- **Verification**: backend **1496 passed**, 0 failed (+24 over 1472/2 skipped); mutation **50/50 CAUGHT** (6 new §90 rows); prepush re-run before push; Playwright **40/40**; tsc/build clean. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
+- **Verification**: backend **1496 passed**, 0 failed (+24 over 1472/2 skipped); mutation **50/50 CAUGHT** (6 new §90 rows); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. Pushed `dde40e8`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
 
 ## Memory-bank update — 2026-11-02 (§89 launcher & Docker parity with §87/§88)

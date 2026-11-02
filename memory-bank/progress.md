@@ -9,7 +9,7 @@
       5. §90-C3: `CommitLog.bind(..., allow_failed=True)` lets chain-proven automatic/operator adoption re-bind a commit previously marked failed, clearing the stale `fail_reason`; the default still refuses failed rows.
       6. §90-D: both compose build stanzas pass `SKIP_BROWSER` (default 0) with a contract test; docs/13 gains the Chromium troubleshooting row and the supervised first-48-hours burn-in checklist.
       7. §90-E: handoff §90, memory-bank, and the §81–§90 mutation log (50 rows).
-      8. Verification: backend **1496 passed**, 0 failed (+24 over the 1472/2-skipped baseline); mutation **50/50 CAUGHT** (6 new §90 rows); prepush gate re-run before push. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
+      8. Verification: backend **1496 passed**, 0 failed (+24 over the 1472/2-skipped baseline); mutation **50/50 CAUGHT** (6 new §90 rows); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. Pushed `dde40e8`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
       9. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §89 Launcher & Docker parity with §87/§88 (2026-11-02):
       1. §89-A: `stop.sh` gives the live cycle the same 150 s graceful window as compose (API 30 s); SIGTERM → wait → SIGKILL only as a reported incident; the live cycle stops before the API.

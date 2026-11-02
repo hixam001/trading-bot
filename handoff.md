@@ -5,7 +5,7 @@
 - Baseline suite: **1472 passed**, 2 skipped; final suite: **1496 passed**, 0 failed (102 warnings in 33.32s; +24)
 - Mutation harness: **50/50 CAUGHT** (6 new §90 rows: A ×1, B ×4, C2 ×1)
 - Phase commits: `c3252e1` A, `f0eab1c` B, `7e6e6c3` C, `c74a192` D, this commit E
-- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it)
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it). Pushed `dde40e8`; GitHub Actions `Tests & Security Audit` (backend/frontend + Docker ARM64 build/compose), `gitleaks`, and `CodeQL` are all green. Operator-only VM drills remain outstanding.
 - Playwright: **40/40**; `tsc --noEmit` + `npm run build` clean (211.13 kB JS / 65.08 kB gzip)
 
 ### Fixed Defects
