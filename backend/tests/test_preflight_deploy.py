@@ -268,14 +268,51 @@ def test_wallet_channel_requires_exactly_one_channel():
         WALLET_KEYPAIR_PATH="")).status == pf.FAIL
 
 
-def test_json_channel_skips_the_host_keypair_file_check(tmp_path):
-    """A JSON-channel deployment has no host keypair file; that must not FAIL."""
-    checks = _run(_env(WALLET_KEYPAIR_PATH="",
-                       WALLET_KEYPAIR_JSON="[1,2,3]"), tmp_path)
+def test_path_channel_must_use_the_container_mount_target():
+    assert pf.CONTAINER_WALLET_PATH == "/run/secrets/wallet_keypair"
+    good = pf.check_wallet_channel(_env())
+    assert good.status == pf.PASS
+
+    host_path = pf.check_wallet_channel(_env(
+        WALLET_KEYPAIR_PATH="/opt/trading-bot/app/secrets/wallet_keypair.json"))
+    assert host_path.status == pf.FAIL
+    assert pf.CONTAINER_WALLET_PATH in host_path.detail
+    assert "WALLET_KEYPAIR_HOST_PATH" in host_path.detail
+
+    both = pf.check_wallet_channel(_env(
+        WALLET_KEYPAIR_PATH="/opt/trading-bot/app/secrets/wallet_keypair.json",
+        WALLET_KEYPAIR_JSON="[1,2,3]"))
+    assert both.status == pf.FAIL
+    assert pf.CONTAINER_WALLET_PATH in both.detail
+
+
+def test_json_channel_warns_when_the_compose_bind_source_is_missing(tmp_path):
+    """JSON-channel signing works, but compose still bind-mounts a host path."""
+    env = _env(WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]")
+    checks = _run(env, tmp_path)
     assert all(c.status != pf.FAIL for c in checks), checks
     assert _status(checks, "wallet channel") == pf.PASS
+    assert _status(checks, "wallet file") == pf.WARN
+    assert "bind" in next(
+        c for c in checks if c.name == "wallet file").detail
+
+
+def test_json_channel_warns_when_the_compose_bind_source_is_a_directory(
+        tmp_path):
+    (tmp_path / "secrets" / "wallet_keypair.json").mkdir(parents=True)
+    env = _env(WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]")
+    checks = pf.check_wallet_file(env, tmp_path, uid_reader=lambda p: 10001)
+    assert _status(checks, "wallet file") == pf.WARN
+    assert "not a regular file" in next(
+        c for c in checks if c.name == "wallet file").detail
+
+
+def test_json_channel_passes_when_the_compose_bind_source_is_a_file(tmp_path):
+    _wallet(tmp_path)
+    env = _env(WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]")
+    checks = pf.check_wallet_file(env, tmp_path, uid_reader=lambda p: 10001)
     assert _status(checks, "wallet file") == pf.PASS
-    assert "skipped" in next(
+    assert "unused" in next(
         c for c in checks if c.name == "wallet file").detail
 
 

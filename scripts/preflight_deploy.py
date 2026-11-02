@@ -31,6 +31,10 @@ from urllib.parse import urlparse
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
 DEFAULT_WALLET_HOST_PATH = "secrets/wallet_keypair.json"
+# compose bind-mounts the host keypair at this fixed in-container path. The
+# engine reads WALLET_KEYPAIR_PATH, so a host path here would point at a file
+# that does not exist inside the live container.
+CONTAINER_WALLET_PATH = "/run/secrets/wallet_keypair"
 EXPECTED_WALLET_UID = 10001
 
 PASS = "PASS"
@@ -345,6 +349,10 @@ def check_wallet_channel(env: dict[str, str]) -> Check:
     failed by the host-file check even though the engine signs fine, and a
     no-channel deployment passed the host-file check while the engine would
     refuse to start.
+
+    For the file channel the value must be the compose mount target: the host
+    path belongs in WALLET_KEYPAIR_HOST_PATH and is meaningless inside the
+    live container.
     """
     channel = wallet_channel(env)
     if channel == WALLET_CHANNEL_NONE:
@@ -353,6 +361,15 @@ def check_wallet_channel(env: dict[str, str]) -> Check:
             "no wallet configured: set exactly one of WALLET_KEYPAIR_PATH "
             "(preferred, /run/secrets/wallet_keypair in compose) or "
             "WALLET_KEYPAIR_JSON — the engine refuses to sign without one")
+    configured = _value(env, "WALLET_KEYPAIR_PATH")
+    if (channel in (WALLET_CHANNEL_PATH, WALLET_CHANNEL_BOTH)
+            and configured != CONTAINER_WALLET_PATH):
+        return _check(
+            "wallet channel", FAIL,
+            f"WALLET_KEYPAIR_PATH={configured!r} is not the in-container "
+            f"mount target {CONTAINER_WALLET_PATH!r}; set "
+            f"WALLET_KEYPAIR_PATH={CONTAINER_WALLET_PATH} and put the host "
+            "path in WALLET_KEYPAIR_HOST_PATH")
     if channel == WALLET_CHANNEL_BOTH:
         return _check(
             "wallet channel", WARN,
@@ -365,8 +382,7 @@ def check_wallet_channel(env: dict[str, str]) -> Check:
             "WALLET_KEYPAIR_JSON (env) selected; no host keypair file needed")
     return _check(
         "wallet channel", PASS,
-        f"WALLET_KEYPAIR_PATH={_value(env, 'WALLET_KEYPAIR_PATH')} "
-        "(mounted secret file)")
+        f"WALLET_KEYPAIR_PATH={configured} (mounted secret file)")
 
 
 def _wallet_identity_check(env: dict[str, str]) -> Check:
@@ -381,6 +397,54 @@ def _wallet_identity_check(env: dict[str, str]) -> Check:
 
 def _default_uid(path: Path) -> int:
     return path.stat().st_uid
+
+
+def _wallet_host_path(env: dict[str, str], root: Path) -> Path:
+    """Resolve the host side of the compose wallet bind mount."""
+    configured = _value(env, "WALLET_KEYPAIR_HOST_PATH")
+    path = Path(configured or DEFAULT_WALLET_HOST_PATH)
+    if not path.is_absolute():
+        path = root / path
+    return path
+
+
+def _json_bind_source_check(env: dict[str, str], root: Path) -> Check:
+    """JSON signing needs no host file, but compose still bind-mounts one.
+
+    A missing source is silently created as a root-owned directory by Docker;
+    the engine still signs from WALLET_KEYPAIR_JSON, so this is a WARN (and a
+    later switch to the file channel would fail until it is fixed).
+    """
+    path = _wallet_host_path(env, root)
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return _check(
+            "wallet file", WARN,
+            f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
+            f"source {path} is missing — Docker will create a directory "
+            "there; create a keypair file or point WALLET_KEYPAIR_HOST_PATH "
+            "at an existing file")
+    except PermissionError:
+        return _check(
+            "wallet file", WARN,
+            f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
+            f"source {path} cannot be inspected (parent directory not "
+            "traversable)")
+    except OSError as exc:
+        return _check(
+            "wallet file", WARN,
+            f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
+            f"source {path} cannot be inspected: {exc}")
+    if not stat.S_ISREG(st.st_mode):
+        return _check(
+            "wallet file", WARN,
+            f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
+            f"source {path} is not a regular file (Docker created a "
+            "directory); replace it with a keypair file")
+    return _check(
+        "wallet file", PASS,
+        f"compose bind source {path} is present (unused by the JSON channel)")
 
 
 def check_wallet_file(env: dict[str, str], root: Path,
@@ -400,18 +464,11 @@ def check_wallet_file(env: dict[str, str], root: Path,
 
     checks: list[Check] = []
     if wallet_channel(env) == WALLET_CHANNEL_JSON:
-        checks.append(_check(
-            "wallet file", PASS,
-            "skipped: WALLET_KEYPAIR_JSON channel is selected "
-            "(no host keypair file needed)"))
+        checks.append(_json_bind_source_check(env, root))
         checks.append(_wallet_identity_check(env))
         return checks
 
-    configured = _value(env, "WALLET_KEYPAIR_HOST_PATH")
-    host_path = configured or DEFAULT_WALLET_HOST_PATH
-    path = Path(host_path)
-    if not path.is_absolute():
-        path = root / path
+    path = _wallet_host_path(env, root)
 
     euid = euid_reader()
     try:

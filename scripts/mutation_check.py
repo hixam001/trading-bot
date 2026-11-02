@@ -513,6 +513,19 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_resolve_pending_buy.py",
         description="Operator adoption reads unfiltered deltas without a wallet owner",
     ),
+    # §90-A
+    Mutation(
+        phase="§90-A",
+        mutation_id="90A_CONTAINER_WALLET_PATH",
+        file_path="scripts/preflight_deploy.py",
+        exact_old_text=(
+            "    if (channel in (WALLET_CHANNEL_PATH, WALLET_CHANNEL_BOTH)\n"
+            "            and configured != CONTAINER_WALLET_PATH):"
+        ),
+        new_text="    if False:",
+        test_selector="backend/tests/test_preflight_deploy.py",
+        description="Host wallet path accepted as the in-container WALLET_KEYPAIR_PATH",
+    ),
 ]
 
 
