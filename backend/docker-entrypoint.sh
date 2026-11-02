@@ -67,6 +67,17 @@ FORWARDED_ALLOW_IPS="${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12,::1/128}"
 
 ROLE="${ROLE:-}"
 
+# §89: a typo in ROLE must not silently fall through to the single-container
+# fallback, which starts BOTH uvicorn and the wallet-signing live cycle. Only
+# the three documented states are accepted; anything else is EX_CONFIG (78).
+case "$ROLE" in
+  ""|api|live) ;;
+  *)
+    echo "[entrypoint] FATAL: unknown ROLE='$ROLE' (expected api, live, or unset)" >&2
+    exit 78
+    ;;
+esac
+
 if [ "$ROLE" = "api" ]; then
   echo "[entrypoint] starting in API-only role (web process has no signing key access)"
   exec uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"
@@ -76,6 +87,9 @@ elif [ "$ROLE" = "live" ]; then
     fatal_wallet_path
   fi
   if [ "${ARMED:-0}" -ge 1 ] && [ "$WALLET_OK" -eq 1 ]; then
+    # §87 B / §88 F: tini forwards SIGTERM; the runner sets its stop event,
+    # skips new entries, finishes the in-flight cycle/order, and logs
+    # "graceful shutdown complete" before exiting. compose allows 150s.
     echo "[entrypoint] ARMED + wallet configured — starting live decision cycle"
     exec python run_live_cycle.py
   else

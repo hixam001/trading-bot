@@ -128,6 +128,13 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
     `--yes` (required for non-TTY), requires actual fill deltas for adoption, and writes a
     JSON audit line. There is no cross-process ledger lock, so never hand-edit or resolve a
     row while the live cycle is running.
+26. **One armed engine per wallet, and a stop that can finish an order (§87-B, §88-F, §89):**
+    The local `start.sh` refuses to start when the compose `trading-bot-live` container is
+    running, and `stop.sh` gives the live cycle the same 150 s SIGTERM window as compose
+    before escalating to a reported SIGKILL. Process sweeps require the repo's
+    `backend` cwd and a Python executable — never a host-wide `pkill -f` — so a Docker
+    container or a reused PID is not signalled. An unknown container `ROLE` exits 78
+    instead of falling through to the single-container (API + wallet) path.
 
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;

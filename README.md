@@ -95,6 +95,7 @@ cp .env.example .env
 ./start.sh
 
 # 3. Stop everything
+#    (waits up to 150s for an in-flight order/ledger write before SIGKILL)
 ./stop.sh
 ```
 

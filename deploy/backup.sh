@@ -22,7 +22,9 @@ echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Starting trading-bot state backup..."
 
 # Execute backup inside the running live container. A failed exec MUST fail
 # the wrapper (cron then reports it) instead of printing "finished".
-if ! docker compose exec -T live python scripts/backup_state.py "$@"; then
+# Absolute path: the container WORKDIR is /app, but operator docs and the
+# §88 entrypoint passthrough use /app/scripts/... consistently.
+if ! docker compose exec -T live python /app/scripts/backup_state.py "$@"; then
   echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] ERROR: backup failed" >&2
   exit 1
 fi
@@ -33,9 +35,14 @@ if [ -n "${OFFSITE_REMOTE:-}" ]; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Syncing backups offsite to ${OFFSITE_REMOTE}..."
     # Copy from host mount / docker volume
     # Assumes backup volume is accessible or copied from container
-    docker compose cp live:/app/backups/. /tmp/trading_bot_backups_sync/
-    rclone copy /tmp/trading_bot_backups_sync/ "${OFFSITE_REMOTE}"
-    rm -rf /tmp/trading_bot_backups_sync/
+    SYNC_DIR="/tmp/trading_bot_backups_sync"
+    rm -rf "$SYNC_DIR"
+    mkdir -p "$SYNC_DIR"
+    trap 'rm -rf "$SYNC_DIR"' EXIT
+    docker compose cp live:/app/backups/. "$SYNC_DIR/"
+    rclone copy "$SYNC_DIR/" "${OFFSITE_REMOTE}"
+    rm -rf "$SYNC_DIR"
+    trap - EXIT
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Offsite sync complete."
   else
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] WARNING: OFFSITE_REMOTE is set but 'rclone' was not found on PATH."

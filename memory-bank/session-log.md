@@ -1,3 +1,14 @@
+## Memory-bank update — 2026-11-02 (§89 launcher & Docker parity with §87/§88)
+
+- **Task**: make the local launchers and container assets match the documented §87-B graceful-stop and §88 signer-safety behavior, without touching any money-path Python.
+- **Local stop (`stop.sh`)**: the live cycle gets `STOP_GRACE_SECONDS` (default 150 s) and the API 30 s. SIGTERM → wait → SIGKILL only as a reported incident (non-zero exit); the live cycle stops before the API.
+- **Scoped sweeps**: `pkill -f` is gone. A sweep PID must have cwd `$ROOT/backend` and a Python executable, so Docker `live`/`api` processes on the same host and stale/reused PIDs are never signalled. `stop.sh` notes when the compose `live` container is still running.
+- **One signer (`start.sh`)**: refuses to start when `trading-bot-live` is running; resolves a relative `WALLET_KEYPAIR_PATH` against `$ROOT/backend` and passes the absolute path; fails fast with the log tail when the live process dies within 2 s.
+- **Docker**: `.dockerignore` excludes `secrets/`, `**/wallet_keypair*.json`, `*.enc`, `backups/`; `Dockerfile` declares `STOPSIGNAL SIGTERM` and makes `/app/data` + live state `0700`; compose adds `api` init/SIGTERM/30 s grace and explicit `live` SIGTERM/150 s grace; unknown `ROLE` exits 78; `deploy/backup.sh` uses `/app/scripts/backup_state.py` and a trapped temp dir.
+- **Docs/tests**: README, docs 01/11/13, handoff §89; new `backend/tests/test_launchers.py` (7) plus deploy/entrypoint contracts (+5).
+- **Verification**: backend **1474 passed**, 0 failed (+14 over 1460); mutation **44/44 CAUGHT** (unchanged — no money-path Python); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean.
+- **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
+
 ## Memory-bank update — 2026-11-01 (§88 pending-buy gate hole, entrypoint passthrough, preflight truth, expiry race, pre-send journal & operator resolver)
 
 - **Task**: implement master prompt §88 in phases A–G, one commit per phase, with hermetic tests, a mutation row for every new guard, and docs/memory kept true.

@@ -1,3 +1,46 @@
+## §89 — Launcher & Docker Parity with §87/§88 (2026-11-02)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `7e60b0b` (§88-G follow-up)
+- Baseline suite: **1460 passed**, 0 failed; final suite: **1474 passed**, 0 failed (102 warnings in 20.50s; +14)
+- Mutation harness: **44/44 CAUGHT** (no money-path Python changed; no new rows)
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it)
+- Playwright: **40/40**; `tsc --noEmit` + `npm run build` clean (211.13 kB JS / 65.08 kB gzip)
+
+### Fixed Defects
+1. **Local stop was not graceful (`stop.sh`)**:
+   - It sent SIGTERM and waited only 5 s before SIGKILL — shorter than the §87-B graceful shutdown and the compose `live` service's 150 s window. An in-flight order or ledger write could be killed mid-flight.
+   - The live cycle now gets `STOP_GRACE_SECONDS` (default **150 s**) and the API `API_STOP_GRACE_SECONDS` (default **30 s**). SIGKILL is only the fallback; a forced kill prints an incident warning and exits non-zero. The live cycle is stopped before the API.
+2. **Host sweeps could signal another deployment (`stop.sh`, `start.sh`)**:
+   - `pkill -f run_live_cycle.py` / `pkill -f uvicorn api.main:app` also match the Python processes inside a Docker `live`/`api` container on the same host, and a stale PID file could point at an unrelated process.
+   - Sweeps now require `/proc/<pid>/cwd == $ROOT/backend` **and** a Python executable. `pkill` is gone; a PID that fails the check is left alone. `stop.sh` prints a note when the compose `live` container is still running (it only stops the local launcher).
+3. **A second wallet signer (`start.sh`)**:
+   - `start.sh` could be launched while the compose `live` service was running. It now refuses with exit 1 and points at `docker compose stop live`.
+   - A relative `WALLET_KEYPAIR_PATH` in `.env` is resolved against `$ROOT/backend` (the live runner's cwd), matching the child, and the absolute path is passed explicitly; previously the gate checked the caller's cwd while the engine used `backend/`.
+   - The live launch is now checked after 2 s: a process that died at import/wallet load prints the log tail and exits 1 instead of reporting `RUNNING — REAL MONEY`.
+4. **Docker artifacts**:
+   - `.dockerignore`: `secrets/`, `**/wallet_keypair*.json`, `*.enc`, and `backups/` can no longer enter the build context (the image still contains none).
+   - `Dockerfile`: explicit `STOPSIGNAL SIGTERM`; `/app/data` and the live state dir are `0700` like `/app/backups`.
+   - `docker-compose.yml`: `api` gains `init: true`, `stop_signal: SIGTERM`, and `stop_grace_period: 30s`; `live` declares `stop_signal: SIGTERM` alongside its 150 s grace.
+   - `backend/docker-entrypoint.sh`: an unknown `ROLE` exits **78** instead of falling through to the single-container fallback, which starts both uvicorn and the wallet-signing live cycle.
+   - `deploy/backup.sh`: uses the absolute `/app/scripts/backup_state.py` path and creates/traps the offsite temp directory.
+5. **Documentation truth**:
+   - `README.md`: `./stop.sh` waits up to 150 s.
+   - `docs/01_ARCHITECTURE.md`: launcher/container parity (grace, scoped sweeps, second-signer refusal, unknown ROLE, private dirs).
+   - `docs/11_DEPLOYMENT.md`: standalone `docker run` gains `--init --stop-timeout 150` and is labeled the single-container fallback; the live-service bullet now distinguishes a configured-but-unreadable wallet path (exit 78) from an unset channel (stays up unhealthy), matching §87-A.
+   - `docs/13_ORACLE_DEPLOY_GUIDE.md`: `docker compose ps` no longer claims searxng is health-gated; local `./stop.sh` grace documented in Step 9 and §10.2.
+
+### Tests
+- New `backend/tests/test_launchers.py` (7 tests): bash syntax for all launcher/entrypoint scripts; 150 s/30 s grace and SIGKILL-after-wait ordering; no `pkill`; cwd/executable scoping; live-before-API order; second-signer refusal; relative wallet-path resolution; live fast-fail.
+- `backend/tests/test_deploy_contracts.py` (+4): `.dockerignore` secret exclusions, `STOPSIGNAL`/private state dirs, API init/SIGTERM/30 s grace, live SIGTERM/150 s grace; backup wrapper now asserts the absolute script path.
+- `backend/tests/test_docker_entrypoint.py` (+1): unknown `ROLE` exits 78 without starting either process.
+
+### Constraints & Invariants Preserved
+- No changes to `LIVE_TRADING_ENABLED=True` / `REQUIRE_MANUAL_CONFIRMATION=False`, the 11-rule gate, signing, sizing, thresholds, pending-buy logic, or Jupiter lite-api Swap V1.
+- Shell changes are operational only. The live cycle remains the only signer; `start.sh` refuses a compose conflict, and `stop.sh` never signals Docker container processes.
+- Unknown stays unknown; no money-path mutation rows were added because no money-path Python changed (44/44 remains the full set).
+- Every push requires `./scripts/prepush_check.sh` to pass locally and GitHub Actions to be green; failures are fixed, never bypassed.
+
 ## §88 — Pending-Buy Gate Hole, Entrypoint Passthrough, Preflight Truth, Expiry Race, Pre-Send Journal & Operator Resolver (2026-11-01)
 
 ### Baseline & Measured Suite Counts

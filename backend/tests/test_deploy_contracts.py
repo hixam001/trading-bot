@@ -103,8 +103,45 @@ def test_all_services_have_bounded_json_file_logs():
 def test_backup_wrapper_is_cwd_independent_and_fails_loudly():
     script = (ROOT / "deploy" / "backup.sh").read_text()
     assert 'cd "$(dirname "$0")/.."' in script
-    assert "if ! docker compose exec -T live python scripts/backup_state.py" in script
+    assert "if ! docker compose exec -T live python /app/scripts/backup_state.py" in script
     assert "exit 1" in script
     guide = (ROOT / "docs" / "15_BACKUP_RESTORE.md").read_text()
     assert "cd /opt/trading-bot/app && ./deploy/backup.sh" in guide
     assert "cd /opt/trading-bot && ./deploy/backup.sh" not in guide
+
+
+def test_dockerignore_keeps_wallet_material_and_state_archives_out():
+    """The build context must never include the wallet keypair or encrypted
+    backups, even though the Dockerfile does not COPY them: BuildKit still
+    sends the context to the daemon, and a future COPY must not be able to
+    bake a secret in by accident."""
+    text = (ROOT / ".dockerignore").read_text()
+    for pattern in ("secrets/", "**/wallet_keypair*.json", "*.enc", "backups/"):
+        assert pattern in text, f".dockerignore is missing {pattern!r}"
+
+
+def test_dockerfile_declares_sigterm_and_private_state_dirs():
+    text = DOCKERFILE.read_text()
+    assert "STOPSIGNAL SIGTERM" in text
+    # Real-money state and the SQLite book are not world-readable in the image.
+    match = re.search(r"chmod 700 ([^\n]+)", text)
+    assert match, "Dockerfile has no chmod 700 runtime-directory line"
+    private = match.group(1)
+    for path in ("/app/backups", "/app/data",
+                 "/app/backend/live_execution/state"):
+        assert path in private, f"{path} is not chmod 700 in the image"
+
+
+def test_api_service_reaps_children_and_has_a_stop_window():
+    """The API must shut down on SIGTERM like the live service; init reaps
+    the uvicorn child instead of leaving zombies for the container's PID 1."""
+    api = _compose()["services"]["api"]
+    assert api["init"] is True
+    assert api["stop_signal"] == "SIGTERM"
+    assert api["stop_grace_period"] == "30s"
+
+
+def test_live_service_declares_its_stop_signal():
+    live = _compose()["services"]["live"]
+    assert live["stop_signal"] == "SIGTERM"
+    assert live["stop_grace_period"] == "150s"

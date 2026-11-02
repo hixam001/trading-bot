@@ -22,6 +22,7 @@ docker build -t trading-bot .
 docker volume create bot_state bot_data bot_logs
 
 docker run -d --name trading-bot \
+  --init --stop-timeout 150 \
   --env-file .env \
   -p 127.0.0.1:8000:8000 \
   -v bot_state:/app/backend/live_execution/state \
@@ -31,6 +32,12 @@ docker run -d --name trading-bot \
   -e LOG_DIR=/app/logs \
   trading-bot
 ```
+
+`--init` and `--stop-timeout 150` matter: the runner handles SIGTERM by
+finishing an in-flight cycle/order (§87 B), and Docker's default 10s timeout
+would SIGKILL it first. This standalone command is the single-container
+fallback (the entrypoint warns that the API and wallet share process space);
+compose is the supported deployment because it splits `api` and `live`.
 
 The dashboard binds to loopback only; reach it through an SSH tunnel
 (`ssh -L 8000:127.0.0.1:8000 user@host`) or a TLS-terminating reverse proxy.
@@ -55,10 +62,10 @@ and the chain degrades to Brave → Firecrawl — fail-soft either way. See
 ### Process Separation (ROLE=api vs ROLE=live)
 
 Per §77 B2 security architecture, `docker-compose.yml` splits the engine into two isolated services from the same image:
-- **`api` service (`ROLE=api`)**: Serves the web dashboard and REST/WebSocket API. It mounts the state directory **read-only** (`:ro`) and **never receives any wallet secrets** (`WALLET_KEYPAIR_*` are explicitly stripped). The dashboard process can now run on an unprivileged host with zero key material. Health check: `GET /api/health`.
-- **`live` service (`ROLE=live`)**: Runs the autonomous execution cycle (`run_live_cycle.py`). It mounts the state directory read-write (`rw`), loads the wallet signing key, and exposes **no ports** to the host or internet. Restart policy: `unless-stopped` (§87 A3) so a Docker daemon restart or host reboot brings the armed bot back; a manual `docker compose stop` is still honored. If armed without a wallet, the container outputs a clear message and exits with code 78 (misconfiguration), which the operator must fix; with `ROLE=live` and trading disarmed, the entrypoint stays up idle via `exec tail -f /dev/null` instead of crash-looping. Health check: verifies `heartbeat.txt` freshness (< 300s).
+- **`api` service (`ROLE=api`)**: Serves the web dashboard and REST/WebSocket API. It mounts the state directory **read-only** (`:ro`) and **never receives any wallet secrets** (`WALLET_KEYPAIR_*` are explicitly stripped). The dashboard process can now run on an unprivileged host with zero key material. Health check: `GET /api/health`. `init: true` reaps the uvicorn child; `stop_grace_period: 30s` gives it a clean SIGTERM window.
+- **`live` service (`ROLE=live`)**: Runs the autonomous execution cycle (`run_live_cycle.py`). It mounts the state directory read-write (`rw`), loads the wallet signing key, and exposes **no ports** to the host or internet. Restart policy: `unless-stopped` (§87 A3) so a Docker daemon restart or host reboot brings the armed bot back; a manual `docker compose stop` is still honored. A configured-but-unreadable wallet path (including Docker's directory fallback for a missing bind source) prints `FATAL: wallet keypair not readable by uid 10001` and exits with code **78** (EX_CONFIG). An unset wallet channel keeps the clean "NOT started" behavior: the container stays up without a heartbeat (healthcheck fails) rather than crash-looping, and with `ROLE=live` and trading disarmed it idles via `exec tail -f /dev/null`. Health check: verifies `heartbeat.txt` freshness (< 300s). `init: true`, `stop_signal: SIGTERM`, and `stop_grace_period: 150s` let an in-flight order/ledger write finish before SIGKILL.
 
-If running a single container without `ROLE`, both run in the same container, emitting a prominent warning that process separation is violated.
+If running a single container without `ROLE`, both run in the same container, emitting a prominent warning that process separation is violated. Any other `ROLE` value is a configuration error: the entrypoint exits **78** instead of silently falling back.
 
 The entrypoint starts the API always (under `ROLE=api`), and the live cycle **only if** `ROLE=live` (or single-container fallback), the hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True, AND a wallet secret is configured — the same double-gate as `start.sh`.
 

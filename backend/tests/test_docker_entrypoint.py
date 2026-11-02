@@ -317,6 +317,18 @@ def test_role_unset_warns_about_shared_process_space(tmp_path):
     assert "shares process space" in out
 
 
+def test_unknown_role_is_a_config_error(tmp_path):
+    """A typo must not fall through to the single-container fallback, which
+    would start BOTH the API and the wallet-signing live cycle."""
+    status, out, calls = _run(tmp_path, armed=True, kp_json="[1,2,3]",
+                             role="lvie")
+    assert status == 78
+    assert "unknown ROLE='lvie'" in out
+    assert "UVICORN_CALLED" not in calls
+    assert "PYTHON_CALLED" not in calls
+
+
+
 # --- §88 B: explicit commands never start the engine -------------------------
 
 def test_explicit_command_wins_over_an_armed_live_role(tmp_path):

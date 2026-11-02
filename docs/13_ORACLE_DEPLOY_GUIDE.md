@@ -187,10 +187,14 @@ docker compose up -d --build
 **Verify:**
 
 ```bash
-docker compose ps                    # api, live, and searxng all healthy
+docker compose ps                    # api and live healthy; searxng running
 docker compose logs -f live --tail=50     # watch the live cycle: ARMED banner, cycle lines
 curl http://127.0.0.1:8000/api/health      # returns {"status":"ok"}
 ```
+
+`searxng` has no healthcheck (it is a fail-soft search sidecar, not on the
+order path); `docker compose ps` shows it as running. `api` and `live` are the
+health-gated services.
 
 > If pip fails compiling `uvloop`/`httptools` (cp314 aarch64 wheels can
 > lag), edit the Dockerfile base `FROM python:3.14-slim` →
@@ -317,7 +321,8 @@ want a vanity domain decoupled from the engine.
 ## Step 9 — Day-2: stop the local instance, backups, updates
 
 ```bash
-# On the LAPTOP — one armed cycle only, ever:
+# On the LAPTOP — one armed cycle only, ever.
+# stop.sh waits up to 150s for an in-flight order/ledger write before SIGKILL.
 ./stop.sh
 
 # On the VM — encrypted state + DB backup via the in-image script.
@@ -387,7 +392,9 @@ cancelled mid-sell, then closes the provider/thinker. A stop that reaches
 SIGKILLed — treat that as an incident and inspect the last cycle lines.
 A stop that arrives while the cycle is sizing also skips any **new** entry
 and logs `entry skipped: shutting down`; exits and management still run, and
-an order already sent is never cancelled.
+an order already sent is never cancelled. The local `./stop.sh` gives the
+same 150s window and exits non-zero (with an incident warning) if it has to
+SIGKILL a process.
 
 ### 10.3 Rollback to the last good tag
 

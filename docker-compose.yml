@@ -42,6 +42,10 @@ services:
     image: trading-bot:latest
     container_name: trading-bot-api
     restart: unless-stopped
+    # §87 B parity: reap children and give uvicorn a clean SIGTERM window.
+    init: true
+    stop_signal: SIGTERM
+    stop_grace_period: 30s
     logging: *logging
     depends_on:
       - searxng
@@ -85,6 +89,7 @@ services:
     # an in-flight order/ledger write finish instead of being SIGKILLed.
     restart: unless-stopped
     init: true
+    stop_signal: SIGTERM
     stop_grace_period: 150s
     logging: *logging
     depends_on:

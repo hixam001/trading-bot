@@ -1,6 +1,15 @@
 # Active Context — trading-bot
 
-**Current — 2026-11-01 (§88 Pending-Buy Gate Hole, Entrypoint Passthrough, Preflight Truth, Expiry Race, Pre-Send Journal & Operator Resolver — complete, phases A–G):**
+**Current — 2026-11-02 (§89 Launcher & Docker Parity with §87/§88 — complete):**
+- **§89-A — graceful local stop (`stop.sh`)**: the live cycle now gets the same 150 s window as compose (`STOP_GRACE_SECONDS`, default 150; API 30 s). SIGTERM → wait → SIGKILL only as a reported incident; a forced kill exits non-zero. The live cycle is stopped before the API.
+- **§89-B — scoped sweeps**: `pkill -f` is gone. Stray sweeps require `/proc/<pid>/cwd == $ROOT/backend` and a Python executable, so a Docker `live`/`api` container on the same host and stale/reused PIDs are never signalled. `stop.sh` notes when the compose `live` container is still running.
+- **§89-C — one signer (`start.sh`)**: refuses to start when the `trading-bot-live` container is running; resolves a relative `WALLET_KEYPAIR_PATH` against `$ROOT/backend` and passes the absolute path to the child; fails fast (log tail + exit 1) when the live process dies within 2 s.
+- **§89-D — Docker assets**: `.dockerignore` excludes `secrets/`, `**/wallet_keypair*.json`, `*.enc`, `backups/`; `Dockerfile` declares `STOPSIGNAL SIGTERM` and makes `/app/data` + the live state dir `0700`; compose adds `api` `init`/SIGTERM/30 s grace and explicit `live` SIGTERM/150 s grace; the entrypoint rejects an unknown `ROLE` with exit 78 instead of falling through to the single-container path; `deploy/backup.sh` uses `/app/scripts/backup_state.py` and a trapped temp dir.
+- **§89-E — docs/tests**: README stop grace; docs 01/11/13 truth fixes; new `backend/tests/test_launchers.py` (7) plus deploy/entrypoint contracts (+5).
+- **Verification**: backend **1474 passed**, 0 failed (102 warnings in 20.50s; +14 over §88's 1460); mutation **44/44 CAUGHT** (unchanged — no money-path Python); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean.
+- **Push gate (binding)**: no `git push` on any branch — including docs-only changes — until `./scripts/prepush_check.sh` passes locally and GitHub Actions is green. A red check blocks the push and is fixed, never bypassed.
+
+**Prior — 2026-11-01 (§88 Pending-Buy Gate Hole, Entrypoint Passthrough, Preflight Truth, Expiry Race, Pre-Send Journal & Operator Resolver — complete, phases A–G):**
 - **§88-A — pending buys block a second buy**: `preflight` refuses a mint with an unresolved pending row; `executor.place_buy` repeats the guard before idempotency replay. The live gate sees pending cost as a `quantity=0.0` held position (so `already_held` fails), while pending mints never enter `meta`, `_manage`, exit pricing, or the trades mirror.
 - **§88-B — entrypoint passthrough**: a non-empty argv is `exec "$@"` before any `ROLE` logic, so an explicit `docker compose run live python …` can never start a second wallet signer. Docs use `--entrypoint python`; docs/13 §5.5 uses `/app/scripts/preflight_deploy.py`.
 - **§88-C — preflight truth**: `.env` must select exactly one wallet channel; the JSON channel skips the host-file check. A `PermissionError` reports "directory not traversable". Host readability is tested only as uid 10001/root; injected uid/euid readers keep the tests hermetic.

@@ -22,7 +22,7 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 ## Commands
 - One click: ./start.sh | ./stop.sh
 - Tests: cd backend && ../.venv/bin/python -m pytest tests/ -q
-- All suites from repo root: env -u ADMIN_TOKEN pytest -q (1,338+ tests = backend + live_execution hermetic without .env)
+- All suites from repo root: env -u ADMIN_TOKEN pytest -q (1,474+ tests = backend + live_execution hermetic without .env)
 - Python dependency check: pip check && pip-audit -r backend/requirements.lock
 - Frontend typecheck & build: cd frontend && npx tsc --noEmit && npm run build
 - Frontend audit: cd frontend && npm audit --omit=dev
@@ -33,7 +33,7 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 
 ## Pre-Commit and Pre-Push Verification Pipeline
 MANDATORY: every commit and push requires all check suites below to pass cleanly:
-1. `env -u ADMIN_TOKEN pytest -q` (1,338+ hermetic tests green, no regressions)
+1. `env -u ADMIN_TOKEN pytest -q` (1,474+ hermetic tests green, no regressions)
 2. `pip check` and `pip-audit -r backend/requirements.lock` (clean)
 3. AST isolation test (no `load_keypair` in `backend/api/`)
 4. `cd frontend && npx tsc --noEmit` (zero errors)

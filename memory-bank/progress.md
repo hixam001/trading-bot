@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §89 Launcher & Docker parity with §87/§88 (2026-11-02):
+      1. §89-A: `stop.sh` gives the live cycle the same 150 s graceful window as compose (API 30 s); SIGTERM → wait → SIGKILL only as a reported incident; the live cycle stops before the API.
+      2. §89-B: `pkill -f` removed; sweeps require `/proc/<pid>/cwd == $ROOT/backend` and a Python executable, so Docker container processes and stale/reused PIDs are never signalled.
+      3. §89-C: `start.sh` refuses to start a second signer when `trading-bot-live` is running, resolves a relative `WALLET_KEYPAIR_PATH` against `$ROOT/backend`, passes the absolute path, and fails fast when the live process dies within 2 s.
+      4. §89-D: `.dockerignore` excludes wallet material/encrypted backups; `Dockerfile` adds `STOPSIGNAL SIGTERM` and 0700 state/data dirs; compose adds `api` init/SIGTERM/30 s grace and explicit `live` SIGTERM/150 s grace; the entrypoint rejects unknown `ROLE` with exit 78; `deploy/backup.sh` uses the absolute script path.
+      5. §89-E: README/docs 01/11/13 truth fixes; `backend/tests/test_launchers.py` (7) and +5 deploy/entrypoint contracts.
+      6. Verification: backend **1474 passed**, 0 failed (+14 over §88's 1460); mutation **44/44 CAUGHT** (no money-path Python changed); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean.
+      7. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §88 Pending-buy gate hole, entrypoint passthrough, preflight truth, expiry race, pre-send journal & operator resolver (2026-11-01, phases A–G):
       1. §88-A: `preflight` refuses a mint with an unresolved pending buy; `place_buy` repeats the guard before replay. The gate sees pending cost as a zero-quantity held position (`already_held` fails), while pending mints stay out of `meta`, exits, and the mirror.
       2. §88-B: the container entrypoint executes explicit argv (`exec "$@"`) before any role logic; docs/13 §5.5 and docs/15 use `--entrypoint python` and absolute `/app/scripts/...` paths.

@@ -5,6 +5,14 @@
 .venv
 .env
 .env.*
+# Wallet key material and encrypted state archives must never enter the build
+# context. The live service receives the keypair through a runtime bind mount
+# (`WALLET_KEYPAIR_HOST_PATH`), and backups are written to the engine_backups
+# volume — neither belongs in an image layer or the build cache.
+secrets/
+**/wallet_keypair*.json
+*.enc
+backups/
 *.db
 *.db-journal
 *.db-wal

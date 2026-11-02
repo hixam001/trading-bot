@@ -53,12 +53,17 @@ RUN useradd --uid 10001 --create-home bot \
     && mkdir -p /app/logs /app/data /app/backups /app/backend/live_execution/state /app/backend/knowledge_base/ingested \
     && chmod +x /app/docker-entrypoint.sh \
     && chmod 750 /app/logs \
-    && chmod 700 /app/backups \
+    && chmod 700 /app/backups /app/data /app/backend/live_execution/state \
     && (chmod -R 755 /ms-playwright 2>/dev/null || true) \
     && chown -R bot:bot /app
 USER bot
 
 EXPOSE 8000
+# §87 B: the runner handles SIGTERM by finishing an in-flight cycle/order and
+# then logging "graceful shutdown complete". Docker's default stop timeout is
+# 10s; compose raises it to 150s for the live service. The signal is explicit
+# so a future base-image change cannot silently switch to SIGQUIT/SIGKILL.
+STOPSIGNAL SIGTERM
 # Health check honours $PORT and $API_PORT (platforms often inject their own).
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD python -c "import os,sys,urllib.request; \
