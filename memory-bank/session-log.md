@@ -1,3 +1,13 @@
+## Memory-bank update — 2026-11-01 (§88 pending-buy gate hole, entrypoint passthrough, preflight truth, expiry race, pre-send journal & operator resolver)
+
+- **Task**: implement master prompt §88 in phases A–G, one commit per phase, with hermetic tests, a mutation row for every new guard, and docs/memory kept true.
+- **Pending buys (A/D/E)**: a pending mint now fails the gate's `already_held`, is refused by `preflight` and again by `place_buy` before replay, but never enters `meta`/exit pricing/the mirror. Both buy paths journal the pending row after signing and before send; a fill replaces that same key (original `ts`, blockhash, commit/memo preserved). Expiry re-queries every deduped endpoint and requires age ≥ 90 s; one lagging node or a failed re-query stays pending.
+- **Deploy truth (B/C)**: the entrypoint executes explicit argv before role logic, so a compose `run` command can no longer start a second engine. The preflight requires exactly one wallet channel (JSON skips the host file), reports an untraversable directory honestly, and only tests `os.access` as uid 10001/root.
+- **Shutdown + operator tool (F)**: SIGTERM/SIGINT set `_STOP_EVENT`; the entry boundary logs `entry skipped: shutting down` and skips the new buy while exits finish. New `scripts/resolve_pending_buy.py <key> --expire|--adopt-from-sig [SIG]` prompts unless `--yes`, refuses a non-TTY without it, requires actual fill deltas for adoption, and writes a JSON audit line.
+- **Docs (G)**: docs/01, docs/13 (§10.6 manual resolution), docs/15, handoff §88, memory-bank, and the §81–§88 mutation log.
+- **Verification**: backend **1460 passed**, 0 failed (+41 over 1419); mutation **44/44 CAUGHT** (14 new §88 rows); local prepush **9/9 clean** (gitleaks absent locally; CI runs it). No push yet — arm64 CI and operator-only VM drills remain unverified.
+- **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
+
 ## Memory-bank update — 2026-11-01 (§87-D2 risk-off exit price-impact ceiling, operator-approved)
 
 - **Task**: implement the D2 decision the operator approved: protect a collapsing position from being trapped by the same 2.5% price-impact ceiling used for entries.

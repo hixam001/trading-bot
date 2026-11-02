@@ -348,6 +348,171 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_audit_87_e.py",
         description="Zero-token quantity guard disabled (prices an invented 1.0 size)",
     ),
+    # §88-A
+    Mutation(
+        phase="§88-A",
+        mutation_id="88A_GATE_PENDING_VISIBLE",
+        file_path="backend/run_live_cycle.py",
+        exact_old_text=(
+            "    for mint, cost in pending_costs.items():\n"
+            "        positions.append(Trade("
+        ),
+        new_text=(
+            "    for mint, cost in {}.items():\n"
+            "        positions.append(Trade("
+        ),
+        test_selector="backend/tests/test_audit_88_a.py",
+        description="Pending buys hidden from the live gate (already_held can pass)",
+    ),
+    Mutation(
+        phase="§88-A",
+        mutation_id="88A_PREFLIGHT_PENDING_GUARD",
+        file_path="backend/live_execution/jupiter_executor.py",
+        exact_old_text=(
+            "    pending_mints = {r.mint for r in ledger.pending_buys()}\n"
+            "    if output_mint in pending_mints:"
+        ),
+        new_text=(
+            "    pending_mints = {r.mint for r in ledger.pending_buys()}\n"
+            "    if False:"
+        ),
+        test_selector="backend/tests/test_audit_88_a.py",
+        description="Preflight accepts a second buy while the first is pending",
+    ),
+    Mutation(
+        phase="§88-A",
+        mutation_id="88A_EXECUTOR_PENDING_GUARD",
+        file_path="backend/live_execution/executor.py",
+        exact_old_text="        if mint in {r.mint for r in ledger.pending_buys()}:",
+        new_text="        if False:",
+        test_selector="backend/tests/test_audit_88_a.py",
+        description="Executor pre-replay pending guard disabled (defence in depth lost)",
+    ),
+    # §88-B
+    Mutation(
+        phase="§88-B",
+        mutation_id="88B_ENTRYPOINT_PASSTHROUGH",
+        file_path="backend/docker-entrypoint.sh",
+        exact_old_text=(
+            'if [ "$#" -gt 0 ]; then\n'
+            '  exec "$@"\n'
+            'fi'
+        ),
+        new_text=(
+            'if false; then\n'
+            '  exec "$@"\n'
+            'fi'
+        ),
+        test_selector="backend/tests/test_docker_entrypoint.py",
+        description="Explicit commands ignored before role logic (starts a second engine)",
+    ),
+    # §88-C
+    Mutation(
+        phase="§88-C",
+        mutation_id="88C_JSON_CHANNEL_SKIP",
+        file_path="scripts/preflight_deploy.py",
+        exact_old_text="    if wallet_channel(env) == WALLET_CHANNEL_JSON:",
+        new_text="    if False:",
+        test_selector="backend/tests/test_preflight_deploy.py",
+        description="JSON wallet channel still checks the absent host keypair file",
+    ),
+    Mutation(
+        phase="§88-C",
+        mutation_id="88C_EUID_READABILITY_GATE",
+        file_path="scripts/preflight_deploy.py",
+        exact_old_text=(
+            "    if euid in (EXPECTED_WALLET_UID, 0) and not os.access(path, os.R_OK):"
+        ),
+        new_text="    if not os.access(path, os.R_OK):",
+        test_selector="backend/tests/test_preflight_deploy.py",
+        description="Readability checked from an unrelated uid (false FAIL for chmod 600)",
+    ),
+    # §88-D
+    Mutation(
+        phase="§88-D",
+        mutation_id="88D_MULTI_ENDPOINT_REQUERY",
+        file_path="backend/run_live_cycle.py",
+        exact_old_text="                    if sig and not status_requeried:",
+        new_text="                    if False:",
+        test_selector="backend/tests/test_pending_buy_resolution.py",
+        description="Pending expiry trusts one endpoint instead of re-querying all",
+    ),
+    Mutation(
+        phase="§88-D",
+        mutation_id="88D_EXPIRY_MIN_AGE",
+        file_path="backend/run_live_cycle.py",
+        exact_old_text=(
+            "                    if recheck_ok and age >= PENDING_EXPIRY_MIN_AGE_SECONDS:"
+        ),
+        new_text="                    if recheck_ok:",
+        test_selector="backend/tests/test_pending_buy_resolution.py",
+        description="Young pending buy expires before the 90s late-land window",
+    ),
+    Mutation(
+        phase="§88-D",
+        mutation_id="88D_STATUS_ALL_ENDPOINTS",
+        file_path="backend/live_execution/solana.py",
+        exact_old_text=(
+            "    return list(await asyncio.gather(*(_one(ep) for ep in target)))"
+        ),
+        new_text="    return [await _one(target[0])] if target else []",
+        test_selector="backend/tests/test_audit_88_d.py",
+        description="Signature re-query stops at the first endpoint (lagging node wins)",
+    ),
+    # §88-E
+    Mutation(
+        phase="§88-E",
+        mutation_id="88E_REPLACE_PENDING_ON_FILL",
+        file_path="backend/live_execution/models.py",
+        exact_old_text=(
+            '            if (raw.get("kind") == "buy"\n'
+            '                    and raw.get("idempotency_key") == idempotency_key\n'
+            '                    and raw.get("status") == "pending"):'
+        ),
+        new_text="            if False:",
+        test_selector="backend/live_execution/tests/test_executor_memo_flow.py",
+        description="Fill appends a second buy row instead of replacing the pending one",
+    ),
+    # §88-F
+    Mutation(
+        phase="§88-F",
+        mutation_id="88F_STOP_ENTRY_GUARD",
+        file_path="backend/run_live_cycle.py",
+        exact_old_text="        if stop_event.is_set():",
+        new_text="        if False:",
+        test_selector="backend/tests/test_audit_88_f.py",
+        description="A new entry is placed after shutdown was requested",
+    ),
+    Mutation(
+        phase="§88-F",
+        mutation_id="88F_RESOLVE_REQUIRE_PENDING",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text="    if rec is None:",
+        new_text="    if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator resolver proceeds without a pending row",
+    ),
+    Mutation(
+        phase="§88-F",
+        mutation_id="88F_ADOPT_ACTUALS_REQUIRED",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text=(
+            "    if (usd_actual is None or tokens_actual is None\n"
+            "            or float(usd_actual) <= 0 or float(tokens_actual) <= 0):"
+        ),
+        new_text="    if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator adoption proceeds without readable fill actuals",
+    ),
+    Mutation(
+        phase="§88-F",
+        mutation_id="88F_ADOPT_OWNER_REQUIRED",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text="    if not owner:",
+        new_text="    if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator adoption reads unfiltered deltas without a wallet owner",
+    ),
 ]
 
 
@@ -477,9 +642,9 @@ def main() -> int:
 
     # Format Markdown document
     doc_lines = [
-        "# §81–§87 Mutation Log",
+        "# §81–§88 Mutation Log",
         "",
-        "This document records the automated, reproducible mutation verification discipline executed across all phases of Master Prompts §81, §82 and §87.",
+        "This document records the automated, reproducible mutation verification discipline executed across all phases of Master Prompts §81, §82, §87 and §88.",
         "Generated by `scripts/mutation_check.py`. For every refusal rule, security barrier, and classification branch,",
         "the active enforcement line was mutated and tested against real test suites to prove that tests fail when guards are broken.",
         "",

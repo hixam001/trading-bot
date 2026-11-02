@@ -221,9 +221,28 @@ async def resolve(args: argparse.Namespace, *,
     # -- adopt: require ACTUAL amounts from the confirmed transaction. The
     # stored quote is deliberately NOT a fallback here — an operator acting
     # manually has the chain data available, and inventing a basis is worse
-    # than leaving the row pending.
+    # than leaving the row pending. The owner is mandatory: without it the
+    # balance deltas would sum the pool/counterparty accounts, not the wallet.
     owner = live_config.EXPECTED_WALLET_ADDRESS or None
-    actuals = await actuals_fn("buy", rec.mint, signature, owner=owner)
+    if not owner:
+        print(
+            "ERROR: EXPECTED_WALLET_ADDRESS is not set; fill deltas cannot be "
+            "attributed to this wallet. Set it in .env before adopting.",
+            file=sys.stderr)
+        _append_audit(audit_path, _audit_payload(
+            rec, action, "refused", ledger_path, signature=signature,
+            reason="EXPECTED_WALLET_ADDRESS not set"))
+        return 1
+    try:
+        actuals = await actuals_fn("buy", rec.mint, signature, owner=owner)
+    except Exception as exc:
+        print(f"ERROR: fill actuals read failed for signature "
+              f"{signature[:16]}: {exc}; pending row left untouched.",
+              file=sys.stderr)
+        _append_audit(audit_path, _audit_payload(
+            rec, action, "refused", ledger_path, signature=signature,
+            reason=f"fill actuals read failed: {exc}"))
+        return 1
     usd_actual = actuals.get("usdc_delta")
     tokens_actual = actuals.get("tokens_delta")
     if (usd_actual is None or tokens_actual is None

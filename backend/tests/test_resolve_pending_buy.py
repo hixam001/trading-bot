@@ -147,6 +147,7 @@ def test_adopt_without_a_value_uses_the_stored_signature(tmp_path, monkeypatch):
         seen["signature"] = signature
         return {"tokens_delta": 10.0, "usdc_delta": 2.5}
 
+    monkeypatch.setattr(rpb.live_config, "EXPECTED_WALLET_ADDRESS", "OWNER88")
     monkeypatch.setattr(rpb, "_fill_actuals", actuals)
     rc = _run(_args(tmp_path, "--adopt-from-sig", "--yes"), stdin=Tty(False))
     assert rc == 0
@@ -174,6 +175,7 @@ def test_adopt_refuses_when_actuals_are_unknown(tmp_path, monkeypatch):
     async def actuals(side, mint, signature, owner=None):
         return {"tokens_delta": None, "usdc_delta": 2.4}
 
+    monkeypatch.setattr(rpb.live_config, "EXPECTED_WALLET_ADDRESS", "OWNER88")
     monkeypatch.setattr(rpb, "_fill_actuals", actuals)
     rc = _run(_args(tmp_path, "--adopt-from-sig", "--yes"), stdin=Tty(False))
     assert rc == 1
@@ -181,6 +183,38 @@ def test_adopt_refuses_when_actuals_are_unknown(tmp_path, monkeypatch):
     audit = _audit(tmp_path)[-1]
     assert audit["result"] == "refused"
     assert "actuals" in audit["reason"]
+
+
+def test_adopt_requires_the_expected_wallet_address(tmp_path, monkeypatch):
+    ledger, _ = _seed(tmp_path)
+
+    async def actuals(*args, **kwargs):
+        raise AssertionError("actuals must not be read without an owner")
+
+    monkeypatch.setattr(rpb.live_config, "EXPECTED_WALLET_ADDRESS", "")
+    monkeypatch.setattr(rpb, "_fill_actuals", actuals)
+    rc = _run(_args(tmp_path, "--adopt-from-sig", "--yes"), stdin=Tty(False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "EXPECTED_WALLET_ADDRESS" in audit["reason"]
+
+
+def test_adopt_refuses_when_actuals_read_raises(tmp_path, monkeypatch):
+    ledger, _ = _seed(tmp_path)
+
+    async def actuals(side, mint, signature, owner=None):
+        raise RuntimeError("rpc down")
+
+    monkeypatch.setattr(rpb.live_config, "EXPECTED_WALLET_ADDRESS", "OWNER88")
+    monkeypatch.setattr(rpb, "_fill_actuals", actuals)
+    rc = _run(_args(tmp_path, "--adopt-from-sig", "--yes"), stdin=Tty(False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "rpc down" in audit["reason"]
 
 
 def test_cli_rejects_both_actions(tmp_path):

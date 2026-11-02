@@ -214,6 +214,9 @@ Operators should periodically practice a restore drill in a scratch directory to
      when the ledger cannot be read. If RPC balances are unavailable (or the state has no wallet address),
      it prints `RECONCILE SKIPPED`, does not claim success, and exits `0` so a network outage does not
      masquerade as a state discrepancy. Resolve any `MISMATCH` lines before clearing the kill switch.
+   - A restored ledger can contain `pending` buys (unresolved on-chain commitments). Leave them in place:
+     with the engine stopped, resolve each one with `scripts/resolve_pending_buy.py` as documented in
+     `docs/13_ORACLE_DEPLOY_GUIDE.md` §10.6. Never delete or hand-edit a pending row.
 4. **Clear the kill switch** (only after human verification):
    ```bash
    docker compose run --rm --entrypoint python -w /app/backend live \

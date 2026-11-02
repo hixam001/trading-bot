@@ -271,14 +271,24 @@ an idempotent append persisted with one atomic rewrite:
 - A corrupt or unreadable ledger raises and refuses to trade. It is never
   treated as empty, which would forget open exposure and idempotency
   history.
-- §87 C: an ambiguous buy (unknown send outcome or confirmation timeout) is
-  journaled `pending` instead of dropped. It blocks its idempotency key,
-  slot, exposure, and daily-deploy budget, but it carries no token amount in
-  the open book, so it is never priced or exited. `resolve_pending_buys()`
-  runs at startup and at the top of every cycle: a confirmed late land is
-  adopted with actual fill deltas, a landed error becomes failed, and only a
-  **provably** invalid blockhash (`False`, never `None`) marks it expired and
-  releases the daily cap. Anything unknown stays pending and alerts.
+- §87 C / §88 A–F: an ambiguous buy (unknown send outcome or confirmation
+  timeout) is journaled `pending` instead of dropped. The row is written
+  immediately after signing and **before** the send, so a crash cannot lose a
+  signed transaction; a confirmed fill replaces that same row (one key → one
+  row, commit/memo metadata preserved). It blocks its idempotency key, slot,
+  exposure, and daily-deploy budget, and the live gate sees its cost as a
+  held position so a fresh per-minute key cannot double-buy the mint. It
+  carries no token amount in `meta`, exit pricing, or the trades mirror, so
+  it is never priced or exited. `resolve_pending_buys()` runs at startup and
+  at the top of every cycle: a confirmed late land is adopted with actual
+  fill deltas, a landed error becomes failed, and expiry requires a
+  **provably** invalid blockhash (`False`, never `None`), the signature
+  absent on **every** distinct RPC endpoint, and a row age of at least 90 s.
+  Anything unknown stays pending and alerts. An operator can resolve one row
+  with `scripts/resolve_pending_buy.py` (interactive confirmation plus a JSON
+  audit line) while the engine is stopped. SIGTERM/SIGINT sets a stop event;
+  a cycle already running finishes exits/management but skips any new entry
+  with `entry skipped: shutting down`.
 - The shared `trades` table is a one-way observability mirror (ledger → DB).
   A mirror failure never changes the money record.
 

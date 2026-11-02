@@ -385,6 +385,9 @@ sign/send/ledger write), takes `_EXIT_LOCK` so the fast scanner cannot be
 cancelled mid-sell, then closes the provider/thinker. A stop that reaches
 150 s and prints no `graceful shutdown complete` means the process was
 SIGKILLed — treat that as an incident and inspect the last cycle lines.
+A stop that arrives while the cycle is sizing also skips any **new** entry
+and logs `entry skipped: shutting down`; exits and management still run, and
+an order already sent is never cancelled.
 
 ### 10.3 Rollback to the last good tag
 
@@ -426,10 +429,43 @@ cleared by a human (`resume`). `LIVE_TRADING_ENABLED` is still the outer gate.
 | Low USDC / low SOL | Alert channel; `LOW_USDC`, `LOW_SOL` | USDC below the minimum ticket floor or SOL below 2× `MIN_SOL_RESERVE` (default 0.01 SOL). Fund or stop; do not raise risk limits. |
 | No fills | Alert channel / `ALERT_NO_FILLS_HOURS` | After 6 h with ≥10 candidates and no fill, the bot alerts. Check whether the gate/model is refusing, not whether to loosen rules. |
 | Wallet drop | Alert channel; `WALLET_DROP` | Unexplained outflow above `$5` (alert-only unless the operator enabled the kill-switch option). Reconcile before resuming. |
-| Pending buys | `docker compose logs live \| grep -E "pending buy|LATE BUY ADOPTED"` | A pending row is counted against caps and is never priced/exited. Confirmed late land → `LATE BUY ADOPTED`; provably expired blockhash → released; unknown stays pending and alerts after 5 min. |
+| Pending buys | `docker compose logs live \| grep -E "pending buy\|LATE BUY ADOPTED"` | A pending row is counted against caps/slots and is never priced/exited. Confirmed late land → `LATE BUY ADOPTED`; expiry needs a provably invalid blockhash, **every** RPC endpoint still reporting the signature unknown, and an age ≥ 90 s; unknown stays pending and alerts after 5 min. Resolve manually only with the engine stopped (§10.6). |
 | Unexplained holdings | Alert channel; `UNJOURNALED_HOLDING` | On-chain tokens with no ledger row and no pending buy. Never auto-added; inspect and repair manually. |
 | Exit failures | `docker compose logs live \| grep -E "backoff\|EXIT_UNRESOLVED\|risk-off exit"` | Per-mint retry backoff is 15/30/60/120/300 s (risk-off capped at 60 s); repeated failures are expected during a collapse, not a reason to disable the stop. Risk-off exits may accept up to 15% price impact by design (`EXIT_MAX_PRICE_IMPACT_PCT`); entries and profit trims stay at 2.5%. |
 | Backup + restore | `docker compose logs live \| grep backup`; docs/15 drill | Run one manual backup and one throwaway-directory restore before trusting cron. |
+
+### 10.6 Manual pending-buy resolution
+
+The cycle resolver handles pending buys automatically. If an operator has
+conclusive chain evidence and the engine is stopped (never edit the ledger
+while the live cycle is running — there is no cross-process ledger lock):
+
+```bash
+# 1. Stop the engine so nothing else rewrites the ledger.
+docker compose stop live
+
+# 2. List the unresolved keys (read-only).
+docker compose run --rm --entrypoint python live \
+  -c "from live_execution.models import ExecutionLedger; from live_execution import config; [print(r.idempotency_key, r.mint, r.signature, r.ts) for r in ExecutionLedger(config.STATE_DIR / 'executions.json').pending_buys()]"
+
+# 3a. Expire: the transaction provably cannot land. Releases caps/slots.
+docker compose run --rm --entrypoint python live \
+  /app/scripts/resolve_pending_buy.py '<key>' --expire
+
+# 3b. Adopt: the fill landed; SIG may be omitted to use the stored one.
+docker compose run --rm --entrypoint python live \
+  /app/scripts/resolve_pending_buy.py '<key>' --adopt-from-sig '<signature>' --yes
+
+# 4. Resume only after the tool reports success.
+docker compose start live
+```
+
+The tool prints the row and requires typing `expire`/`adopt`; `--yes` is
+mandatory when stdin is not a TTY. Adoption reads the **actual** token/USDC
+deltas from the confirmed transaction and refuses to invent a cost basis when
+they are unreadable. Every attempt appends one JSON line to
+`/app/backend/live_execution/state/resolve_pending_buy_audit.log` (or the
+configured `--audit-log`). A nonzero exit means nothing changed.
 
 ## Quick troubleshooting
 

@@ -91,12 +91,15 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
     may be written to `decision_commits.signature`; `live-*`/`ledger-*` mirror keys stay
     unattributed until exact CommitLog binding. Retro matches also require mint
     agreement when both rows expose a mint.
-19. **Pending buys are in-flight, not holdings (§87-C):** an ambiguous BUY writes a
+19. **Pending buys are in-flight, not holdings (§87-C/§88-A):** an ambiguous BUY writes a
     `pending_buy` row with its signature/blockhash and is counted against
     slots/exposure/daily-deploy/idempotency — but never priced, exited, or mirrored as a
-    token position. Resolution is evidence-only: confirmed → adopt actuals; landed error
-    → failed; `is_blockhash_valid() is False` → expired; everything else (including
-    `None`) stays pending and alerts. Unknown never becomes expired.
+    token position. It IS shown to the gate as zero-quantity held cost, so `already_held`
+    and the preflight/`place_buy` guards cannot authorize a second buy of the same mint.
+    Resolution is evidence-only: confirmed → adopt actuals; landed error → failed;
+    `is_blockhash_valid() is False` + every endpoint unknown + age ≥ 90 s → expired;
+    everything else (including `None`) stays pending and alerts. Unknown never becomes
+    expired.
 20. **Shutdown waits for the order, never the other way around (§87-B):** SIGTERM only
     sets a stop event; the current cycle/order finishes. Shutdown takes the loop-bound
     `_EXIT_LOCK` before cancelling the fast exit scanner, so a sell can never be killed
@@ -106,10 +109,25 @@ SQLite in WAL mode (default) or Supabase Postgres via asyncpg.
     10001. The entrypoint refuses to claim "armed" otherwise (exit 78), and
     `scripts/preflight_deploy.py` reproduces the same check before `docker compose up`.
     Disarmed `live` stays up unhealthy (no restart flap) rather than exiting 0.
-22. **Operator CLIs override the container entrypoint (§87-G):** `backend/docker-entrypoint.sh`
-    ignores command arguments, so `docker compose run live python script.py` would start
-    the live cycle. Use `--entrypoint python` for one-off restore/reconcile/kill-switch
-    commands, or `docker compose exec` against the running live container.
+22. **Operator CLIs override the container entrypoint (§87-G/§88-B):** since §88 B the
+    entrypoint executes a non-empty argv (`exec "$@"`) before any role logic, but docs keep
+    the explicit `--entrypoint python` override: it is unambiguous and works with older
+    images. Use it for one-off restore/reconcile/kill-switch/resolve commands, or
+    `docker compose exec` against the running live container.
+23. **Journal after signing, before send (§88-E):** the pending row must exist before the
+    first byte leaves the process; if the journal write fails, nothing is sent. A confirmed
+    fill replaces that same idempotency key in place (original `ts`, blockhash, commit/memo
+    metadata preserved) so replay can never keep returning a stale `pending` row and the
+    same cost is never counted twice.
+24. **Expiry needs every endpoint and a 90 s window (§88-D):** `get_signature_status_all()`
+    queries each deduped RPC endpoint; a single "not found" is not proof of a non-land.
+    Expire only when the re-query succeeded, every endpoint still reports unknown, and the
+    row is at least 90 s old. A failed re-query or young row stays pending.
+25. **Manual pending-buy resolution runs with the engine stopped (§88-F):**
+    `scripts/resolve_pending_buy.py` refuses without a pending row, prompts unless
+    `--yes` (required for non-TTY), requires actual fill deltas for adoption, and writes a
+    JSON audit line. There is no cross-process ledger lock, so never hand-edit or resolve a
+    row while the live cycle is running.
 
 ## Anti-patterns explicitly rejected
 LLM pass/fail fields; .get(key, default) fabrication on external data;

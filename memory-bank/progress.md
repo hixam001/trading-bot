@@ -1,6 +1,16 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §88 Pending-buy gate hole, entrypoint passthrough, preflight truth, expiry race, pre-send journal & operator resolver (2026-11-01, phases A–G):
+      1. §88-A: `preflight` refuses a mint with an unresolved pending buy; `place_buy` repeats the guard before replay. The gate sees pending cost as a zero-quantity held position (`already_held` fails), while pending mints stay out of `meta`, exits, and the mirror.
+      2. §88-B: the container entrypoint executes explicit argv (`exec "$@"`) before any role logic; docs/13 §5.5 and docs/15 use `--entrypoint python` and absolute `/app/scripts/...` paths.
+      3. §88-C: preflight requires exactly one wallet channel (JSON skips the host-file check), reports an untraversable directory honestly, and tests host readability only as uid 10001/root.
+      4. §88-D: `get_signature_status_all()` queries every deduped RPC endpoint; a pending buy expires only after a successful re-query shows every endpoint still unknown AND the row is ≥ 90 s old.
+      5. §88-E: both buy paths journal the pending row after signing and before send; a journal failure blocks the send; definitive failures settle `failed`; a fill replaces the same-key row (one key → one row).
+      6. §88-F: SIGTERM/SIGINT stop new entries (`entry skipped: shutting down`) while exits finish; new `scripts/resolve_pending_buy.py` expires/adopts one pending row with a prompt, `--yes` for non-TTY, and a JSON audit line.
+      7. §88-G: docs 01/13/15, handoff §88, memory-bank, and the mutation log updated; 14 §88 mutation rows added.
+      8. Verification: backend **1460 passed**, 0 failed (+41 over the 1419 baseline); mutation **44/44 CAUGHT** (14 new §88 rows); prepush **9/9 clean** (gitleaks absent locally; CI runs it). No push yet; arm64 CI and operator VM drills outstanding.
+      9. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §87 Oracle deploy blockers, unresolved-buy safety, graceful stop & exit resilience (2026-10-31, phases A–G):
       1. §87-A: `/app/backups` created/chmod 700 before the volume; wallet bind mount default-on with `WALLET_KEYPAIR_HOST_PATH`; entrypoint requires a readable regular file and exits 78 with the uid diagnostic; `live` is `unless-stopped` + `init: true` + 150s stop grace; disarmed live stays unhealthy instead of flapping; 10 MB × 5 log rotation; cwd-independent backup script and `/opt/trading-bot/app` cron path.
       2. §87-B: SIGTERM/SIGINT event + interruptible tick sleep; no new cycle after the flag; in-flight order finishes; shutdown takes the loop-bound `_EXIT_LOCK`, then cancels the scanner and closes clients; stage-boundary heartbeats.

@@ -1,3 +1,49 @@
+## §88 — Pending-Buy Gate Hole, Entrypoint Passthrough, Preflight Truth, Expiry Race, Pre-Send Journal & Operator Resolver (2026-11-01)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `02aad20` (§87-D2)
+- Baseline suite: **1419 passed**, 2 skipped; final suite: **1460 passed**, 0 failed (102 warnings in 20.48s; +41)
+- Mutation harness: **44/44 CAUGHT** after adding 14 §88 rows (the §88-E pre-send row was retargeted from §87-C)
+- Phase commits: `bc162e9` A, `e8ed1f4` B, `7632be7` C, `704bafd` D, `fd7641a` E, `2b99e81` F, this commit G
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it). No push occurred in this session; arm64 CI and the operator-only VM drills remain unverified.
+
+### Fixed Defects
+1. **Phase A — a pending buy must block a second buy (`jupiter_executor.py`, `executor.py`, `run_live_cycle.py`)**:
+   - `preflight` refuses any mint with an unresolved pending buy, after USD validation and before exposure/caps. `executor.place_buy` repeats the guard **before** the idempotency replay, so a bug in the shared preflight still cannot start a second send.
+   - `_live_portfolio` shows pending cost to the GATE as a `quantity=0.0`, `thesis="pending buy"` position. This makes `already_held` fail and counts the slot/exposure, but pending mints never enter `meta`, `_manage`, exit pricing, or `_mirror_live_trades` (the mirror skips `quantity <= 0`).
+   - Tests: `backend/tests/test_audit_88_a.py` (gate FAIL, preflight refusal, expiry releases the mint, adoption becomes managed, executor pre-replay guard).
+2. **Phase B — explicit commands never start the engine (`docker-entrypoint.sh`, docs)**:
+   - After `cd "$APP_DIR"`, a non-empty argv is executed with `exec "$@"` before any `ROLE` logic. A compose `run` command against the `live` service can no longer silently start a second wallet signer.
+   - Static docs contract forbids bare `docker compose run … live python`; operator examples use `--entrypoint python` (docs/13 §5.5 now uses `/app/scripts/preflight_deploy.py`).
+   - Tests: `backend/tests/test_docker_entrypoint.py` (+3).
+3. **Phase C — preflight false FAILs (`scripts/preflight_deploy.py`)**:
+   - Wallet-channel check selects exactly one of `WALLET_KEYPAIR_PATH` / `WALLET_KEYPAIR_JSON`; the JSON channel skips the host-file check and still checks identity config. A `PermissionError` while traversing reports "directory not traversable" instead of a generic missing file.
+   - Host readability (`os.access`) runs only when the preflight itself is uid 10001 or root; ownership/mode checks still run for every euid. Injected `uid_reader`/`euid_reader` make the behavior testable on any build user.
+   - Tests: `backend/tests/test_preflight_deploy.py` (+6; 34 passed in that file).
+4. **Phase D — expiry race (`solana.py`, `run_live_cycle.py`)**:
+   - New `solana.get_signature_status_all()` queries every deduped endpoint (one failure returns `None` for that endpoint, never aborts the rest). The resolver re-queries after an invalid blockhash, processes a found status through the normal adopt/fail path, and expires only when the re-query succeeded, every endpoint still reports unknown, and the row is at least `PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0` old.
+   - A failed re-query or a young row stays pending — one lagging node is not proof of a non-land.
+   - Tests: `backend/tests/test_audit_88_d.py` (2), plus resolver cases in `test_pending_buy_resolution.py`.
+5. **Phase E — journal before send (`executor.py`, `jupiter_executor.py`, `models.py`)**:
+   - `_broadcast_and_confirm` invokes `on_signed(signed_swap)` after signing and before the first send; both buy paths write the pending row there. A journal failure blocks the send (fail closed). A definitive send rejection/landed error settles the row `failed`; an ambiguous outcome leaves it pending.
+   - `record_buy` replaces the same-key pending row in place, preserving its original `ts`, blockhash, and commit/memo fields, so one key is one row and replay never returns a stale `pending` after a fill.
+   - Tests: crash-simulation (row exists before send), fill replacement, rejection settlement, journal-failure blocks send; full suite **1445 passed** at that point.
+6. **Phase F — stop skips new entries; operator resolver (`run_live_cycle.py`, `scripts/resolve_pending_buy.py`)**:
+   - SIGTERM/SIGINT set the module `_STOP_EVENT`; `run_cycle(..., stop=None)` defaults to it. The entry boundary checks it immediately before `place_order`, logs `entry skipped: shutting down`, and records `{"status": "skipped"}`. Exits/management still run; an already-sent order is not cancelled.
+   - `scripts/resolve_pending_buy.py <key> --expire|--adopt-from-sig [SIG]` requires a pending row, prompts unless `--yes`, refuses a non-TTY without `--yes`, and appends a JSON audit line (`resolve_pending_buy_audit.log`). Expire settles `expired` and best-effort fails the commit; adopt reads actual token/USDC deltas via `_fill_actuals(..., owner=EXPECTED_WALLET_ADDRESS)`, refuses unknown amounts (never fabricates a basis), settles `confirmed`, and best-effort binds the commit. Nonzero exit means nothing changed.
+   - Tests: `backend/tests/test_audit_88_f.py` (explicit and default stop event, static ordering backstop), `backend/tests/test_resolve_pending_buy.py` (prompt/non-TTY, audit, expire, adopt, stored/override signature, unknown key, unknown actuals), updated graceful-shutdown child signature.
+7. **Phase G — documentation and memory**:
+   - `docs/13_ORACLE_DEPLOY_GUIDE.md`: stop-skips-entry behavior, 90s/all-endpoint expiry, and §10.6 manual pending-buy resolution with the engine stopped.
+   - `docs/15_BACKUP_RESTORE.md`: restored ledgers may contain pending rows; resolve them with the operator tool, never hand-edit/delete.
+   - `docs/01_ARCHITECTURE.md`: pending gate visibility, pre-send journal/replace, multi-endpoint 90s expiry, resolver, stop behavior.
+   - `handoff.md` §88 (this section); memory-bank activeContext/progress/session-log/decisionLog/systemPatterns; `docs/17_MUTATION_LOG.md` regenerated for §81–§88.
+
+### Constraints & Invariants Preserved
+- No changes to the hardcoded `LIVE_TRADING_ENABLED=True` / `REQUIRE_MANUAL_CONFIRMATION=False`, PaperTradingBanner removal, fomo.family Privy, the 11-rule gate, or Jupiter lite-api Swap V1.
+- Unknown stays unknown: pending rows, blockhash validity, fill actuals, token quantities, and prices are never fabricated; zero is not `None`.
+- Every new money-path guard has a §88 mutation row that is CAUGHT. Tests are hermetic (network socket guard on).
+- No cross-process ledger lock was added; operator resolution is documented to run with the engine stopped.
+
 ## §87 — Oracle Deploy Blockers, Unresolved-Buy Safety, Graceful Stop & Exit Resilience (2026-10-31; D2 2026-11-01)
 
 ### Baseline & Measured Suite Counts
