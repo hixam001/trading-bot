@@ -107,16 +107,27 @@ class CommitLog:
                 return True
         return False
 
-    def bind(self, digest: str, signature: str) -> bool:
+    def bind(self, digest: str, signature: str,
+             allow_failed: bool = False) -> bool:
         """Attach the confirmed fill signature to the sealed intent.
 
         Normal armed flow binds from "published" (memo first, always); the
-        "sealed" path is kept so a local-only seal can still be bound."""
+        "sealed" path is kept so a local-only seal can still be bound.
+
+        §90-C3: `allow_failed=True` is reserved for chain-proven adoption of a
+        commit that was marked failed prematurely (expiry/orphan healing). It
+        clears the stale fail reason; the default still refuses failed rows."""
         commits = self._load()
+        allowed = ("sealed", "published")
+        if allow_failed:
+            allowed += ("failed",)
         for rec in commits:
-            if rec.get("hash") == digest and rec.get("status") in ("sealed", "published"):
+            if rec.get("hash") == digest and rec.get("status") in allowed:
+                was_failed = rec.get("status") == "failed"
                 rec["signature"] = signature
                 rec["status"] = "bound"
+                if was_failed:
+                    rec.pop("fail_reason", None)
                 self._save(commits)
                 return True
         return False

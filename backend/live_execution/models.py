@@ -188,7 +188,10 @@ class ExecutionLedger:
                     commit_sealed_at=pending.commit_sealed_at,
                     memo_signature=pending.memo_signature,
                     memo_slot=pending.memo_slot,
-                    reason=pending.reason,
+                    # §90-C1: the pending row's pre-send note ("send outcome
+                    # not yet known") describes an unresolved attempt, not a
+                    # confirmed fill. Never carry it onto the settled row.
+                    reason="",
                 )
                 records[index] = rec.to_json()
                 self._save(records)

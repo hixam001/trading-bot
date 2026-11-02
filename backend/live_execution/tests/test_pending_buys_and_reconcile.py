@@ -85,6 +85,27 @@ def test_settle_unknown_key_returns_false(tmp_path):
     assert len(ledger.pending_buys()) == 1
 
 
+def test_confirmed_replacement_clears_the_pending_reason(tmp_path):
+    """§90-C1: the pending row's pre-send note is not part of the fill.
+
+    Carrying 'signed; send outcome not yet known' onto a confirmed row made
+    the ledger describe a settled fill as unresolved.
+    """
+    ledger = _ledger(tmp_path)
+    _pending(ledger, reason="signed; send outcome not yet known")
+
+    rec = ledger.record_buy(
+        idempotency_key="k-pending", mint="MINTAAA", usd_size=2.5,
+        tokens_out=10.0, price_usd=0.25, signature="SIGFILL",
+        status="confirmed")
+
+    assert rec.status == "confirmed"
+    assert rec.reason == ""
+    assert ledger.get_by_idempotency_key("k-pending").reason == ""
+    [row] = ledger._load()
+    assert row["status"] == "confirmed" and row["reason"] == ""
+
+
 def test_reconcile_explains_balance_covered_by_pending_buy(monkeypatch):
     alerts = []
     monkeypatch.setattr(reconcile_mod, "_unjournaled_alert_last", {})

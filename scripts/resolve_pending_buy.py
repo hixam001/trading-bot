@@ -369,7 +369,7 @@ async def resolve(args: argparse.Namespace, *,
     if rec.commit_hash:
         try:
             commit_log_cls(state_dir / "commits.json").bind(
-                rec.commit_hash, signature)
+                rec.commit_hash, signature, allow_failed=True)
         except Exception as exc:
             print(f"WARNING: commit log bind() skipped: {exc}", file=sys.stderr)
     _append_audit(audit_path, _audit_payload(

@@ -60,8 +60,21 @@ def test_fail_marks_reason_and_blocks_bind(log):
     rows = log.all()
     assert rows[0]["status"] == "failed"
     assert rows[0]["fail_reason"] == "memo: rpc down"
-    # A failed commit can never be bound.
+    # A failed commit can never be bound by default.
     assert log.bind(rec["hash"], "FILLSIG") is False
+
+
+def test_allow_failed_rebinds_only_an_explicit_chain_proven_fill(log):
+    """§90-C3: a premature fail (e.g. expiry) must not permanently erase a
+    fill that chain data later proves. The opt-in keeps the default closed."""
+    rec = log.seal("buy", {"mint": "M"})
+    assert log.fail(rec["hash"], "pending buy expired") is True
+
+    assert log.bind(rec["hash"], "FILLSIG", allow_failed=True) is True
+    row = log.all()[0]
+    assert row["status"] == "bound"
+    assert row["signature"] == "FILLSIG"
+    assert "fail_reason" not in row
 
 
 def test_bind_unknown_hash_refused(log):

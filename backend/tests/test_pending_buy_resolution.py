@@ -21,6 +21,7 @@ import pytest
 
 import alerts
 import run_live_cycle as rlc
+from live_execution.commit_log import CommitLog
 from live_execution.models import ExecutionLedger
 
 
@@ -30,11 +31,13 @@ class _FakeCommitLog:
     def __init__(self, path):
         self.path = path
         self.binds: list[tuple[str, str]] = []
+        self.bind_allow_failed: list[bool] = []
         self.fails: list[tuple[str, str]] = []
         _FakeCommitLog.instances.append(self)
 
-    def bind(self, commit_hash, signature):
+    def bind(self, commit_hash, signature, allow_failed=False):
         self.binds.append((commit_hash, signature))
+        self.bind_allow_failed.append(allow_failed)
 
     def fail(self, commit_hash, reason):
         self.fails.append((commit_hash, reason))
@@ -124,11 +127,44 @@ async def test_confirmed_late_buy_is_adopted_with_actuals(env, monkeypatch):
     assert ledger.open_token_amounts() == {"MINTAAA": pytest.approx(9.0)}
     [commit] = _FakeCommitLog.instances
     assert commit.binds == [("HASH1", "SIG1")]
+    assert commit.bind_allow_failed == [True]
     [journal] = env.journaled
     assert journal["mint_address"] == "MINTAAA"
     assert journal["verdict"] == "buy" and journal["entry_allowed"] is True
     assert journal["result"].signature == "SIG1"
     assert any("Late buy adopted" in m for _, m in env.alerts)
+
+
+async def test_late_adoption_rebinds_a_previously_failed_commit(
+        env, monkeypatch):
+    """§90-C3: expiry marks the commit failed; a later chain-proven fill must
+    still be bindable instead of leaving a failed commit beside a managed
+    position."""
+    log = CommitLog(env.dir / "commits.json")
+    sealed = log.seal("buy", {"mint": "MINTAAA", "usd": 2.5})
+    assert log.fail(sealed["hash"], "pending buy expired") is True
+    ledger = env.ledger
+    _pending(ledger, commit_hash=sealed["hash"])
+
+    async def status(sig, endpoints=None):
+        return {"slot": 9, "err": None, "confirmationStatus": "confirmed"}
+
+    async def actuals(side, mint, sig, owner=None):
+        return {"usdc_delta": 2.7, "tokens_delta": 9.0}
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc, "_fill_actuals", actuals)
+    # Use the real commit log (the env fixture normally fakes it).
+    monkeypatch.setattr(rlc, "CommitLog", CommitLog)
+    monkeypatch.setattr(rlc.live_config, "STATE_DIR", env.dir)
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats["adopted"] == 1
+    row = CommitLog(env.dir / "commits.json").all()[0]
+    assert row["status"] == "bound"
+    assert row["signature"] == "SIG1"
+    assert "fail_reason" not in row
 
 
 async def test_confirmed_with_unreadable_actuals_uses_quote_snapshot(

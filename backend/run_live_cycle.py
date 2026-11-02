@@ -472,7 +472,7 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                 if rec.commit_hash:
                     try:
                         CommitLog(live_config.STATE_DIR / "commits.json").bind(
-                            rec.commit_hash, sig)
+                            rec.commit_hash, sig, allow_failed=True)
                     except Exception:
                         log.warning("pending-buy commit bind failed for %s",
                                     rec.commit_hash[:16], exc_info=True)

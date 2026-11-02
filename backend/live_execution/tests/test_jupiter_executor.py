@@ -538,6 +538,47 @@ def test_signed_trade_is_journaled_before_send_and_survives_a_crash(
     assert ledger.open_positions() == {"MINT": 10.0}
 
 
+def test_execute_orders_sign_then_journal_then_send(env, monkeypatch):
+    """§90-C2: the exact pre-broadcast order is sign → journal → send.
+
+    A journal after the send can lose the only record of a broadcast order if
+    the process dies in between, so the order itself is the contract.
+    """
+    monkeypatch.setattr(je.wallet, "load_keypair", lambda: _StubPayer())
+    monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
+    order: list[str] = []
+
+    async def fake_sign(b64, payer, intent=None, quote=None):
+        order.append("sign")
+        return le_solana.SignedSwap(
+            "SIG123", b"signed-tx", _checked=True, blockhash="BHJ")
+
+    monkeypatch.setattr(je, "sign_after_checks", fake_sign)
+    calls: list[dict] = []
+    _wire_fake_network(monkeypatch, calls)
+    ledger = ExecutionLedger(env / "executions.json")
+    real_record = ledger.record_pending_buy
+
+    def record(**kwargs):
+        order.append("record_pending_buy")
+        return real_record(**kwargs)
+
+    monkeypatch.setattr(ledger, "record_pending_buy", record)
+
+    async def fake_send(signed, endpoints=None):
+        order.append("send_checked_swap")
+        return "SIG123"
+
+    monkeypatch.setattr(le_solana, "send_checked_swap", fake_send)
+
+    asyncio.run(je.execute_confirmed_trade(
+        "MINT", 6, 10.0, idempotency_key="k-order",
+        ledger=ledger, reference_price_usd=1.0,
+    ))
+
+    assert order == ["sign", "record_pending_buy", "send_checked_swap"]
+
+
 def test_definitive_send_rejection_settles_pending_row_failed(
         env, monkeypatch):
     from live_execution.exit_errors import SendRejected

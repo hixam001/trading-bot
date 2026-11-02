@@ -328,6 +328,29 @@ def test_adopt_reads_actuals_and_binds_the_commit(tmp_path, monkeypatch):
     assert audit["tokens_out"] == pytest.approx(12.5)
 
 
+def test_adopt_rebinds_a_commit_marked_failed(tmp_path, monkeypatch):
+    """§90-C3: a previously failed commit becomes bound when adoption proves
+    the fill on-chain."""
+    ledger, commit_hash = _seed(tmp_path)
+    assert CommitLog(tmp_path / "commits.json").fail(
+        commit_hash, "pending buy expired") is True
+
+    async def actuals(side, mint, signature, owner=None):
+        return {"tokens_delta": 12.5, "usdc_delta": 2.4}
+
+    monkeypatch.setattr(rpb.live_config, "EXPECTED_WALLET_ADDRESS", "OWNER88")
+    monkeypatch.setattr(rpb, "_fill_actuals", actuals)
+    rc = _run(_args(tmp_path, "--adopt-from-sig", "NEWSIG", "--yes"),
+              stdin=Tty(False))
+
+    assert rc == 0
+    commit = next(c for c in CommitLog(tmp_path / "commits.json").all()
+                  if c["hash"] == commit_hash)
+    assert commit["status"] == "bound"
+    assert commit["signature"] == "NEWSIG"
+    assert "fail_reason" not in commit
+
+
 def test_adopt_without_a_value_uses_the_stored_signature(tmp_path, monkeypatch):
     ledger, _ = _seed(tmp_path, signature="STOREDSIG")
     seen = {}

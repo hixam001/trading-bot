@@ -568,6 +568,63 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_resolve_pending_buy.py",
         description="Operator expire treats an empty status re-query as proof of absence",
     ),
+    # §90-C2
+    Mutation(
+        phase="§90-C2",
+        mutation_id="90C2_JOURNAL_AFTER_SEND",
+        file_path="backend/live_execution/jupiter_executor.py",
+        exact_old_text=(
+            "    ledger.record_pending_buy(\n"
+            "        idempotency_key=idempotency_key,\n"
+            "        mint=output_mint,\n"
+            "        usd_size=usd_size,\n"
+            "        tokens_out=quote_result[\"tokens_out\"],\n"
+            "        price_usd=quote_result[\"price_usd\"],\n"
+            "        signature=signature,\n"
+            "        blockhash=blockhash,\n"
+            "        reason=\"signed; send outcome not yet known\",\n"
+            "    )\n"
+            "    log.info(\n"
+            "        \"PENDING BUY %s $%.2f sig %s journaled BEFORE send\",\n"
+            "        output_mint[:8], usd_size, signature[:16])\n"
+            "    log.info(\n"
+            "        \"EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s\",\n"
+            "        output_mint[:8], usd_size, quote_result[\"tokens_out\"],\n"
+            "        quote_result[\"price_usd\"], signature,\n"
+            "    )\n"
+            "\n"
+            "    try:\n"
+            "        sent = await solana.send_checked_swap(signed_swap)"
+        ),
+        new_text=(
+            "    log.info(\n"
+            "        \"PENDING BUY %s $%.2f sig %s journaled BEFORE send\",\n"
+            "        output_mint[:8], usd_size, signature[:16])\n"
+            "    log.info(\n"
+            "        \"EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s\",\n"
+            "        output_mint[:8], usd_size, quote_result[\"tokens_out\"],\n"
+            "        quote_result[\"price_usd\"], signature,\n"
+            "    )\n"
+            "\n"
+            "    try:\n"
+            "        sent = await solana.send_checked_swap(signed_swap)\n"
+            "        ledger.record_pending_buy(\n"
+            "            idempotency_key=idempotency_key,\n"
+            "            mint=output_mint,\n"
+            "            usd_size=usd_size,\n"
+            "            tokens_out=quote_result[\"tokens_out\"],\n"
+            "            price_usd=quote_result[\"price_usd\"],\n"
+            "            signature=signature,\n"
+            "            blockhash=blockhash,\n"
+            "            reason=\"signed; send outcome not yet known\",\n"
+            "        )"
+        ),
+        test_selector=(
+            "backend/live_execution/tests/test_jupiter_executor.py::"
+            "test_execute_orders_sign_then_journal_then_send"
+        ),
+        description="Pending buy journal moved after send_checked_swap",
+    ),
 ]
 
 
