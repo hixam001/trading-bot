@@ -4,7 +4,7 @@
 - Base HEAD: `7e60b0b` (§88-G follow-up)
 - Baseline suite: **1460 passed**, 0 failed; final suite: **1474 passed**, 0 failed (102 warnings in 20.50s; +14)
 - Mutation harness: **44/44 CAUGHT** (no money-path Python changed; no new rows)
-- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it)
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it). Pushed `296b33b`; GitHub Actions `Tests & Security Audit` (backend/frontend + Docker ARM64 build/compose), `gitleaks`, and `CodeQL` are all green. Operator-only VM drills remain outstanding.
 - Playwright: **40/40**; `tsc --noEmit` + `npm run build` clean (211.13 kB JS / 65.08 kB gzip)
 
 ### Fixed Defects

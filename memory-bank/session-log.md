@@ -6,7 +6,7 @@
 - **One signer (`start.sh`)**: refuses to start when `trading-bot-live` is running; resolves a relative `WALLET_KEYPAIR_PATH` against `$ROOT/backend` and passes the absolute path; fails fast with the log tail when the live process dies within 2 s.
 - **Docker**: `.dockerignore` excludes `secrets/`, `**/wallet_keypair*.json`, `*.enc`, `backups/`; `Dockerfile` declares `STOPSIGNAL SIGTERM` and makes `/app/data` + live state `0700`; compose adds `api` init/SIGTERM/30 s grace and explicit `live` SIGTERM/150 s grace; unknown `ROLE` exits 78; `deploy/backup.sh` uses `/app/scripts/backup_state.py` and a trapped temp dir.
 - **Docs/tests**: README, docs 01/11/13, handoff §89; new `backend/tests/test_launchers.py` (7) plus deploy/entrypoint contracts (+5).
-- **Verification**: backend **1474 passed**, 0 failed (+14 over 1460); mutation **44/44 CAUGHT** (unchanged — no money-path Python); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean.
+- **Verification**: backend **1474 passed**, 0 failed (+14 over 1460); mutation **44/44 CAUGHT** (unchanged — no money-path Python); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. Pushed `296b33b`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green. Operator-only VM drills remain outstanding.
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
 
 ## Memory-bank update — 2026-11-01 (§88 pending-buy gate hole, entrypoint passthrough, preflight truth, expiry race, pre-send journal & operator resolver)
