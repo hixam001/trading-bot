@@ -101,6 +101,12 @@ CONFIRM_EXPIRY_SECONDS: float = 300.0
 # shared poller's timeout.
 CONFIRM_TIMEOUT_SECONDS: float = 60.0
 
+# §90-B: a pending buy may only be expired once it is at least this old, even
+# when its blockhash is provably invalid and every endpoint reports the
+# signature unknown — a lagging node can still accept a late land. ONE
+# definition shared by the automatic resolver and the operator tool.
+PENDING_EXPIRY_MIN_AGE_SECONDS: float = 90.0
+
 
 
 # Whitelist of approved Solana programs that may be invoked by Jupiter swap transactions.

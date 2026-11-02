@@ -463,6 +463,12 @@ docker compose run --rm --entrypoint python live \
 docker compose run --rm --entrypoint python live \
   /app/scripts/resolve_pending_buy.py '<key>' --expire
 
+# 3a-alt. ONLY when the chain reads are unavailable (RPC outage):
+# --force-expire skips ONLY the blockhash/age gates. Every endpoint must
+# still report the signature absent, and the audit line records forced=true.
+docker compose run --rm --entrypoint python live \
+  /app/scripts/resolve_pending_buy.py '<key>' --force-expire
+
 # 3b. Adopt: the fill landed; SIG may be omitted to use the stored one.
 docker compose run --rm --entrypoint python live \
   /app/scripts/resolve_pending_buy.py '<key>' --adopt-from-sig '<signature>' --yes
@@ -472,11 +478,18 @@ docker compose start live
 ```
 
 The tool prints the row and requires typing `expire`/`adopt`; `--yes` is
-mandatory when stdin is not a TTY. Adoption reads the **actual** token/USDC
-deltas from the confirmed transaction and refuses to invent a cost basis when
-they are unreadable. Every attempt appends one JSON line to
-`/app/backend/live_execution/state/resolve_pending_buy_audit.log` (or the
-configured `--audit-log`). A nonzero exit means nothing changed.
+mandatory when stdin is not a TTY. `--expire` re-verifies the chain before
+changing anything: the stored blockhash must be provably invalid, **every**
+endpoint must report the signature absent, and the row must be at least
+`PENDING_EXPIRY_MIN_AGE_SECONDS` (90 s) old. A still-valid or unknown
+blockhash, a signature found on any endpoint, an RPC error, or a young row is
+refused with exit 1. `--force-expire` exists only for an RPC outage and skips
+**only** the blockhash/age gates — the all-endpoint-absent check still runs;
+forced expiries are audited with `"forced": true`. Adoption reads the
+**actual** token/USDC deltas from the confirmed transaction and refuses to
+invent a cost basis when they are unreadable. Every attempt appends one JSON
+line to `/app/backend/live_execution/state/resolve_pending_buy_audit.log` (or
+the configured `--audit-log`). A nonzero exit means nothing changed.
 
 ## Quick troubleshooting
 

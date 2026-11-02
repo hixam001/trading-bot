@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import pytest
 
 from live_execution.commit_log import CommitLog
@@ -26,7 +27,41 @@ class Tty:
         return self._tty
 
 
+class Chain:
+    """Hermetic stand-in for the two chain reads the expiry guard performs."""
+
+    def __init__(self, *, blockhash=False, statuses=(None, None),
+                 blockhash_error=None, status_error=None):
+        self.blockhash = blockhash
+        self.statuses = statuses
+        self.blockhash_error = blockhash_error
+        self.status_error = status_error
+        self.blockhash_calls: list[str] = []
+        self.status_calls: list[str] = []
+
+    async def blockhash_valid(self, blockhash):
+        self.blockhash_calls.append(blockhash)
+        if self.blockhash_error is not None:
+            raise self.blockhash_error
+        return self.blockhash
+
+    async def status_all(self, signature):
+        self.status_calls.append(signature)
+        if self.status_error is not None:
+            raise self.status_error
+        return list(self.statuses)
+
+
+def _chain_kwargs(chain: Chain, *, old: bool = True) -> dict:
+    return {
+        "blockhash_valid_fn": chain.blockhash_valid,
+        "signature_status_all_fn": chain.status_all,
+        "now_fn": (lambda: time.time() + 1000.0) if old else time.time,
+    }
+
+
 def _seed(tmp_path, *, signature: str = "STOREDSIG",
+          blockhash: str = "BH88",
           commit: bool = True) -> tuple[ExecutionLedger, str]:
     ledger = ExecutionLedger(tmp_path / "executions.json")
     commit_hash = ""
@@ -36,7 +71,7 @@ def _seed(tmp_path, *, signature: str = "STOREDSIG",
         commit_hash = rec["hash"]
     ledger.record_pending_buy(
         idempotency_key=KEY, mint=MINT, usd_size=2.5, tokens_out=10.0,
-        price_usd=0.25, signature=signature, blockhash="BH88",
+        price_usd=0.25, signature=signature, blockhash=blockhash,
         commit_hash=commit_hash,
     )
     return ledger, commit_hash
@@ -66,8 +101,9 @@ def test_expire_requires_confirmation_on_non_tty(tmp_path):
 
 def test_expire_prompt_accepts_the_action_word(tmp_path):
     ledger, commit_hash = _seed(tmp_path)
+    chain = Chain()
     rc = _run(_args(tmp_path, "--expire"), stdin=Tty(True),
-              input_fn=lambda prompt: "expire")
+              input_fn=lambda prompt: "expire", **_chain_kwargs(chain))
     assert rc == 0
     assert ledger.pending_buys() == []
     row = ledger.get_by_idempotency_key(KEY)
@@ -80,6 +116,9 @@ def test_expire_prompt_accepts_the_action_word(tmp_path):
     assert audit["result"] == "expired"
     assert audit["key"] == KEY
     assert audit["ledger"] == str(tmp_path / "executions.json")
+    assert audit["forced"] is False
+    assert chain.blockhash_calls == ["BH88"]
+    assert chain.status_calls == ["STOREDSIG"]
 
 
 def test_expire_prompt_rejects_anything_else(tmp_path):
@@ -92,9 +131,159 @@ def test_expire_prompt_rejects_anything_else(tmp_path):
 
 def test_expire_yes_settles_without_a_tty(tmp_path):
     ledger, _ = _seed(tmp_path)
-    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False))
+    chain = Chain()
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
     assert rc == 0
     assert ledger.pending_buys() == []
+
+
+# ---------------------------------------------------------------- expiry guard
+
+def test_expire_refuses_while_the_blockhash_is_still_valid(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash=True, statuses=(None, None))
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "still valid" in audit["reason"]
+    assert chain.status_calls == [], "status read must not run after a valid blockhash"
+
+
+def test_expire_refuses_when_blockhash_validity_is_unknown(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash=None)
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "unknown" in _audit(tmp_path)[-1]["reason"]
+
+
+def test_expire_refuses_when_the_blockhash_rpc_raises(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash_error=RuntimeError("blockhash rpc down"))
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "blockhash rpc down" in _audit(tmp_path)[-1]["reason"]
+
+
+def test_expire_refuses_without_a_stored_blockhash(tmp_path):
+    ledger, _ = _seed(tmp_path, blockhash="")
+    chain = Chain()
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "no blockhash" in _audit(tmp_path)[-1]["reason"]
+    assert chain.blockhash_calls == []
+
+
+def test_expire_refuses_when_any_endpoint_reports_the_signature(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash=False,
+                  statuses=(None, {"slot": 1, "confirmationStatus": "confirmed"}))
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "on-chain" in audit["reason"]
+    assert "--adopt-from-sig" in audit["reason"]
+
+
+def test_expire_refuses_when_the_status_requery_raises(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash=False, status_error=RuntimeError("status rpc down"))
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "status rpc down" in _audit(tmp_path)[-1]["reason"]
+
+
+def test_expire_refuses_when_no_endpoint_returns_a_status(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash=False, statuses=())
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "no endpoint" in _audit(tmp_path)[-1]["reason"]
+
+
+def test_expire_refuses_a_row_younger_than_the_late_land_window(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(blockhash=False)
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "90" in audit["reason"]
+    assert chain.blockhash_calls == [], "young rows must not be probed"
+
+
+def test_expire_refuses_without_a_signature_to_requery(tmp_path):
+    ledger, _ = _seed(tmp_path, signature="")
+    chain = Chain(blockhash=False)
+    rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "no signature" in _audit(tmp_path)[-1]["reason"]
+    assert chain.status_calls == []
+
+
+# ---------------------------------------------------------------- force expiry
+
+def test_force_expire_skips_only_blockhash_and_age(tmp_path):
+    ledger, commit_hash = _seed(tmp_path)
+    chain = Chain(blockhash_error=RuntimeError("must not be queried"))
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 0
+    assert chain.blockhash_calls == []
+    assert ledger.pending_buys() == []
+    row = ledger.get_by_idempotency_key(KEY)
+    assert row.status == "expired"
+    assert "FORCE" in row.reason
+    commit = next(c for c in CommitLog(tmp_path / "commits.json").all()
+                  if c["hash"] == commit_hash)
+    assert commit["status"] == "failed"
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "expired"
+    assert audit["forced"] is True
+
+
+def test_force_expire_still_refuses_a_signature_found_on_chain(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=({"slot": 1},))
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert audit["forced"] is True
+    assert "--adopt-from-sig" in audit["reason"]
+
+
+def test_force_expire_still_refuses_an_unreadable_status_requery(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=())
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    assert "no endpoint" in _audit(tmp_path)[-1]["reason"]
 
 
 def test_unknown_key_is_nonzero_and_audited(tmp_path):
@@ -220,3 +409,8 @@ def test_adopt_refuses_when_actuals_read_raises(tmp_path, monkeypatch):
 def test_cli_rejects_both_actions(tmp_path):
     with pytest.raises(SystemExit):
         rpb.parse_args([KEY, "--expire", "--adopt-from-sig", "SIG"])
+
+
+def test_cli_rejects_expire_and_force_expire_together(tmp_path):
+    with pytest.raises(SystemExit):
+        rpb.parse_args([KEY, "--expire", "--force-expire"])

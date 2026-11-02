@@ -360,7 +360,8 @@ async def _reconcile_with_chain(meta: dict, ledger: ExecutionLedger | None = Non
 # invalid is not proof that the buy never landed — a lagging node may not have
 # seen the transaction yet. Re-query every distinct endpoint, and never expire
 # a row younger than this even when every endpoint still reports it unknown.
-PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0
+# §90-B: the threshold lives in live_execution.config so the automatic resolver
+# and the operator tool cannot drift.
 
 
 async def _fail_pending_commit(record, reason: str) -> None:
@@ -548,11 +549,13 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                         else:
                             # The re-query itself failed: still unknown.
                             recheck_ok = False
-                    if recheck_ok and age >= PENDING_EXPIRY_MIN_AGE_SECONDS:
+                    if (recheck_ok
+                            and age >= live_config.PENDING_EXPIRY_MIN_AGE_SECONDS):
                         reason = (
                             "pending buy expired: blockhash is provably "
                             "invalid and every endpoint reports the signature "
-                            f"unknown after >= {PENDING_EXPIRY_MIN_AGE_SECONDS:.0f}s")
+                            "unknown after >= "
+                            f"{live_config.PENDING_EXPIRY_MIN_AGE_SECONDS:.0f}s")
                         ledger.settle_pending_buy(
                             rec.idempotency_key, "expired", reason=reason)
                         await _fail_pending_commit(rec, reason)
@@ -566,7 +569,7 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                         "pending buy %s: blockhash invalid but age %.0fs < "
                         "%.0fs — waiting before expiry (a late land is still "
                         "possible)", rec.mint[:8], age,
-                        PENDING_EXPIRY_MIN_AGE_SECONDS)
+                        live_config.PENDING_EXPIRY_MIN_AGE_SECONDS)
 
             # Still possibly landable, or validity unknown. Never expire on
             # unknown data.

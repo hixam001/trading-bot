@@ -6,13 +6,17 @@ A pending buy is an on-chain commitment whose send outcome was unknown. The
 cycle resolver normally settles it, but an operator may need to intervene when
 the chain data is conclusive before the automatic path acts:
 
-    --expire            the transaction can never land (blockhash long dead,
-                        every endpoint reports it absent); release caps/slots.
+    --expire            the transaction can never land: the blockhash is
+                        provably invalid, every endpoint reports the signature
+                        absent, and the row is >= 90 s old; release caps/slots.
+    --force-expire      the automatic checks cannot run (RPC down): skip ONLY
+                        the blockhash/age gates; every endpoint must still
+                        report the signature absent. Audited with forced=true.
     --adopt-from-sig    the fill landed but was never adopted; read the actual
                         token/USDC deltas from the confirmed transaction and
                         turn the pending row into a managed position.
 
-Both actions are destructive bookkeeping: the tool prints the row, requires an
+Every action is destructive bookkeeping: the tool prints the row, requires an
 interactive confirmation (or explicit --yes) and appends one JSON audit line
 to ``resolve_pending_buy_audit.log``. It never imports the private key; fill
 actuals are read from public transaction data and the owner defaults to
@@ -45,6 +49,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from live_execution import config as live_config
+from live_execution import solana
 from live_execution.commit_log import CommitLog
 from live_execution.executor import _fill_actuals
 from live_execution.models import ExecutionLedger
@@ -63,6 +68,13 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--expire",
         action="store_true",
         help="Mark the buy expired: it provably cannot land; release caps/slots.",
+    )
+    action.add_argument(
+        "--force-expire",
+        action="store_true",
+        help=("Mark the buy expired after bypassing ONLY the blockhash/age "
+              "gates (use when RPC is down). Every endpoint must still report "
+              "the signature absent; audited with forced=true."),
     )
     action.add_argument(
         "--adopt-from-sig",
@@ -124,7 +136,8 @@ def _append_audit(path: Path, payload: dict) -> None:
 
 def _audit_payload(rec, action: str, result: str, ledger_path: Path,
                    *, signature: str = "", usd_size=None, tokens_out=None,
-                   reason: str = "", now_fn: Callable[[], float] = time.time) -> dict:
+                   reason: str = "", forced: bool = False,
+                   now_fn: Callable[[], float] = time.time) -> dict:
     return {
         "ts": now_fn(),
         "key": rec.idempotency_key,
@@ -135,6 +148,7 @@ def _audit_payload(rec, action: str, result: str, ledger_path: Path,
         "usd_size": usd_size,
         "tokens_out": tokens_out,
         "reason": reason,
+        "forced": forced,
         "ledger": str(ledger_path),
     }
 
@@ -155,18 +169,34 @@ def _confirm(action: str, rec, input_fn: Callable[[str], str],
     return answer.strip().lower() == action
 
 
+def _refuse_expire(rec, audit_path: Path, ledger_path: Path, reason: str,
+                   *, forced: bool, now_fn: Callable[[], float]) -> int:
+    print(f"REFUSED: {reason}; pending row left untouched.", file=sys.stderr)
+    _append_audit(audit_path, _audit_payload(
+        rec, "expire", "refused", ledger_path, reason=reason,
+        forced=forced, now_fn=now_fn))
+    return 1
+
+
 async def resolve(args: argparse.Namespace, *,
                   input_fn: Optional[Callable[[str], str]] = None,
                   stdin: Optional[TextIO] = None,
                   actuals_fn: Optional[Callable] = None,
-                  commit_log_cls=None) -> int:
+                  commit_log_cls=None,
+                  blockhash_valid_fn: Optional[Callable] = None,
+                  signature_status_all_fn: Optional[Callable] = None,
+                  now_fn: Optional[Callable[[], float]] = None) -> int:
     input_fn = input_fn or input
     actuals_fn = actuals_fn or _fill_actuals
     commit_log_cls = commit_log_cls or CommitLog
+    blockhash_valid_fn = blockhash_valid_fn or solana.is_blockhash_valid
+    signature_status_all_fn = (
+        signature_status_all_fn or solana.get_signature_status_all)
+    now_fn = now_fn or time.time
     state_dir, ledger_path, audit_path = _paths(args)
     ledger = ExecutionLedger(ledger_path)
     rec = _find_pending(ledger, args.key)
-    action = "expire" if args.expire else "adopt"
+    action = ("expire" if (args.expire or args.force_expire) else "adopt")
 
     if rec is None:
         print(f"ERROR: no pending buy with key {args.key!r} in {ledger_path}",
@@ -198,13 +228,77 @@ async def resolve(args: argparse.Namespace, *,
             return 1
 
     if action == "expire":
-        reason = "operator expired pending buy: blockhash cannot land"
+        forced = bool(getattr(args, "force_expire", False))
+        if not forced:
+            age = now_fn() - float(rec.ts or 0.0)
+            if age < live_config.PENDING_EXPIRY_MIN_AGE_SECONDS:
+                return _refuse_expire(
+                    rec, audit_path, ledger_path,
+                    f"row is only {age:.0f}s old; wait "
+                    f"{live_config.PENDING_EXPIRY_MIN_AGE_SECONDS:.0f}s before "
+                    "expiring (a late land is still possible)",
+                    forced=forced, now_fn=now_fn)
+            if not rec.blockhash:
+                return _refuse_expire(
+                    rec, audit_path, ledger_path,
+                    "no blockhash stored; cannot prove the transaction can "
+                    "never land", forced=forced, now_fn=now_fn)
+            try:
+                valid = await blockhash_valid_fn(rec.blockhash)
+            except Exception as exc:
+                return _refuse_expire(
+                    rec, audit_path, ledger_path,
+                    f"blockhash validity read failed: {exc}",
+                    forced=forced, now_fn=now_fn)
+            if valid is None:
+                return _refuse_expire(
+                    rec, audit_path, ledger_path,
+                    "blockhash validity is unknown (RPC failure); refusing to "
+                    "expire on unknown data", forced=forced, now_fn=now_fn)
+            if valid is not False:
+                return _refuse_expire(
+                    rec, audit_path, ledger_path,
+                    "blockhash is still valid; the transaction can still land",
+                    forced=forced, now_fn=now_fn)
+
+        # --force-expire skips ONLY the blockhash/age gates: a signature that
+        # is present on any endpoint must still block expiry (adopt it), and an
+        # unreadable/empty re-query is unknown, never "absent".
+        if not rec.signature:
+            return _refuse_expire(
+                rec, audit_path, ledger_path,
+                "no signature stored; cannot prove the transaction is absent "
+                "from every endpoint", forced=forced, now_fn=now_fn)
+        try:
+            statuses = await signature_status_all_fn(rec.signature)
+        except Exception as exc:
+            return _refuse_expire(
+                rec, audit_path, ledger_path,
+                f"signature status re-query failed: {exc}",
+                forced=forced, now_fn=now_fn)
+        if not statuses:
+            return _refuse_expire(
+                rec, audit_path, ledger_path,
+                "no endpoint returned a status; refusing to expire on "
+                "unknown data", forced=forced, now_fn=now_fn)
+        if any(status is not None for status in statuses):
+            return _refuse_expire(
+                rec, audit_path, ledger_path,
+                "signature is present on-chain; do not expire — adopt the "
+                "confirmed fill with --adopt-from-sig",
+                forced=forced, now_fn=now_fn)
+
+        reason = (
+            "operator FORCE-expired pending buy: chain proof bypassed"
+            if forced else
+            "operator expired pending buy: blockhash cannot land")
         settled = ledger.settle_pending_buy(args.key, "expired", reason=reason)
         if not settled:
             print("ERROR: pending row changed before it could be expired; "
                   "re-read the ledger.", file=sys.stderr)
             _append_audit(audit_path, _audit_payload(
-                rec, action, "no-op", ledger_path, reason="row no longer pending"))
+                rec, action, "no-op", ledger_path, reason="row no longer pending",
+                forced=forced, now_fn=now_fn))
             return 1
         if rec.commit_hash:
             try:
@@ -214,7 +308,8 @@ async def resolve(args: argparse.Namespace, *,
                 print(f"WARNING: commit log fail() skipped: {exc}",
                       file=sys.stderr)
         _append_audit(audit_path, _audit_payload(
-            rec, action, "expired", ledger_path, reason=reason))
+            rec, action, "expired", ledger_path, reason=reason,
+            forced=forced, now_fn=now_fn))
         print(f"EXPIRED {rec.idempotency_key} ({rec.mint[:8]}); caps released.")
         return 0
 

@@ -442,7 +442,8 @@ MUTATIONS: list[Mutation] = [
         mutation_id="88D_EXPIRY_MIN_AGE",
         file_path="backend/run_live_cycle.py",
         exact_old_text=(
-            "                    if recheck_ok and age >= PENDING_EXPIRY_MIN_AGE_SECONDS:"
+            "                    if (recheck_ok\n"
+            "                            and age >= live_config.PENDING_EXPIRY_MIN_AGE_SECONDS):"
         ),
         new_text="                    if recheck_ok:",
         test_selector="backend/tests/test_pending_buy_resolution.py",
@@ -525,6 +526,47 @@ MUTATIONS: list[Mutation] = [
         new_text="    if False:",
         test_selector="backend/tests/test_preflight_deploy.py",
         description="Host wallet path accepted as the in-container WALLET_KEYPAIR_PATH",
+    ),
+    # §90-B
+    Mutation(
+        phase="§90-B",
+        mutation_id="90B_EXPIRY_AGE_GATE",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text=(
+            "            if age < live_config.PENDING_EXPIRY_MIN_AGE_SECONDS:"
+        ),
+        new_text="            if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator expire skips the 90s late-land age gate",
+    ),
+    Mutation(
+        phase="§90-B",
+        mutation_id="90B_EXPIRY_BLOCKHASH_GATE",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text="            if valid is not False:",
+        new_text="            if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator expire accepts a still-valid or unknown blockhash",
+    ),
+    Mutation(
+        phase="§90-B",
+        mutation_id="90B_EXPIRY_FOUND_STATUS",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text=(
+            "        if any(status is not None for status in statuses):"
+        ),
+        new_text="        if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator expire ignores a signature found on-chain",
+    ),
+    Mutation(
+        phase="§90-B",
+        mutation_id="90B_EXPIRY_NO_ENDPOINT",
+        file_path="scripts/resolve_pending_buy.py",
+        exact_old_text="        if not statuses:",
+        new_text="        if False:",
+        test_selector="backend/tests/test_resolve_pending_buy.py",
+        description="Operator expire treats an empty status re-query as proof of absence",
     ),
 ]
 
