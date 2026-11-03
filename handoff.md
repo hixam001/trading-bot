@@ -1,3 +1,58 @@
+## §91 — Prove Absence Before Expiring a Pending Buy (2026-11-03)
+
+### Baseline & Measured Suite Counts
+- Base HEAD: `096c131` (§90 follow-up, green CI)
+- Baseline suite on this tree: **1496 passed**, 0 failed (102 warnings); final suite: **1535 passed**, 0 failed (+39 test items)
+- Mutation harness: **54/54 CAUGHT** (4 new §91 rows: `91A1_STRICT_NONE_IS_ABSENT`, `91A2_UNREACHABLE_AS_ABSENT`, `91A3_CYCLE_UNREACHABLE_EXPIRES`, `91B_DEVNULL_ANY_CHARDEV`; `90B_EXPIRY_FOUND_STATUS` and `88D_STATUS_ALL_ENDPOINTS` retargeted to unique anchors)
+- Phase commits: `ed04266` A1, `adf5977` A2, `2be3bc6` A3 (amended with the strengthened §87-C test), `b17bf32` B, this commit C
+- Local pre-push gate: **9/9 steps clean** (gitleaks binary absent locally; CI runs it); Playwright **40/40**; `tsc --noEmit` + `npm run build` clean
+- GitHub Actions run for the §91 code (commit `c6f0b5a`; this docs-only amend only adds the URL): [run 41589599684](https://github.com/hixam001/trading-bot/actions/runs/41589599684) — `Backend & Frontend Tests` **success**, `Docker ARM64 Build + Compose Config` **success**. `gitleaks` [run 41589599772](https://github.com/hixam001/trading-bot/actions/runs/41589599772) **success**. `CodeQL` [run 41589599188](https://github.com/hixam001/trading-bot/actions/runs/41589599188) — `Analyze (actions)`, `Analyze (javascript-typescript)`, `Analyze (python)` all **success**.
+
+### Fixed Defects
+1. **Phase A1 — `None` conflated "not found" with "endpoint failed" (`backend/live_execution/solana.py`)**:
+   - `get_signature_status_all` returns `None` for both "endpoint answered 200 with `value:[null]`" and "transport error / non-200 / JSON-RPC error / malformed body". Both callers treated all-`None` as proof the transaction never landed.
+   - New `get_signature_status_all_strict(signature, endpoints=None)` asks every host-deduped endpoint concurrently, in order, using `rpc("getSignatureStatuses", [[sig], {"searchTransactionHistory": True}], endpoints=[ep])`, and classifies the RESULT:
+     - `None` → `UNREACHABLE`;
+     - dict with `value` a list of length exactly 1 and `value[0] is None` → `ABSENT`;
+     - same shape with `value[0]` a dict → that status dict;
+     - everything else (non-dict, missing/odd `value`, wrong length, non-dict/non-`None` element) → `UNREACHABLE`;
+     - exception → warning + `UNREACHABLE` (never raises).
+   - `ABSENT`/`UNREACHABLE` are identity-only sentinels whose `__bool__` raises, so a careless `if status:` or `status or x` cannot silently classify them. Empty endpoint list → `[]`. `get_signature_status_all` is byte-for-byte unchanged.
+   - Tests: `backend/tests/test_solana_signature_status_strict.py` (+20) covers every table row, order, host dedupe, the legacy contract, exception containment, and the sentinel truth-value guard.
+2. **Phase A2 — operator expiry could release caps on unknown RPC (`scripts/resolve_pending_buy.py`)**:
+   - The default status reader is now `get_signature_status_all_strict`. The expiry block runs identically for `--expire` and `--force-expire`:
+     - empty list → refuse "no endpoint configured; cannot prove absence";
+     - any found dict → refusal keeps the exact text `the transaction landed (status ...): use --adopt-from-sig` (found outranks unreachable because adoption is the correct instruction);
+     - fewer than two distinct endpoints → refuse and name `SOLANA_RPC_URL_2`;
+     - any entry not `ABSENT` by identity (including a stray legacy `None`) → refuse with the count of endpoints that did not answer "not found".
+   - `--force-expire` still skips ONLY the blockhash/age gates; it never bypasses the all-endpoint-absence proof. Its help text and both operator docs now say: with RPC fully down there is **no** unproven expiry — restore RPC, or open the signature in a block explorer and use `--adopt-from-sig` if it landed; leaving the row pending is safe (caps stay held), an unproven expiry is not.
+   - Every refusal and success audit line now carries `endpoint_verdicts` (`"absent" | "unreachable" | "found"`, one word per endpoint, no URLs/secrets) alongside `forced`.
+   - Tests: `test_resolve_pending_buy.py` (+11) covers all-ABSENT success under both flags, one/all UNREACHABLE, found-outranks-unreachable, single endpoint, injected legacy `[None, None]`, the real-helper dead-`rpc` repro (rc 1, row pending, audit `refused`), and the real-helper all-null happy path.
+3. **Phase A3 — the live cycle could expire on one lagging/unreachable node (`backend/run_live_cycle.py`)**:
+   - `resolve_pending_buys` now calls `get_signature_status_all_strict`. Any dict is re-processed through the existing adopt/fail branches; any non-`ABSENT` entry sets `recheck_ok = False` and logs `"pending buy %s: %d of %d endpoints did not answer 'not found' — left pending"`; only an all-`ABSENT` list can expire, still gated by age ≥ `PENDING_EXPIRY_MIN_AGE_SECONDS`. The exception path remains unknown → `recheck_ok = False`.
+   - The §88-D tests were repointed at the strict helper with `ABSENT` where they used `None`, keeping every assertion. New tests pin `[ABSENT, UNREACHABLE]` and `[UNREACHABLE, UNREACHABLE]` staying pending, `[ABSENT, ABSENT]` expiring, and `[ABSENT, found]` adopting. The §87-C unknown-blockhash test now also asserts the expiry re-query is never reached, so the predicate mutation cannot be masked by the stricter helper.
+   - Tests: `test_pending_buy_resolution.py` (+4 new items, plus the strengthened §87-C assertion).
+4. **Phase B — preflight rejected the documented `/dev/null` placeholder (`scripts/preflight_deploy.py`)**:
+   - In `_json_bind_source_check`, `os.devnull` is now a PASS for the JSON channel (`"zero-file placeholder; the JSON channel signs from env"`). Only `Path(os.devnull)` qualifies: `/dev/zero` and any other non-regular file stay WARN.
+   - The directory/non-regular WARN now carries the fix: `sudo rmdir <path> && sudo install -m 600 -o 10001 /dev/null <path>, or set WALLET_KEYPAIR_HOST_PATH=/dev/null`.
+   - The FILE channel is unchanged and still FAILs for `/dev/null` (it requires a regular keypair file); a regression test pins that.
+   - Tests: `test_preflight_deploy.py` (+4).
+5. **Phase C — this documentation/memory/mutation-log commit**:
+   - `docs/13_ORACLE_DEPLOY_GUIDE.md` §5.5/§10.6 and `docs/15_BACKUP_RESTORE.md` state the honest `--force-expire` contract and the `/dev/null`/directory distinction.
+   - `handoff.md` §91, memory-bank `activeContext`/`progress`/`decisionLog`/`session-log`, and the regenerated `docs/17_MUTATION_LOG.md` (54 rows, all KILLED).
+
+### Known Limits
+- **Cycle single-endpoint behaviour is unchanged.** `resolve_pending_buys` does not itself refuse when only one distinct endpoint is configured; it relies on preflight/`check_rpc_diversity` to enforce two RPCs. The operator tool does refuse a single endpoint. A deployment that bypasses preflight with one RPC could therefore still expire on one `ABSENT` answer.
+- **`get_signature_status_all` remains for compatibility, unchanged.** After §91 it has **no production callers**: `scripts/resolve_pending_buy.py` defaults to the strict helper and `backend/run_live_cycle.py` calls the strict helper directly. It is exercised only by `backend/tests/test_audit_88_d.py` and the explicit regression test in `test_solana_signature_status_strict.py`.
+- The sentinels intentionally have no truth value; code must compare with `is`. This is a test-time tripwire, not an operator-facing value.
+- Operator-only work remains: VM preflight, reboot drill, graceful-stop drill, backup+restore drill, and the first real buy/sell on a scratch state dir with loss-only funding. Do not use `--force-expire` on the VM until §91 is merged.
+
+### Verification
+- Backend suite: **1535 passed**, 0 failed (102 warnings in 21.70s; +39 over 1496). Target ≥ 1506 met.
+- Mutation harness (no flags): **54/54 CAUGHT**, restorations verified clean; log regenerated.
+- Local pre-push gate: **9/9 clean**; Playwright **40/40**; tsc/build clean.
+- GitHub Actions: [run 41589599684](https://github.com/hixam001/trading-bot/actions/runs/41589599684) — `Backend & Frontend Tests` success, `Docker ARM64 Build + Compose Config` success; `gitleaks` and all three `CodeQL` analyze jobs success (links above).
+
 ## §90 — Pre-Deploy Hardening: Wallet Mount Truth, Chain-Proven Expiry, Pending-Buy Audit Gaps & ARM Browser Escape (2026-11-02)
 
 ### Baseline & Measured Suite Counts

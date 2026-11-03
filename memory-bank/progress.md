@@ -1,6 +1,14 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §91 Prove absence before expiring a pending buy (2026-11-03, phases A1–C):
+      1. §91-A1: new `solana.get_signature_status_all_strict()` keeps `ABSENT` (200 + `value:[null]`) separate from `UNREACHABLE` (rpc `None`, malformed body, exception) with identity-only sentinels whose `__bool__` raises; `get_signature_status_all` is unchanged.
+      2. §91-A2: operator `--expire`/`--force-expire` require at least two endpoints and every one to return `ABSENT`; any found status refuses with `the transaction landed (status ...): use --adopt-from-sig` (found outranks unreachable). `--force-expire` skips only blockhash/age. Audit lines add `endpoint_verdicts`; docs state RPC-fully-down has no unproven expiry.
+      3. §91-A3: the live cycle uses the strict helper; `[ABSENT, UNREACHABLE]` and `[UNREACHABLE, UNREACHABLE]` stay pending, only all-`ABSENT` + age ≥ 90 s expires, found statuses still adopt.
+      4. §91-B: preflight accepts `/dev/null` for the JSON channel, keeps `/dev/zero` and other non-regular files on WARN, and gives the directory WARN the `rmdir` + `install -m 600 -o 10001 /dev/null` fix; the FILE channel still FAILs for `/dev/null`.
+      5. §91-C: handoff §91, memory-bank, docs 13/15, and the §81–§91 mutation log (54 rows, all KILLED).
+      6. Verification: backend **1535 passed**, 0 failed (+39 over 1496; target ≥ 1506); mutation **54/54 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. CI [run 41589599684](https://github.com/hixam001/trading-bot/actions/runs/41589599684) green including `docker-arm64`; gitleaks and CodeQL green. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
+      7. Known limit: the live cycle does not itself refuse a single endpoint (preflight enforces two RPCs); the operator tool does. `get_signature_status_all` has no production callers after §91.
 - [x] §90 Pre-deploy hardening (2026-11-02, phases A–E):
       1. §90-A: preflight FAILs unless `WALLET_KEYPAIR_PATH` is exactly `/run/secrets/wallet_keypair` (new `CONTAINER_WALLET_PATH`); the JSON channel WARNs when the compose bind source is missing or not a regular file instead of claiming PASS.
       2. §90-B: operator `--expire` refuses unless the row is ≥ 90 s old, the stored blockhash is provably invalid, every deduped endpoint reports the signature absent, and every read succeeded; `--force-expire` skips only blockhash/age, still requires every-endpoint absence, and audits `forced: true`. One shared `PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0` in `live_execution.config`.

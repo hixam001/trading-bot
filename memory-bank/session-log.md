@@ -1,3 +1,14 @@
+## Memory-bank update — 2026-11-03 (§91 prove absence before expiring a pending buy)
+
+- **Task**: implement §91 in five commits (A1, A2, A3, B, C) so an all-`None`/all-unreachable status re-query can never be read as proof that a pending transaction did not land.
+- **A1**: `live_execution.solana.get_signature_status_all_strict()` classifies each endpoint as found-dict / `ABSENT` / `UNREACHABLE`; sentinels are identity-only and `__bool__` raises. `get_signature_status_all` unchanged.
+- **A2**: `scripts/resolve_pending_buy.py` defaults to the strict helper and requires ≥ 2 endpoints, every one `ABSENT`, and any found status refuses with the exact `the transaction landed ... use --adopt-from-sig` text. `--force-expire` skips only blockhash/age. Audit lines add `endpoint_verdicts`.
+- **A3**: `run_live_cycle.resolve_pending_buys` uses the strict helper; any non-`ABSENT` entry leaves the row pending with a `did not answer 'not found'` warning; only all-`ABSENT` + age ≥ 90 s expires.
+- **B**: `preflight_deploy._json_bind_source_check` PASSes `/dev/null` for the JSON channel, WARNs `/dev/zero`/directories with the `rmdir` + `install -m 600 -o 10001 /dev/null` fix; the FILE channel still FAILs `/dev/null`.
+- **C**: docs 13/15, handoff §91, memory-bank, and the §81–§91 mutation log (54/54 KILLED). New rows: `91A1_STRICT_NONE_IS_ABSENT`, `91A2_UNREACHABLE_AS_ABSENT`, `91A3_CYCLE_UNREACHABLE_EXPIRES`, `91B_DEVNULL_ANY_CHARDEV`.
+- **Verification**: backend **1535 passed**, 0 failed (+39 over 1496); mutation **54/54 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; CI [run 41589599684](https://github.com/hixam001/trading-bot/actions/runs/41589599684) green including `docker-arm64`, gitleaks and CodeQL green; no arming, signing, sizing, threshold, gate, Jupiter, or Privy changes.
+- **Known limit**: the live cycle keeps its single-endpoint behaviour (preflight enforces two RPCs); the operator tool refuses fewer than two. `get_signature_status_all` is now test-only.
+
 ## Memory-bank update — 2026-11-02 (§90 follow-up spec audit)
 
 - **Task**: re-read §90 against the shipped commits and close literal spec gaps without changing money semantics.
