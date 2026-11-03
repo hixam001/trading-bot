@@ -11,6 +11,7 @@ import json
 import time
 import pytest
 
+from live_execution import solana
 from live_execution.commit_log import CommitLog
 from live_execution.models import ExecutionLedger
 from scripts import resolve_pending_buy as rpb
@@ -30,7 +31,8 @@ class Tty:
 class Chain:
     """Hermetic stand-in for the two chain reads the expiry guard performs."""
 
-    def __init__(self, *, blockhash=False, statuses=(None, None),
+    def __init__(self, *, blockhash=False,
+                 statuses=(solana.ABSENT, solana.ABSENT),
                  blockhash_error=None, status_error=None):
         self.blockhash = blockhash
         self.statuses = statuses
@@ -142,7 +144,8 @@ def test_expire_yes_settles_without_a_tty(tmp_path):
 
 def test_expire_refuses_while_the_blockhash_is_still_valid(tmp_path):
     ledger, _ = _seed(tmp_path)
-    chain = Chain(blockhash=True, statuses=(None, None))
+    chain = Chain(blockhash=True,
+                  statuses=(solana.ABSENT, solana.ABSENT))
     rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
               **_chain_kwargs(chain))
     assert rc == 1
@@ -186,8 +189,10 @@ def test_expire_refuses_without_a_stored_blockhash(tmp_path):
 
 def test_expire_refuses_when_any_endpoint_reports_the_signature(tmp_path):
     ledger, _ = _seed(tmp_path)
-    chain = Chain(blockhash=False,
-                  statuses=(None, {"slot": 1, "confirmationStatus": "confirmed"}))
+    chain = Chain(
+        blockhash=False,
+        statuses=(solana.ABSENT,
+                  {"slot": 1, "confirmationStatus": "confirmed"}))
     rc = _run(_args(tmp_path, "--expire", "--yes"), stdin=Tty(False),
               **_chain_kwargs(chain))
     assert rc == 1
@@ -285,6 +290,143 @@ def test_force_expire_still_refuses_an_unreadable_status_requery(tmp_path):
     assert rc == 1
     assert len(ledger.pending_buys()) == 1
     assert "no endpoint" in _audit(tmp_path)[-1]["reason"]
+
+
+# ------------------------------------------------- §91 strict absence proof
+
+@pytest.mark.parametrize("flag", ["--expire", "--force-expire"])
+def test_all_endpoints_absent_expires_and_audits_verdicts(tmp_path, flag):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=(solana.ABSENT, solana.ABSENT))
+    rc = _run(_args(tmp_path, flag, "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 0
+    assert ledger.pending_buys() == []
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "expired"
+    assert audit["endpoint_verdicts"] == ["absent", "absent"]
+
+
+@pytest.mark.parametrize("flag", ["--expire", "--force-expire"])
+def test_one_unreachable_endpoint_refuses_expiry(tmp_path, flag):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=(solana.ABSENT, solana.UNREACHABLE))
+    rc = _run(_args(tmp_path, flag, "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert audit["endpoint_verdicts"] == ["absent", "unreachable"]
+    assert "1 of 2 endpoints did not answer 'not found'" in audit["reason"]
+
+
+@pytest.mark.parametrize("flag", ["--expire", "--force-expire"])
+def test_all_unreachable_endpoints_refuse_expiry(tmp_path, flag):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=(solana.UNREACHABLE, solana.UNREACHABLE))
+    rc = _run(_args(tmp_path, flag, "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert audit["endpoint_verdicts"] == ["unreachable", "unreachable"]
+    assert "2 of 2 endpoints did not answer 'not found'" in audit["reason"]
+
+
+def test_found_status_outranks_an_unreachable_endpoint(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    landed = {"slot": 7, "confirmationStatus": "confirmed"}
+    chain = Chain(statuses=(landed, solana.UNREACHABLE))
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "the transaction landed" in audit["reason"]
+    assert "--adopt-from-sig" in audit["reason"]
+    assert audit["endpoint_verdicts"] == ["found", "unreachable"]
+
+
+def test_single_endpoint_cannot_prove_absence(tmp_path):
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=(solana.ABSENT,))
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert "only one distinct RPC endpoint" in audit["reason"]
+    assert "SOLANA_RPC_URL_2" in audit["reason"]
+    assert audit["endpoint_verdicts"] == ["absent"]
+
+
+def test_legacy_none_entries_are_not_proof_of_absence(tmp_path):
+    """A stale default (None = old 'not found') must never expire a row."""
+    ledger, _ = _seed(tmp_path)
+    chain = Chain(statuses=(None, None))
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"), stdin=Tty(False),
+              **_chain_kwargs(chain, old=False))
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert audit["endpoint_verdicts"] == ["unreachable", "unreachable"]
+
+
+def test_real_helper_repro_dead_rpc_force_expire_refuses(
+        tmp_path, monkeypatch):
+    """§91 repro: rpc() returning None is UNREACHABLE, never 'absent'."""
+    ledger, _ = _seed(tmp_path)
+
+    async def dead_rpc(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(rpb.solana, "rpc", dead_rpc)
+    monkeypatch.setattr(rpb.solana.config, "RPC_URLS", [
+        "https://a.example/rpc",
+        "https://b.example/rpc",
+    ])
+
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"),
+              stdin=Tty(False), now_fn=time.time)
+
+    assert rc == 1
+    assert len(ledger.pending_buys()) == 1
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "refused"
+    assert audit["endpoint_verdicts"] == ["unreachable", "unreachable"]
+    assert "did not answer 'not found'" in audit["reason"]
+
+
+def test_real_helper_all_endpoints_answer_not_found_expires(
+        tmp_path, monkeypatch):
+    ledger, _ = _seed(tmp_path)
+    calls = []
+
+    async def null_rpc(method, params, timeout=15.0, endpoints=None):
+        calls.append((method, endpoints))
+        return {"context": {}, "value": [None]}
+
+    monkeypatch.setattr(rpb.solana, "rpc", null_rpc)
+    monkeypatch.setattr(rpb.solana.config, "RPC_URLS", [
+        "https://a.example/rpc",
+        "https://b.example/rpc",
+    ])
+
+    rc = _run(_args(tmp_path, "--force-expire", "--yes"),
+              stdin=Tty(False), now_fn=time.time)
+
+    assert rc == 0
+    assert ledger.pending_buys() == []
+    assert ledger.get_by_idempotency_key(KEY).status == "expired"
+    assert len(calls) == 2
+    audit = _audit(tmp_path)[-1]
+    assert audit["result"] == "expired"
+    assert audit["endpoint_verdicts"] == ["absent", "absent"]
 
 
 def test_unknown_key_is_nonzero_and_audited(tmp_path):

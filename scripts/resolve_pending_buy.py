@@ -9,9 +9,12 @@ the chain data is conclusive before the automatic path acts:
     --expire            the transaction can never land: the blockhash is
                         provably invalid, every endpoint reports the signature
                         absent, and the row is >= 90 s old; release caps/slots.
-    --force-expire      the automatic checks cannot run (RPC down): skip ONLY
-                        the blockhash/age gates; every endpoint must still
-                        report the signature absent. Audited with forced=true.
+    --force-expire      the blockhash/age reads are unavailable, but at least
+                        two RPCs still answer: skip ONLY those two gates; EVERY
+                        endpoint must still answer "not found". Audited with
+                        forced=true. With RPC fully down this tool refuses:
+                        restore RPC, or open the signature in a block explorer
+                        and use --adopt-from-sig if it landed.
     --adopt-from-sig    the fill landed but was never adopted; read the actual
                         token/USDC deltas from the confirmed transaction and
                         turn the pending row into a managed position.
@@ -72,9 +75,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
     action.add_argument(
         "--force-expire",
         action="store_true",
-        help=("Mark the buy expired after bypassing ONLY the blockhash/age "
-              "gates (use when RPC is down). Every endpoint must still report "
-              "the signature absent; audited with forced=true."),
+        help=("Skip ONLY the blockhash/age gates when those reads are "
+              "unavailable but at least two RPCs still answer. Every endpoint "
+              "must still answer 'not found'; with RPC fully down this "
+              "refuses — restore RPC, or use --adopt-from-sig from a block "
+              "explorer if it landed. Audited with forced=true."),
     )
     action.add_argument(
         "--adopt-from-sig",
@@ -137,6 +142,7 @@ def _append_audit(path: Path, payload: dict) -> None:
 def _audit_payload(rec, action: str, result: str, ledger_path: Path,
                    *, signature: str = "", usd_size=None, tokens_out=None,
                    reason: str = "", forced: bool = False,
+                   endpoint_verdicts: Optional[list[str]] = None,
                    now_fn: Callable[[], float] = time.time) -> dict:
     return {
         "ts": now_fn(),
@@ -149,6 +155,8 @@ def _audit_payload(rec, action: str, result: str, ledger_path: Path,
         "tokens_out": tokens_out,
         "reason": reason,
         "forced": forced,
+        "endpoint_verdicts": (
+            [] if endpoint_verdicts is None else list(endpoint_verdicts)),
         "ledger": str(ledger_path),
     }
 
@@ -170,11 +178,12 @@ def _confirm(action: str, rec, input_fn: Callable[[str], str],
 
 
 def _refuse_expire(rec, audit_path: Path, ledger_path: Path, reason: str,
-                   *, forced: bool, now_fn: Callable[[], float]) -> int:
+                   *, forced: bool, now_fn: Callable[[], float],
+                   endpoint_verdicts: Optional[list[str]] = None) -> int:
     print(f"REFUSED: {reason}; pending row left untouched.", file=sys.stderr)
     _append_audit(audit_path, _audit_payload(
         rec, "expire", "refused", ledger_path, reason=reason,
-        forced=forced, now_fn=now_fn))
+        forced=forced, endpoint_verdicts=endpoint_verdicts, now_fn=now_fn))
     return 1
 
 
@@ -191,7 +200,7 @@ async def resolve(args: argparse.Namespace, *,
     commit_log_cls = commit_log_cls or CommitLog
     blockhash_valid_fn = blockhash_valid_fn or solana.is_blockhash_valid
     signature_status_all_fn = (
-        signature_status_all_fn or solana.get_signature_status_all)
+        signature_status_all_fn or solana.get_signature_status_all_strict)
     now_fn = now_fn or time.time
     state_dir, ledger_path, audit_path = _paths(args)
     ledger = ExecutionLedger(ledger_path)
@@ -276,18 +285,47 @@ async def resolve(args: argparse.Namespace, *,
                 rec, audit_path, ledger_path,
                 f"signature status re-query failed: {exc}",
                 forced=forced, now_fn=now_fn)
+
+        def _endpoint_verdicts(entries) -> list[str]:
+            # No URLs/secrets: one summary word per distinct endpoint.
+            return [
+                "found" if isinstance(status, dict)
+                else "absent" if status is solana.ABSENT
+                else "unreachable"
+                for status in entries
+            ]
+
         if not statuses:
             return _refuse_expire(
                 rec, audit_path, ledger_path,
-                "no endpoint returned a status; refusing to expire on "
-                "unknown data", forced=forced, now_fn=now_fn)
-        landed = next((status for status in statuses
-                       if status is not None), None)
-        if landed is not None:
+                "no endpoint configured; cannot prove absence",
+                forced=forced, now_fn=now_fn, endpoint_verdicts=[])
+        endpoint_verdicts = _endpoint_verdicts(statuses)
+        found = next(
+            (status for status in statuses if isinstance(status, dict)), None)
+        if found is not None:
             return _refuse_expire(
                 rec, audit_path, ledger_path,
-                f"the transaction landed (status {landed!r}): use "
-                "--adopt-from-sig", forced=forced, now_fn=now_fn)
+                f"the transaction landed (status {found!r}): use "
+                "--adopt-from-sig", forced=forced, now_fn=now_fn,
+                endpoint_verdicts=endpoint_verdicts)
+        if len(statuses) < 2:
+            return _refuse_expire(
+                rec, audit_path, ledger_path,
+                "only one distinct RPC endpoint is configured; one lagging "
+                "node cannot prove absence (set SOLANA_RPC_URL_2)",
+                forced=forced, now_fn=now_fn,
+                endpoint_verdicts=endpoint_verdicts)
+        bad = [i for i, status in enumerate(statuses)
+               if status is not solana.ABSENT]
+        if bad:
+            return _refuse_expire(
+                rec, audit_path, ledger_path,
+                f"{len(bad)} of {len(statuses)} endpoints did not answer "
+                "'not found' (unreachable or unexpected); cannot prove "
+                "absence — restore RPC or resolve with the explorer and "
+                "--adopt-from-sig", forced=forced, now_fn=now_fn,
+                endpoint_verdicts=endpoint_verdicts)
 
         reason = (
             "operator FORCE-expired pending buy: chain proof bypassed"
@@ -298,8 +336,9 @@ async def resolve(args: argparse.Namespace, *,
             print("ERROR: pending row changed before it could be expired; "
                   "re-read the ledger.", file=sys.stderr)
             _append_audit(audit_path, _audit_payload(
-                rec, action, "no-op", ledger_path, reason="row no longer pending",
-                forced=forced, now_fn=now_fn))
+                rec, action, "no-op", ledger_path,
+                reason="row no longer pending", forced=forced,
+                endpoint_verdicts=endpoint_verdicts, now_fn=now_fn))
             return 1
         if rec.commit_hash:
             try:
@@ -310,7 +349,8 @@ async def resolve(args: argparse.Namespace, *,
                       file=sys.stderr)
         _append_audit(audit_path, _audit_payload(
             rec, action, "expired", ledger_path, reason=reason,
-            forced=forced, now_fn=now_fn))
+            forced=forced, endpoint_verdicts=endpoint_verdicts,
+            now_fn=now_fn))
         print(f"EXPIRED {rec.idempotency_key} ({rec.mint[:8]}); caps released.")
         return 0
 

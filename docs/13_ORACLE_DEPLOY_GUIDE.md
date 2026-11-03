@@ -465,9 +465,12 @@ docker compose run --rm --entrypoint python live \
 docker compose run --rm --entrypoint python live \
   /app/scripts/resolve_pending_buy.py '<key>' --expire
 
-# 3a-alt. ONLY when the chain reads are unavailable (RPC outage):
-# --force-expire skips ONLY the blockhash/age gates. Every endpoint must
-# still report the signature absent, and the audit line records forced=true.
+# 3a-alt. ONLY when the blockhash/age reads are unavailable but at least
+# two RPCs still answer: --force-expire skips ONLY those two gates. Every
+# endpoint must still answer "not found" (audit line records forced=true).
+# With RPC fully down there is NO unproven expiry: restore RPC, or open the
+# signature in a block explorer and use --adopt-from-sig if it landed.
+# Leaving the row pending is safe (caps stay held); an unproven expiry is not.
 docker compose run --rm --entrypoint python live \
   /app/scripts/resolve_pending_buy.py '<key>' --force-expire
 
@@ -486,9 +489,14 @@ endpoint must report the signature absent, and the row must be at least
 `PENDING_EXPIRY_MIN_AGE_SECONDS` (90 s) old. A still-valid or unknown
 blockhash, an RPC error, or a young row is refused with exit 1. A signature
 found on any endpoint refuses with `the transaction landed (status ...): use
---adopt-from-sig`. `--force-expire` exists only for an RPC outage and skips
-**only** the blockhash/age gates — the all-endpoint-absent check still runs;
-forced expiries are audited with `"forced": true`. Adoption reads the
+--adopt-from-sig`. `--force-expire` is for "my blockhash/age reads are
+unavailable but at least two RPCs still answer": it skips **only** those two
+gates — every endpoint must still answer "not found", and one unreachable
+endpoint refuses because absence is not proven. With RPC fully down there is
+**no** unproven expiry: restore RPC, or open the signature in a block explorer
+and use `--adopt-from-sig` if it landed. Leaving the row pending is safe (caps
+stay held); an unproven expiry is not. Forced expiries are audited with
+`"forced": true` plus `endpoint_verdicts`. Adoption reads the
 **actual** token/USDC deltas from the confirmed transaction and refuses to
 invent a cost basis when they are unreadable. Every attempt appends one JSON
 line to `/app/backend/live_execution/state/resolve_pending_buy_audit.log` (or

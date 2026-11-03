@@ -217,10 +217,12 @@ Operators should periodically practice a restore drill in a scratch directory to
    - A restored ledger can contain `pending` buys (unresolved on-chain commitments). Leave them in place:
      with the engine stopped, resolve each one with `scripts/resolve_pending_buy.py` as documented in
      `docs/13_ORACLE_DEPLOY_GUIDE.md` §10.6. The tool re-verifies the blockhash, every-endpoint absence and
-     the 90 s age gate before expiring; use `--force-expire` only when RPC reads are unavailable (it still
-     requires every endpoint to report the signature absent, and audits `forced: true`). A signature found
-     on any endpoint refuses with `the transaction landed (status ...): use --adopt-from-sig`. Never delete
-     or hand-edit a pending row.
+     the 90 s age gate before expiring; use `--force-expire` only when the blockhash/age reads are
+     unavailable but at least two RPCs still answer (it still requires every endpoint to answer "not
+     found", and audits `forced: true`). With RPC fully down there is no unproven expiry: restore RPC, or
+     open the signature in a block explorer and use `--adopt-from-sig` if it landed. A signature found on
+     any endpoint refuses with `the transaction landed (status ...): use --adopt-from-sig`. Leaving the row
+     pending is safe (caps stay held); an unproven expiry is not. Never delete or hand-edit a pending row.
 4. **Clear the kill switch** (only after human verification):
    ```bash
    docker compose run --rm --entrypoint python -w /app/backend live \
