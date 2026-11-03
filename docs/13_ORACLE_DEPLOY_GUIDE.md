@@ -151,7 +151,10 @@ secret. It prints a PASS/WARN/FAIL table and exits **1** if any check fails:
   and the JSON channel WARNs if the compose bind source is missing or not a
   regular file. Pre-create that mount source with
   `sudo install -m 600 -o 10001 /dev/null <path>` or set
-  `WALLET_KEYPAIR_HOST_PATH=/dev/null`.
+  `WALLET_KEYPAIR_HOST_PATH=/dev/null`; `/dev/null` itself is accepted as the
+  JSON-channel placeholder, while a directory at that path means Docker
+  created the missing mount source — remove it and install the placeholder
+  with `sudo rmdir <path> && sudo install -m 600 -o 10001 /dev/null <path>`.
 - For the file channel, the host bind source exists, is a regular file, mode
   0600/0400, owner uid **10001** — a FAIL prints the exact `chown`/`chmod`
   commands. Readability is tested only when the preflight itself runs as uid

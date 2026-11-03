@@ -316,6 +316,52 @@ def test_json_channel_warns_when_the_compose_bind_source_is_a_directory(
         c for c in checks if c.name == "wallet file").detail
 
 
+def test_json_channel_accepts_the_devnull_placeholder(tmp_path):
+    env = _env(
+        WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]",
+        WALLET_KEYPAIR_HOST_PATH="/dev/null")
+    checks = _run(env, tmp_path)
+    assert all(c.status != pf.FAIL for c in checks), checks
+    wallet = next(c for c in checks if c.name == "wallet file")
+    assert wallet.status == pf.PASS
+    assert "zero-file placeholder" in wallet.detail
+    assert "/dev/null" in wallet.detail
+    assert not any(
+        c.status == pf.WARN and "wallet file" in c.detail for c in checks)
+
+
+def test_json_channel_directory_warn_carries_the_rmdir_and_install_fix(
+        tmp_path):
+    (tmp_path / "secrets" / "wallet_keypair.json").mkdir(parents=True)
+    env = _env(WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]")
+    checks = pf.check_wallet_file(env, tmp_path, uid_reader=lambda p: 10001)
+    wallet = next(c for c in checks if c.name == "wallet file")
+    assert wallet.status == pf.WARN
+    assert "not a regular file" in wallet.detail
+    assert "Docker likely created a directory" in wallet.detail
+    assert "sudo rmdir" in wallet.detail
+    assert "install -m 600 -o 10001 /dev/null" in wallet.detail
+    assert "WALLET_KEYPAIR_HOST_PATH=/dev/null" in wallet.detail
+
+
+def test_json_channel_other_character_device_stays_a_warning(tmp_path):
+    env = _env(
+        WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]",
+        WALLET_KEYPAIR_HOST_PATH="/dev/zero")
+    checks = pf.check_wallet_file(env, tmp_path, uid_reader=lambda p: 10001)
+    wallet = next(c for c in checks if c.name == "wallet file")
+    assert wallet.status == pf.WARN
+    assert "not a regular file" in wallet.detail
+
+
+def test_file_channel_rejects_the_devnull_placeholder(tmp_path):
+    env = _env(WALLET_KEYPAIR_HOST_PATH="/dev/null")
+    checks = pf.check_wallet_file(env, tmp_path, uid_reader=lambda p: 10001)
+    wallet = next(c for c in checks if c.name == "wallet file")
+    assert wallet.status == pf.FAIL
+    assert "not a regular file" in wallet.detail
+
+
 def test_json_channel_passes_when_the_compose_bind_source_is_a_file(tmp_path):
     _wallet(tmp_path)
     env = _env(WALLET_KEYPAIR_PATH="", WALLET_KEYPAIR_JSON="[1,2,3]")

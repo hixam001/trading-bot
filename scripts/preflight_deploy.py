@@ -435,12 +435,19 @@ def _json_bind_source_check(env: dict[str, str], root: Path) -> Check:
             "wallet file", WARN,
             f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
             f"source {path} cannot be inspected: {exc}")
+    if stat.S_ISCHR(st.st_mode) and path == Path(os.devnull):
+        return _check(
+            "wallet file", PASS,
+            "compose bind source is /dev/null (zero-file placeholder; the "
+            "JSON channel signs from env)")
     if not stat.S_ISREG(st.st_mode):
         return _check(
             "wallet file", WARN,
             f"WALLET_KEYPAIR_JSON signs from env, but the compose bind "
-            f"source {path} is not a regular file (Docker created a "
-            "directory); replace it with a keypair file")
+            f"source {path} is not a regular file (Docker likely created a "
+            f"directory): sudo rmdir {path} && sudo install -m 600 -o 10001 "
+            f"/dev/null {path}, or set "
+            "WALLET_KEYPAIR_HOST_PATH=/dev/null")
     return _check(
         "wallet file", PASS,
         f"compose bind source {path} is present (unused by the JSON channel)")
