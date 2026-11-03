@@ -29,7 +29,7 @@ pytest-asyncio>=0.24
 # BSD-3): curl-cffi Chrome-TLS impersonation (direct hop) + patchright
 # stealth Chromium with Cloudflare solver (browser hop). Pinned <0.5 —
 # 0.4 is Beta and minor versions have carried breaking renames.
-scrapling[fetchers]>=0.4.15,<0.5
+scrapling[fetchers]>=0.5,<0.6
 
 # Dependency hygiene (§78 D3): bump past PYSEC-2026-4175/4176/4177
 urllib3>=2.8.0
