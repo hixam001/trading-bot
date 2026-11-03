@@ -527,14 +527,15 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                     # §88 D: one endpoint saying "not found" is not proof of
                     # a non-land — a lagging node may already have it. Query
                     # every distinct endpoint once; a found status is
-                    # re-processed above. Expire only when every endpoint
-                    # still reports unknown AND the row is >= 90s old.
+                    # re-processed above. §91 A3: any UNREACHABLE answer is
+                    # unknown, never "absent"; expire only when EVERY endpoint
+                    # answered 200+null AND the row is >= 90s old.
                     recheck_ok = True
                     if sig and not status_requeried:
                         status_requeried = True
                         statuses = None
                         try:
-                            statuses = await solana.get_signature_status_all(sig)
+                            statuses = await solana.get_signature_status_all_strict(sig)
                         except Exception as exc:
                             log.warning(
                                 "pending buy %s: multi-endpoint status "
@@ -542,10 +543,19 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                                 sig[:16], exc)
                         if statuses is not None:
                             found = next(
-                                (s for s in statuses if s is not None), None)
+                                (s for s in statuses if isinstance(s, dict)),
+                                None)
                             if found is not None:
                                 status = found
                                 continue
+                            unknown = [s for s in statuses
+                                       if s is not solana.ABSENT]
+                            if unknown:
+                                recheck_ok = False
+                                log.warning(
+                                    "pending buy %s: %d of %d endpoints did "
+                                    "not answer 'not found' — left pending",
+                                    sig[:16], len(unknown), len(statuses))
                         else:
                             # The re-query itself failed: still unknown.
                             recheck_ok = False

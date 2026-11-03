@@ -21,6 +21,7 @@ import pytest
 
 import alerts
 import run_live_cycle as rlc
+from live_execution import solana
 from live_execution.commit_log import CommitLog
 from live_execution.models import ExecutionLedger
 
@@ -248,14 +249,15 @@ async def test_provably_invalid_blockhash_expires_and_releases_caps(
         return None
 
     async def status_all(sig, endpoints=None):
-        return [None, None]
+        return [solana.ABSENT, solana.ABSENT]
 
     async def invalid(blockhash, endpoints=None):
         assert blockhash == "BH1"
         return False
 
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
-    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(
+        rlc.solana, "get_signature_status_all_strict", status_all)
     monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
 
     stats = await rlc.resolve_pending_buys(ledger)
@@ -279,13 +281,14 @@ async def test_invalid_blockhash_on_a_young_row_does_not_expire(
         return None
 
     async def status_all(sig, endpoints=None):
-        return [None, None]
+        return [solana.ABSENT, solana.ABSENT]
 
     async def invalid(blockhash, endpoints=None):
         return False
 
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
-    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(
+        rlc.solana, "get_signature_status_all_strict", status_all)
     monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
 
     stats = await rlc.resolve_pending_buys(ledger)
@@ -305,7 +308,8 @@ async def test_invalid_blockhash_recheck_adopts_a_lagging_endpoint_fill(
         return None
 
     async def status_all(sig, endpoints=None):
-        return [None, {"err": None, "confirmationStatus": "confirmed"}]
+        return [solana.ABSENT,
+                {"err": None, "confirmationStatus": "confirmed"}]
 
     async def invalid(blockhash, endpoints=None):
         return False
@@ -314,7 +318,8 @@ async def test_invalid_blockhash_recheck_adopts_a_lagging_endpoint_fill(
         return {"usdc_delta": 2.7, "tokens_delta": 9.0}
 
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
-    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(
+        rlc.solana, "get_signature_status_all_strict", status_all)
     monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
     monkeypatch.setattr(rlc, "_fill_actuals", actuals)
 
@@ -345,13 +350,121 @@ async def test_invalid_blockhash_with_failed_recheck_stays_pending(
         return False
 
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
-    monkeypatch.setattr(rlc.solana, "get_signature_status_all", status_all)
+    monkeypatch.setattr(
+        rlc.solana, "get_signature_status_all_strict", status_all)
     monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
 
     stats = await rlc.resolve_pending_buys(ledger)
 
     assert stats == {"adopted": 0, "failed": 0, "expired": 0, "pending": 1}
     assert ledger.get_by_idempotency_key("k1").status == "pending"
+
+
+def _patch_status_all(monkeypatch, statuses):
+    """Patch the strict helper for §91 tests.
+
+    The legacy helper is also stubbed to its old collapsed semantics
+    (`None` for absent OR unreachable) so a pre-fix cycle still runs without
+    network and fails on the classification under test, not on a socket.
+    """
+    async def strict(sig, endpoints=None):
+        return list(statuses)
+
+    async def legacy(sig, endpoints=None):
+        return [s if isinstance(s, dict) else None for s in statuses]
+
+    monkeypatch.setattr(
+        rlc.solana, "get_signature_status_all_strict", strict)
+    monkeypatch.setattr(rlc.solana, "get_signature_status_all", legacy)
+
+
+@pytest.mark.parametrize(
+    "statuses",
+    [
+        [solana.ABSENT, solana.UNREACHABLE],
+        [solana.UNREACHABLE, solana.UNREACHABLE],
+    ],
+    ids=["one-unreachable", "all-unreachable"],
+)
+async def test_invalid_blockhash_with_an_unknown_endpoint_stays_pending(
+        env, monkeypatch, statuses):
+    """Absence is proven only when EVERY endpoint answered 200+null."""
+    import time as _time
+    old = _time.time() - 400.0
+    ledger = ExecutionLedger(env.dir / "exec_unreachable.json",
+                             now_fn=lambda: old)
+    _pending(ledger)
+
+    async def status(sig, endpoints=None):
+        return None
+
+    async def invalid(blockhash, endpoints=None):
+        return False
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
+    _patch_status_all(monkeypatch, statuses)
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats == {"adopted": 0, "failed": 0, "expired": 0, "pending": 1}
+    assert ledger.get_by_idempotency_key("k1").status == "pending"
+    assert ledger.deployed_today_usd() == 2.5
+
+
+async def test_invalid_blockhash_with_all_endpoints_absent_expires(
+        env, monkeypatch):
+    import time as _time
+    old = _time.time() - 400.0
+    ledger = ExecutionLedger(env.dir / "exec_absent.json", now_fn=lambda: old)
+    _pending(ledger)
+
+    async def status(sig, endpoints=None):
+        return None
+
+    async def invalid(blockhash, endpoints=None):
+        return False
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
+    _patch_status_all(monkeypatch, [solana.ABSENT, solana.ABSENT])
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats == {"adopted": 0, "failed": 0, "expired": 1, "pending": 0}
+    assert ledger.get_by_idempotency_key("k1").status == "expired"
+    assert ledger.deployed_today_usd() == 0.0
+
+
+async def test_invalid_blockhash_with_absent_and_found_status_adopts(
+        env, monkeypatch):
+    ledger = env.ledger
+    _pending(ledger)
+
+    async def status(sig, endpoints=None):
+        return None
+
+    async def invalid(blockhash, endpoints=None):
+        return False
+
+    async def actuals(side, mint, sig, owner=None):
+        return {"usdc_delta": 2.7, "tokens_delta": 9.0}
+
+    monkeypatch.setattr(rlc.solana, "get_signature_status", status)
+    monkeypatch.setattr(rlc.solana, "is_blockhash_valid", invalid)
+    monkeypatch.setattr(rlc, "_fill_actuals", actuals)
+    _patch_status_all(
+        monkeypatch,
+        [solana.ABSENT,
+         {"err": None, "confirmationStatus": "confirmed"}],
+    )
+
+    stats = await rlc.resolve_pending_buys(ledger)
+
+    assert stats == {"adopted": 1, "failed": 0, "expired": 0, "pending": 0}
+    rec = ledger.get_by_idempotency_key("k1")
+    assert rec.status == "confirmed"
+    assert rec.tokens_out == pytest.approx(9.0)
 
 
 async def test_unknown_blockhash_never_expires_and_alerts_after_5min(
@@ -367,12 +480,23 @@ async def test_unknown_blockhash_never_expires_and_alerts_after_5min(
     async def unknown(blockhash, endpoints=None):
         return None
 
+    status_all_calls: list[str] = []
+
+    async def status_all(sig, endpoints=None):
+        status_all_calls.append(sig)
+        return [solana.ABSENT, solana.ABSENT]
+
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
     monkeypatch.setattr(rlc.solana, "is_blockhash_valid", unknown)
+    monkeypatch.setattr(
+        rlc.solana, "get_signature_status_all_strict", status_all)
 
     stats = await rlc.resolve_pending_buys(ledger)
 
     assert stats == {"adopted": 0, "failed": 0, "expired": 0, "pending": 1}
+    # Unknown validity must never even reach the expiry re-query: every
+    # endpoint saying ABSENT cannot make an unknown blockhash provably invalid.
+    assert status_all_calls == []
     rec = ledger.get_by_idempotency_key("k1")
     assert rec.status == "pending"       # unknown is never "expired"
     assert rec.blockhash == "BH1"
