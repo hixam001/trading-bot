@@ -816,3 +816,63 @@ async def get_signature_status_all(
     return list(await asyncio.gather(*(_one(ep) for ep in target)))
 
 
+class _Verdict:
+    """Module sentinel; compared by identity, never by equality or truthiness."""
+    def __init__(self, name): self._name = name
+    def __repr__(self): return f"<{self._name}>"
+    def __bool__(self): raise TypeError(f"{self._name} has no truth value; compare with `is`")
+
+
+ABSENT = _Verdict("ABSENT")            # endpoint answered 200, value == [null]: "signature not found"
+UNREACHABLE = _Verdict("UNREACHABLE")  # anything else: transport error, non-200, JSON-RPC error,
+                                       # malformed/unexpected body, exception
+
+
+def _classify_signature_status_result(result) -> dict | _Verdict:
+    """Map one `rpc()` result to found-dict / ABSENT / UNREACHABLE (§91 A1)."""
+    if result is None:
+        # rpc() only returns None when every endpoint failed: transport error,
+        # non-200, JSON-RPC error, or a malformed body. Never "not found".
+        return UNREACHABLE
+    if not isinstance(result, dict):
+        return UNREACHABLE
+    value = result.get("value")
+    if not isinstance(value, list) or len(value) != 1:
+        return UNREACHABLE
+    entry = value[0]
+    if entry is None:
+        return ABSENT
+    if isinstance(entry, dict):
+        return entry
+    return UNREACHABLE
+
+
+async def get_signature_status_all_strict(
+    signature: str, endpoints: Optional[list[str]] = None
+) -> list[dict | _Verdict]:
+    """Query EVERY distinct endpoint and keep absence separate from unknown.
+
+    One entry per host-deduped endpoint, same order, queried concurrently.
+    `ABSENT` means that endpoint answered 200 with `value == [null]`;
+    `UNREACHABLE` covers every failure or unexpected shape. Only an all-ABSENT
+    list is proof that the signature did not land.
+    """
+    if endpoints is not None and not endpoints:
+        return []
+    target = _dedup_endpoints_by_host(endpoints or config.RPC_URLS)
+
+    async def _one(endpoint: str) -> dict | _Verdict:
+        try:
+            result = await rpc(
+                "getSignatureStatuses",
+                [[signature], {"searchTransactionHistory": True}],
+                endpoints=[endpoint],
+            )
+        except Exception as exc:
+            log.warning("[solana] status query failed on %s: %s", endpoint, exc)
+            return UNREACHABLE
+        return _classify_signature_status_result(result)
+
+    return list(await asyncio.gather(*(_one(ep) for ep in target)))
+
+
