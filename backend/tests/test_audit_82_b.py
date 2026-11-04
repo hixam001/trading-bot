@@ -17,16 +17,13 @@ Self-consistent quote fixtures used.
 from __future__ import annotations
 
 import base64
-from typing import Optional
-from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
 
 import live_execution.config as le_config
 from live_execution import executor as ex
 from live_execution import solana as sol_mod
-from live_execution.exit_errors import SendRejected, is_already_processed
+from live_execution.exit_errors import SendRejected
 from live_execution.models import ExecutionLedger
 
 MINT = "So11111111111111111111111111111111111111112"
@@ -62,7 +59,6 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(le_config, "REQUIRE_MANUAL_CONFIRMATION", False)
     monkeypatch.setattr(le_config, "STATE_DIR", tmp_path)
     monkeypatch.setattr(le_config, "EXIT_SLIPPAGE_LADDER_BPS", (50, 150, 300))
-    monkeypatch.setattr(le_config, "EXIT_MAX_ATTEMPTS", 3)
 
     class _Payer:
         pass
@@ -304,17 +300,6 @@ async def test_already_processed_is_never_treated_as_rejected(monkeypatch):
     send_raw_transaction must NOT raise SendRejected. It returns None (ambiguous)
     so the ladder keeps last_sig and status check runs.
     """
-    attempts = [
-        {
-            "endpoint": "https://api.mainnet-beta.solana.com",
-            "kind": "rpc_error",
-            "code": -32002,
-            "message": "Transaction simulation failed: This transaction has already been processed",
-            "err": "AlreadyProcessed",
-            "data": None,
-        }
-    ]
-
     class _Outcome:
         signature = None
         attempts = [

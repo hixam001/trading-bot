@@ -10,7 +10,6 @@ import config
 from api.main import app
 from api.auth import (
     _REVOKED_SESSION_SIGS,
-    MAX_REVOKED_SESSIONS,
     create_session_token,
     is_session_revoked,
     revoke_session_token,

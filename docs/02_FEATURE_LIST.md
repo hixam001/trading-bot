@@ -149,7 +149,7 @@ progress (updated as items complete).
 
 | # | Requirement | Status |
 |---|---|---|
-| M1 | Dead code & unused module elimination: removed retired paper-era modules (`backend/llm/reuse.py`, `backend/tests/test_narration_reuse.py`), experimental spike (`scripts/scrapling_spike.py`), and cleaned 55 unused imports | DONE |
+| M1 | Dead code & unused module elimination: removed retired paper-era modules (`backend/llm/reuse.py`, `backend/tests/test_narration_reuse.py`), experimental spikes, and cleaned 55 unused imports | DONE |
 | M2 | WebSocket feed optimization: incremental delta query (`get_feed_events_since`) eliminating full 100-row deserialization loops | DONE (`backend/api/websocket.py`, `backend/api/db.py`, `backend/api/db_pg.py`) |
 | M3 | Refusal funnel projection: lightweight verdict query (`get_feed_verdicts`) skipping heavy JSON text columns | DONE (`backend/api/routes/funnel.py`) |
 | M4 | Jupiter pricing cache: short-TTL (2.0s) price caching in `JupiterProvider.get_current_price` reducing redundant RPC calls | DONE (`backend/data_providers/jupiter.py`, `backend/tests/test_jupiter_decimals.py`) |

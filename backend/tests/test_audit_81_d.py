@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 if str(REPO_ROOT) not in sys.path:
@@ -23,9 +23,8 @@ import httpx
 import pytest
 
 from live_execution import config as live_config
-from live_execution.quote_params import build_quote_params, get_active_dex_labels
+from live_execution.quote_params import build_quote_params
 from scripts.refresh_dex_labels import parse_label_map, refresh_labels
-import config as backend_config
 
 
 # ---------------------------------------------------------------------------
@@ -54,8 +53,6 @@ def test_d2_empty_labels_warning_and_status(monkeypatch, caplog):
     and get_system_status reports dex_filter: 'inactive'.
     When labels are present, reports 'active (N labels)'.
     """
-    import logging
-    from api.routes.system_status import _get_labels
 
     # With empty labels
     monkeypatch.setattr("api.routes.system_status._get_labels", lambda: [])
@@ -145,7 +142,7 @@ def test_d3_refresh_labels_writes_atomically_and_reports_unmapped(tmp_path, monk
 
     monkeypatch.setattr(httpx, "get", lambda *a, **kw: FakeResponse())
 
-    res = refresh_labels(labels_url="https://lite-api.jup.ag/swap/v1/program-id-to-label", out_file=out_file)
+    refresh_labels(labels_url="https://lite-api.jup.ag/swap/v1/program-id-to-label", out_file=out_file)
 
     assert out_file.is_file(), "Target file must be written"
     saved = json.loads(out_file.read_text(encoding="utf-8"))

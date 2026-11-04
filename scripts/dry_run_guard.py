@@ -39,7 +39,7 @@ from live_execution.jupiter_executor import (
     inspect_swap_transaction,
 )
 from live_execution.quote_params import build_quote_params
-from live_execution.sim_guard import simulate_and_assert, SimulationRefused
+from live_execution.sim_guard import simulate_and_assert
 from live_execution.trade_intent import TradeIntent, usd_to_raw_amount
 
 

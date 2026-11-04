@@ -7,7 +7,6 @@ import ast
 import base64
 import struct
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from solders.hash import Hash
@@ -17,7 +16,7 @@ from solders.message import Message
 from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
-from live_execution import config, sim_guard, solana
+from live_execution import sim_guard, solana
 from live_execution.jupiter_executor import (
     _ATA_PROGRAM_ID,
     _SPL_TOKEN_PROGRAM_ID,
@@ -25,10 +24,8 @@ from live_execution.jupiter_executor import (
     _WSOL_MINT,
     ExecutionError,
     sign_after_checks,
-    execute_confirmed_trade,
 )
 from live_execution.trade_intent import TradeIntent
-from live_execution import executor
 from tests.helpers import make_intent_from_quote
 
 SYSTEM_PROGRAM_ID = Pubkey.from_string(_SYSTEM_PROGRAM_ID)

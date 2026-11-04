@@ -46,10 +46,6 @@ class NewListingFeed:
         self._enabled = True                 # flips off permanently on plan/auth errors
         self._stop_evt = asyncio.Event()
 
-    @property
-    def available(self) -> bool:
-        return self._enabled
-
     def start(self) -> None:
         if not config.BIRDEYE_API_KEY:
             log.warning("new_listings: no BIRDEYE_API_KEY — lens disabled")

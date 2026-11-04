@@ -328,12 +328,6 @@ class PortfolioState:
             if t.mint_address == mint_address
         )
 
-    def get_open_trade_for_mint(self, mint_address: str) -> Optional[Trade]:
-        return next(
-            (t for t in self.open_positions if t.mint_address == mint_address),
-            None,
-        )
-
 
 # ---------------------------------------------------------------------------
 # DailyStats — aggregate stats for one calendar day (learning loop G1/G2)

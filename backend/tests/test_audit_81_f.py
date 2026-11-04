@@ -14,7 +14,6 @@ from pathlib import Path
 import subprocess
 import sys
 import tomllib
-import pytest
 import yaml
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
@@ -126,3 +125,4 @@ def test_ci_workflow_does_not_set_expected_wallet_address():
 
     # Check text and parsed YAML
     assert "EXPECTED_WALLET_ADDRESS" not in content
+    assert "EXPECTED_WALLET_ADDRESS" not in parsed.get("env", {})

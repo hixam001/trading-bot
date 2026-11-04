@@ -452,9 +452,6 @@ SCRAPLING_TIMEOUT_MS: int = int(os.getenv("SCRAPLING_TIMEOUT_MS", "30000"))
 # Close the warm browser after this many idle seconds (RAM hygiene).
 SCRAPLING_IDLE_CLOSE_SECONDS: float = float(
     os.getenv("SCRAPLING_IDLE_CLOSE_SECONDS", "600"))
-# Only if a deployment IP is hard-blocked: pass a proxy to the browser hop
-# (user:pass@host:port). Empty = never used. The curl hop needs no proxy.
-SCRAPLING_PROXY: str = os.getenv("SCRAPLING_PROXY", "")
 
 # Additional stealth-scrape providers — OPTIONAL failover chain. When the
 # preferred provider runs out of credits (or errors), the next CONFIGURED
@@ -559,14 +556,12 @@ SOCIAL_LLM_BASE_URL: str = os.getenv("SOCIAL_LLM_BASE_URL", "https://api.groq.co
 SOCIAL_LLM_API_KEY: str = os.getenv("SOCIAL_LLM_API_KEY", "")
 SOCIAL_LLM_MODEL: str = os.getenv("SOCIAL_LLM_MODEL", "qwen/qwen3.8-27b")
 SOCIAL_LLM_TIMEOUT_SECONDS: float = float(os.getenv("SOCIAL_LLM_TIMEOUT_SECONDS", "20"))
-SOCIAL_READ_PER_TICK: int = int(os.getenv("SOCIAL_READ_PER_TICK", "8"))
 
 # Live web search evidence for the think stage (the reference web-research
 # parity). §51: FREE-first chain — Brave (primary), self-hosted SearXNG
 # (keyless secondary), Firecrawl (last-resort failover). Empty everywhere =
 # stage disabled. tbs=qdr:d / freshness=pd / time_range=day all limit results
 # to the last 24h like the reference recent=true.
-WEB_SEARCH_PER_TICK: int = int(os.getenv("WEB_SEARCH_PER_TICK", "8"))
 WEB_RESEARCH_TIMEOUT_SECONDS: float = float(os.getenv("WEB_RESEARCH_TIMEOUT_SECONDS", "20"))
 # §48: cross-tick evidence cache (in-memory, per mint). A HIT (real
 # evidence lines) is cached this long — default 2h, well inside the search's

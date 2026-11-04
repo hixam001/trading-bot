@@ -5,14 +5,11 @@ from __future__ import annotations
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 
-import httpx
 import pytest
-import pytest_asyncio
 from fastapi import HTTPException
-from fastapi.testclient import TestClient
 
 import config
 from api.main import app
@@ -255,7 +252,6 @@ def test_sec01_out_of_range_program_index_refused():
 def test_sec01_swap_request_pins_legacy_transactions():
     """The swap build requests a legacy transaction (no ALTs) so the
     static allowlist check is complete for every well-formed Jupiter swap."""
-    import asyncio
 
     from live_execution import jupiter_executor as je
 

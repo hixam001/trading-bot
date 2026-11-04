@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
 import os
 import re
 import statistics
@@ -188,7 +187,7 @@ def load_rows(db_path: str | Path | None = None) -> tuple[list[dict], list[dict]
         try:
             feed, trades = asyncio.run(fetch_data_pg())
             return feed, trades, "postgres:supabase"
-        except Exception as exc:
+        except Exception:
             # Fall back to SQLite if offline
             pass
 

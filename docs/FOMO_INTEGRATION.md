@@ -27,7 +27,7 @@ heat 20–24 ("fomo reading inside the range i act in" fails), action around
 
 ## 2a. §47 — The LOCAL stealth transport (Scrapling, 2026-08-30, LIVE)
 
-Phase-0 drill finding (scripts/scrapling_spike.py, 6/6 per hop): **fomo's
+Phase-0 drill finding (6/6 per hop): **fomo's
 Cloudflare block is a TLS-fingerprint (JA3) block, not an IP block.** Plain
 httpx always got 430 from this very machine, while curl-cffi speaking
 Chrome's exact TLS handshake passed 100% with no browser and no proxy.

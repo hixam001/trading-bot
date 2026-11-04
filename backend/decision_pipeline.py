@@ -92,9 +92,9 @@ async def enrich_candidates(candidates: list) -> list:
 
     §51 (2026-09-02): the SOCIAL READ left this chain — it was the last
     metered LLM input that still ran for the whole board before any rule
-    could weigh in (up to SOCIAL_READ_PER_TICK=8 head-of-board reads per
-    tick, ~11k calls/day at 60s ticks — wildly outside the free Groq tier's
-    1,000/day). It now runs as stage 5 of `gate_candidate_staged` below,
+    could weigh in (up to 8 head-of-board reads per tick, ~11k calls/day at
+    60s ticks — wildly outside the free Groq tier's 1,000/day). It now runs
+    as stage 5 of `gate_candidate_staged` below,
     only for the all-passed candidates the per-candidate thinker is about
     to evaluate — the exact population the web-search evidence (§48) and
     the fomo scrape (§44) already serve. The fomo scrape left in §43/§44;

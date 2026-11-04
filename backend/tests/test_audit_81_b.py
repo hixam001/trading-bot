@@ -15,11 +15,10 @@ import json
 import subprocess
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 import pytest
 
-from live_execution.reconcile import check_wallet_drop, WalletDropResult
+from live_execution.reconcile import check_wallet_drop
 
 
 class FakeLedger:

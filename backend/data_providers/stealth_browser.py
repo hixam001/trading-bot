@@ -3,7 +3,7 @@ data_providers/stealth_browser.py — LOCAL stealth transport for the fomo.fun
 crowd feed (§47, Scrapling integration).
 
 Two free hops replace the paid stealth-proxy chain's job, both validated by
-the 2026-08-30 Phase-0 drill (scripts/scrapling_spike.py, 6/6 success each):
+the 2026-08-30 Phase-0 drill (6/6 success each):
 
   1. curl-cffi impersonated GET  — fomo's Cloudflare blocks plain httpx on
      TLS fingerprint (JA3), not on auth. `scrapling.fetchers.AsyncFetcher`

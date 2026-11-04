@@ -3,7 +3,6 @@ tests/test_api_routes.py — endpoint shape/pagination against a seeded DB (J4/H
 """
 from __future__ import annotations
 
-import pytest
 import pytest_asyncio
 
 import config

@@ -341,25 +341,3 @@ async def search_for_candidate(c) -> str:
         log.info("web research (%s): no results (cached %ss)",
                  c.symbol, int(config.WEB_SEARCH_CACHE_MISS_TTL))
     return evidence
-
-
-async def enrich_web(candidates, client=None, limit=None) -> int:
-    """
-    §48: LEGACY read-stage entry — RETAINED but no longer called by the
-    pipeline (the staged gate calls search_for_candidate instead). Kept as
-    a cache-aware convenience for scripts/tests and any external caller:
-    fills web_summary for the head of the list WITHOUT spending searches on
-    candidates that already have fresh cache entries.
-    """
-    if not _configured_searchers():
-        return 0
-    applied = 0
-    for c in candidates[: (limit or config.WEB_SEARCH_PER_TICK)]:
-        if getattr(c, "web_summary", None):
-            continue
-        evidence = await search_for_candidate(c)
-        if evidence:
-            c.web_summary = evidence
-            applied += 1
-    return applied
-

@@ -9,16 +9,12 @@ Covers:
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import json
-import os
-from pathlib import Path
 import pytest
 from starlette.testclient import TestClient
 
 import config
 from live_execution.safety_counters import record_safety_refusal, load_safety_counters
-from api.rate_limiter import get_client_ip, _get_trusted_proxy_networks
+from api.rate_limiter import get_client_ip
 
 
 def test_safety_counters_persistence_and_categories(tmp_path):
@@ -96,7 +92,6 @@ async def test_stats_real_equity_and_status(monkeypatch):
     partial sums will leak to wallet_equity_usd.
     """
     from api.main import app
-    from models import Trade
 
     client = TestClient(app)
 

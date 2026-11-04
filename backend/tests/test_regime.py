@@ -3,7 +3,7 @@ tests/test_regime.py — MarketRegime computed from candidate batches (C1).
 """
 from __future__ import annotations
 
-from rule_engine.regime import MarketRegime, compute_market_regime
+from rule_engine.regime import compute_market_regime
 from tests.test_rules import make_candidate
 
 

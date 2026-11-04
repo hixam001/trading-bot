@@ -4,7 +4,6 @@ backend/tests/test_audit_78_d.py — Dependency hygiene, SearXNG pin, and CI/Doc
 import re
 from pathlib import Path
 import yaml
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 

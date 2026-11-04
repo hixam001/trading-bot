@@ -11,12 +11,8 @@ Covers:
 """
 from __future__ import annotations
 
-import asyncio
 import base64
-import json
 import struct
-from pathlib import Path
-from typing import Optional
 
 import pytest
 from solders.hash import Hash
@@ -37,7 +33,6 @@ from live_execution.jupiter_executor import (
 from live_execution.executor import OrderResult
 from live_execution.models import ExecutionLedger
 from live_execution.quote_params import build_quote_params
-from live_execution.trade_intent import TradeIntent
 
 CB_PROGRAM_ID = Pubkey.from_string(_COMPUTE_BUDGET_PROGRAM_ID)
 USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"

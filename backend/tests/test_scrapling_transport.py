@@ -13,7 +13,6 @@ during the suite. Pins the integration contract:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import types
 
@@ -91,7 +90,7 @@ async def test_mock_mode_never_uses_the_curl_hop(monkeypatch):
     """Mock runs: the scrapling curl hop must not run — the transport
     degrades to the plain-httpx fallback exactly as pre-§47."""
     install_fake_scrapling_import(monkeypatch, async_fetcher=StubAsyncFetcher)
-    out = await crowd._direct_get("https://x.example", {})
+    await crowd._direct_get("https://x.example", {})
     # x.example isn't reachable; whatever happens, zero scrapling calls
     assert StubAsyncFetcher.calls == [], "curl hop must not run in mock"
 

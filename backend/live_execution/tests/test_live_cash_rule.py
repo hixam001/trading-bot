@@ -17,11 +17,9 @@ Hermetic: no network, no ledger, no DB — pure rule evaluation.
 """
 from __future__ import annotations
 
-import pytest
 
 import config as paper_config
 import run_live_cycle as rlc
-from live_execution import config as live_config
 from models import Candidate, PortfolioState
 from rule_engine import rules as rules_mod
 from rule_engine.gate import evaluate_gate

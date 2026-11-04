@@ -169,7 +169,6 @@ async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monke
     §87 C journals a PENDING buy so a late land cannot become an unmanaged
     holding. The pending row counts against caps/slots and blocks a re-buy,
     while staying out of the open-position/token accounting."""
-    order = []
     _arm_balances(monkeypatch)
 
     async def fake_memo(payer, seal_hash, endpoints=None):

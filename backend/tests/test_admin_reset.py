@@ -14,11 +14,10 @@ Properties verified:
 """
 from __future__ import annotations
 
-import json
 import os
 import tempfile
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from contextlib import asynccontextmanager
 
 import pytest

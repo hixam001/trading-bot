@@ -11,18 +11,16 @@ Validates:
 """
 from __future__ import annotations
 
-import json
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import config
-from models import Candidate, PortfolioState, FeedEvent
+from models import Candidate, PortfolioState
 from rule_engine.regime import MarketRegime
 from rule_engine.rules import security_clear, ACTIVE_RULES
 from data_providers.onchain_security import (
     get_mint_extension_flags,
     parse_mint_extensions,
-    VERIFIED_DANGEROUS_EXTENSIONS,
 )
 from sizing import compute_ticket, compute_risk_flags
 

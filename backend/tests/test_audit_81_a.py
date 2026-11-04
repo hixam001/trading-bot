@@ -12,17 +12,12 @@ Real Solana error shapes used: {"InstructionError": [2, {"Custom": 6001}]}
 """
 from __future__ import annotations
 
-import asyncio
 import base64
-import struct
-from typing import Optional
-from unittest.mock import AsyncMock
 
 import pytest
 
 import live_execution.config as le_config
 from live_execution import executor as ex
-from live_execution import solana as sol_mod
 
 
 # ---------------------------------------------------------------------------
@@ -66,7 +61,6 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(le_config, "REQUIRE_MANUAL_CONFIRMATION", False)
     monkeypatch.setattr(le_config, "STATE_DIR", tmp_path)
     monkeypatch.setattr(le_config, "EXIT_SLIPPAGE_LADDER_BPS", (50, 150, 300))
-    monkeypatch.setattr(le_config, "EXIT_MAX_ATTEMPTS", 3)
 
     class _Payer:
         pass

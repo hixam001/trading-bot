@@ -13,7 +13,6 @@ import logging
 from pathlib import Path
 from typing import Optional
 
-from live_execution import config
 
 log = logging.getLogger(__name__)
 

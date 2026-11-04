@@ -16,7 +16,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
 
 from live_execution.models import ExecutionLedger, ExecutionRecord
 from rule_engine.exits import ExitDecision, sell_risk_gate

@@ -346,7 +346,7 @@ def restore_backup(
                           "restore the book.")
                     log.warning("SQLite DB in archive skipped: no target DB path specified")
 
-    except Exception as exc:
+    except Exception:
         # Clean up any staged files
         for temp_path, _ in staged_files:
             try:
@@ -373,7 +373,7 @@ def restore_backup(
             os.replace(temp_path, dest_path)
             promoted.append((temp_path, dest_path))
             restored_files.append(str(dest_path))
-    except Exception as exc:
+    except Exception:
         for temp_path, _ in staged_files:
             try:
                 temp_path.unlink(missing_ok=True)

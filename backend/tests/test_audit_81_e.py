@@ -17,7 +17,6 @@ from datetime import datetime, timezone
 import hashlib
 import io
 import json
-import os
 from pathlib import Path
 import sqlite3
 import subprocess
@@ -299,7 +298,7 @@ def test_force_preserves_old_files_in_pre_restore_backup(sample_state_3files, ke
     conn.commit()
     conn.close()
 
-    res = restore_state.restore_backup(
+    restore_state.restore_backup(
         archive_path=archive,
         target_state_dir=target_state,
         target_db_path=target_db,

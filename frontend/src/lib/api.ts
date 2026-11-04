@@ -7,7 +7,7 @@
  * the VITE_ prefix is inlined into the public JS bundle at build time; the
  * only sanctioned variable here is VITE_API_BASE_URL (a public origin).
  */
-export const API_BASE: string = (
+const API_BASE: string = (
   (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? ''
 ).replace(/\/+$/, '')
 

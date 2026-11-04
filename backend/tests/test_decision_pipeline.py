@@ -135,47 +135,30 @@ async def test_enrich_candidates_no_longer_reads_the_crowd_feed(monkeypatch):
 
     import data_providers.crowd as crowd_mod
     import data_providers.research as research_mod
-    import llm.social as social_mod
-    import llm.web_research as web_mod
 
     async def _must_not_run(cands):
         raise AssertionError("crowd feed ran for every candidate again")
-
-    async def _must_not_run_web(cands=None, *a, **kw):
-        raise AssertionError("web search ran in the read stage again")
-
-    async def _must_not_run_social(cands, *a, **kw):
-        raise AssertionError("social read ran in the read stage again")
 
     async def _noop(cands=None, *a, **kw):
         return None
 
     monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _must_not_run)
     monkeypatch.setattr(research_mod, "enrich_with_research", _noop)
-    monkeypatch.setattr(social_mod, "enrich_social", _must_not_run_social)
-    monkeypatch.setattr(web_mod, "enrich_web", _must_not_run_web)
     assert await dp.enrich_candidates([make_candidate()]) == []
 
 
 async def test_enrich_candidates_fail_soft_on_every_feed(monkeypatch):
-    """Every enricher raising still completes and returns [] usages."""
+    """Every remaining enricher raising still completes and returns [] usages."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
 
     import data_providers.crowd as crowd_mod
     import data_providers.research as research_mod
-    import llm.social as social_mod
-    import llm.web_research as web_mod
 
     async def _boom(cands=None):
         raise RuntimeError("feed down")
 
-    async def _boom2(cands, *a, **kw):
-        raise RuntimeError("feed down")
-
     monkeypatch.setattr(crowd_mod, "enrich_crowd_heat", _boom)
     monkeypatch.setattr(research_mod, "enrich_with_research", _boom)
-    monkeypatch.setattr(social_mod, "enrich_social", _boom2)
-    monkeypatch.setattr(web_mod, "enrich_web", _boom)
     usages = await dp.enrich_candidates([make_candidate()])
     assert usages == []
 

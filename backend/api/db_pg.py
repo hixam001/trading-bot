@@ -44,7 +44,6 @@ from models import DailyStats, FeedEvent, Trade
 log = logging.getLogger(__name__)
 
 _pool: Optional[asyncpg.Pool] = None
-_pool_closed: bool = True
 
 
 def _dsn() -> str:
@@ -140,23 +139,14 @@ async def _tls_context() -> ssl.SSLContext:
 
 
 async def _get_pool() -> asyncpg.Pool:
-    global _pool, _pool_closed
-    if _pool is None or _pool_closed:
+    global _pool
+    if _pool is None:
         _pool = await asyncpg.create_pool(
             _dsn(), min_size=1, max_size=5,
             command_timeout=30, timeout=15,
             ssl=await _tls_context(),
         )
-        _pool_closed = False
     return _pool
-
-
-async def close_pool() -> None:
-    global _pool, _pool_closed
-    if _pool is not None and not _pool_closed:
-        await _pool.close()
-    _pool = None
-    _pool_closed = True
 
 
 def _rowcount(status: str) -> int:
@@ -911,15 +901,6 @@ async def bind_commit_venue(
 async def get_trade_by_id(conn: asyncpg.Connection, trade_id: str) -> Optional[Trade]:
     row = await conn.fetchrow(
         f"SELECT {_TRADE_COLS} FROM trades WHERE trade_id = $1", trade_id)
-    return _row_to_trade(row) if row else None
-
-
-async def get_open_trade_for_mint(conn: asyncpg.Connection, mint_address: str) -> Optional[Trade]:
-    row = await conn.fetchrow(
-        f"SELECT {_TRADE_COLS} FROM trades "
-        "WHERE mint_address = $1 AND is_open = TRUE LIMIT 1",
-        mint_address,
-    )
     return _row_to_trade(row) if row else None
 
 

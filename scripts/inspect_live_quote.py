@@ -22,7 +22,6 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import httpx
-from solders.pubkey import Pubkey
 from solders.transaction import VersionedTransaction
 
 from config import JUPITER_QUOTE_URL

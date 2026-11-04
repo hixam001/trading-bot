@@ -13,12 +13,9 @@ All DB-touching tests run against a fresh tmp SQLite database.
 """
 from __future__ import annotations
 
-import asyncio
-import hashlib
 import inspect
 import json
 import time
-from datetime import datetime, timezone
 
 import pytest
 
@@ -37,7 +34,6 @@ from blocklist import (
     should_autoblock,
     unblock_mint,
 )
-from llm.thinker import Thinker, template_think
 from models import Candidate, Trade
 
 

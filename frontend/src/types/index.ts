@@ -37,7 +37,7 @@ export interface RegimeRow {
   regime_detail: string
 }
 
-export interface LlmUsageRow {
+interface LlmUsageRow {
   id: number
   ts: string
   task: string
@@ -154,7 +154,7 @@ export interface LiveCommitEntry {
 }
 
 /** One money movement from the live ExecutionLedger (state/executions.json). */
-export interface LiveExecutionRecord {
+interface LiveExecutionRecord {
   kind: 'buy' | 'close'
   idempotency_key: string
   mint: string
@@ -195,13 +195,13 @@ export type FeedFilter = "all" | "approved" | "refused" | "gate_refused" | "gate
 /** One §64.1b alert — a symptom that genuinely demands operator attention.
  *  The strip renders NOTHING when the list is empty (that is the feature
  *  working, not wasted space). */
-export interface SafetyAlert {
+interface SafetyAlert {
   id: string
   severity: "fail" | "warn"
   message: string
 }
 
-export interface BlocklistLatest {
+interface BlocklistLatest {
   mint: string | null
   symbol: string
   reason: string
@@ -250,7 +250,7 @@ export interface SafetyResponse {
 }
 
 /** One persisted funnel snapshot (§64.2) — the trend series' data points. */
-export interface FunnelSnapshot {
+interface FunnelSnapshot {
   id: number
   ts: string
   candidates_seen: number

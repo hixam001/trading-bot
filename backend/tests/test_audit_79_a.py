@@ -15,10 +15,8 @@ from __future__ import annotations
 
 import ast
 import base64
-import math
 import struct
 from pathlib import Path
-from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -408,7 +406,6 @@ async def test_a3_quorum_enforcement_buy_vs_sell(monkeypatch):
       allows single-RPC buys to proceed.
     """
     payer = Keypair()
-    token_mint = Keypair().pubkey()
     tx_b64, _ = _make_dummy_tx(payer)
 
     single_resp = {

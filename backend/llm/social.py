@@ -25,8 +25,8 @@ prompt via append_evidence() - nothing else changes.
 
 §51 (2026-09-02): the read is STAGED — `read_social_one` runs for a single
 candidate from stage 5 of `gate_candidate_staged` (only all-passed,
-thinker-bound candidates; the head-of-board batch read `enrich_social` no
-longer runs in the pipeline). Usage journaling: each read's LLMResult is
+thinker-bound candidates; the head-of-board batch read no longer runs in
+the pipeline). Usage journaling: each read's LLMResult is
 appended to a module-level queue that decision_pipeline drains after the
 gate loop (`take_queued_usages`) — the tick inserts them into
 llm_call_usage exactly as the old batch path did. Free-tier arithmetic:
@@ -35,7 +35,6 @@ handful of all-passed candidates per tick, comfortably inside that budget.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
@@ -188,39 +187,3 @@ async def read_social_one(c: Candidate,
     # convention the old batch path used).
     setattr(usage, "mint_address", c.mint_address)
     _queued_usages.append(usage)
-
-
-async def enrich_social(
-    candidates: list[Candidate],
-    client: Optional[httpx.AsyncClient] = None,
-    limit: Optional[int] = None,
-) -> tuple[int, list[LLMResult]]:
-    """Social-read the head of the board, fail-soft. Returns (applied count, usages).
-    Disabled entirely (0 calls) when SOCIAL_LLM_API_KEY is empty."""
-    reader = _reader_for(client)
-    if not reader.enabled:
-        return 0, []
-    picks = [c for c in candidates if c.social_interest is None]
-    picks = picks[: (limit if limit is not None else config.SOCIAL_READ_PER_TICK)]
-    if not picks:
-        return 0, []
-    sem = asyncio.Semaphore(4)
-
-    async def one(c: Candidate):
-        async with sem:
-            return await reader.read(c)
-
-    results = await asyncio.gather(*(one(c) for c in picks), return_exceptions=True)
-    applied = 0
-    usages = []
-    for cand, res in zip(picks, results):
-        if isinstance(res, Exception) or res is None:
-            continue
-        cand.social_interest, cand.social_note, usage = res
-        # Store mint alongside the usage for the DB insert in main.py
-        setattr(usage, "mint_address", cand.mint_address)
-        usages.append(usage)
-        applied += 1
-    if applied:
-        log.info("social read: %s/%s candidates classified", applied, len(picks))
-    return applied, usages

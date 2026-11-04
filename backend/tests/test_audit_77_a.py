@@ -12,12 +12,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 import config
 from api.auth import (
-    _FAILED_ATTEMPTS,
-    clear_session_cookie,
-    create_session_token,
     require_admin_token,
     require_local_or_admin,
-    verify_session_token,
 )
 from api.bot_protection import verify_bot_protection
 from api.main import app
@@ -152,7 +148,7 @@ def test_proxy_headers_and_client_ip_throttling(monkeypatch):
     # 5 wrong attempts from untrusted peer 203.0.113.195 with rotating XFF
     for i in range(5):
         # Using a custom scope runner
-        response = client.post(
+        client.post(
             "/api/auth/login",
             json={"token": "wrong-token"},
             headers={"X-Forwarded-For": f"10.0.0.{i}"},

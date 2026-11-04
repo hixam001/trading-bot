@@ -18,7 +18,6 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 import config
-from api import db
 from models import Trade
 from rule_engine.exits import (
     ExitDecision,

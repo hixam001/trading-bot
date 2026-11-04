@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import inspect
 
-import pytest
 import pytest_asyncio
 
 import config

@@ -22,17 +22,14 @@ Verifies:
 from __future__ import annotations
 
 import asyncio
-from collections import deque
 import json
-from pathlib import Path
 import time
 
 import pytest
-import pytest_asyncio
 from httpx import AsyncClient, ASGITransport
 
 import alerts
-from alerts import AlertEvent, AlertPriority, AlertItem
+from alerts import AlertEvent, AlertPriority
 from secret_registry import clear_runtime_secrets, register_secret
 
 
@@ -455,7 +452,6 @@ async def test_sell_no_ref_price_alert_hook(monkeypatch, tmp_path):
     causes assert any(ev == AlertEvent.SELL_NO_REF_PRICE...) to fail.
     """
     from live_execution import executor, wallet, solana
-    from live_execution.commit_log import CommitLog
     from live_execution.models import ExecutionLedger
     from solders.keypair import Keypair
 

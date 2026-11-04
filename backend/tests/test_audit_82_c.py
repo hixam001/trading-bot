@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import pytest
 
 from live_execution import config as live_config
 from live_execution import kill_switch

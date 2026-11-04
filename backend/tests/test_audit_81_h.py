@@ -11,11 +11,9 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import re
 import sqlite3
 import sys
-from collections import OrderedDict
 from pathlib import Path
 
 import pytest

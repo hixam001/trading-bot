@@ -39,7 +39,7 @@ def test_db_pg_exposes_every_public_function_of_db() -> None:
 
 def test_db_pg_additions_are_explicit_helpers() -> None:
     """Postgres-only additions must stay an explicit, documented allow-list."""
-    allowed = {"close_pool"}
+    allowed = set()
     pg_only = _public_functions(DB_PG_PY) - _public_functions(DB_PY)
     unexpected = pg_only - allowed
     assert not unexpected, (

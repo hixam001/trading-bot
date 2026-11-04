@@ -42,7 +42,6 @@ class SecurityEventType(str, Enum):
     BLOCKED_PATH_PROBE = "blocked_path_probe"
     SUSPICIOUS_UPLOAD = "suspicious_upload"
     INTERNAL_ERROR = "internal_error"
-    INJECTION_PROBE = "injection_probe"
 
 
 @dataclass
@@ -65,7 +64,6 @@ class SecurityMonitor:
     """Thread-safe security event tracker with in-memory ring buffer and metrics."""
 
     def __init__(self, max_events: int = 300) -> None:
-        self._max_events = max_events
         self._events: deque[SecurityEvent] = deque(maxlen=max_events)
         self._lock = threading.Lock()
         self._type_counts: defaultdict[str, int] = defaultdict(int)

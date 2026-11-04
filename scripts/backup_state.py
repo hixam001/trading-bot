@@ -26,12 +26,11 @@ import json
 import logging
 import os
 from pathlib import Path
-import shutil
 import sqlite3
 import subprocess
 import sys
 import tarfile
-from typing import Any, Optional
+from typing import Optional
 
 from cryptography.fernet import Fernet
 

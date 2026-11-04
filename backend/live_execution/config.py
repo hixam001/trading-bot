@@ -159,7 +159,6 @@ PRIORITY_FEE_HARD_CAP_LAMPORTS: int = 1_000_000  # Guard-side absolute cap
 
 # §79 Phase B-4: Exit slippage ladder (sells only)
 EXIT_SLIPPAGE_LADDER_BPS: tuple[int, ...] = (50, 150, 300)
-EXIT_MAX_ATTEMPTS: int = 3
 _retryable_env = os.getenv("EXIT_RETRYABLE_CUSTOM_ERRORS", "")
 EXIT_RETRYABLE_CUSTOM_ERRORS: tuple[int, ...] = (
     tuple(int(x) for x in _retryable_env.split(",") if x.strip().isdigit())
@@ -221,9 +220,9 @@ EXIT_MAX_PRICE_IMPACT_PCT: float = 15.0
 MIN_SOL_RESERVE: float = float(os.getenv("SOLANA_MIN_SOL_RESERVE", "0.01"))
 
 # Minimum live ticket — EQUITY-PROPORTIONAL (§45, operator decision 2026-08-30).
-# The old fixed $0.50 (MIN_LIVE_TICKET_USD below, kept for historical
-# reference only) froze every entry on a live book whose cash dipped under
-# ~$3.33: with SIZING_MODE="fixed" the ticket is cash * 0.15, and 0.496 < 0.50
+# The old fixed $0.50 floor froze every entry on a live book whose cash
+# dipped under ~$3.33: with SIZING_MODE="fixed" the ticket is cash * 0.15,
+# and 0.496 < 0.50
 # refuses the order — the "site says ENTER but nothing executes" incident.
 # A fixed floor cannot adapt to book size, so the floor now scales with the
 # book: whatever the equity is, there is a formula for the minimum ticket.
@@ -245,12 +244,6 @@ MIN_SOL_RESERVE: float = float(os.getenv("SOLANA_MIN_SOL_RESERVE", "0.01"))
 # Hardcoded like the other risk numbers in this file — never env-settable.
 MIN_LIVE_TICKET_EQUITY_FRACTION: float = 0.10
 MIN_LIVE_TICKET_ABS_FLOOR_USD: float = 0.10
-
-# Legacy constant (handoff §26 micro-bootstrap). SUPERSEDED by the formula
-# above as the operative floor — kept so historical docs/tests citing $0.50
-# remain readable. Nothing reads this in the trade path any more.
-MIN_LIVE_TICKET_USD: float = 0.5
-
 
 def min_live_ticket_usd(equity_usd) -> float:
     """

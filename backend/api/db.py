@@ -874,15 +874,6 @@ async def get_trade_by_id(conn: aiosqlite.Connection, trade_id: str) -> Optional
     return _row_to_trade(row) if row else None
 
 
-async def get_open_trade_for_mint(conn: aiosqlite.Connection, mint_address: str) -> Optional[Trade]:
-    cursor = await conn.execute(
-        "SELECT * FROM trades WHERE mint_address = ? AND is_open = 1 LIMIT 1",
-        (mint_address,),
-    )
-    row = await cursor.fetchone()
-    return _row_to_trade(row) if row else None
-
-
 async def get_open_trades(conn: aiosqlite.Connection) -> list[Trade]:
     cursor = await conn.execute("SELECT * FROM trades WHERE is_open = 1 ORDER BY opened_at")
     return [_row_to_trade(r) for r in await cursor.fetchall()]

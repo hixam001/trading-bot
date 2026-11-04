@@ -89,7 +89,7 @@ Keep Twitter/social on Groq initially. The social stage is deliberately weaker t
 
 - it returns only `organic`, `peaked`, or `unclear` plus one evidence sentence;
 - it cannot open, size, veto, close, or override a trade;
-- it is capped at `SOCIAL_READ_PER_TICK` and already runs concurrently;
+- it runs only for candidates that clear the earlier gate stages, and already runs concurrently;
 - stale or missing social data is acceptable because the tape and deterministic rules remain available.
 
 Using DeepSeek for both stages would simplify vendor count, but it would couple two different latency and availability requirements and make a social outage more likely to delay the hot path. Keep Groq unless the benchmark shows that its social classification materially harms entry precision. A future single-provider fallback may use DeepSeek for social only during Groq failure, with a strict timeout and no retry storm.

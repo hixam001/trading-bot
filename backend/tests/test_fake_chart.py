@@ -15,7 +15,6 @@ zero is the safe direction.
 """
 from __future__ import annotations
 
-import pytest
 
 from models import Candidate
 from rule_engine.fake_chart import is_fake_chart, is_fake_candidate

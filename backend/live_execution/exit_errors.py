@@ -8,7 +8,7 @@ and ambiguous transport failures fail closed.
 from __future__ import annotations
 
 import re
-from typing import NamedTuple, Optional
+from typing import NamedTuple
 
 
 def custom_error_code(err) -> int | None:

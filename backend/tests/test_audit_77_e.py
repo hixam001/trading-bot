@@ -3,18 +3,13 @@ backend/tests/test_audit_77_e.py — tests for Master Prompt §77 Phase E:
 Hardening (runtime secret registration, broader JSON redaction, postgres reset_book,
 websocket per-IP cap, CORS wildcard guard, session revocation).
 """
-import asyncio
-import json
 import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock
-from fastapi import FastAPI
-from starlette.testclient import TestClient
 
-import config
 from api.error_handler import SecretRedactorFilter, register_secret, sanitize_error_detail
 from api import db_pg
-from api.websocket import FeedBroadcaster, MAX_WS_PER_IP
+from api.websocket import FeedBroadcaster
 from api.auth import (
     create_session_token,
     verify_session_token,

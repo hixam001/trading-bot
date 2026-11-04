@@ -10,7 +10,6 @@ unreadable inside the container.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 import yaml
 

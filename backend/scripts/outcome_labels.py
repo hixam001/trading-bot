@@ -64,7 +64,7 @@ async def generate_outcome_labels(limit: int):
         print(f"Model Buys: {total_buys} (True Positives: {true_positives}, False Positives: {false_positives})")
         print(f"Model Precision (Win Rate on Buys): {precision:.1f}%")
 
-    except Exception as e:
+    except Exception:
         log.exception("Error generating outcome labels.")
 
 

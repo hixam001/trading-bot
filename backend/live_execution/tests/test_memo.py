@@ -33,7 +33,7 @@ def test_memo_program_id_is_the_reference_constant():
 # --- transaction build (deserialized + verified, no network) ------------------
 
 def test_build_memo_transaction_round_trips():
-    solders = pytest.importorskip("solders")
+    pytest.importorskip("solders")
     from solders.keypair import Keypair
     from solders.transaction import VersionedTransaction
 
@@ -69,7 +69,7 @@ def test_build_memo_transaction_rejects_bad_blockhash():
 
 @pytest.fixture
 def payer():
-    solders = pytest.importorskip("solders")
+    pytest.importorskip("solders")
     from solders.keypair import Keypair
     return Keypair()
 

@@ -861,7 +861,7 @@ ever burned.
 - `drill.py`: devnet drill now sends a real memo (airdrop-funded).
 
 ### Micro-bootstrap (start from $3–5 and compound)
-- `MIN_SOL_RESERVE` env-tunable (default **0.01 SOL**); `MIN_LIVE_TICKET_USD=0.5`.
+- `MIN_SOL_RESERVE` env-tunable (default **0.01 SOL**).
 - `compute_ticket`/`compute_risk_budget` gained an optional `min_ticket_usd`
   floor (default = paper `MIN_TICKET_USD`, so paper output is bit-identical).
 - Funding model: **0.03 SOL = fee reserve** (memo + fill = 2×5,000 lamports per
@@ -1181,7 +1181,7 @@ live-verified the same day:
   `cash_available` rule checks cash against `INTENDED_POSITION_SIZE_USD`
   ($100, sized for the $1,000 paper book), so the few-USDC live book refused
   every entry before sizing. `LIVE_ACTIVE_RULES` swaps in
-  `_live_cash_available` (checks `MIN_LIVE_TICKET_USD` $0.50); every other
+  `_live_cash_available` (checks the equity-proportional live floor); every other
   rule stays verbatim and the paper rules remain calibration-frozen. Live
   proof: no `cash_available` gate failures, several `gate=PASS`; with
   `SIZING_MODE=fixed` a $5 book sizes $0.75 ≥ the floor, so a model "buy" +
@@ -1716,7 +1716,7 @@ degrades to proxy heat rather than raising. 615 tests passing.
 **The incident.** The dashboard showed a token as ENTER with no execution
 following it. Live-log forensics: TREE passed the full staged gate every
 cycle, then sizing refused the order — `ticket $0.4962 below live floor $0.50`
-(cash $3.31 × 0.15, against the hardcoded `MIN_LIVE_TICKET_USD = 0.50`). Two
+(cash $3.31 × 0.15, against the then-hardcoded $0.50 live floor). Two
 defects: a fixed floor cannot adapt to book size (any live book with cash
 under ~$3.33 is structurally frozen out of every entry in `fixed` sizing
 mode), and the below-floor refusal vanished from `outcome["entries"]` while
@@ -1933,8 +1933,8 @@ plan.
 - **NEW `tests/test_db_surface_parity.py`**: the twins merge via
   `globals().update()` at import, so a function missing from `db_pg.py` silently
   ran the SQLite implementation against Postgres. The parity test now fails loudly
-  on any surface drift (Postgres-only additions pinned to an explicit allow-list:
-  `close_pool`). Surface at time of writing: 55 vs 56 public functions, clean.
+  on any surface drift; Postgres-only additions require an explicit allow-list
+  entry. The two public surfaces are currently identical.
 - **Competing `backend/pytest.ini` deleted**: running pytest from `backend/`
   silently skipped all 300+ `live_execution` tests; the root `pytest.ini` covers
   both suites.

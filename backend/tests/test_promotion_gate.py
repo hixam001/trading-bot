@@ -3,9 +3,7 @@ tests/test_promotion_gate.py — read-only evaluation logic (G4/G5).
 """
 from __future__ import annotations
 
-import pytest
 
-import config
 from models import Trade
 from promotion_gate import evaluate
 

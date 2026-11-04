@@ -17,7 +17,6 @@ import base64
 from decimal import Decimal
 import inspect
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from solders.hash import Hash
@@ -28,21 +27,17 @@ from solders.pubkey import Pubkey
 from solders.system_program import ID as SYSTEM_PROGRAM_ID
 from solders.transaction import VersionedTransaction
 
-from live_execution import config as le_config
 from live_execution.sim_guard import (
     simulate_and_assert,
-    validate_quote_against_intent,
-    QuoteMismatch,
     SimulationRefused,
 )
 from live_execution.solana import responses_agree
-from live_execution.trade_intent import TradeIntent, usd_to_raw_amount
+from live_execution.trade_intent import usd_to_raw_amount
 from live_execution.jupiter_executor import (
     inspect_swap_transaction,
     ExecutionError,
     _BACKEND_USDC_MINT,
     _SPL_TOKEN_PROGRAM_ID,
-    _TOKEN_2022_PROGRAM_ID,
     _COMPUTE_BUDGET_PROGRAM_ID,
 )
 from tests._helpers import intent_from_quote_for_tests, encode_token_account_data

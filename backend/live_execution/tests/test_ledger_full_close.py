@@ -97,8 +97,7 @@ def test_out_of_band_close_with_proceeds(tmp_path):
     ledger = ExecutionLedger(tmp_path / "exec.json", now_fn=Clock())
     ledger.record_buy("b1", "MINT", 0.5370006, 4015.376685, 0.0001337, "sig",
                       status="confirmed")
-    closed = ledger.close_out_of_band("MINT", proceeds_usd=1.11715,
-                                      note="manual sell")
+    ledger.close_out_of_band("MINT", proceeds_usd=1.11715, note="manual sell")
     assert _open_buys(ledger, "MINT") == []
     close = [r for r in ledger._load() if r["kind"] == "close"][-1]
     assert close["pnl_usd"] == pytest.approx(1.11715 - 0.5370006)
@@ -130,7 +129,7 @@ def test_out_of_band_close_multiple_buys_sums_cost(tmp_path):
                       status="confirmed")
     ledger.record_buy("b2", "MINT", 0.20, 200.0, 0.001, "sig",
                       status="confirmed")
-    closed = ledger.close_out_of_band("MINT", proceeds_usd=0.55)
+    ledger.close_out_of_band("MINT", proceeds_usd=0.55)
     assert _open_buys(ledger, "MINT") == []
     close = [r for r in ledger._load() if r["kind"] == "close"][-1]
     assert close["pnl_usd"] == pytest.approx(0.55 - 0.50)   # vs SUMMED cost

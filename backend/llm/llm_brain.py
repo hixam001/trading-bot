@@ -55,9 +55,6 @@ from models import Candidate
 # (DeepSeek main + Groq) instead of the reference's claude/grok/gemini gateway ids.
 # ---------------------------------------------------------------------------
 
-MODEL_ROLES = ("reasoning", "realtime", "narration")
-
-
 @dataclass
 class ResolvedRole:
     role: str

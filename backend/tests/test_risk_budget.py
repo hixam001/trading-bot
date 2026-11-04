@@ -20,7 +20,6 @@ import pytest
 
 import config
 from api import db
-from llm.thinker import Thinker
 from models import Candidate, PortfolioState, Trade
 from sizing import (
     _round_half_up,
