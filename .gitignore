@@ -26,6 +26,9 @@ secrets/
 *.keypair
 *.p12
 *.pfx
+*.enc
+/backups/
+/state/
 id_rsa
 id_rsa.*
 .fomo_privy.json

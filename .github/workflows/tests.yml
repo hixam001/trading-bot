@@ -70,6 +70,10 @@ jobs:
           cd frontend
           npm run build
 
+      - name: Scan built frontend for secrets
+        run: |
+          python scripts/scan_frontend_bundle.py --dist frontend/dist
+
       - name: Audit frontend dependencies
         run: |
           cd frontend

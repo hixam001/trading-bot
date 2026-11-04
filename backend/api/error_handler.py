@@ -57,6 +57,7 @@ _BASIC_AUTH_URL_RE = re.compile(r"(https?://)([^:\s/]+):([^@\s/]+)@")
 _SOLANA_KEYPAIR_RE = re.compile(r"\[\s*\d+(?:\s*,\s*\d+){40,}\s*\]")
 
 from secret_registry import get_runtime_secrets, register_secret  # noqa: F401
+from redaction import redact_text
 
 
 class SecretRedactorFilter(logging.Filter):
@@ -110,31 +111,30 @@ class SecretRedactorFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         try:
-            msg = record.getMessage()
-            original = msg
-
-            # 1. Mask exact known config and runtime secrets
-            for pat in self._compiled_secrets:
-                msg = pat.sub("<REDACTED-SECRET>", msg)
-
-            # 2. Mask Solana 64-int keypair arrays
-            msg = _SOLANA_KEYPAIR_RE.sub("[<REDACTED-KEYPAIR>]", msg)
-
-            # 3. Mask Authorization: Bearer tokens
-            msg = _BEARER_RE.sub("Bearer <REDACTED>", msg)
-
-            # 4. Mask basic auth credentials in URLs
-            msg = _BASIC_AUTH_URL_RE.sub(r"\1***:***@", msg)
-
-            # 5. Mask JSON-quoted key-values: {"api_key": "..."}
-            msg = _JSON_SENSITIVE_RE.sub(r'\1"<REDACTED>"', msg)
-
-            # 6. Mask query params and header tokens
-            msg = _SENSITIVE_PARAM_RE.sub(r"\1=<REDACTED>", msg)
-
+            original = record.getMessage()
+            # One shared scrubber: config/runtime secrets + every
+            # secret-shaped pattern (base58/JSON keypairs, PEM, Bearer,
+            # credentials in URLs, provider token shapes, query params).
+            msg = redact_text(
+                original, secret_placeholder="<REDACTED-SECRET>"
+            )
             if msg != original:
                 record.msg = msg
                 record.args = None
+
+            # A traceback is formatted separately from record.msg. Without
+            # this, an exception message/repr (e.g. a keypair in a ValueError)
+            # would be written to disk verbatim even though the log line was
+            # scrubbed.
+            if record.exc_info:
+                raw_tb = logging.Formatter().formatException(record.exc_info)
+                record.exc_text = redact_text(
+                    raw_tb, secret_placeholder="<REDACTED-SECRET>"
+                )
+            if record.stack_info:
+                record.stack_info = redact_text(
+                    record.stack_info, secret_placeholder="<REDACTED-SECRET>"
+                )
         except Exception:
             # Redaction failure must never crash the application or prevent logging
             pass
@@ -155,25 +155,7 @@ def sanitize_error_detail(detail: Any) -> Any:
     """Sanitize detail string to ensure no secrets or sensitive parameters leak in client responses."""
     if not isinstance(detail, str):
         return detail
-
-    sanitized = detail
-    # Dynamically scan configured and runtime secrets
-    for val in get_runtime_secrets():
-        sanitized = sanitized.replace(val, "<REDACTED>")
-
-    for attr in dir(config):
-        if any(attr.endswith(suffix) for suffix in ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")) and not attr.startswith("_"):
-            val = getattr(config, attr, None)
-            if val and isinstance(val, str) and len(val.strip()) >= 6:
-                sanitized = sanitized.replace(val.strip(), "<REDACTED>")
-
-    # Mask keypair patterns
-    sanitized = _SOLANA_KEYPAIR_RE.sub("[<REDACTED-KEYPAIR>]", sanitized)
-    sanitized = _BEARER_RE.sub("Bearer <REDACTED>", sanitized)
-    sanitized = _BASIC_AUTH_URL_RE.sub(r"\1***:***@", sanitized)
-    sanitized = _JSON_SENSITIVE_RE.sub(r'\1"<REDACTED>"', sanitized)
-    sanitized = _SENSITIVE_PARAM_RE.sub(r"\1=<REDACTED>", sanitized)
-    return sanitized
+    return redact_text(detail)
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:

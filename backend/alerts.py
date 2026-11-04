@@ -167,44 +167,17 @@ _SENSITIVE_PARAM_RE = re.compile(
 def sanitize_alert_text(text: str) -> str:
     """Sanitize message content to ensure no secrets or keys leak in push notifications."""
     if not isinstance(text, str):
-        return str(text)
+        text = str(text)
 
-    sanitized = text
-
-    # Mask secrets from runtime registry
-    try:
-        for sec in get_runtime_secrets():
-            if sec and len(sec) >= 6:
-                sanitized = sanitized.replace(sec, "<REDACTED>")
-    except Exception:
-        pass
-
-    # Mask config secrets
-    try:
-        import config
-        for attr in dir(config):
-            if any(attr.endswith(suffix) for suffix in ("_TOKEN", "_KEY", "_SECRET", "_PASSWORD")) and not attr.startswith("_"):
-                val = getattr(config, attr, None)
-                if val and isinstance(val, str) and len(val.strip()) >= 6:
-                    sanitized = sanitized.replace(val.strip(), "<REDACTED>")
-    except Exception:
-        pass
-
-    # Mask explicit channel tokens from current environment
-    curr_ntfy_tok = os.getenv("ALERT_NTFY_TOKEN", ALERT_NTFY_TOKEN)
-    if curr_ntfy_tok and len(curr_ntfy_tok) >= 6:
-        sanitized = sanitized.replace(curr_ntfy_tok, "<REDACTED>")
-    curr_tg_tok = os.getenv("ALERT_TELEGRAM_BOT_TOKEN", ALERT_TELEGRAM_BOT_TOKEN)
-    if curr_tg_tok and len(curr_tg_tok) >= 6:
-        sanitized = sanitized.replace(curr_tg_tok, "<REDACTED>")
-
-    # Mask structural patterns
-    sanitized = _SOLANA_KEYPAIR_RE.sub("[<REDACTED-KEYPAIR>]", sanitized)
-    sanitized = _BEARER_RE.sub("Bearer <REDACTED>", sanitized)
-    sanitized = _BASIC_AUTH_URL_RE.sub(r"\1***:***@", sanitized)
-    sanitized = _JSON_SENSITIVE_RE.sub(r'\1"<REDACTED>"', sanitized)
-    sanitized = _SENSITIVE_PARAM_RE.sub(r"\1=<REDACTED>", sanitized)
-    return sanitized
+    # One shared scrubber (backend/redaction.py): config/runtime secrets plus
+    # base58/JSON keypairs, PEM blocks, Bearer tokens, credentialed URLs,
+    # provider token shapes, and secret query parameters.
+    from redaction import redact_text
+    channel_tokens = [
+        os.getenv("ALERT_NTFY_TOKEN", ALERT_NTFY_TOKEN),
+        os.getenv("ALERT_TELEGRAM_BOT_TOKEN", ALERT_TELEGRAM_BOT_TOKEN),
+    ]
+    return redact_text(text, extra_secrets=channel_tokens)
 
 
 # ---------------------------------------------------------------------------
