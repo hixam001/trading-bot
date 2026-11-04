@@ -28,6 +28,7 @@ async def app_env(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "ADMIN_TOKEN", TOKEN)
     monkeypatch.setattr(config, "CAPTCHA_ENABLED", True)
     monkeypatch.setattr(config, "CAPTCHA_PROVIDER", "internal")
+    monkeypatch.setattr(config, "ALLOW_SIGNUP", True)
     await db.init_db()
     yield
 

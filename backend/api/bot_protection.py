@@ -16,7 +16,9 @@ import hashlib
 import hmac
 import logging
 import secrets
+import threading
 import time
+from collections import OrderedDict
 from typing import Any
 
 import httpx
@@ -26,6 +28,31 @@ import config
 from api.rate_limiter import get_client_ip
 
 log = logging.getLogger(__name__)
+
+# A proof-of-work challenge is a one-time coupon. Without this registry a
+# solved token is replayable for its full five-minute lifetime, so one GPU
+# solve could authorize a burst of login attempts. Nonces are stored only
+# after a valid signature AND solution, so a garbage attempt cannot burn a
+# challenge an honest client is still solving.
+_USED_POW_NONCES: OrderedDict[str, float] = OrderedDict()
+_USED_POW_LOCK = threading.Lock()
+_MAX_USED_POW_NONCES = 10_000
+_POW_MAX_AGE_SECONDS = 300.0
+
+
+def _consume_pow_nonce(nonce: str, timestamp: int) -> bool:
+    """Atomically mark a solved nonce used. False means replay."""
+    now = time.time()
+    with _USED_POW_LOCK:
+        for key, exp in list(_USED_POW_NONCES.items()):
+            if now >= exp:
+                _USED_POW_NONCES.pop(key, None)
+        if nonce in _USED_POW_NONCES:
+            return False
+        while len(_USED_POW_NONCES) >= _MAX_USED_POW_NONCES:
+            _USED_POW_NONCES.popitem(last=False)
+        _USED_POW_NONCES[nonce] = timestamp + _POW_MAX_AGE_SECONDS
+        return True
 
 
 def _get_signing_key() -> bytes:
@@ -76,7 +103,11 @@ def verify_proof_of_work(
     # Verify difficulty requirement
     attempt = f"{nonce}:{solution}".encode("utf-8")
     digest = hashlib.sha256(attempt).hexdigest()
-    return digest.startswith("0" * difficulty)
+    if not digest.startswith("0" * difficulty):
+        return False
+
+    # Single use: one solved challenge authorizes exactly one login/signup.
+    return _consume_pow_nonce(nonce, timestamp)
 
 
 async def verify_bot_protection(

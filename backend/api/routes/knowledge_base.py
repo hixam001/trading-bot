@@ -25,7 +25,7 @@ class IngestDocumentItem(BaseModel):
     filename: str = Field(..., min_length=1, max_length=255, description="Document filename")
     content: str = Field(..., min_length=1, max_length=500_000, description="Document body content")
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     @field_validator("filename")
     @classmethod
@@ -76,7 +76,7 @@ class IngestRequest(BaseModel):
         description="Documents to ingest (up to 50 items)",
     )
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
 
 @router.get("/api/knowledge-base")

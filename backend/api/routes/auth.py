@@ -16,8 +16,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 import config
 from api.auth import (
     _FAILED_ATTEMPTS,
+    _GLOBAL_FAILED_ATTEMPTS,
     _MAX_FAILED_ATTEMPTS,
+    _clear_auth_failures,
+    _global_lockout_active,
     _prune_failures,
+    _record_global_failure,
     clear_session_cookie,
     create_session_token,
     revoke_session_token,
@@ -39,7 +43,7 @@ class LoginRequest(BaseModel):
     captcha_token: str | None = Field(default=None, max_length=1024, description="Optional CAPTCHA or PoW token")
     honeypot: str | None = Field(default="", max_length=256, alias="_hp_website")
 
-    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     @field_validator("token")
     @classmethod
@@ -81,7 +85,7 @@ class SignupRequest(BaseModel):
     captcha_token: str | None = Field(default=None, max_length=1024)
     honeypot: str | None = Field(default="", max_length=256, alias="_hp_website")
 
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="forbid")
 
     @field_validator("username")
     @classmethod
@@ -137,7 +141,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
     valid = bool(req.token) and hmac.compare_digest(req.token, configured)
     if valid:
         # Clear lockout history on successful login
-        _FAILED_ATTEMPTS.pop(client_ip, None)
+        _clear_auth_failures(client_ip)
         session_token = create_session_token()
         set_session_cookie(response, session_token, request=request)
         return {
@@ -145,8 +149,9 @@ async def login(req: LoginRequest, request: Request, response: Response):
             "expires_in": config.SESSION_MAX_AGE_SECONDS,
         }
 
-    # Wrong credential: check if host is already over the lockout threshold
-    if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+    # Wrong credential: check if this host OR the global fleet is over the
+    # lockout threshold. Global failures defeat per-IP rotation.
+    if len(attempts) >= _MAX_FAILED_ATTEMPTS or _global_lockout_active(now):
         try:
             from api.security_monitor import SecurityEventType, record_security_event
             record_security_event(
@@ -154,7 +159,10 @@ async def login(req: LoginRequest, request: Request, response: Response):
                 client_ip=client_ip,
                 path="/api/auth/login",
                 method="POST",
-                detail=f"Login lockout triggered: {len(attempts)} failed attempts",
+                detail=(
+                    "Login lockout triggered "
+                    f"(per-ip={len(attempts)}, global={len(_GLOBAL_FAILED_ATTEMPTS)})"
+                ),
                 severity="ERROR",
             )
         except Exception:
@@ -165,6 +173,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
         )
 
     _FAILED_ATTEMPTS[client_ip].append(now)
+    _record_global_failure(now)
     try:
         from api.security_monitor import SecurityEventType, record_security_event
         record_security_event(
@@ -183,6 +192,12 @@ async def login(req: LoginRequest, request: Request, response: Response):
 @router.post("/signup")
 async def signup(req: SignupRequest, request: Request):
     """Registration endpoint protected with server-side bot challenge and honeypot."""
+    # Single-operator architecture: conceal the endpoint entirely by default.
+    # An explicit ALLOW_SIGNUP=true opts into the bot-protected 403 path so a
+    # deployment can later add an account store without changing the default.
+    if not getattr(config, "ALLOW_SIGNUP", False):
+        raise HTTPException(status_code=404, detail="Not Found")
+
     client_ip = get_client_ip(request)
     # 1. Server-side Bot Protection check executes BEFORE anything else
     await verify_bot_protection(
@@ -191,7 +206,7 @@ async def signup(req: SignupRequest, request: Request):
         honeypot=req.honeypot,
         request=request,
     )
-    # Single-operator bot architecture: public signups are disabled by default
+    # Single-operator bot architecture: public signups remain unsupported.
     raise HTTPException(
         status_code=403,
         detail="Public registration is disabled. Use operator ADMIN_TOKEN to authenticate.",
@@ -226,7 +241,7 @@ async def get_session(request: Request):
 
     # 2. Check session cookie
     cookie = request.cookies.get(config.SESSION_COOKIE_NAME, "")
-    if cookie and verify_session_token(cookie, secret=configured):
+    if cookie and verify_session_token(cookie):
         parts = cookie.split(".")
         created_at = int(parts[0]) if len(parts) == 3 and parts[0].isdigit() else int(time.time())
         remaining = max(0, config.SESSION_MAX_AGE_SECONDS - int(time.time() - created_at))

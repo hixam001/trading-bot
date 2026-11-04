@@ -15,3 +15,17 @@ def validate_admin_token_entropy(token: str) -> bool:
         return False
     return True
 
+
+def validate_session_secret(secret: str, admin_token: str = "") -> bool:
+    """Validate a dedicated SESSION_SECRET.
+
+    Same entropy floor as ADMIN_TOKEN, and it must not be a copy of the
+    operator token: session signing and operator authentication are separate
+    privileges, so one credential must never unlock both.
+    """
+    if not validate_admin_token_entropy(secret):
+        return False
+    if admin_token and secret.strip() == admin_token.strip():
+        return False
+    return True
+

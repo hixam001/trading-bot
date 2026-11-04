@@ -30,7 +30,7 @@ import time
 from typing import Any, Callable, Optional
 import httpx
 
-from secret_registry import get_runtime_secrets, register_secret
+from secret_registry import register_secret
 
 log = logging.getLogger("alerts")
 

@@ -43,8 +43,8 @@ async def client(app_env):
 
 
 @pytest.mark.asyncio
-async def test_kb_ingest_ignores_mass_assignment_fields(client):
-    """Confirm extra fields like role, is_admin, and user_id are ignored."""
+async def test_kb_ingest_rejects_mass_assignment_fields(client):
+    """S2: extra fields like role/is_admin/user_id are rejected, not ignored."""
     payload = {
         "documents": [
             {
@@ -65,18 +65,13 @@ async def test_kb_ingest_ignores_mass_assignment_fields(client):
         json=payload,
         headers={"X-Admin-Token": TOKEN},
     )
-    assert r.status_code == 200
-    data = r.json()
-    assert len(data["ingested"]) == 1
-    assert data["ingested"][0]["filename"] == "whitelisted.md"
+    assert r.status_code == 422
+    assert "extra_forbidden" in r.text
 
-    # Verify database row contains only the authorized fields
+    # Nothing was written.
     async with db.get_db() as conn:
         docs = await db.get_kb_documents(conn)
-        doc = next((d for d in docs if d["filename"] == "whitelisted.md"), None)
-        assert doc is not None
-        assert doc["filename"] == "whitelisted.md"
-        assert "legitimate content" in doc["content"]
+        assert not any(d["filename"] == "whitelisted.md" for d in docs)
 
 
 @pytest.mark.asyncio
@@ -100,8 +95,8 @@ async def test_kb_ingest_rejects_missing_required_fields(client):
 
 
 @pytest.mark.asyncio
-async def test_login_ignores_mass_assignment_fields(client):
-    """Confirm extra attributes in login body (e.g. role, is_admin) are ignored."""
+async def test_login_rejects_mass_assignment_fields(client):
+    """S2: extra attributes in the login body (role, is_admin, ...) are rejected."""
     payload = {
         "token": TOKEN,
         "role": "admin",
@@ -110,8 +105,8 @@ async def test_login_ignores_mass_assignment_fields(client):
         "user_id": "00000000-0000-0000-0000-000000000000",
     }
     r = await client.post("/api/auth/login", json=payload)
-    assert r.status_code == 200
-    assert r.json()["status"] == "authenticated"
+    assert r.status_code == 422
+    assert "extra_forbidden" in r.text
 
 
 @pytest.mark.asyncio

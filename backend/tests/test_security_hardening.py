@@ -146,7 +146,7 @@ def test_cors_narrowed():
 
     cors = next(m for m in app.user_middleware if m.cls is CORSMiddleware)
     assert cors.kwargs["allow_methods"] == ["GET", "POST"]
-    assert cors.kwargs["allow_headers"] == ["Content-Type", "X-Admin-Token"]
+    assert cors.kwargs["allow_headers"] == ["Content-Type", "X-Admin-Token", "X-Requested-With"]
     # FRONTEND_ORIGIN is a comma-separated LIST (same-origin :8000 + dev :5173
     # by default); the middleware must receive the parsed list, never the raw
     # string.

@@ -153,15 +153,34 @@ from config_helpers import validate_admin_token_entropy
 _raw_admin_token = os.getenv("ADMIN_TOKEN", "")
 if _raw_admin_token:
     if not validate_admin_token_entropy(_raw_admin_token):
-        import logging
-        logging.getLogger("config").critical(
-            "ADMIN_TOKEN has insufficient entropy (must be >= 32 characters and >= 12 distinct characters) — operator auth DISABLED. Run 'openssl rand -hex 32' to generate a secure token."
+        # FAIL CLOSED AT BOOT. The old behavior logged critical and booted
+        # with auth disabled; a production process that silently loses its
+        # operator gate is worse than one that refuses to start.
+        raise RuntimeError(
+            "ADMIN_TOKEN has insufficient entropy (must be >= 32 characters "
+            "and >= 12 distinct characters). Refusing to start; run "
+            "'openssl rand -hex 32' and update .env."
         )
-        ADMIN_TOKEN: str = ""
-    else:
-        ADMIN_TOKEN: str = _raw_admin_token
+    ADMIN_TOKEN: str = _raw_admin_token
 else:
     ADMIN_TOKEN: str = ""
+
+# Optional dedicated session-signing key. When set, browser session cookies
+# are signed with this value instead of ADMIN_TOKEN, so rotating the operator
+# token does not invalidate (or weaken) live sessions. When unset, the legacy
+# ADMIN_TOKEN-derived key remains in use. Invalid values fail boot closed.
+from config_helpers import validate_session_secret
+_raw_session_secret = os.getenv("SESSION_SECRET", "")
+if _raw_session_secret:
+    if not validate_session_secret(_raw_session_secret, admin_token=ADMIN_TOKEN):
+        raise RuntimeError(
+            "SESSION_SECRET is invalid: it must be >= 32 characters, have "
+            ">= 12 distinct characters, and must not equal ADMIN_TOKEN. "
+            "Refusing to start; run 'openssl rand -hex 32'."
+        )
+    SESSION_SECRET: str = _raw_session_secret
+else:
+    SESSION_SECRET: str = ""
 
 DEFAULT_FORWARDED_ALLOW_IPS: str = "127.0.0.1,172.16.0.0/12,::1/128"
 
@@ -173,6 +192,11 @@ TRUSTED_PROXY_CIDRS: str = os.getenv(
 # Secure session cookie configuration (Rule 9: http-only cookie session auth).
 SESSION_COOKIE_NAME: str = os.getenv("SESSION_COOKIE_NAME", "admin_session")
 SESSION_MAX_AGE_SECONDS: int = int(os.getenv("SESSION_MAX_AGE_SECONDS", "3600"))  # 1 hour
+# Session revocations survive process restart. The file is a bounded map of
+# token signatures -> absolute expiry; it never contains the token itself.
+SESSION_REVOCATION_FILE: str = os.getenv("SESSION_REVOCATION_FILE") or str(
+    PROJECT_ROOT / "state" / "session_revocations.json"
+)
 
 # Heartbeat freshness threshold used by the API's stale-heartbeat watcher.
 # Defined here so setting it in .env actually takes effect (previously only
@@ -193,6 +217,10 @@ CAPTCHA_VERIFY_URL: str = os.getenv(
     "CAPTCHA_VERIFY_URL",
     "https://challenges.cloudflare.com/turnstile/v0/siteverify",
 )
+# Single-operator architecture: public registration is concealed (404) unless
+# the operator explicitly opts in. Even opted in, this build has no account
+# store, so the route remains a hard 403 after bot checks.
+ALLOW_SIGNUP: bool = os.getenv("ALLOW_SIGNUP", "false").strip().lower() == "true"
 
 # ---------------------------------------------------------------------------
 # LLM providers

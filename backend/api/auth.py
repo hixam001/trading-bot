@@ -18,10 +18,14 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
+import os
 import secrets
+import threading
 import time
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict, deque
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from urllib.parse import urlsplit
 
 from fastapi import HTTPException, Request, Response
@@ -30,6 +34,15 @@ import config
 from api.rate_limiter import get_client_ip
 
 ADMIN_TOKEN_HEADER = "X-Admin-Token"
+
+# Global brute-force ceiling: per-IP limits are bypassable by a distributed
+# attacker (or by a real botnet behind many proxies). This window is not
+# account-specific — there is one operator — so any 50 failures in five
+# minutes throttle ALL wrong credentials. A valid credential still wins
+# (operator availability beats lockout purity; see A7 below).
+_GLOBAL_FAILED_ATTEMPTS: deque[float] = deque(maxlen=1000)
+_MAX_GLOBAL_FAILED_ATTEMPTS = 50
+_GLOBAL_LOCKOUT_WINDOW_SECONDS = 300.0
 
 # Brute-force mitigation: track recent failed attempts per client host
 _FAILED_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
@@ -43,8 +56,25 @@ _LOCKOUT_WINDOW_SECONDS = 60.0
 _MAX_TRACKED_HOSTS = 10_000
 
 
+def _session_secrets() -> list[str]:
+    """Session-signing candidates, strongest first.
+
+    SESSION_SECRET (when configured) is the dedicated signer. ADMIN_TOKEN
+    remains a fallback so an operator can add SESSION_SECRET without logging
+    every browser out, and so a token issued before the split still verifies.
+    """
+    out: list[str] = []
+    dedicated = getattr(config, "SESSION_SECRET", "") or ""
+    admin = getattr(config, "ADMIN_TOKEN", "") or ""
+    if dedicated and len(dedicated) >= 32:
+        out.append(dedicated)
+    if admin and len(admin) >= 32 and admin not in out:
+        out.append(admin)
+    return out
+
+
 def _derive_session_key(secret: str) -> bytes:
-    """Derive a dedicated HMAC session-signing key from the admin token."""
+    """Derive a dedicated HMAC session-signing key from the signing secret."""
     return hashlib.sha256((secret + ":session_auth_key_v1").encode("utf-8")).digest()
 
 
@@ -60,9 +90,13 @@ def create_session_token(secret: str | None = None) -> str:
     Format: <timestamp>.<nonce>.<hmac_signature>
     Tamper-evident, stateless, and verifiable server-side without database queries.
     """
-    configured = secret if secret is not None else config.ADMIN_TOKEN
+    if secret is not None:
+        configured = secret
+    else:
+        candidates = _session_secrets()
+        configured = candidates[0] if candidates else ""
     if not configured or len(configured) < 32:
-        raise ValueError("Cannot create session token: ADMIN_TOKEN is not configured or shorter than 32 characters")
+        raise ValueError("Cannot create session token: session secret is not configured or shorter than 32 characters")
     _ACTIVE_SIGNING_KEYS[configured] = None
     _ACTIVE_SIGNING_KEYS.move_to_end(configured)
     if len(_ACTIVE_SIGNING_KEYS) > 100:
@@ -81,13 +115,110 @@ def create_session_token(secret: str | None = None) -> str:
 MAX_REVOKED_SESSIONS: int = 10_000
 _REVOKED_SESSION_SIGS: OrderedDict[str, float] = OrderedDict()
 
+# Revocations are persisted as a bounded JSON map of signature -> expiry.
+# Only the signature is stored (never the bearer token), and the file is
+# mode 0600 under a 0700 directory. A corrupt/unreadable file fails CLOSED:
+# we would rather force a fresh login than resurrect a logged-out session.
+_REVOCATIONS_LOADED = False
+_REVOCATIONS_ERROR = False
+_REVOCATION_LOCK = threading.RLock()
+
+
+def _revocation_path() -> Path | None:
+    raw = getattr(config, "SESSION_REVOCATION_FILE", "") or ""
+    if not raw:
+        return None
+    try:
+        return Path(raw).expanduser()
+    except (TypeError, ValueError):
+        return None
+
+
+def _prune_revoked(now: float | None = None, reserve_slot: bool = False) -> None:
+    moment = time.time() if now is None else now
+    for sig, exp in list(_REVOKED_SESSION_SIGS.items()):
+        if moment >= exp:
+            _REVOKED_SESSION_SIGS.pop(sig, None)
+    cap = getattr(config, "MAX_REVOKED_SESSIONS", MAX_REVOKED_SESSIONS)
+    limit = max(0, cap - 1) if reserve_slot else max(0, cap)
+    while len(_REVOKED_SESSION_SIGS) > limit:
+        _REVOKED_SESSION_SIGS.popitem(last=False)
+
+
+def _ensure_revocations_loaded() -> None:
+    global _REVOCATIONS_LOADED, _REVOCATIONS_ERROR
+    if _REVOCATIONS_LOADED:
+        return
+    with _REVOCATION_LOCK:
+        if _REVOCATIONS_LOADED:
+            return
+        _REVOCATIONS_LOADED = True
+        path = _revocation_path()
+        if path is None or not path.is_file():
+            return
+        try:
+            raw = json.loads(path.read_text(encoding="utf-8"))
+            entries = raw.get("revoked", raw) if isinstance(raw, dict) else {}
+            now = time.time()
+            for sig, exp in entries.items():
+                if (isinstance(sig, str) and len(sig) == 64
+                        and isinstance(exp, (int, float)) and exp > now):
+                    _REVOKED_SESSION_SIGS[sig] = float(exp)
+            _prune_revoked(now)
+        except Exception:
+            _REVOCATIONS_ERROR = True
+
+
+def _persist_revocations() -> None:
+    path = _revocation_path()
+    if path is None:
+        return
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        payload = json.dumps(
+            {"version": 1, "revoked": dict(_REVOKED_SESSION_SIGS)},
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(payload, encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:
+        # Persistence is best-effort at the HTTP layer, but the operator must
+        # see it: a restart could otherwise resurrect revoked sessions.
+        import logging
+        logging.getLogger("api.auth").exception(
+            "failed to persist session revocation registry"
+        )
+
+
+def reset_session_revocations(delete_file: bool = False) -> None:
+    """Clear the in-memory registry (tests / explicit operator reset).
+
+    ``delete_file=True`` also removes the on-disk registry. Startup is lazily
+    reloaded, so callers must set this before issuing tokens.
+    """
+    global _REVOCATIONS_LOADED, _REVOCATIONS_ERROR
+    with _REVOCATION_LOCK:
+        _REVOKED_SESSION_SIGS.clear()
+        _REVOCATIONS_LOADED = False
+        _REVOCATIONS_ERROR = False
+        if delete_file:
+            path = _revocation_path()
+            if path is not None:
+                try:
+                    path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
 
 def revoke_session_token(token: str, secret: str | None = None) -> None:
     """Record token signature as revoked and prune expired entries (§77 E5, §78 E1–E3).
 
-    Revocations are stored in memory and reset on process restart. An operator who
-    needs immediate cluster-wide revocation across restarts should rotate
-    ADMIN_TOKEN / SESSION_SECRET.
+    Revocations are persisted (signature + expiry only) and survive process
+    restart. Rotating ADMIN_TOKEN / SESSION_SECRET still provides cluster-wide
+    revocation; this file covers a single host's logout semantics.
 
     Validates HMAC signature and timestamp before storing to prevent memory-growth
     attacks from unauthenticated forged cookies.
@@ -95,13 +226,15 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
     if not token or not isinstance(token, str):
         return
 
+    _ensure_revocations_loaded()
+
     candidates: list[str] = []
     if secret and len(secret) >= 32:
         candidates.append(secret)
     else:
-        admin_tok = getattr(config, "ADMIN_TOKEN", "")
-        if admin_tok and len(admin_tok) >= 32:
-            candidates.append(admin_tok)
+        for candidate in _session_secrets():
+            if candidate not in candidates:
+                candidates.append(candidate)
         for k in list(_ACTIVE_SIGNING_KEYS):
             if k not in candidates:
                 candidates.append(k)
@@ -142,17 +275,10 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
 
     expiry_timestamp = created_at + max_age
 
-    # Prune expired entries
-    for s, exp in list(_REVOKED_SESSION_SIGS.items()):
-        if now >= exp:
-            _REVOKED_SESSION_SIGS.pop(s, None)
-
-    # Evict oldest if at capacity
-    cap = getattr(config, "MAX_REVOKED_SESSIONS", MAX_REVOKED_SESSIONS)
-    while len(_REVOKED_SESSION_SIGS) >= cap:
-        _REVOKED_SESSION_SIGS.popitem(last=False)
-
-    _REVOKED_SESSION_SIGS[sig] = expiry_timestamp
+    with _REVOCATION_LOCK:
+        _prune_revoked(now, reserve_slot=True)
+        _REVOKED_SESSION_SIGS[sig] = expiry_timestamp
+        _persist_revocations()
 
 
 def is_session_revoked(token: str) -> bool:
@@ -162,13 +288,18 @@ def is_session_revoked(token: str) -> bool:
     parts = token.split(".")
     if len(parts) != 3:
         return False
-    sig = parts[2]
-    if sig in _REVOKED_SESSION_SIGS:
-        exp = _REVOKED_SESSION_SIGS[sig]
-        if time.time() >= exp:
-            _REVOKED_SESSION_SIGS.pop(sig, None)
-            return False
+    _ensure_revocations_loaded()
+    if _REVOCATIONS_ERROR:
+        # Unreadable/corrupt registry: fail closed rather than resurrect.
         return True
+    sig = parts[2]
+    with _REVOCATION_LOCK:
+        if sig in _REVOKED_SESSION_SIGS:
+            exp = _REVOKED_SESSION_SIGS[sig]
+            if time.time() >= exp:
+                _REVOKED_SESSION_SIGS.pop(sig, None)
+                return False
+            return True
     return False
 
 
@@ -180,8 +311,14 @@ def verify_session_token(
     """Verify session token HMAC signature and age. Fail-closed on any error."""
     if is_session_revoked(token):
         return False
-    configured = secret if secret is not None else config.ADMIN_TOKEN
-    if not configured or len(configured) < 32 or not token:
+    if not token:
+        return False
+    if secret is not None:
+        candidates = [secret]
+    else:
+        candidates = _session_secrets()
+    candidates = [c for c in candidates if c and len(c) >= 32]
+    if not candidates:
         return False
     parts = token.split(".")
     if len(parts) != 3:
@@ -199,12 +336,15 @@ def verify_session_token(
         return False
 
     payload = f"{created_at}.{nonce}"
-    expected_sig = hmac.new(
-        _derive_session_key(configured),
-        payload.encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
-    return hmac.compare_digest(sig, expected_sig)
+    for configured in candidates:
+        expected_sig = hmac.new(
+            _derive_session_key(configured),
+            payload.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+        if hmac.compare_digest(sig, expected_sig):
+            return True
+    return False
 
 
 def _is_request_https(request: Request | None) -> bool:
@@ -323,6 +463,27 @@ def _prune_failures(client_ip: str, now: float) -> list[float]:
     return attempts
 
 
+def _prune_global_failures(now: float) -> None:
+    while (_GLOBAL_FAILED_ATTEMPTS
+           and now - _GLOBAL_FAILED_ATTEMPTS[0] >= _GLOBAL_LOCKOUT_WINDOW_SECONDS):
+        _GLOBAL_FAILED_ATTEMPTS.popleft()
+
+
+def _global_lockout_active(now: float) -> bool:
+    _prune_global_failures(now)
+    return len(_GLOBAL_FAILED_ATTEMPTS) >= _MAX_GLOBAL_FAILED_ATTEMPTS
+
+
+def _record_global_failure(now: float) -> None:
+    _prune_global_failures(now)
+    _GLOBAL_FAILED_ATTEMPTS.append(now)
+
+
+def _clear_auth_failures(client_ip: str) -> None:
+    _FAILED_ATTEMPTS.pop(client_ip, None)
+    _GLOBAL_FAILED_ATTEMPTS.clear()
+
+
 def require_admin_token(request: Request) -> None:
     """Raise 403 unless the request carries the configured operator token
     or a valid, non-expired HttpOnly session cookie.
@@ -350,14 +511,14 @@ def require_admin_token(request: Request) -> None:
         supplied, configured)
     if token_ok:
         # Clear recorded failures on successful authentication
-        _FAILED_ATTEMPTS.pop(client_ip, None)
+        _clear_auth_failures(client_ip)
         return
 
     # 2. HttpOnly Cookie authentication (Browser dashboard sessions)
     session_cookie = request.cookies.get(config.SESSION_COOKIE_NAME, "")
-    if session_cookie and verify_session_token(session_cookie, secret=configured):
+    if session_cookie and verify_session_token(session_cookie):
         # Clear recorded failures on successful session authentication
-        _FAILED_ATTEMPTS.pop(client_ip, None)
+        _clear_auth_failures(client_ip)
         return
 
     if not configured or len(configured) < 32:
@@ -366,7 +527,7 @@ def require_admin_token(request: Request) -> None:
             status_code=403,
             detail="operator endpoints are disabled (ADMIN_TOKEN not set)",
         )
-    if len(attempts) >= _MAX_FAILED_ATTEMPTS:
+    if len(attempts) >= _MAX_FAILED_ATTEMPTS or _global_lockout_active(now):
         try:
             from api.security_monitor import SecurityEventType, record_security_event
             record_security_event(
@@ -374,7 +535,10 @@ def require_admin_token(request: Request) -> None:
                 client_ip=client_ip,
                 path=request.url.path,
                 method=request.method,
-                detail=f"Operator auth lockout threshold reached ({len(attempts)} failed attempts)",
+                detail=(
+                    "Operator auth lockout threshold reached "
+                    f"(per-ip={len(attempts)}, global={len(_GLOBAL_FAILED_ATTEMPTS)})"
+                ),
                 severity="ERROR",
             )
         except Exception:
@@ -384,6 +548,7 @@ def require_admin_token(request: Request) -> None:
             detail="too many failed authentication attempts — rate limited",
         )
     _FAILED_ATTEMPTS[client_ip].append(now)
+    _record_global_failure(now)
     try:
         from api.security_monitor import SecurityEventType, record_security_event
         record_security_event(

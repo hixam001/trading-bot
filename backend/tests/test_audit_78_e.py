@@ -41,6 +41,7 @@ def test_spam_forged_cookies_does_not_grow_revocation_set(monkeypatch):
         resp = client.post(
             "/api/auth/logout",
             cookies={config.SESSION_COOKIE_NAME: forged_cookie},
+            headers={"X-Requested-With": "XMLHttpRequest"},
         )
         assert resp.status_code == 200, "Logout should return 200 without leaking token validity"
 
@@ -61,6 +62,7 @@ def test_legitimate_logout_revokes_session(monkeypatch):
     resp = client.post(
         "/api/auth/logout",
         cookies={config.SESSION_COOKIE_NAME: token},
+        headers={"X-Requested-With": "XMLHttpRequest"},
     )
     assert resp.status_code == 200
     assert len(_REVOKED_SESSION_SIGS) == init_len + 1

@@ -184,7 +184,7 @@ async def test_logout_clears_cookie(client):
     assert client.cookies.get("admin_session") is not None
 
     # Log out
-    r = await client.post("/api/auth/logout")
+    r = await client.post("/api/auth/logout", headers={"X-Requested-With": "XMLHttpRequest"})
     assert r.status_code == 200
     assert r.json()["status"] == "logged_out"
 

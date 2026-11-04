@@ -17,6 +17,7 @@ import contextlib
 import html
 import logging
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -110,9 +111,107 @@ app.add_middleware(
     allow_origins=cors_origins,
     # §38 F6: only the verbs/headers the dashboard actually uses.
     allow_methods=["GET", "POST"],
-    allow_headers=["Content-Type", "X-Admin-Token"],
+    allow_headers=["Content-Type", "X-Admin-Token", "X-Requested-With"],
     allow_credentials=True,
 )
+
+
+# ---------------------------------------------------------------------------
+# S2 — CSRF defense for cookie-authenticated mutations.
+#
+# SameSite=Lax is not sufficient for split deployments (SameSite=None is
+# required for a cross-origin dashboard) and older clients. A session cookie
+# therefore authenticates a mutation only when the request ALSO proves it was
+# issued by our JavaScript: a custom header that an HTML form cannot set.
+# If Origin/Referer is present it must match the effective request origin or
+# an explicitly allowed frontend origin; a mismatched one is rejected even
+# with the header.
+# ---------------------------------------------------------------------------
+_CSRF_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_CSRF_EXEMPT_PATHS = frozenset({"/api/auth/login", "/api/auth/challenge"})
+_CSRF_HEADER = "X-Requested-With"
+_CSRF_HEADER_VALUE = "XMLHttpRequest"
+
+
+def _normalise_origin(value: str) -> str:
+    raw = (value or "").strip().rstrip("/")
+    try:
+        parsed = urlsplit(raw)
+    except ValueError:
+        return ""
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return ""
+    return f"{parsed.scheme.lower()}://{parsed.netloc.lower()}"
+
+
+def _effective_request_origin(request: Request) -> str:
+    proto = (request.headers.get("x-forwarded-proto") or request.url.scheme or "").lower()
+    host = (
+        request.headers.get("x-forwarded-host")
+        or request.headers.get("host")
+        or request.url.netloc
+        or ""
+    ).lower()
+    return f"{proto}://{host}".rstrip("/")
+
+
+def _csrf_origin_allowed(origin_or_referer: str, request: Request) -> bool:
+    candidate = _normalise_origin(origin_or_referer)
+    if not candidate:
+        return False
+    if candidate == _effective_request_origin(request):
+        return True
+    allowed = {_normalise_origin(o) for o in getattr(config, "FRONTEND_ORIGINS", [])}
+    return candidate in allowed
+
+
+def _record_csrf_block(request: Request, reason: str) -> None:
+    try:
+        from api.rate_limiter import get_client_ip
+        from api.security_monitor import SecurityEventType, record_security_event
+        record_security_event(
+            SecurityEventType.CSRF_BLOCKED,
+            client_ip=get_client_ip(request),
+            path=request.url.path,
+            method=request.method,
+            detail=reason,
+            severity="WARNING",
+        )
+    except Exception:
+        pass
+
+
+@app.middleware("http")
+async def csrf_protect_middleware(request: Request, call_next):
+    """Reject cross-site cookie-authenticated mutations (§92 S2)."""
+    method = request.method.upper()
+    path = request.url.path
+    if (method in _CSRF_UNSAFE_METHODS
+            and path.startswith("/api/")
+            and path not in _CSRF_EXEMPT_PATHS
+            and request.cookies.get(config.SESSION_COOKIE_NAME, "")):
+        supplied = request.headers.get(_CSRF_HEADER, "").strip()
+        if supplied.lower() != _CSRF_HEADER_VALUE.lower():
+            _record_csrf_block(request, "cookie-auth mutation without X-Requested-With")
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF verification failed: missing X-Requested-With"},
+            )
+        origin = request.headers.get("origin", "")
+        referer = request.headers.get("referer", "")
+        if origin and not _csrf_origin_allowed(origin, request):
+            _record_csrf_block(request, "cookie-auth mutation from disallowed Origin")
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF verification failed: origin not allowed"},
+            )
+        if referer and not _csrf_origin_allowed(referer, request):
+            _record_csrf_block(request, "cookie-auth mutation from disallowed Referer")
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "CSRF verification failed: referer not allowed"},
+            )
+    return await call_next(request)
 
 
 

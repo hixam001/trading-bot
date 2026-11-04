@@ -41,6 +41,7 @@ class SecurityEventType(str, Enum):
     BOT_DETECTED = "bot_detected"
     BLOCKED_PATH_PROBE = "blocked_path_probe"
     SUSPICIOUS_UPLOAD = "suspicious_upload"
+    CSRF_BLOCKED = "csrf_blocked"
     INTERNAL_ERROR = "internal_error"
 
 
