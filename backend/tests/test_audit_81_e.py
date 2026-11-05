@@ -34,6 +34,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+import backup_crypto
 import backup_state
 import restore_state
 from live_execution import kill_switch
@@ -102,8 +103,7 @@ def test_tampered_third_file_leaves_target_untouched(sample_state_3files, keys):
         (target_state / fname).write_bytes(content)
 
     # Tamper with the 3rd file in the archive
-    fernet = Fernet(key_backup.encode("utf-8"))
-    tar_bytes = fernet.decrypt(archive.read_bytes())
+    tar_bytes = backup_crypto.decrypt_archive(archive.read_bytes(), key_backup)
     in_buf = io.BytesIO(tar_bytes)
     out_buf = io.BytesIO()
 
@@ -118,6 +118,8 @@ def test_tampered_third_file_leaves_target_untouched(sample_state_3files, keys):
             ti.size = len(data)
             tout.addfile(ti, io.BytesIO(data))
 
+    # Re-wrap in a legacy Fernet envelope: restore still supports both.
+    fernet = Fernet(key_backup.encode("utf-8"))
     tampered_archive = backup_dir / "tampered_third.tar.gz.enc"
     tampered_archive.write_bytes(fernet.encrypt(out_buf.getvalue()))
 

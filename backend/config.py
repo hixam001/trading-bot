@@ -207,6 +207,11 @@ HEARTBEAT_STALE_SECONDS: float = float(os.getenv("HEARTBEAT_STALE_SECONDS", "300
 # Rejects oversized payloads before they touch disk, the DB, or prompt context.
 MAX_INGEST_CHARS: int = int(os.getenv("MAX_INGEST_CHARS", "200000"))
 
+# §92 S4: global HTTP request-body ceiling. A 50-document ingest at the
+# per-document cap still fits; anything larger is rejected before parsing.
+MAX_REQUEST_BODY_BYTES: int = int(
+    os.getenv("MAX_REQUEST_BODY_BYTES", str(16 * 1024 * 1024)))
+
 # ---------------------------------------------------------------------------
 # Bot Protection & CAPTCHA (Rule 12: server-side CAPTCHA / challenge verification)
 # ---------------------------------------------------------------------------

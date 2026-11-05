@@ -90,8 +90,13 @@ Auth legend:
 | S3 | Binding checks withhold the configured wallet and fee payer | `proof.py` `_verify_binding_checks` | `test_public_surface_leaks.py` |
 | S3 | Transaction/memo error objects are not stringified publicly | `proof.py` `_verify_memo` | `test_public_surface_leaks.py` |
 | S3 | Every documented Public GET is scanned for secrets, keys, tracebacks, paths | route matrix + real ASGI app | `test_public_surface_leaks.py` |
+| S4 | Interpolated SQL identifiers come only from a guarded module constant | `db._assert_allowed_reset_table`, `db_pg._assert_allowed_reset_table` | `test_s4_sql_allowlist.py` |
+| S4 | PostgREST `anon`/`authenticated` have no table/sequence rights; every public table has RLS | `migrations/supabase/007_revoke_anon_authenticated.sql` | `test_s4_migrations_rls.py` |
+| S4 | Request bodies are capped before parsing, including chunked bodies | `RequestBodyLimitMiddleware` | `test_s4_request_limits.py` |
+| S4 | Backups use a random-salt scrypt KDF + AES-256-GCM; legacy archives still restore | `scripts/backup_crypto.py`, `backup_state.py`, `restore_state.py` | `test_s4_backup_v2.py`, `test_audit_79_e.py`, `test_audit_81_e.py` |
+| S4 | Untrusted token/social text is escaped; no raw-HTML/eval sinks; no multipart uploads | React text rendering + static guard | `test_s4_xss_surface.py`, `frontend/e2e/xss.spec.ts` |
 
-Phases S4–S9 are appended as they land; this table is the authoritative
+Phases S5–S9 are appended as they land; this table is the authoritative
 control↔test map, not a marketing summary.
 
 ## 3. Residual risks
@@ -117,6 +122,16 @@ control↔test map, not a marketing summary.
 - S3: the public-route scanner uses sentinel values configured at runtime. A
   future route that leaks a secret not present in `config` at scan time (for
   example a per-request credential) needs a route-specific test.
+- S4: the PostgREST lock-down is SQL that must actually be applied to the
+  hosted Supabase project. The repository test proves the migration is
+  present and complete; it cannot prove the dashboard ran it. Verify with the
+  queries at the bottom of migration 007.
+- S4: the body cap is enforced at the ASGI app. A reverse proxy should also
+  enforce `client_max_body_size`; the app cap remains the backstop.
+- S4: scrypt parameters are fixed at n=2^15, r=8, p=1. Raising them requires a
+  new archive version or every existing archive becomes undecryptable.
+- S4: XSS is prevented by React text rendering plus the static sink test.
+  Third-party components added later must keep the no-raw-HTML rule.
 
 ## 4. Operator checklist (pre-launch)
 
@@ -172,10 +187,14 @@ control↔test map, not a marketing summary.
 
 ## 7. Backup encryption
 
-Backups are encrypted at rest and are never committed. The archive header is
-versioned so old Fernet archives remain restorable while new archives use a
-memory-hard KDF and authenticated encryption. The backup key must differ from
-`SECRET_STORE_KEY`; preflight enforces separation.
+Backups are encrypted at rest and are never committed. New archives use the
+versioned v2 envelope: a per-archive random salt, scrypt (n=2^15, r=8, p=1),
+and AES-256-GCM with the header as associated data. A wrong key or any header/
+ciphertext tamper fails closed. Restore still accepts legacy Fernet archives,
+so the last pre-upgrade backup is not stranded. The backup key must be a valid
+Fernet key, differ from `SECRET_STORE_KEY`, and live only in the server
+`.env`; preflight enforces both. The archive denylist refuses keypairs,
+secret-store keys, sidecars, `.env`, and `.pem` files.
 
 ## 8. UNVERIFIED items
 

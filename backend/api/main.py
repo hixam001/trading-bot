@@ -215,6 +215,81 @@ async def csrf_protect_middleware(request: Request, call_next):
 
 
 
+class RequestBodyLimitMiddleware:
+    """§92 S4: bound every request body before parsing or disk writes.
+
+    Pure ASGI (not BaseHTTPMiddleware) so a chunked body is rejected with a
+    real 413 response instead of an exception raised inside FastAPI's body
+    parser. The body is buffered up to the cap and replayed to the app, so
+    routes see the same stream they would have received.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            return await self.app(scope, receive, send)
+
+        cap = int(getattr(config, "MAX_REQUEST_BODY_BYTES", 16 * 1024 * 1024))
+        if cap <= 0:
+            return await self.app(scope, receive, send)
+
+        headers = {k.decode("latin-1").lower(): v.decode("latin-1")
+                   for k, v in scope.get("headers") or []}
+        declared = headers.get("content-length")
+        if declared is not None:
+            try:
+                if int(declared) > cap:
+                    return await _send_body_too_large(scope, receive, send)
+            except ValueError:
+                response = JSONResponse(
+                    status_code=400,
+                    content={"detail": "Invalid Content-Length"},
+                )
+                return await response(scope, receive, send)
+
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            message = await receive()
+            if message.get("type") == "http.disconnect":
+                break
+            if message.get("type") != "http.request":
+                continue
+            body = message.get("body", b"")
+            total += len(body)
+            if total > cap:
+                return await _send_body_too_large(scope, receive, send)
+            chunks.append(body)
+            if not message.get("more_body", False):
+                break
+
+        replayed = False
+
+        async def _replay():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {"type": "http.request",
+                        "body": b"".join(chunks),
+                        "more_body": False}
+            return await receive()
+
+        await self.app(scope, _replay, send)
+
+
+async def _send_body_too_large(scope, receive, send) -> None:
+    response = JSONResponse(
+        status_code=413,
+        content={"detail": "Request body too large"},
+    )
+    await response(scope, receive, send)
+
+
+app.add_middleware(RequestBodyLimitMiddleware)
+
+
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient", "test", "testserver", "app"})
 
 

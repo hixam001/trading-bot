@@ -740,6 +740,60 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_public_surface_leaks.py",
         description="Live portfolio failure reason embeds a local path",
     ),
+    # §92-S4
+    Mutation(
+        phase="§92-S4",
+        mutation_id="92S4_BACKUP_LEGACY_FERNET",
+        file_path="scripts/backup_state.py",
+        exact_old_text="    encrypted_bytes = backup_crypto.encrypt_archive(tar_bytes, backup_key_clean)",
+        new_text="    encrypted_bytes = Fernet(backup_key_clean.encode(\"utf-8\")).encrypt(tar_bytes)",
+        test_selector="backend/tests/test_s4_backup_v2.py",
+        description="Backup reverts to direct-key Fernet instead of scrypt+AES-GCM",
+    ),
+    Mutation(
+        phase="§92-S4",
+        mutation_id="92S4_BACKUP_WEAK_KEY_ACCEPTED",
+        file_path="scripts/backup_state.py",
+        exact_old_text=(
+            '    try:\n'
+            '        Fernet(backup_key_clean.encode("utf-8"))\n'
+            '    except Exception as exc:\n'
+            '        raise RuntimeError(\n'
+            '            "BACKUP_ENCRYPTION_KEY is not a valid Fernet key; generate one "\n'
+            '            "with cryptography.fernet.Fernet.generate_key()"\n'
+            '        ) from exc'
+        ),
+        new_text="    pass",
+        test_selector="backend/tests/test_s4_backup_v2.py",
+        description="Weak BACKUP_ENCRYPTION_KEY accepted",
+    ),
+    Mutation(
+        phase="§92-S4",
+        mutation_id="92S4_BODY_CAP_OFF",
+        file_path="backend/api/main.py",
+        exact_old_text="            if total > cap:",
+        new_text="            if False:",
+        test_selector="backend/tests/test_s4_request_limits.py",
+        description="Streamed request body cap disabled",
+    ),
+    Mutation(
+        phase="§92-S4",
+        mutation_id="92S4_POSTGREST_REVOKE_REMOVED",
+        file_path="migrations/supabase/007_revoke_anon_authenticated.sql",
+        exact_old_text="REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;",
+        new_text="-- revoke removed by mutation",
+        test_selector="backend/tests/test_s4_migrations_rls.py",
+        description="PostgREST anon/authenticated table revoke removed",
+    ),
+    Mutation(
+        phase="§92-S4",
+        mutation_id="92S4_RESET_TABLE_GUARD_OFF",
+        file_path="backend/api/db.py",
+        exact_old_text="    if table not in _ALLOWED_RESET_TABLES:",
+        new_text="    if False:",
+        test_selector="backend/tests/test_s4_sql_allowlist.py",
+        description="Reset table identifier allowlist guard disabled",
+    ),
 ]
 
 

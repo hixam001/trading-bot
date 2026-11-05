@@ -10,7 +10,9 @@ Snapshots:
    Skips if USE_SUPABASE_DB=1.
 3. Excludes secrets via strict denylist (wallet keypairs, secret store keys, sidecars).
 4. Packages into tar.gz with MANIFEST.json (SHA-256 hashes, sizes, git revision).
-5. Encrypts archive using Fernet with BACKUP_ENCRYPTION_KEY (must differ from SECRET_STORE_KEY).
+5. Encrypts archive with scrypt + AES-256-GCM (v2) under
+   BACKUP_ENCRYPTION_KEY (must differ from SECRET_STORE_KEY); legacy
+   Fernet archives remain supported by restore_state.py.
 6. Retention pruning: preserves the newest 14 daily + 8 weekly archives in BACKUP_DIR.
 
 Usage:
@@ -33,6 +35,11 @@ import tarfile
 from typing import Optional
 
 from cryptography.fernet import Fernet
+
+try:  # script mode: scripts/ is on sys.path
+    import backup_crypto
+except ImportError:  # package mode in tests
+    from scripts import backup_crypto
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("backup")
@@ -134,7 +141,13 @@ def create_backup(
     if secret_store_key and backup_key_clean == secret_store_key.strip():
         raise RuntimeError("BACKUP_ENCRYPTION_KEY must NOT match SECRET_STORE_KEY; separate keys required")
 
-    fernet = Fernet(backup_key_clean.encode("utf-8"))
+    try:
+        Fernet(backup_key_clean.encode("utf-8"))
+    except Exception as exc:
+        raise RuntimeError(
+            "BACKUP_ENCRYPTION_KEY is not a valid Fernet key; generate one "
+            "with cryptography.fernet.Fernet.generate_key()"
+        ) from exc
 
     dt = now_dt or datetime.now(timezone.utc)
     ts_str = dt.strftime("%Y%m%dT%H%M%SZ")
@@ -232,7 +245,7 @@ def create_backup(
         tar.addfile(m_ti, io.BytesIO(manifest_raw))
 
     tar_bytes = tar_buf.getvalue()
-    encrypted_bytes = fernet.encrypt(tar_bytes)
+    encrypted_bytes = backup_crypto.encrypt_archive(tar_bytes, backup_key_clean)
 
     backup_dir.mkdir(parents=True, exist_ok=True)
     out_file = backup_dir / f"state-{ts_str}.tar.gz.enc"

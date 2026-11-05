@@ -1444,6 +1444,17 @@ _ALLOWED_RESET_TABLES: frozenset[str] = frozenset({
 })
 
 
+def _assert_allowed_reset_table(table: str) -> None:
+    """The only safe source for an interpolated table identifier.
+
+    Reset/wipe SQL is built with an f-string because SQLite cannot bind an
+    identifier. Every caller must pass a module constant through this guard;
+    no request value may ever reach the query builder.
+    """
+    if table not in _ALLOWED_RESET_TABLES:
+        raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
+
+
 async def reset_book(conn: aiosqlite.Connection, initial_cash_usd: float) -> dict:
     """Full operator reset: wipe all operational tables and restore the
     starting balance. This is a paper-trading maintenance function — it
@@ -1465,8 +1476,7 @@ async def reset_book(conn: aiosqlite.Connection, initial_cash_usd: float) -> dic
     counts: dict[str, int] = {}
 
     async def _del(table: str) -> int:
-        if table not in _ALLOWED_RESET_TABLES:
-            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
+        _assert_allowed_reset_table(table)
         cur = await conn.execute(f"DELETE FROM {table}")
         return max(cur.rowcount, 0)
 
@@ -1512,8 +1522,7 @@ async def wipe_paper_book(
     counts: dict[str, int] = {}
 
     async def _del(table: str) -> int:
-        if table not in _ALLOWED_RESET_TABLES:
-            raise ValueError(f"Table '{table}' is not permitted for reset/wipe operations")
+        _assert_allowed_reset_table(table)
         cur = await conn.execute(f"DELETE FROM {table}")
         return max(cur.rowcount, 0)
 

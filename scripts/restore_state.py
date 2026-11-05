@@ -3,7 +3,7 @@
 scripts/restore_state.py — Decrypt, verify, stage, and safely restore state & SQLite backup (§79 Phase E, §81 Phase E).
 
 Multi-pass restore:
-1. Decrypt archive using Fernet with BACKUP_ENCRYPTION_KEY.
+1. Decrypt archive (v2 scrypt+AES-GCM, or legacy Fernet) with BACKUP_ENCRYPTION_KEY.
 2. Pass 1 (In-Memory Validation):
    - Path safety: Reject symlinks, hardlinks, devices, directories; reject absolute paths or traversal '..'
    - Allowed members: MANIFEST.json, trading_bot.db, or state/*
@@ -46,7 +46,10 @@ import sys
 import tarfile
 from typing import Any, Optional
 
-from cryptography.fernet import Fernet, InvalidToken
+try:  # script mode: scripts/ is on sys.path
+    import backup_crypto
+except ImportError:  # package mode in tests
+    from scripts import backup_crypto
 
 # Ensure backend package is importable
 backend_dir = Path(__file__).resolve().parent.parent / "backend"
@@ -164,10 +167,9 @@ def restore_backup(
     # 1. Decrypt archive in-memory
     encrypted_bytes = archive_path.read_bytes()
     try:
-        fernet = Fernet(backup_key.strip().encode("utf-8"))
-        decrypted_tar_bytes = fernet.decrypt(encrypted_bytes)
-    except InvalidToken:
-        raise RuntimeError("Archive decryption failed: InvalidToken (wrong key or corrupted data)")
+        # v2 (scrypt + AES-256-GCM) or a legacy Fernet archive.
+        decrypted_tar_bytes = backup_crypto.decrypt_archive(
+            encrypted_bytes, backup_key.strip())
     except Exception as e:
         raise RuntimeError(f"Archive decryption failed: {e}")
 

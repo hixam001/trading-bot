@@ -34,6 +34,7 @@ if str(SCRIPTS_DIR) not in sys.path:
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
+import backup_crypto
 import backup_state
 import restore_state
 
@@ -147,9 +148,10 @@ def test_tampered_archive_refused(sample_state, keys):
             backup_key=key_backup,
         )
 
-    # 2. Tampered content inside valid Fernet envelope (hash mismatch)
+    # 2. Tampered content inside a legacy Fernet envelope (hash mismatch).
+    #    Restore must still accept old archives after the v2 upgrade.
     fernet = Fernet(key_backup.encode("utf-8"))
-    decrypted_tar = fernet.decrypt(raw)
+    decrypted_tar = backup_crypto.decrypt_archive(raw, key_backup)
     in_buf = io.BytesIO(decrypted_tar)
     out_buf = io.BytesIO()
 
@@ -260,8 +262,7 @@ def test_secret_files_excluded_from_archive(sample_state, keys):
         secret_store_key=key_secret,
     )
 
-    fernet = Fernet(key_backup.encode("utf-8"))
-    tar_bytes = fernet.decrypt(archive.read_bytes())
+    tar_bytes = backup_crypto.decrypt_archive(archive.read_bytes(), key_backup)
 
     with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r:gz") as tar:
         names = tar.getnames()
