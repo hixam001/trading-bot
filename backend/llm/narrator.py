@@ -26,6 +26,7 @@ from typing import Optional
 import config
 from llm.client import build_main_client, main_max_tokens, LLMResult, _is_peak_window
 from llm.grounding import validate_numbers, validate_thesis
+from llm.untrusted import sanitize_untrusted
 from models import GateDecision
 
 log = logging.getLogger(__name__)
@@ -102,10 +103,10 @@ class NarrationResult:
 def build_prompt(gate: GateDecision) -> str:
     verdict = "ENTER" if gate.all_passed else "REJECT"
     lines = [
-        f"- {r.rule_id}: "
+        f"- {sanitize_untrusted(r.rule_id, 60)}: "
         + ("NOT EVALUATED" if not r.evaluated
            else ("PASS" if r.passed else "FAIL"))
-        + f" ({r.detail})"
+        + f" ({sanitize_untrusted(r.detail, 400)})"
         for r in gate.rules
     ]
     base = NARRATION_PROMPT.format(verdict=verdict, rules_block="\n".join(lines))
@@ -212,8 +213,8 @@ realized P&L ${pnl_usd:+.4f} ({pnl_pct:+.1f}%).
 
 async def generate_reflection(trade, rule_summary: str) -> str:
     prompt = REFLECTION_PROMPT.format(
-        rule_summary=rule_summary,
-        exit_reason=trade.exit_reason,
+        rule_summary=sanitize_untrusted(rule_summary, 800),
+        exit_reason=sanitize_untrusted(trade.exit_reason, 300),
         exit_price=trade.exit_price_usd or 0.0,
         entry_price=trade.entry_price_usd,
         pnl_usd=trade.realized_pnl_usd or 0.0,

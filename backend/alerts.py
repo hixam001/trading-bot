@@ -125,6 +125,7 @@ class AlertEvent(str, Enum):
     LOW_USDC = "LOW_USDC"
     WALLET_DROP = "WALLET_DROP"
     LOGIN_FAILURE_BURST = "LOGIN_FAILURE_BURST"
+    SPEND_CAP = "SPEND_CAP"
     TEST = "TEST"
     INFO = "INFO"
 
@@ -144,6 +145,7 @@ EVENT_DEFAULT_PRIORITY: dict[AlertEvent, AlertPriority] = {
     AlertEvent.SIM_SINGLE_RPC_SELL: AlertPriority.HIGH,
     AlertEvent.SELL_NO_REF_PRICE: AlertPriority.HIGH,
     AlertEvent.LOGIN_FAILURE_BURST: AlertPriority.HIGH,
+    AlertEvent.SPEND_CAP: AlertPriority.HIGH,
     AlertEvent.LIVE_BOOT: AlertPriority.INFO,
     AlertEvent.HEARTBEAT_RECOVERED: AlertPriority.INFO,
     AlertEvent.TEST: AlertPriority.INFO,

@@ -95,6 +95,13 @@ Auth legend:
 | S4 | Request bodies are capped before parsing, including chunked bodies | `RequestBodyLimitMiddleware` | `test_s4_request_limits.py` |
 | S4 | Backups use a random-salt scrypt KDF + AES-256-GCM; legacy archives still restore | `scripts/backup_crypto.py`, `backup_state.py`, `restore_state.py` | `test_s4_backup_v2.py`, `test_audit_79_e.py`, `test_audit_81_e.py` |
 | S4 | Untrusted token/social text is escaped; no raw-HTML/eval sinks; no multipart uploads | React text rendering + static guard | `test_s4_xss_surface.py`, `frontend/e2e/xss.spec.ts` |
+| S5 | Every third-party field sent to a model is normalised, bounded, and fenced as data | `backend/llm/untrusted.py`; thinker/brain/social/KB/web callers | `test_s5_prompt_injection.py` |
+| S5 | Injection cannot change size, mint, stops, caps, slippage, or the kill switch | fixed model schema + deterministic gate/sizing | `test_s5_prompt_injection.py` |
+| S5 | Prompts and stored transcripts contain no API keys, wallet address, or full config; usage table stores metadata only | prompt builders + `llm_call_usage` schema | `test_s5_prompt_injection.py` |
+| S5 | LLM calls have hard daily call/token/cost ceilings, persisted across restart and fail-closed | `backend/llm/spend_guard.py`, `llm/client.py` | `test_s5_spend_caps.py` |
+| S5 | Entry-side web search has a hard daily call ceiling | `spend_guard.reserve_search`, `web_research.search_web` | `test_s5_spend_caps.py` |
+| S5 | A spent model budget pauses entries but never exits; exits do not call the LLM | price-only exit scanner; post-close reflection is fire-and-forget | `test_s5_spend_caps.py` |
+| S5 | One deduped `SPEND_CAP` alert per provider/day | `spend_guard._alert`, `AlertEvent.SPEND_CAP` | `test_s5_spend_caps.py` |
 
 Phases S5–S9 are appended as they land; this table is the authoritative
 control↔test map, not a marketing summary.
@@ -132,6 +139,27 @@ control↔test map, not a marketing summary.
   new archive version or every existing archive becomes undecryptable.
 - S4: XSS is prevented by React text rendering plus the static sink test.
   Third-party components added later must keep the no-raw-HTML rule.
+- S5: prompt sanitisation and fencing reduce injection surface but are not a
+  mathematical guarantee; the real containment is structural — the model can
+  only return a verdict, and size, mint, stops, caps, slippage, and the kill
+  switch are fixed by deterministic code. A future feature that lets model
+  output set any of those fields must add a new control and test.
+- S5: RPC and Birdeye are intentionally NOT under the daily spend guard in this
+  phase. Exit pricing and route/liquidity checks use them, so a tripped cap
+  could delay a stop-loss. Their hard ceilings are provider-side quotas plus
+  operator alerting; document and review them at the provider. If a future
+  design splits read-only entry RPC from exit RPC, add a separate entry cap.
+- S5: the spend guard is per-host. Two API process replicas sharing one
+  `LIVE_STATE_DIR` serialize on the filesystem atomic replace but do not share
+  an in-process lock; use one writer per state directory, or move the counter
+  to a transactional store before horizontal scaling.
+- S5: cost is estimated from the provider's advertised token prices. A
+  provider-side price change or a missing `usage` block makes the estimate
+  stale; the call/token caps and provider dashboard remain the backstops.
+- S5: the brain prompt intentionally includes book context (cash, deployed
+  size, open symbols, thesis text) so it can reason about the book. It never
+  includes the wallet address, private key, API keys, or a full config dump.
+  Keep it that way when adding fields to `build_wallet_block`.
 
 ## 4. Operator checklist (pre-launch)
 
@@ -144,6 +172,13 @@ control↔test map, not a marketing summary.
    service user, and is included in backups.
 6. Built frontend has been scanned (`python scripts/scan_frontend_bundle.py`).
 7. `gitleaks detect` is clean on the deployed commit and its history.
+8. `LLM_DAILY_CALL_CAP`, `LLM_DAILY_TOKEN_CAP`, `LLM_DAILY_COST_CAP_USD`, and
+   `SEARCH_DAILY_CALL_CAP` are set to deliberate values (never 0 unless you
+   intend zero calls). Verify `LIVE_STATE_DIR/spend_guard.json` is mode 0600
+   and writable; a corrupt/unwritable guard pauses entries by design.
+9. RPC/Birdeye provider quotas are configured and alerting is on: those calls
+   are intentionally not blocked by the LLM/search guard because exits use
+   them.
 
 ## 5. Rotation runbook
 

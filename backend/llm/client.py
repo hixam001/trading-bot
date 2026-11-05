@@ -150,7 +150,29 @@ class LLMClient:
     ) -> Optional[LLMResult]:
         if not self.api_key:
             return None
-        
+
+        # §92 S5: reserve before the network call. A reached daily ceiling
+        # degrades to an empty result (the caller fails closed to "pass");
+        # deterministic exits never call this client.
+        from llm.spend_guard import (
+            SpendCapExceeded, record_llm, reserve_llm,
+        )
+        try:
+            reserve_llm(self.provider)
+        except SpendCapExceeded as exc:
+            return LLMResult(
+                text="", provider=self.provider, model=self.model, task=task,
+                degradation_reason=f"spend_cap:{exc}",
+            )
+
+        def _finish(result: LLMResult) -> LLMResult:
+            record_llm(
+                self.provider,
+                tokens=int(result.total_tokens or 0),
+                cost_usd=float(result.estimated_cost_usd or 0.0),
+            )
+            return result
+
         max_tokens = budget or 200
         payload = {
             "model": self.model,
@@ -196,21 +218,21 @@ class LLMClient:
             if (not isinstance(raw_body, dict)
                     or not isinstance(choices, list) or not choices
                     or not isinstance(choices[0], dict)):
-                return LLMResult(
+                return _finish(LLMResult(
                     text="", provider=self.provider, model=self.model, task=task,
                     http_status=response.status_code, latency_ms=(time.monotonic() - started) * 1000.0,
                     degradation_reason="unparsable_response" if response.status_code == 200 else f"http_{response.status_code}"
-                )
+                ))
                 
             first_choice = choices[0]
             message = first_choice.get("message")
             text = message.get("content") if isinstance(message, dict) else None
             if not isinstance(text, str) or not text.strip():
-                return LLMResult(
+                return _finish(LLMResult(
                     text="", provider=self.provider, model=self.model, task=task,
                     http_status=response.status_code, latency_ms=(time.monotonic() - started) * 1000.0,
                     degradation_reason="empty_content"
-                )
+                ))
                 
             usage = body.get("usage")
             usage = usage if isinstance(usage, dict) else {}
@@ -234,7 +256,7 @@ class LLMClient:
                 
             est_cost = _estimate_cost(self.provider, in_tok, out_tok, cache_tok, is_peak)
                 
-            return LLMResult(
+            return _finish(LLMResult(
                 text=text.strip(),
                 provider=self.provider,
                 model=self.model,
@@ -251,13 +273,13 @@ class LLMClient:
                 http_status=response.status_code,
                 is_peak_window=is_peak,
                 finish_reason=first_choice.get("finish_reason", "")
-            )
+            ))
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as e:
-            return LLMResult(
+            return _finish(LLMResult(
                 text="", provider=self.provider, model=self.model, task=task,
                 latency_ms=(time.monotonic() - started) * 1000.0,
                 degradation_reason=f"exception:{type(e).__name__}"
-            )
+            ))
 
 
 class MainGroqClient(LLMClient):

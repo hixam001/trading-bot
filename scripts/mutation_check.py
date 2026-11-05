@@ -794,6 +794,106 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_s4_sql_allowlist.py",
         description="Reset table identifier allowlist guard disabled",
     ),
+    # §92-S5
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_INSTRUCTION_FILTER_OFF",
+        file_path="backend/llm/untrusted.py",
+        exact_old_text='    normalised = _INSTRUCTION.sub("[instruction-like text removed]", normalised)',
+        new_text="    normalised = normalised",
+        test_selector="backend/tests/test_s5_prompt_injection.py",
+        description="Instruction-like text filter disabled in the untrusted-data sanitizer",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_UNTRUSTED_FENCE_REMOVED",
+        file_path="backend/llm/untrusted.py",
+        exact_old_text=(
+            '    return (\n'
+            '        f\'<untrusted_data source="{label}">\\n\'\n'
+            '        f"{body}\\n"\n'
+            '        "</untrusted_data>"\n'
+            '    )'
+        ),
+        new_text="    return body",
+        test_selector="backend/tests/test_s5_prompt_injection.py",
+        description="Untrusted-data fence removed from wrap_untrusted",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_SPEND_CAP_OFF",
+        file_path="backend/llm/spend_guard.py",
+        exact_old_text="    if reason:",
+        new_text="    if False:",
+        test_selector="backend/tests/test_s5_spend_caps.py",
+        description="Daily spend cap enforcement disabled",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_ZERO_CAP_MEANS_UNLIMITED",
+        file_path="backend/llm/spend_guard.py",
+        exact_old_text="    if calls_cap <= 0 or calls >= calls_cap:",
+        new_text="    if calls_cap > 0 and calls >= calls_cap:",
+        test_selector="backend/tests/test_s5_spend_caps.py",
+        description="Zero cap interpreted as unlimited instead of zero calls",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_BRAIN_SYMBOL_VALIDATION_OFF",
+        file_path="backend/llm/llm_brain.py",
+        exact_old_text="            if not symbol or symbol not in valid_symbols:",
+        new_text="            if not symbol:",
+        test_selector="backend/tests/test_s5_prompt_injection.py",
+        description="Brain accepts model-invented symbols outside the snapshot",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_KB_PROMPT_FENCE_REMOVED",
+        file_path="backend/knowledge_base/loader.py",
+        exact_old_text=(
+            '            user_prompt=wrap_untrusted("knowledge_base_document", content,\n'
+            '                                       max_chars=6000),'
+        ),
+        new_text='            user_prompt=content[:6000],',
+        test_selector="backend/tests/test_s5_prompt_injection.py",
+        description="Knowledge-base document sent to the model unfenced",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_SEARCH_SANITIZER_OFF",
+        file_path="backend/llm/web_research.py",
+        exact_old_text='    return sanitize_untrusted(" | ".join(out), 600)',
+        new_text='    return " | ".join(out)[:600]',
+        test_selector="backend/tests/test_s5_prompt_injection.py",
+        description="Web-search evidence no longer sanitized before reaching a prompt",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_MODEL_OUTPUT_SANITIZER_OFF",
+        file_path="backend/llm/thinker.py",
+        exact_old_text='    thesis = sanitize_untrusted(obj.get("thesis"), 2000)',
+        new_text='    thesis = str(obj.get("thesis") or "").strip()',
+        test_selector="backend/tests/test_s5_prompt_injection.py",
+        description="Model thesis stored/rendered without sanitisation",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_SPEND_ALERT_DEDUPE_OFF",
+        file_path="backend/llm/spend_guard.py",
+        exact_old_text="    if key in _ALERTED:",
+        new_text="    if False:",
+        test_selector="backend/tests/test_s5_spend_caps.py",
+        description="SPEND_CAP alert dedupe disabled (alert flood)",
+    ),
+    Mutation(
+        phase="§92-S5",
+        mutation_id="92S5_LLM_RESERVE_BYPASSED",
+        file_path="backend/llm/client.py",
+        exact_old_text="            reserve_llm(self.provider)",
+        new_text="            pass",
+        test_selector="backend/tests/test_s5_spend_caps.py",
+        description="LLM client skips the pre-call spend reservation",
+    ),
 ]
 
 

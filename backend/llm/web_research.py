@@ -38,6 +38,7 @@ import time
 import httpx
 
 import config
+from llm.untrusted import sanitize_untrusted
 
 log = logging.getLogger(__name__)
 
@@ -98,7 +99,7 @@ def summarize_hits(rows) -> str:
         line = (title + " - " + desc).strip(" -")
         if line:
             out.append(line)
-    return " | ".join(out)[:600]
+    return sanitize_untrusted(" | ".join(out), 600)
 
 
 # ---------------------------------------------------------------------------
@@ -294,9 +295,16 @@ async def search_web(client, symbol: str) -> str:
     benches that hop — a dead free transport costs a couple of timeouts
     ONCE, never one per candidate per tick (§34 lesson). Non-200 statuses
     route through _handle_hop_status (402/422/429 bench semantics)."""
+    from llm.spend_guard import SpendCapExceeded, reserve_search
+
     for name, fn in _configured_searchers():
         if _is_benched(name):
             continue
+        try:
+            reserve_search()
+        except SpendCapExceeded as exc:
+            log.warning("web search skipped: %s", exc)
+            break
         rows, status, body = await fn(client, symbol)
         if status is None:
             _transport_error(name)               # timeout / conn refused

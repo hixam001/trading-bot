@@ -272,6 +272,23 @@ LLM_BRAIN_MAX_TOKENS: int = int(os.getenv("LLM_BRAIN_MAX_TOKENS", "4000"))
 LLM_BRAIN_TIMEOUT_SECONDS: float = float(os.getenv("LLM_BRAIN_TIMEOUT_SECONDS", "60"))
 
 # ---------------------------------------------------------------------------
+# §92 S5 — hard daily spend ceilings.
+#
+# The LLM decides WHETHER to enter, never the size, and exits never call it.
+# When a ceiling is reached the client fails closed with a `spend_cap`
+# degradation (no entry; deterministic exits keep running) and raises one
+# deduped SPEND_CAP alert per provider/day. Counters live in
+# LIVE_STATE_DIR/spend_guard.json (0600) so a restart cannot reset the day.
+# A zero/negative cap means ZERO calls, never "unlimited" (zero != none).
+# ---------------------------------------------------------------------------
+LLM_DAILY_CALL_CAP: int = int(os.getenv("LLM_DAILY_CALL_CAP", "2000"))
+LLM_DAILY_TOKEN_CAP: int = int(os.getenv("LLM_DAILY_TOKEN_CAP", "2000000"))
+LLM_DAILY_COST_CAP_USD: float = float(
+    os.getenv("LLM_DAILY_COST_CAP_USD", "5.0"))
+# Search is entry-side evidence only; exhausting it never blocks an exit.
+SEARCH_DAILY_CALL_CAP: int = int(os.getenv("SEARCH_DAILY_CALL_CAP", "500"))
+
+# ---------------------------------------------------------------------------
 # DeepSeek direct API (main-provider candidate per docs/08 §1). Non-thinking
 # mode only in the hot path. Model id + prices verified against
 # api-docs.deepseek.com on 2026-08-27 (pricing snapshot id in llm/client.py).
