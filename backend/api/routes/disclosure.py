@@ -54,8 +54,12 @@ def _kill_switch_state() -> dict:
             return {"active": engaged,
                     "reason": str(data.get("reason", ""))}
         return {"active": False, "reason": "no state file"}
-    except Exception as exc:
-        return {"active": True, "reason": f"unreadable — treated as KILL: {exc}"}
+    except Exception:
+        # Public endpoint: log the exception privately, never echo paths or
+        # provider text. Fail closed — unreadable is KILL.
+        log.warning("disclosure: kill-switch state unreadable (treated as KILL)",
+                    exc_info=True)
+        return {"active": True, "reason": "unreadable — treated as KILL"}
 
 
 def _break_state() -> dict:
@@ -68,12 +72,16 @@ def _break_state() -> dict:
             "reason": break_reason() if on_break else "",
             "break_until_epoch": break_until() if on_break else 0.0,
         }
-    except RuntimeError as exc:
+    except RuntimeError:
         # corrupt state file — liveness raises RuntimeError
-        return {"on_break": True, "reason": f"state corrupt: {exc}", "break_until_epoch": 0.0}
-    except Exception as exc:
+        log.warning("disclosure: break state corrupt (treated as on-break)",
+                    exc_info=True)
+        return {"on_break": True, "reason": "state corrupt", "break_until_epoch": 0.0}
+    except Exception:
         # Fail closed like the gate: an unreadable break state is not "awake".
-        return {"on_break": True, "reason": f"state unavailable: {exc}", "break_until_epoch": 0.0}
+        log.warning("disclosure: break state unavailable (treated as on-break)",
+                    exc_info=True)
+        return {"on_break": True, "reason": "state unavailable", "break_until_epoch": 0.0}
 
 
 async def _sizing_truths() -> tuple[dict, dict]:

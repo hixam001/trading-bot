@@ -165,7 +165,7 @@ async def _verify_memo(row: dict, recomputed_hash: str, _get_tx,
     checks.append({
         "name": "memo_confirmed",
         "status": "pass" if err is None else "fail",
-        "detail": "no error" if err is None else f"err={err}",
+        "detail": "no error" if err is None else "transaction error present",
     })
 
     memo_text = _memo_text_from_tx(memo_tx)
@@ -332,7 +332,7 @@ def _verify_binding_checks(tx: dict, commit_payload: dict,
     checks.append({
         "name": "tx_confirmed",
         "status": "pass" if err is None else "fail",
-        "detail": "no error" if err is None else f"err={err}",
+        "detail": "no error" if err is None else "transaction error present",
     })
 
     # Check 2: time ordering
@@ -367,7 +367,13 @@ def _verify_binding_checks(tx: dict, commit_payload: dict,
         checks.append({
             "name": "fee_payer",
             "status": "pass" if fee_payer_ok else "fail",
-            "detail": f"key0={first_key!r} wallet={wallet_address!r}",
+            # Public feed: do not echo the configured wallet or the fee
+            # payer's raw account key. The boolean is the audit signal.
+            "detail": (
+                "fee payer is the configured wallet"
+                if fee_payer_ok
+                else "fee payer does not match configured wallet (values withheld)"
+            ),
         })
     else:
         checks.append({"name": "fee_payer", "status": "unknown",

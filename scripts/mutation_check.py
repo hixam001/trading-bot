@@ -691,6 +691,55 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_preflight_deploy.py",
         description="Preflight accepts any character device as the placeholder",
     ),
+    # §92-S3
+    Mutation(
+        phase="§92-S3",
+        mutation_id="92S3_BINDING_WALLET_ECHO",
+        file_path="backend/api/routes/proof.py",
+        exact_old_text=(
+            '            "detail": (\n'
+            '                "fee payer is the configured wallet"\n'
+            '                if fee_payer_ok\n'
+            '                else "fee payer does not match configured wallet (values withheld)"\n'
+            '            ),'
+        ),
+        new_text='            "detail": f"key0={first_key!r} wallet={wallet_address!r}",',
+        test_selector="backend/tests/test_public_surface_leaks.py",
+        description="Binding mismatch echoes configured wallet and fee payer",
+    ),
+    Mutation(
+        phase="§92-S3",
+        mutation_id="92S3_KILL_SWITCH_PATH_ECHO",
+        file_path="backend/api/routes/disclosure.py",
+        exact_old_text='        return {"active": True, "reason": "unreadable — treated as KILL"}',
+        new_text='        return {"active": True, "reason": f"unreadable — treated as KILL: {config.KILL_SWITCH_FILE}"}',
+        test_selector="backend/tests/test_public_surface_leaks.py",
+        description="Corrupt kill-switch reason embeds the state path",
+    ),
+    Mutation(
+        phase="§92-S3",
+        mutation_id="92S3_BREAK_STATE_PATH_ECHO",
+        file_path="backend/api/routes/disclosure.py",
+        exact_old_text='        return {"on_break": True, "reason": "state corrupt", "break_until_epoch": 0.0}',
+        new_text='        return {"on_break": True, "reason": f"state corrupt: {config.BREAK_STATE_FILE}", "break_until_epoch": 0.0}',
+        test_selector="backend/tests/test_public_surface_leaks.py",
+        description="Corrupt break-state reason embeds the state path",
+    ),
+    Mutation(
+        phase="§92-S3",
+        mutation_id="92S3_LIVE_BOOK_PATH_ECHO",
+        file_path="backend/api/routes/live_book.py",
+        exact_old_text=(
+            '        log.warning("live portfolio unreadable", exc_info=True)\n'
+            '        return _disabled("unreadable")'
+        ),
+        new_text=(
+            '        log.warning("live portfolio unreadable", exc_info=True)\n'
+            '        return _disabled(f"unreadable: {config.DB_PATH}")'
+        ),
+        test_selector="backend/tests/test_public_surface_leaks.py",
+        description="Live portfolio failure reason embeds a local path",
+    ),
 ]
 
 

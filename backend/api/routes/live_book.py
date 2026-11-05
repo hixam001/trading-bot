@@ -88,10 +88,11 @@ async def get_live_portfolio(request: Request):
     _check_access(request)
     try:
         return await _build(request)
-    except Exception as exc:
-        # The live book must never take the dashboard down.
-        log.warning("live portfolio unreadable: %s", exc, exc_info=True)
-        return _disabled(f"unreadable: {exc}")
+    except Exception:
+        # The live book must never take the dashboard down. The reason is a
+        # fixed public string; the exception (paths/RPC URLs) stays in logs.
+        log.warning("live portfolio unreadable", exc_info=True)
+        return _disabled("unreadable")
 
 
 
@@ -112,14 +113,16 @@ async def _build(request: Request) -> dict:
         pubkey = wallet.public_address()
         if not pubkey:
             return _disabled("wallet unreadable (no public address available)")
-    except Exception as exc:
-        return _disabled(f"wallet unreadable: {exc}")
+    except Exception:
+        log.warning("live portfolio: wallet unreadable", exc_info=True)
+        return _disabled("wallet unreadable")
 
     ledger = ExecutionLedger(le_config.STATE_DIR / "executions.json")
     try:
         records = ledger._load()   # same-package read pattern as run_live_cycle
-    except RuntimeError as exc:
-        return _disabled(f"ledger corrupt: {exc}")
+    except RuntimeError:
+        log.warning("live portfolio: ledger corrupt", exc_info=True)
+        return _disabled("ledger corrupt")
 
     # --- cash: chain truth, never accumulated -----------------------------
     cash_usd = None
@@ -278,9 +281,9 @@ async def get_live_executions(request: Request):
     _check_access(request)
     try:
         return _build_executions()
-    except Exception as exc:
-        log.warning("live executions unreadable: %s", exc, exc_info=True)
-        return _disabled(f"unreadable: {exc}")
+    except Exception:
+        log.warning("live executions unreadable", exc_info=True)
+        return _disabled("unreadable")
 
 
 
@@ -299,8 +302,9 @@ def _build_executions() -> dict:
     ledger = ExecutionLedger(le_config.STATE_DIR / "executions.json")
     try:
         records = list(reversed(ledger._load()[-100:]))   # newest first
-    except RuntimeError as exc:
-        return _disabled(f"ledger corrupt: {exc}")
+    except RuntimeError:
+        log.warning("live portfolio: ledger corrupt", exc_info=True)
+        return _disabled("ledger corrupt")
 
     return {
         "enabled": True,

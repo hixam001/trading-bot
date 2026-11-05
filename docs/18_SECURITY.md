@@ -86,8 +86,12 @@ Auth legend:
 | S2 | Request schemas reject unknown fields | Pydantic `extra="forbid"` | `test_mass_assignment.py` |
 | S2 | Weak ADMIN_TOKEN/SESSION_SECRET refuses boot | `config.py` `RuntimeError` | `test_s2_auth_hardening.py` |
 | S2 | Session signing key separable from operator token | `SESSION_SECRET` | `test_s2_auth_hardening.py` |
+| S3 | Public fail-soft reasons are fixed strings, never exception text | `disclosure.py`, `live_book.py` | `test_public_surface_leaks.py` |
+| S3 | Binding checks withhold the configured wallet and fee payer | `proof.py` `_verify_binding_checks` | `test_public_surface_leaks.py` |
+| S3 | Transaction/memo error objects are not stringified publicly | `proof.py` `_verify_memo` | `test_public_surface_leaks.py` |
+| S3 | Every documented Public GET is scanned for secrets, keys, tracebacks, paths | route matrix + real ASGI app | `test_public_surface_leaks.py` |
 
-Phases S3–S9 are appended as they land; this table is the authoritative
+Phases S4–S9 are appended as they land; this table is the authoritative
 control↔test map, not a marketing summary.
 
 ## 3. Residual risks
@@ -102,6 +106,17 @@ control↔test map, not a marketing summary.
 - S2: revocation persistence is per-host. A multi-host API deployment needs
   a shared revocation store (or rotate the signing secret) for cluster-wide
   logout.
+- S3: public failure reasons are intentionally fixed strings. Operators must
+  read the server log (where the exception is logged with redaction) to learn
+  whether a public feed failed because of a corrupt file, RPC outage, or
+  permissions. The public body only tells a consumer "fail closed".
+- S3: `LIVE_BOOK_PUBLIC=true` still publishes live wallet balances, positions,
+  and executions by product design. Only failure text and the binding report's
+  raw key echo were trimmed; enabling that flag remains a deliberate privacy
+  trade-off.
+- S3: the public-route scanner uses sentinel values configured at runtime. A
+  future route that leaks a secret not present in `config` at scan time (for
+  example a per-request credential) needs a route-specific test.
 
 ## 4. Operator checklist (pre-launch)
 
