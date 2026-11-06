@@ -42,7 +42,7 @@ echo "=== [8/9] Running Playwright E2E integration tests (npm run test:e2e) ==="
 BACKEND_PID=""
 if ! curl -s http://127.0.0.1:8000/api/health | grep -q "ok"; then
     echo "Starting local mock backend on port 8000 for E2E tests..."
-    DATA_BACKEND=mock RATE_LIMIT_PAID_PER_MINUTE=1000 RATE_LIMIT_GENERAL_PER_MINUTE=2000 "$PYTHON_BIN" -m uvicorn api.main:app --app-dir backend --host 127.0.0.1 --port 8000 >/dev/null 2>&1 &
+    DATA_BACKEND=mock RATE_LIMIT_PAID_PER_MINUTE=1000 RATE_LIMIT_GENERAL_PER_MINUTE=2000 "$PYTHON_BIN" -m uvicorn api.main:app --app-dir backend --host 127.0.0.1 --port 8000 --workers 1 --limit-concurrency 200 --timeout-keep-alive 5 --h11-max-incomplete-event-size 65536 --timeout-graceful-shutdown 20 >/dev/null 2>&1 &
     BACKEND_PID=$!
     for i in $(seq 1 30); do
         if curl -s http://127.0.0.1:8000/api/health | grep -q "ok"; then

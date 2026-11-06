@@ -80,7 +80,13 @@ esac
 
 if [ "$ROLE" = "api" ]; then
   echo "[entrypoint] starting in API-only role (web process has no signing key access)"
-  exec uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS"
+  # Single worker is mandatory: rate-limit buckets, the global auth lockout,
+  # single-use PoW nonces, and session revocations live in this process.
+  # Multiple workers would multiply every quota and split that state. The
+  # remaining flags bound concurrent sockets, header/body buffering, idle
+  # keep-alives, and shutdown time so a slow or oversized client cannot
+  # exhaust server resources.
+  exec uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" --workers 1 --limit-concurrency 200 --timeout-keep-alive 5 --h11-max-incomplete-event-size 65536 --timeout-graceful-shutdown 20
 elif [ "$ROLE" = "live" ]; then
   echo "[entrypoint] starting in LIVE-only role"
   if wallet_path_invalid; then
@@ -128,7 +134,7 @@ cleanup() {
 }
 trap cleanup TERM INT
 
-uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" &
+uvicorn api.main:app --host 0.0.0.0 --port "$PORT" --proxy-headers --forwarded-allow-ips="$FORWARDED_ALLOW_IPS" --workers 1 --limit-concurrency 200 --timeout-keep-alive 5 --h11-max-incomplete-event-size 65536 --timeout-graceful-shutdown 20 &
 API_PID=$!
 
 # Supervise BOTH processes. `wait -n` returns as soon as either exits, so a

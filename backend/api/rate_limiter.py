@@ -14,7 +14,7 @@ from __future__ import annotations
 import ipaddress
 import logging
 import time
-from collections import defaultdict
+from collections import OrderedDict
 
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -135,15 +135,43 @@ def classify_tier(path: str, method: str) -> tuple[str, int]:
 
 
 class SlidingWindowRateLimiter:
-    """In-memory sliding window rate limiter."""
+    """In-memory sliding window rate limiter with bounded key memory.
+
+    ``_requests`` is an LRU-ordered map of ``(tier, client_ip)`` to the
+    timestamps still inside the window. Every request moves its key to the
+    end; when the map grows past ``max_tracked`` the least-recently-used key is
+    evicted. Expired buckets are swept opportunistically (at most once per
+    second) and again under memory pressure, so the map holds only live keys
+    whenever the clock advances normally.
+    """
+
+    _PRUNE_INTERVAL = 1.0
 
     def __init__(self, max_tracked: int = 20_000) -> None:
-        self._requests: dict[tuple[str, str], list[float]] = defaultdict(list)
-        self._max_tracked = max_tracked
+        self._requests: OrderedDict[tuple[str, str], list[float]] = OrderedDict()
+        self._max_tracked = max(1, int(max_tracked))
+        self._last_prune = float("-inf")
 
     def clear(self) -> None:
         """Clear tracking memory (used in testing and maintenance)."""
         self._requests.clear()
+        self._last_prune = float("-inf")
+
+    def _prune_expired(self, cutoff: float) -> None:
+        """Drop every bucket whose newest timestamp has left the window."""
+        stale = [
+            key for key, timestamps in self._requests.items()
+            if not timestamps or timestamps[-1] <= cutoff
+        ]
+        for key in stale:
+            del self._requests[key]
+
+    def _prune_if_due(self, now: float, cutoff: float) -> None:
+        """Sweep expired buckets at a bounded cadence, not on every request."""
+        if now - self._last_prune < self._PRUNE_INTERVAL:
+            return
+        self._last_prune = now
+        self._prune_expired(cutoff)
 
     def check(
         self,
@@ -161,18 +189,17 @@ class SlidingWindowRateLimiter:
         cutoff = now - window
         key = (tier, client_ip)
 
-        # Prune expired timestamps for this key
-        timestamps = [t for t in self._requests[key] if t > cutoff]
-        self._requests[key] = timestamps
+        timestamps = [t for t in self._requests.get(key, ()) if t > cutoff]
 
-        # Bound total tracked keys to protect server memory
-        if len(self._requests) > self._max_tracked:
-            for k in list(self._requests.keys()):
-                fresh = [t for t in self._requests[k] if t > cutoff]
-                if fresh:
-                    self._requests[k] = fresh
-                else:
-                    del self._requests[k]
+        if timestamps:
+            # Refresh LRU position so an active caller is not evicted first.
+            self._requests[key] = timestamps
+            self._requests.move_to_end(key)
+        else:
+            # No live window for this key: remove it before starting fresh so
+            # an empty bucket can never survive to shadow the new request.
+            self._requests.pop(key, None)
+            self._prune_if_due(now, cutoff)
 
         count = len(timestamps)
         if count >= limit:
@@ -180,8 +207,17 @@ class SlidingWindowRateLimiter:
             retry_after = max(1, int(window - (now - oldest)))
             return False, limit, 0, retry_after
 
-        # Record this request
+        # Record this request. The key is re-inserted *after* pruning so a
+        # client that arrives exactly when the map is full is still counted.
         timestamps.append(now)
+        self._requests[key] = timestamps
+        self._requests.move_to_end(key)
+
+        if len(self._requests) > self._max_tracked:
+            self._prune_expired(cutoff)
+            while len(self._requests) > self._max_tracked:
+                self._requests.popitem(last=False)
+
         remaining = max(0, limit - len(timestamps))
         reset_epoch = int(now + window)
         return True, limit, remaining, reset_epoch

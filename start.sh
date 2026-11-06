@@ -143,10 +143,14 @@ else
     # setsid detaches uvicorn into its own session: closing the terminal
     # tab or Ctrl+C-ing the script can never take the backend down with it
     # (nohup alone only blocks SIGHUP — SIGINT still killed it).
+    # --workers 1 is required: limiter buckets, auth lockout, PoW nonces and
+    # revocations are per-process, and extra workers would split that state.
     nohup setsid \
       "$ROOT/.venv/bin/python" -m uvicorn \
       api.main:app --host 127.0.0.1 --port "$API_PORT" \
       --proxy-headers --forwarded-allow-ips=127.0.0.1 \
+      --workers 1 --limit-concurrency 200 --timeout-keep-alive 5 \
+      --h11-max-incomplete-event-size 65536 --timeout-graceful-shutdown 20 \
       >"$LOGS/backend.log" 2>&1 </dev/null &
     echo $! >"$RUN/backend.pid"
   )

@@ -102,6 +102,13 @@ Auth legend:
 | S5 | Entry-side web search has a hard daily call ceiling | `spend_guard.reserve_search`, `web_research.search_web` | `test_s5_spend_caps.py` |
 | S5 | A spent model budget pauses entries but never exits; exits do not call the LLM | price-only exit scanner; post-close reflection is fire-and-forget | `test_s5_spend_caps.py` |
 | S5 | One deduped `SPEND_CAP` alert per provider/day | `spend_guard._alert`, `AlertEvent.SPEND_CAP` | `test_s5_spend_caps.py` |
+| S6 | Requests are bucketed by `(tier, client IP)` with separate auth/paid/general ceilings | `backend/api/rate_limiter.py` | `test_s6_rate_limit_buckets.py`, existing limiter integration tests |
+| S6 | Every 429 carries a positive `Retry-After`, coherent reset epoch, and remaining count | `RateLimitMiddleware` | `test_s6_rate_limit_buckets.py` |
+| S6 | Limiter key memory is hard-bounded; expired buckets are swept and new clients are counted at capacity | `SlidingWindowRateLimiter` LRU + expiry sweep | `test_s6_rate_limit_buckets.py` |
+| S6 | Client IP is taken from `X-Forwarded-For` only when the peer is a configured trusted proxy | `get_client_ip`, `TRUSTED_PROXY_CIDRS` | `test_s6_rate_limit_buckets.py`, `test_security_audit_remediations.py` |
+| S6 | Every launch site pins `--workers 1` and bounds concurrency, keep-alive, incomplete headers, and graceful shutdown | `docker-entrypoint.sh`, `start.sh`, `prepush_check.sh` | `test_s6_deploy_limits.py` |
+| S6 | Public DB-scan endpoints declare finite `limit`/`offset` ceilings; over-max is rejected before the handler | feed/funnel route `Query(..., le=...)` | `test_s6_deploy_limits.py` |
+| S6 | Operator billing caps are set at every paid provider, so a missed app cap still cannot become an unbounded bill | provider dashboards (Groq/OpenRouter, Birdeye, Helius/RPC, Oracle budget, Telegram/ntfy) | Operator checklist §4, item 10 |
 
 Phases S5–S9 are appended as they land; this table is the authoritative
 control↔test map, not a marketing summary.
@@ -160,6 +167,29 @@ control↔test map, not a marketing summary.
   size, open symbols, thesis text) so it can reason about the book. It never
   includes the wallet address, private key, API keys, or a full config dump.
   Keep it that way when adding fields to `build_wallet_block`.
+- S6: rate-limit counters are per process. `--workers 1` is asserted at every
+  launch site for exactly this reason; horizontal scaling (another container,
+  not another worker) needs a shared counter or an edge/WAF limit, otherwise
+  each replica grants the full quota.
+- S6: the limiter is IP-based. An attacker with many real addresses (or a
+  botnet) can spread requests and evict honest clients from the bounded LRU,
+  resetting those clients' budgets. The LRU bound protects memory, not
+  fairness; put a provider/edge rate limit in front for internet-facing
+  deployments.
+- S6: `X-Forwarded-For` is trusted only from `TRUSTED_PROXY_CIDRS`. Keep that
+  list to the actual proxy/LB addresses. If it is widened (for example to a
+  whole VCN), direct clients can spoof their bucket identity.
+- S6: a process restart clears in-memory limiter and lockout state. Durable
+  controls (session revocations, spend guard) survive; brute-force throttling
+  starts a new window. Provider-side auth controls remain the backstop.
+- S6: `/api/funnel` still allows a window of 10,000 rows. It is finite and
+  rate-limited, but it is the largest public scan in the app; put the API
+  behind a cache/CDN if it is exposed to heavy anonymous traffic.
+- S6: `--limit-concurrency`, request-body, and header limits apply inside the
+  app/uvicorn. A reverse proxy must also set connection/body/header limits;
+  the app limits are the backstop, not the only layer.
+- S6: billing caps are operator-configured at the provider. The app cannot
+  prove a dashboard budget was entered; verify each provider before launch.
 
 ## 4. Operator checklist (pre-launch)
 
@@ -179,6 +209,21 @@ control↔test map, not a marketing summary.
 9. RPC/Birdeye provider quotas are configured and alerting is on: those calls
    are intentionally not blocked by the LLM/search guard because exits use
    them.
+10. Set a hard provider-side billing/quota cap for every paid surface and keep
+    the app caps as the first line, not the only line:
+    - Groq and OpenRouter: project/account spend limit and daily request cap
+      matching `LLM_DAILY_CALL_CAP` / `LLM_DAILY_COST_CAP_USD`.
+    - Birdeye: plan quota alert plus a hard daily request budget.
+    - Helius/RPC: plan quota alert; RPC is deliberately outside the LLM guard
+      because exits need it.
+    - Oracle Cloud: a $1 monthly budget with alerts on the tenancy (Always Free
+      resources still need a budget alarm so a shape/egress mistake is caught).
+    - Telegram/ntfy: rate limits on the bot/topic so an alert loop cannot
+      become a message bill or notification flood.
+11. Apply the deploy limits at the edge too: reverse proxy
+    `client_max_body_size`, connection/header limits, and a coarse per-IP rate
+    limit. The app enforces `MAX_REQUEST_BODY_BYTES`, body/header caps,
+    `--limit-concurrency 200`, and the tiered limiter as the backstop.
 
 ## 5. Rotation runbook
 

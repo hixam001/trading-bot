@@ -894,6 +894,83 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_s5_spend_caps.py",
         description="LLM client skips the pre-call spend reservation",
     ),
+    # §92-S6
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_LIMITER_KEY_CAP_OFF",
+        file_path="backend/api/rate_limiter.py",
+        exact_old_text="        if len(self._requests) > self._max_tracked:",
+        new_text="        if False:",
+        test_selector="backend/tests/test_s6_rate_limit_buckets.py",
+        description="Tracked-key memory bound disabled (unbounded limiter map)",
+    ),
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_LIMITER_NEW_CLIENT_NOT_RECORDED",
+        file_path="backend/api/rate_limiter.py",
+        exact_old_text=(
+            "        timestamps.append(now)\n"
+            "        self._requests[key] = timestamps\n"
+            "        self._requests.move_to_end(key)"
+        ),
+        new_text=(
+            "        timestamps.append(now)\n"
+            "        self._requests.pop(key, None)"
+        ),
+        test_selector="backend/tests/test_s6_rate_limit_buckets.py",
+        description="Newly seen client at key capacity is allowed but not counted",
+    ),
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_LIMITER_EXPIRY_SWEEP_OFF",
+        file_path="backend/api/rate_limiter.py",
+        exact_old_text="            self._prune_if_due(now, cutoff)",
+        new_text="            pass",
+        test_selector="backend/tests/test_s6_rate_limit_buckets.py",
+        description="Expired limiter buckets are retained instead of swept",
+    ),
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_RETRY_AFTER_ZERO",
+        file_path="backend/api/rate_limiter.py",
+        exact_old_text="            retry_after = max(1, int(window - (now - oldest)))",
+        new_text="            retry_after = 0",
+        test_selector="backend/tests/test_s6_rate_limit_buckets.py",
+        description="429 responses omit a positive Retry-After value",
+    ),
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_MULTI_WORKER_LAUNCH",
+        file_path="start.sh",
+        exact_old_text="      --workers 1 --limit-concurrency 200 --timeout-keep-alive 5 \\",
+        new_text="      --workers 4 --limit-concurrency 200 --timeout-keep-alive 5 \\",
+        test_selector="backend/tests/test_s6_deploy_limits.py",
+        description="Local launch starts multiple workers, splitting limiter/auth state",
+    ),
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_CONCURRENCY_LIMIT_RAISED",
+        file_path="start.sh",
+        exact_old_text="      --workers 1 --limit-concurrency 200 --timeout-keep-alive 5 \\",
+        new_text="      --workers 1 --limit-concurrency 5000 --timeout-keep-alive 5 \\",
+        test_selector="backend/tests/test_s6_deploy_limits.py",
+        description="Server concurrency ceiling widened past the deploy contract",
+    ),
+    Mutation(
+        phase="§92-S6",
+        mutation_id="92S6_PUBLIC_SCAN_UNBOUNDED",
+        file_path="backend/api/routes/funnel.py",
+        exact_old_text=(
+            '@router.get("/api/funnel")\n'
+            "async def get_funnel(limit: int = Query(1000, ge=1, le=10000)):"
+        ),
+        new_text=(
+            '@router.get("/api/funnel")\n'
+            "async def get_funnel(limit: int = Query(1000, ge=1)):"
+        ),
+        test_selector="backend/tests/test_s6_deploy_limits.py",
+        description="Public funnel scan accepts an unbounded limit",
+    ),
 ]
 
 
