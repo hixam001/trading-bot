@@ -22,12 +22,19 @@ services:
   # .env accordingly). Public instances disable format=json — only our own
   # instance works, which is why this sidecar exists.
   searxng:
-    # Pin to a stable tagged release (§77 D3, §78 D1)
-    # Pinned to real Docker Hub release: 2026.10.9-f4822b3fc (operator may pin sha256 digest after docker pull)
-    image: searxng/searxng:2026.10.9-f4822b3fc
+    # Pin to a stable tagged release and a registry digest (§77 D3, §78 D1,
+    # §92 S8): a moved tag can silently change the search sidecar image.
+    image: searxng/searxng:2026.10.9-f4822b3fc@sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272
     container_name: trading-bot-searxng
     restart: unless-stopped
     logging: *logging
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 512m
+    cpus: 1.0
     environment:
       - SEARXNG_SECRET=${SEARXNG_SECRET:?SEARXNG_SECRET must be set in .env to a non-default secret (run openssl rand -hex 32)}
     volumes:
@@ -52,6 +59,18 @@ services:
     stop_signal: SIGTERM
     stop_grace_period: 30s
     logging: *logging
+    # §92 S8: the API serves static files and reads state; it never needs a
+    # writable root filesystem or Linux capabilities.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 1g
+    cpus: 1.5
     depends_on:
       - searxng
     ports:
@@ -102,6 +121,18 @@ services:
     stop_signal: SIGTERM
     stop_grace_period: 150s
     logging: *logging
+    # §92 S8: state/data/logs/backups are mounted volumes; the root filesystem
+    # stays read-only and the signer needs no added capabilities.
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 256
+    mem_limit: 2g
+    cpus: 2.0
     depends_on:
       - searxng
     env_file:

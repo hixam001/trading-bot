@@ -1063,6 +1063,87 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_s7_response_hardening.py",
         description="Debug exception text echoes a provider secret unredacted",
     ),
+    # §92-S8
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_ACTION_TAG_NOT_PINNED",
+        file_path=".github/workflows/gitleaks.yml",
+        exact_old_text=(
+            "      - uses: actions/checkout@"
+            "d23441a48e516b6c34aea4fa41551a30e30af803 # v6"
+        ),
+        new_text="      - uses: actions/checkout@v6",
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="CI action reverts to a movable tag instead of a commit SHA",
+    ),
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_IMAGE_TAG_NOT_PINNED",
+        file_path="Dockerfile",
+        exact_old_text=(
+            "FROM node:20-slim@sha256:"
+            "2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0"
+            " AS frontend-build"
+        ),
+        new_text="FROM node:20-slim AS frontend-build",
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="Node base image reverts to a movable tag instead of a digest",
+    ),
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_COMPOSE_READ_ONLY_OFF",
+        file_path="docker-compose.yml",
+        exact_old_text=(
+            "    # writable root filesystem or Linux capabilities.\n"
+            "    read_only: true"
+        ),
+        new_text=(
+            "    # writable root filesystem or Linux capabilities.\n"
+            "    read_only: false"
+        ),
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="API container root filesystem becomes writable",
+    ),
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_SEARXNG_HOST_PORT",
+        file_path="docker-compose.yml",
+        exact_old_text="    container_name: trading-bot-searxng",
+        new_text=(
+            "    container_name: trading-bot-searxng\n"
+            "    ports:\n"
+            '      - "8080:8080"'
+        ),
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="SearXNG publishes a host port instead of staying internal",
+    ),
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_PREFLIGHT_DEBUG_ALLOWED",
+        file_path="scripts/preflight_deploy.py",
+        exact_old_text='    if _value(env, "DEBUG").lower() in truthy:',
+        new_text="    if False:",
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="Deploy preflight accepts DEBUG=true",
+    ),
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_PREFLIGHT_COMPOSE_HARDENING_OFF",
+        file_path="scripts/preflight_deploy.py",
+        exact_old_text="    hardening = _compose_hardening_issues(services)",
+        new_text="    hardening = []",
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="Deploy preflight ignores compose hardening violations",
+    ),
+    Mutation(
+        phase="§92-S8",
+        mutation_id="92S8_WALLET_JSON_WARNING_OFF",
+        file_path="backend/live_execution/wallet.py",
+        exact_old_text="        log.warning(",
+        new_text="        log.debug(",
+        test_selector="backend/tests/test_s8_supply_chain.py",
+        description="JSON wallet channel no longer warns that env secrets are visible",
+    ),
 ]
 
 

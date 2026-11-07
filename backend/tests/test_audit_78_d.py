@@ -17,9 +17,14 @@ def test_searxng_tag_format():
 
     searxng_service = compose_data.get("services", {}).get("searxng", {})
     image = searxng_service.get("image", "")
-    assert image.startswith("searxng/searxng:"), f"Expected searxng/searxng image, got {image}"
+    # §92 S8: the image is tag + registry digest. Validate the tag format and
+    # require the digest so a redeployed tag cannot silently move.
+    image_ref = image.split("@", 1)[0]
+    assert image_ref.startswith("searxng/searxng:"), f"Expected searxng/searxng image, got {image}"
+    assert re.search(r"@sha256:[0-9a-f]{64}$", image), (
+        f"SearXNG image must be digest-pinned, got {image}")
 
-    tag = image.split(":", 1)[1]
+    tag = image_ref.split(":", 1)[1]
     assert tag != "latest", "SearXNG image must not be pinned to 'latest'"
     assert tag.strip(), "SearXNG tag must not be empty"
 

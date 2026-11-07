@@ -43,12 +43,28 @@ def _wallet(root, mode=0o600):
     return path
 
 
+def _hardened_service(**overrides) -> dict:
+    service = {
+        "read_only": True,
+        "cap_drop": ["ALL"],
+        "security_opt": ["no-new-privileges:true"],
+        "pids_limit": 256,
+        "mem_limit": "1g",
+        "cpus": 1.0,
+    }
+    service.update(overrides)
+    return service
+
+
 def _compose(**api_env) -> dict:
     return {"services": {
-        "api": {"environment": {"WALLET_KEYPAIR_PATH": "",
-                                "WALLET_KEYPAIR_JSON": "", **api_env}},
-        "live": {},
-        "searxng": {},
+        "api": _hardened_service(environment={
+            "WALLET_KEYPAIR_PATH": "",
+            "WALLET_KEYPAIR_JSON": "",
+            **api_env,
+        }),
+        "live": _hardened_service(),
+        "searxng": _hardened_service(),
     }}
 
 

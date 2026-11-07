@@ -113,6 +113,11 @@ Auth legend:
 | S7 | CSP forbids `<base>` hijacking and framing; `nosniff`, `DENY`, `no-referrer`, COOP, and Permissions-Policy are always set | `security_headers.content_security_policy` | `test_s7_response_hardening.py` |
 | S7 | Synthetic test hostnames (`test`, `testserver`, `testclient`, `app`) are trusted only while pytest is running | `config.TESTING`, `_is_loopback_host` | `test_s7_response_hardening.py` |
 | S7 | DEBUG mode does not bypass operator auth, CSRF, or rate limits, and debug exception text is redacted | auth/CSRF/limiter guards + `redact_text` in error handler | `test_s7_response_hardening.py` |
+| S8 | Every GitHub Action is pinned to a full 40-character commit SHA | `.github/workflows/*.yml` | `test_s8_supply_chain.py` |
+| S8 | Docker base images and the SearXNG sidecar are pinned by registry digest | `Dockerfile`, `docker-compose.yml` | `test_s8_supply_chain.py` |
+| S8 | App containers use a read-only root, `cap_drop: ALL`, `no-new-privileges`, pid/memory/CPU limits; API binds loopback and SearXNG publishes no host port | `docker-compose.yml` | `test_s8_supply_chain.py` |
+| S8 | Deploy preflight rejects DEBUG, disabled rate limits/HTTPS, wildcard proxy trust, a zero body cap, and unhardened compose services | `scripts/preflight_deploy.py` | `test_s8_supply_chain.py`, `test_preflight_deploy.py` |
+| S8 | Selecting the JSON wallet channel logs a warning that env secrets are visible to `docker inspect`; the mounted file channel remains preferred | `live_execution/wallet.py`, `docs/11_DEPLOYMENT.md` | `test_s8_supply_chain.py` |
 
 Phases S5–S9 are appended as they land; this table is the authoritative
 control↔test map, not a marketing summary.
@@ -213,6 +218,24 @@ control↔test map, not a marketing summary.
   target URL. A forged Host from a non-loopback peer produces a redirect to
   that host; deploy behind a proxy that validates Host (or add an explicit
   host allowlist) if host-header poisoning is in scope.
+- S8: digest pinning stops tag drift but does not deliver base-image security
+  updates. Bumping a digest is an explicit operator/CI change; review the
+  upstream diff and re-run the build, compose validation, and preflight.
+- S8: action SHA pinning removes movable-tag risk, but the pinned commit is
+  still trusted upstream code. Review the action diff when bumping a SHA.
+- S8: `read_only` relies on the app writing only to its mounted volumes and
+  `/tmp`. A future dependency that writes elsewhere (for example a new browser
+  cache) needs a tmpfs/volume and a test update; otherwise the container will
+  fail closed rather than silently run with a writable root.
+- S8: `pids_limit`, `mem_limit`, and `cpus` are coarse host protections, not a
+  guarantee that the process stays within its own heap or provider quota.
+  Keep the application and provider alerts as the backstop.
+- S8: preflight inspects the declared `.env` and `docker compose config`, not
+  the live container (`docker inspect`) or provider dashboards. Re-run it
+  after every `.env`/compose change and verify provider budgets separately.
+- S8: the JSON wallet channel warning is advisory. An operator who accepts the
+  `docker inspect` exposure can still use it; the mounted file channel is the
+  documented safe default.
 
 ## 4. Operator checklist (pre-launch)
 
@@ -251,6 +274,12 @@ control↔test map, not a marketing summary.
     imported from environment variables (it is pytest-only). Check a response
     from the public origin carries `Content-Security-Policy` with
     `base-uri 'none'` and `X-Frame-Options: DENY`.
+13. Run `python3 scripts/preflight_deploy.py` on the VM before arming. It
+    must print `0 FAIL`; a `runtime security` or `container hardening` FAIL
+    means the deployed env/compose has undone an S6/S7/S8 control.
+14. Keep the API port bound to `127.0.0.1` and SearXNG without a host port.
+    Bump Docker digests and GitHub Action SHAs deliberately, then re-run
+    `docker compose config` and the preflight.
 
 ## 5. Rotation runbook
 

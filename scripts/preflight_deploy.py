@@ -62,7 +62,9 @@ ENV_OVERRIDE_KEYS = (
     "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
     "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
     "WALLET_KEYPAIR_PATH", "WALLET_KEYPAIR_HOST_PATH",
-    "EXPECTED_WALLET_ADDRESS",
+    "EXPECTED_WALLET_ADDRESS", "DEBUG", "RATE_LIMIT_ENABLED",
+    "FORCE_HTTPS", "MAX_REQUEST_BODY_BYTES", "TRUSTED_PROXY_CIDRS",
+    "SESSION_SECRET",
 )
 
 # The two wallet secret channels are mutually exclusive (see wallet.py):
@@ -200,6 +202,48 @@ def check_admin_token(env: dict[str, str]) -> Check:
                       f"ADMIN_TOKEN is {len(token)} chars; need >= 32 "
                       "(openssl rand -hex 32)")
     return _check("admin token", PASS, "ADMIN_TOKEN >= 32 chars")
+
+
+def check_runtime_security(env: dict[str, str]) -> Check:
+    """Refuse runtime settings that would undo the §92 server controls."""
+    truthy = {"1", "true", "yes", "on"}
+    falsy = {"0", "false", "no", "off"}
+    problems: list[str] = []
+
+    if _value(env, "DEBUG").lower() in truthy:
+        problems.append("DEBUG is enabled (must be false in deployment)")
+    if _value(env, "RATE_LIMIT_ENABLED").lower() in falsy:
+        problems.append("RATE_LIMIT_ENABLED is false (tiered limiter disabled)")
+    if _value(env, "FORCE_HTTPS").lower() in falsy:
+        problems.append("FORCE_HTTPS is false (plaintext origin allowed)")
+
+    body = _value(env, "MAX_REQUEST_BODY_BYTES")
+    if body:
+        try:
+            body_bytes = int(body)
+        except ValueError:
+            problems.append("MAX_REQUEST_BODY_BYTES is not an integer")
+        else:
+            if body_bytes <= 0:
+                problems.append("MAX_REQUEST_BODY_BYTES must be positive")
+
+    trusted = _value(env, "TRUSTED_PROXY_CIDRS")
+    cidrs = [part.strip() for part in trusted.split(",") if part.strip()]
+    if any(cidr in {"0.0.0.0/0", "::/0"} for cidr in cidrs):
+        problems.append(
+            "TRUSTED_PROXY_CIDRS trusts every address (X-Forwarded-For "
+            "spoofing)")
+
+    if problems:
+        return _check("runtime security", FAIL, "; ".join(problems))
+    if not _value(env, "SESSION_SECRET"):
+        return _check(
+            "runtime security", WARN,
+            "SESSION_SECRET unset; sessions derive from ADMIN_TOKEN, so a "
+            "token rotation logs every browser out")
+    return _check(
+        "runtime security", PASS,
+        "DEBUG off, limiter and HTTPS on, proxy trust bounded")
 
 
 def check_searxng_secret(env: dict[str, str]) -> Check:
@@ -588,6 +632,62 @@ def _service_env(service: dict) -> dict[str, str]:
     return out
 
 
+def _as_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    return [str(item) for item in value]
+
+
+def _deploy_limit(service: dict, key: str):
+    limits = (
+        ((service.get("deploy") or {}).get("resources") or {})
+        .get("limits") or {}
+    )
+    return limits.get(key)
+
+
+def _is_loopback_binding(binding) -> bool:
+    if isinstance(binding, dict):
+        return binding.get("host_ip") in ("127.0.0.1", "::1")
+    text = str(binding)
+    return text.startswith(("127.0.0.1:", "[::1]:"))
+
+
+def _compose_hardening_issues(services: dict) -> list[str]:
+    """§92 S8: the compose file must carry the runtime hardening contract."""
+    issues: list[str] = []
+    for name in ("api", "live"):
+        service = services.get(name) or {}
+        if service.get("read_only") is not True:
+            issues.append(f"{name}: read_only is not true")
+        for binding in service.get("ports") or []:
+            if not _is_loopback_binding(binding):
+                issues.append(f"{name}: publishes a non-loopback port {binding}")
+
+    for name in ("api", "live", "searxng"):
+        service = services.get(name) or {}
+        if "ALL" not in _as_list(service.get("cap_drop")):
+            issues.append(f"{name}: cap_drop does not include ALL")
+        if "no-new-privileges:true" not in _as_list(service.get("security_opt")):
+            issues.append(f"{name}: no-new-privileges is not set")
+        try:
+            pids = int(service.get("pids_limit") or 0)
+        except (TypeError, ValueError):
+            pids = 0
+        if pids <= 0:
+            issues.append(f"{name}: pids_limit is missing")
+        if not (service.get("mem_limit") or _deploy_limit(service, "memory")):
+            issues.append(f"{name}: memory limit is missing")
+        if not (service.get("cpus") or _deploy_limit(service, "cpus")):
+            issues.append(f"{name}: CPU limit is missing")
+
+    if (services.get("searxng") or {}).get("ports"):
+        issues.append("searxng: publishes a host port (must stay internal)")
+    return issues
+
+
 def check_compose(config: dict | None, error: str = "") -> list[Check]:
     if config is None:
         return [_check("compose config", FAIL,
@@ -616,6 +716,15 @@ def check_compose(config: dict | None, error: str = "") -> list[Check]:
         checks.append(_check(
             "api wallet isolation", PASS,
             "no non-empty WALLET_* in the api service environment"))
+
+    hardening = _compose_hardening_issues(services)
+    checks.append(_check(
+        "container hardening",
+        FAIL if hardening else PASS,
+        "; ".join(hardening) if hardening else
+        "read-only app root, ALL caps dropped, no-new-privileges, "
+        "pid/memory/CPU bounds, searxng internal-only",
+    ))
     return checks
 
 
@@ -633,6 +742,7 @@ def run_preflight(env: dict[str, str], root: Path,
         check_data_backend(env),
         check_llm_key(env),
         check_admin_token(env),
+        check_runtime_security(env),
         check_searxng_secret(env),
         check_backup_key(env),
         check_frontend_origin(env),

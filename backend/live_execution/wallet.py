@@ -32,6 +32,9 @@ class WalletError(Exception):
     """Wallet could not be loaded — nothing was signed or sent."""
 
 
+log = logging.getLogger(__name__)
+
+
 # ---------------------------------------------------------------------------
 # Log redaction: the keypair material is a JSON array of 64 ints. If any log
 # record ever carries it (a stray exception dump, a debug print), mask it
@@ -146,6 +149,11 @@ def load_keypair(path: str | None = None):
             f"file {config.WALLET_KEYPAIR_PATH!r}",
         )
     elif config.WALLET_KEYPAIR_JSON.strip():
+        log.warning(
+            "wallet: WALLET_KEYPAIR_JSON selected; the keypair is visible to "
+            "docker inspect and /proc/<pid>/environ — prefer the mounted "
+            "WALLET_KEYPAIR_PATH file channel for a VM deployment"
+        )
         raw = _parse_material(
             config.WALLET_KEYPAIR_JSON, "WALLET_KEYPAIR_JSON"
         )
