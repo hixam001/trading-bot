@@ -13,6 +13,7 @@ Operator-facing settings (API keys, model URL, backend selection) load from
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -575,6 +576,11 @@ FORCE_HTTPS: bool = os.getenv("FORCE_HTTPS", "true").strip().lower() == "true"
 # /openapi.json schema route to prevent information disclosure.
 ENVIRONMENT: str = os.getenv("ENVIRONMENT", "production").strip().lower()
 DEBUG: bool = os.getenv("DEBUG", "false").strip().lower() == "true"
+# Test-only trust for synthetic Host headers (httpx ASGITransport uses
+# "test"/"testserver"). Never set in production: outside a pytest process,
+# those names must not be treated as loopback, or a forged Host header could
+# bypass the HTTPS redirect. Not environment-overridable.
+TESTING: bool = "pytest" in sys.modules
 
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0

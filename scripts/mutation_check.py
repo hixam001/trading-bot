@@ -971,6 +971,98 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_s6_deploy_limits.py",
         description="Public funnel scan accepts an unbounded limit",
     ),
+    # §92-S7
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_HEADER_MIDDLEWARE_OFF",
+        file_path="backend/api/main.py",
+        exact_old_text="    return apply_security_headers(request, response)",
+        new_text="    return response",
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="Security headers removed from normal response middleware",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_500_HEADERS_OFF",
+        file_path="backend/api/error_handler.py",
+        exact_old_text=(
+            "    return apply_security_headers(\n"
+            "        request,\n"
+            "        JSONResponse(\n"
+            "            status_code=500,\n"
+            "            content=content,\n"
+            "        ),\n"
+            "    )"
+        ),
+        new_text=(
+            "    return JSONResponse(\n"
+            "        status_code=500,\n"
+            "        content=content,\n"
+            "    )"
+        ),
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="Unhandled-500 path bypasses the shared security headers",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_CSP_BASE_URI_RELAXED",
+        file_path="backend/api/security_headers.py",
+        exact_old_text='        "base-uri \'none\'",',
+        new_text='        "base-uri \'self\'",',
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="CSP allows a same-origin <base> tag (relative-URL hijack)",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_TEST_HOST_TRUST_ALWAYS",
+        file_path="backend/api/main.py",
+        exact_old_text='    return host in _TEST_HOSTS and bool(getattr(config, "TESTING", False))',
+        new_text="    return host in _TEST_HOSTS",
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="Synthetic test hostnames bypass HTTPS even outside pytest",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_DEBUG_AUTH_BYPASS",
+        file_path="backend/api/auth.py",
+        exact_old_text="    if token_ok:",
+        new_text='    if token_ok or getattr(config, "DEBUG", False):',
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="DEBUG mode bypasses operator authentication",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_DEBUG_CSRF_BYPASS",
+        file_path="backend/api/main.py",
+        exact_old_text="            and path not in _CSRF_EXEMPT_PATHS",
+        new_text=(
+            "            and path not in _CSRF_EXEMPT_PATHS\n"
+            '            and not getattr(config, "DEBUG", False)'
+        ),
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="DEBUG mode bypasses the CSRF header check",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_DEBUG_RATE_LIMIT_OFF",
+        file_path="backend/api/rate_limiter.py",
+        exact_old_text='        if not getattr(config, "RATE_LIMIT_ENABLED", True):',
+        new_text=(
+            '        if not getattr(config, "RATE_LIMIT_ENABLED", True) '
+            'or getattr(config, "DEBUG", False):'
+        ),
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="DEBUG mode disables rate limiting",
+    ),
+    Mutation(
+        phase="§92-S7",
+        mutation_id="92S7_DEBUG_MESSAGE_UNREDACTED",
+        file_path="backend/api/error_handler.py",
+        exact_old_text='        content["debug_message"] = redact_text(str(exc))',
+        new_text='        content["debug_message"] = str(exc)',
+        test_selector="backend/tests/test_s7_response_hardening.py",
+        description="Debug exception text echoes a provider secret unredacted",
+    ),
 ]
 
 

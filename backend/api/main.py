@@ -44,6 +44,7 @@ from api.routes import (
     system_status,
 )
 from api.websocket import FeedBroadcaster, websocket_endpoint
+from api.security_headers import apply_security_headers
 from data_providers import build_provider
 from llm.narrator import Narrator
 
@@ -290,7 +291,19 @@ async def _send_body_too_large(scope, receive, send) -> None:
 app.add_middleware(RequestBodyLimitMiddleware)
 
 
-_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost", "testclient", "test", "testserver", "app"})
+_LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# Synthetic hostnames used by httpx/Starlette test transports. They are only
+# loopback while a pytest process is running; otherwise a forged Host header
+# would disable the HTTPS redirect.
+_TEST_HOSTS = frozenset({"testclient", "test", "testserver", "app"})
+
+
+def _is_loopback_host(host: str) -> bool:
+    if not host:
+        return True
+    if host in _LOOPBACK_HOSTS:
+        return True
+    return host in _TEST_HOSTS and bool(getattr(config, "TESTING", False))
 
 
 @app.middleware("http")
@@ -309,10 +322,10 @@ async def force_https_middleware(request, call_next):
         client_host = getattr(getattr(request, "client", None), "host", "") or ""
         request_host = getattr(request.url, "hostname", "") or ""
 
-        # Allow local loopback and test runners when no proxy indicates HTTP
+        # Allow local loopback and, under pytest only, synthetic test hosts.
         is_loopback = (
-            (client_host in _LOOPBACK_HOSTS or not client_host)
-            and (request_host in _LOOPBACK_HOSTS or not request_host)
+            _is_loopback_host(client_host)
+            and _is_loopback_host(request_host)
             and not is_insecure_forwarded
         )
 
@@ -348,50 +361,7 @@ async def security_headers(request, call_next):
     no-store keeps book/wallet data out of any cache.
     """
     response = await call_next(request)
-    response.headers.setdefault("X-Content-Type-Options", "nosniff")
-    response.headers.setdefault("X-Frame-Options", "DENY")
-    response.headers.setdefault("Referrer-Policy", "no-referrer")
-    response.headers.setdefault("Cross-Origin-Opener-Policy", "same-origin")
-    response.headers.setdefault("X-Permitted-Cross-Domain-Policies", "none")
-
-    forwarded_proto = (request.headers.get("x-forwarded-proto") or "").lower()
-    forwarded_hdr = (request.headers.get("forwarded") or "").lower()
-    is_https = (
-        request.url.scheme == "https"
-        or forwarded_proto == "https"
-        or "proto=https" in forwarded_hdr
-    )
-
-    csp_directives = [
-        "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: https:",
-        "font-src 'self' data:",
-        "connect-src 'self' ws: wss:",
-        "object-src 'none'",
-        "base-uri 'self'",
-        "frame-ancestors 'none'",
-        "form-action 'self'",
-    ]
-    if is_https or getattr(config, "FORCE_HTTPS", True):
-        csp_directives.append("upgrade-insecure-requests")
-
-    response.headers.setdefault("Content-Security-Policy", "; ".join(csp_directives))
-    # X-XSS-Protection intentionally NOT set: deprecated and disabled in all
-    # modern browsers (it was an IE-era header that auditing flags as stale).
-    response.headers.setdefault(
-        "Permissions-Policy",
-        "geolocation=(), microphone=(), camera=(), payment=()",
-    )
-    if is_https:
-        response.headers.setdefault(
-            "Strict-Transport-Security",
-            "max-age=63072000; includeSubDomains; preload",
-        )
-    if request.url.path.startswith("/api/"):
-        response.headers.setdefault("Cache-Control", "no-store")
-    return response
+    return apply_security_headers(request, response)
 
 
 for module in (feed, funnel, holdings, journal, stats, market_regime,

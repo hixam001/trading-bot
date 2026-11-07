@@ -58,6 +58,7 @@ _SOLANA_KEYPAIR_RE = re.compile(r"\[\s*\d+(?:\s*,\s*\d+){40,}\s*\]")
 
 from secret_registry import get_runtime_secrets, register_secret  # noqa: F401
 from redaction import redact_text
+from api.security_headers import apply_security_headers
 
 
 class SecretRedactorFilter(logging.Filter):
@@ -187,7 +188,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
         "error_id": error_id,
     }
     if is_debug:
-        content["debug_message"] = str(exc)
+        # Even local debug output must not echo a provider key or wallet
+        # secret that happened to appear in an exception message.
+        content["debug_message"] = redact_text(str(exc))
         content["exception_type"] = type(exc).__name__
 
     try:
@@ -204,9 +207,12 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
     except Exception:
         pass
 
-    return JSONResponse(
-        status_code=500,
-        content=content,
+    return apply_security_headers(
+        request,
+        JSONResponse(
+            status_code=500,
+            content=content,
+        ),
     )
 
 
@@ -250,19 +256,25 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
             "error_id": error_id,
         }
         if is_debug:
-            content["debug_message"] = str(exc.detail)
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=content,
-            headers=headers,
+            content["debug_message"] = redact_text(str(exc.detail))
+        return apply_security_headers(
+            request,
+            JSONResponse(
+                status_code=exc.status_code,
+                content=content,
+                headers=headers,
+            ),
         )
 
     # For 4xx errors, sanitize detail to ensure no inadvertent secret leakage
     safe_detail = sanitize_error_detail(exc.detail)
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={"detail": safe_detail},
-        headers=headers,
+    return apply_security_headers(
+        request,
+        JSONResponse(
+            status_code=exc.status_code,
+            content={"detail": safe_detail},
+            headers=headers,
+        ),
     )
 
 
@@ -294,9 +306,12 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
         cleaned_errors.append(clean_item)
 
-    return JSONResponse(
-        status_code=422,
-        content={"detail": cleaned_errors},
+    return apply_security_headers(
+        request,
+        JSONResponse(
+            status_code=422,
+            content={"detail": cleaned_errors},
+        ),
     )
 
 
