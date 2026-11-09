@@ -688,6 +688,77 @@ def _compose_hardening_issues(services: dict) -> list[str]:
     return issues
 
 
+def _writable_mounts(service: dict) -> list[str]:
+    """Container paths writable for this service (volumes without :ro + tmpfs)."""
+    mounts: list[str] = []
+    for volume in service.get("volumes") or []:
+        parts = str(volume).split(":")
+        if len(parts) >= 2:
+            mode = parts[2] if len(parts) > 2 else "rw"
+            if mode != "ro":
+                mounts.append(parts[1].rstrip("/"))
+    for tmpfs in service.get("tmpfs") or []:
+        mounts.append(str(tmpfs).rstrip("/"))
+    return mounts
+
+
+def _is_under(path: str, root: str) -> bool:
+    try:
+        Path(path).relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+# §93 R1: every runtime write path owned by a compose service. The path is
+# resolved from the service environment (compose overrides .env) with the
+# config defaults for anything compose does not set.
+RUNTIME_WRITE_PATHS: dict[str, tuple[str, ...]] = {
+    "live": (
+        "LIVE_STATE_DIR", "BLOCKLIST_STATE_FILE", "FOMO_PRIVY_STATE_FILE",
+        "SECRET_STORE_KEY_FILE", "SUPABASE_PIN_FILE", "SPEND_GUARD_FILE",
+        "DB_PATH", "LOG_DIR",
+    ),
+    "api": (
+        "SESSION_REVOCATION_FILE", "KB_INGESTED_DIR", "SPEND_GUARD_FILE",
+        "SUPABASE_PIN_FILE", "DB_PATH", "LOG_DIR",
+    ),
+}
+
+
+def check_runtime_write_paths(config: dict | None, env: dict[str, str],
+                              error: str = "") -> list[Check]:
+    """§93 R1: no runtime write may resolve onto the read-only root."""
+    if config is None:
+        return [_check("runtime write paths", FAIL,
+                       error or "compose config unavailable")]
+    services = config.get("services") or {}
+    findings: list[str] = []
+    resolved_rows: list[str] = []
+    for role, keys in RUNTIME_WRITE_PATHS.items():
+        service = services.get(role) or {}
+        mounts = _writable_mounts(service)
+        service_env = _service_env(service)
+        live_state = (service_env.get("LIVE_STATE_DIR")
+                      or _value(env, "LIVE_STATE_DIR")
+                      or "/app/backend/live_execution/state")
+        for key in keys:
+            raw = service_env.get(key) or _value(env, key) or ""
+            if key == "SPEND_GUARD_FILE" and not raw:
+                raw = str(Path(live_state) / "spend_guard.json")
+            if not raw:
+                findings.append(f"{role}: {key} is unset and has no default")
+                continue
+            if not any(_is_under(raw, mount) for mount in mounts) and not _is_under(raw, "/tmp"):
+                findings.append(f"{role}: {key}={raw} is on the read-only root")
+            else:
+                resolved_rows.append(f"{role}:{key}")
+    if findings:
+        return [_check("runtime write paths", FAIL, "; ".join(findings))]
+    return [_check("runtime write paths", PASS,
+                   f"{len(resolved_rows)} write paths on writable mounts/tmpfs")]
+
+
 def check_compose(config: dict | None, error: str = "") -> list[Check]:
     if config is None:
         return [_check("compose config", FAIL,
@@ -754,6 +825,8 @@ def run_preflight(env: dict[str, str], root: Path,
                                     euid_reader=euid_reader))
     if include_compose:
         checks.extend(check_compose(compose_config, compose_error))
+        checks.extend(check_runtime_write_paths(compose_config, env,
+                                                compose_error))
     return checks
 
 

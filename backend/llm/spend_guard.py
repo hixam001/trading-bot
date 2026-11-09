@@ -46,6 +46,16 @@ def _today() -> str:
 
 
 def _state_path() -> Path:
+    """Resolved counter path.
+
+    §93 R1: ``SPEND_GUARD_FILE`` is the explicit home (compose points the API
+    at its own counter on the data volume). When unset, the historical
+    ``LIVE_STATE_DIR/spend_guard.json`` default is preserved — resolving at
+    call time keeps the per-test ``LIVE_STATE_DIR`` override working.
+    """
+    configured = str(getattr(config, "SPEND_GUARD_FILE", "") or "").strip()
+    if configured:
+        return Path(configured)
     return Path(config.LIVE_STATE_DIR) / STATE_FILE_NAME
 
 

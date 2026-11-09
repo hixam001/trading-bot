@@ -111,6 +111,32 @@ import ipaddress
 import socket
 from typing import Any
 
+from tests.rofs_helpers import ErofsGuard, apply_service_env
+
+
+@pytest.fixture
+def rofs_service(tmp_path, monkeypatch):
+    """Install a simulated read-only root for one compose service.
+
+    ``rofs_service("live")`` / ``rofs_service("api")`` returns the guard and
+    applies the service's compose environment (with writable mounts mirrored
+    into ``tmp_path``).  Any write outside those mounts raises EROFS.
+    """
+    guards: list[ErofsGuard] = []
+
+    def _install(role: str) -> ErofsGuard:
+        root = tmp_path / f"rofs_{role}"
+        guard = ErofsGuard(role, root)
+        apply_service_env(guard, monkeypatch, role, root)
+        guard.install()
+        guards.append(guard)
+        return guard
+
+    yield _install
+    for guard in guards:
+        guard.restore()
+
+
 _IS_NETWORK_EXEMPT = False
 
 

@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import ssl
+from pathlib import Path
 from urllib.parse import urlparse
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -60,7 +61,9 @@ def _host_port(dsn: str) -> tuple[str, int]:
     return parsed.hostname or "", port
 
 
-_PIN_PATH = config.BASE_DIR / ".supabase_fp.txt"
+def _pin_path() -> Path:
+    """Resolved per call so tests/operator can retarget via config (§93 R1)."""
+    return Path(str(getattr(config, "SUPABASE_PIN_FILE", "")))
 
 
 def _fetch_cert_fingerprint(host: str, port: int) -> str:
@@ -105,18 +108,19 @@ async def _tls_context() -> ssl.SSLContext:
     try:
         fp = _fetch_cert_fingerprint(*_host_port(_dsn()))
         expected: Optional[str] = None
-        if _PIN_PATH.exists():
-            expected = _PIN_PATH.read_text().strip()
+        pin_path = _pin_path()
+        if pin_path.exists():
+            expected = pin_path.read_text().strip()
             if expected and fp != expected:
                 raise RuntimeError(
                     f"SUPABASE CERTIFICATE FINGERPRINT MISMATCH "
                     f"(pinned {expected[:16]}…, got {fp[:16]}…) — "
                     f"possible MITM. If Supabase rotated certs legitimately, "
-                    f"delete {_PIN_PATH} to re-pin.")
+                    f"delete {pin_path} to re-pin.")
         if not expected:
-            _PIN_PATH.write_text(fp)
+            pin_path.write_text(fp)
             log.warning("db_pg: TOFU pinned Supabase cert %s… -> %s",
-                        fp[:16], _PIN_PATH)
+                        fp[:16], pin_path)
         else:
             log.info("db_pg: Supabase cert fingerprint matches pin (%s…)",
                      fp[:16])

@@ -49,6 +49,7 @@ DENYLIST_SUBSTRINGS = (
     "keypair",
     "secret_store",
     "sidecar",
+    "privy",
     ".key",
     ".pem",
     ".env",

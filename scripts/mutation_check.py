@@ -1293,6 +1293,42 @@ MUTATIONS: list[Mutation] = [
         ),
         description="Restored state is left armed with the kill switch clear",
     ),
+    # §93 R1 — every runtime write has a home on a writable volume.
+    Mutation(
+        phase="§93-R1",
+        mutation_id="93R1_BLOCKLIST_HOME_REMOVED",
+        file_path="docker-compose.yml",
+        exact_old_text=(
+            "      - BLOCKLIST_STATE_FILE=/app/backend/live_execution/state/"
+            "blocklist_state.json\n"
+        ),
+        new_text="",
+        test_selector="backend/tests/test_audit_93_r1.py",
+        description="Live blocklist state returns to the read-only root",
+    ),
+    Mutation(
+        phase="§93-R1",
+        mutation_id="93R1_PRIVY_HOME_REMOVED",
+        file_path="docker-compose.yml",
+        exact_old_text=(
+            "      - FOMO_PRIVY_STATE_FILE=/app/backend/live_execution/state/"
+            ".fomo_privy.json\n"
+        ),
+        new_text="",
+        test_selector="backend/tests/test_audit_93_r1.py",
+        description="Privy rotated-token sidecar returns to the read-only root",
+    ),
+    Mutation(
+        phase="§93-R1",
+        mutation_id="93R1_REVOCATION_HOME_REMOVED",
+        file_path="docker-compose.yml",
+        exact_old_text=(
+            "      - SESSION_REVOCATION_FILE=/app/data/session_revocations.json\n"
+        ),
+        new_text="",
+        test_selector="backend/tests/test_audit_93_r1.py",
+        description="API session revocations return to the read-only root",
+    ),
 ]
 
 

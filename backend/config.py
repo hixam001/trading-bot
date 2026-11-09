@@ -140,7 +140,12 @@ USE_SUPABASE_DB: bool = os.getenv("USE_SUPABASE_DB", "") == "1"
 SUPABASE_DB_URL: str = os.getenv("SUPABASE_DB_URL", "")
 KNOWLEDGE_BASE_DIR: Path = BASE_DIR / "knowledge_base"
 STATIC_KNOWLEDGE_FILE: Path = KNOWLEDGE_BASE_DIR / "static_knowledge.md"
-INGESTED_KNOWLEDGE_DIR: Path = KNOWLEDGE_BASE_DIR / "ingested"
+# §93 R1: the archive directory is env-overridable so the API (read-only root)
+# can put it on the writable data volume. ``INGESTED_KNOWLEDGE_DIR`` stays the
+# resolved value every caller already uses.
+KB_INGESTED_DIR: str = os.getenv("KB_INGESTED_DIR") or str(
+    KNOWLEDGE_BASE_DIR / "ingested")
+INGESTED_KNOWLEDGE_DIR: Path = Path(KB_INGESTED_DIR)
 
 # ---------------------------------------------------------------------------
 # Operator API auth (§38 security audit, finding F3).
@@ -198,6 +203,17 @@ SESSION_MAX_AGE_SECONDS: int = int(os.getenv("SESSION_MAX_AGE_SECONDS", "3600"))
 SESSION_REVOCATION_FILE: str = os.getenv("SESSION_REVOCATION_FILE") or str(
     PROJECT_ROOT / "state" / "session_revocations.json"
 )
+# §93 R1: the Supabase TOFU pin file is env-overridable so both api and live
+# can write it onto their own writable volume instead of the read-only root.
+SUPABASE_PIN_FILE: str = os.getenv("SUPABASE_PIN_FILE") or str(
+    BASE_DIR / ".supabase_fp.txt")
+# §93 R2: optional operator-supplied cert pin (no TOFU). Empty = use TOFU.
+SUPABASE_CERT_FINGERPRINT: str = os.getenv("SUPABASE_CERT_FINGERPRINT", "").strip()
+# §93 R1: spend-guard counter path. Empty means the historical default
+# ``LIVE_STATE_DIR/spend_guard.json``; the compose API service sets its own
+# counter file on the data volume (a separate small budget for API-side LLM
+# calls such as KB digests).
+SPEND_GUARD_FILE: str = os.getenv("SPEND_GUARD_FILE") or ""
 
 # Heartbeat freshness threshold used by the API's stale-heartbeat watcher.
 # Defined here so setting it in .env actually takes effect (previously only

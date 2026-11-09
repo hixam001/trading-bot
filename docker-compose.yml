@@ -91,6 +91,12 @@ services:
       - PORT=8000
       - DB_PATH=/app/data/trading_bot.db
       - LOG_DIR=/app/logs
+      # §93 R1: every API runtime write has a home on the writable data
+      # volume. The root filesystem stays read-only; no new capabilities.
+      - SESSION_REVOCATION_FILE=/app/data/session_revocations.json
+      - KB_INGESTED_DIR=/app/data/knowledge_base/ingested
+      - SPEND_GUARD_FILE=/app/data/spend_guard_api.json
+      - SUPABASE_PIN_FILE=/app/data/.supabase_fp.txt
       # Strip wallet key material so the internet-facing API process NEVER holds the signing key:
       - WALLET_KEYPAIR_PATH=
       - WALLET_KEYPAIR_JSON=
@@ -154,6 +160,13 @@ services:
       - ROLE=live
       - DB_PATH=/app/data/trading_bot.db
       - LOG_DIR=/app/logs
+      # §93 R1: runtime writes live on the read-write engine_state volume
+      # (blocklist loss memory, Privy sidecar, secret-store key, Supabase pin).
+      - LIVE_STATE_DIR=/app/backend/live_execution/state
+      - BLOCKLIST_STATE_FILE=/app/backend/live_execution/state/blocklist_state.json
+      - FOMO_PRIVY_STATE_FILE=/app/backend/live_execution/state/.fomo_privy.json
+      - SECRET_STORE_KEY_FILE=/app/backend/live_execution/state/.secret_store.key
+      - SUPABASE_PIN_FILE=/app/backend/live_execution/state/.supabase_fp.txt
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import time, os, sys; p = '/app/backend/live_execution/state/heartbeat.txt'; sys.exit(0 if os.path.exists(p) and time.time() - os.path.getmtime(p) < 300 else 1)\""]
       interval: 30s

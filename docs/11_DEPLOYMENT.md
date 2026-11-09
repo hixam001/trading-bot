@@ -184,6 +184,41 @@ wallet configured) the live cycle, and exits non-zero if EITHER dies, so the
 platform's restart policy recovers the whole engine. An armed deployment must
 never keep serving a green dashboard while the decision cycle is dead.
 
+**§93 R1 migration — writable homes for runtime state.** The containers run
+with a read-only root, so before `docker compose up -d` with the current
+compose, copy any existing state files out of the old container and into the
+new volume locations:
+
+```bash
+# From the old container (names may differ on your deployment)
+docker cp trading-bot-live:/app/backend/blocklist_state.json \
+  ./state-migration/blocklist_state.json
+docker cp trading-bot-live:/app/.fomo_privy.json \
+  ./state-migration/.fomo_privy.json
+docker cp trading-bot-live:/app/.secret_store.key \
+  ./state-migration/.secret_store.key
+docker cp trading-bot-live:/app/backend/.supabase_fp.txt \
+  ./state-migration/.supabase_fp.txt
+
+# After `docker compose up -d`, place them on the live volume and verify:
+docker compose cp ./state-migration/blocklist_state.json \
+  live:/app/backend/live_execution/state/blocklist_state.json
+docker compose cp ./state-migration/.fomo_privy.json \
+  live:/app/backend/live_execution/state/.fomo_privy.json
+docker compose cp ./state-migration/.secret_store.key \
+  live:/app/backend/live_execution/state/.secret_store.key
+docker compose cp ./state-migration/.supabase_fp.txt \
+  live:/app/backend/live_execution/state/.supabase_fp.txt
+docker compose exec live python scripts/rofs_smoke.py
+```
+
+`blocklist_state.json` now lives on the `engine_state` volume, so the loss
+memory, re-entry cooldown, and auto-block control **start working as §49
+designed** (more mints will be cooled down or blocked than in recent builds).
+That is a restoration of the control, not a regression. `.fomo_privy.json`
+and `.secret_store.key` are excluded from backups by the denylist at their new
+location; `blocklist_state.json` is included.
+
 ## 6. Pre-flight checklist
 
 - [ ] `pytest` fully green from the repo root

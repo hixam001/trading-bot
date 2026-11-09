@@ -57,15 +57,27 @@ def _hardened_service(**overrides) -> dict:
 
 
 def _compose(**api_env) -> dict:
-    return {"services": {
-        "api": _hardened_service(environment={
-            "WALLET_KEYPAIR_PATH": "",
-            "WALLET_KEYPAIR_JSON": "",
-            **api_env,
-        }),
-        "live": _hardened_service(),
-        "searxng": _hardened_service(),
-    }}
+    """The real repo compose, with the API wallet env overridden for tests."""
+    import yaml
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[2]
+    compose = yaml.safe_load(
+        (repo / "docker-compose.yml").read_text(encoding="utf-8"))
+    service = compose["services"]["api"]
+    env = service.get("environment") or []
+    merged = []
+    for item in env:
+        key = str(item).split("=", 1)[0]
+        if key in api_env:
+            merged.append(f"{key}={api_env[key]}")
+        else:
+            merged.append(str(item))
+    for key, value in api_env.items():
+        if not any(str(i).split("=", 1)[0] == key for i in env):
+            merged.append(f"{key}={value}")
+    service["environment"] = merged
+    return compose
 
 
 def _run(env, root, compose=None, **kw):

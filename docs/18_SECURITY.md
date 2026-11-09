@@ -134,6 +134,39 @@ Auth legend:
 | GET | /api | Public | Loud JSON 404 for bare API prefix. |
 | GET | /{full_path:path} | Public | SPA fallback; dotfile/sourcemap/secret-extension probes blocked. |
 
+## 1b. Runtime write paths
+
+Every write the running services perform has a home on a writable mount. The
+table is generated from `scripts/audit_runtime_writes.py`, which AST-scans
+`backend/` and `scripts/` for write-shaped calls and resolves each path's
+default from `config.py`. The compose contract test
+(`backend/tests/test_audit_93_r1.py`) re-parses `docker-compose.yml` and
+fails when a new write path resolves to the read-only root.
+
+| Path (default) | Config key | Service(s) | Mounted volume |
+|---|---|---|---|
+| `<backend>/blocklist_state.json` | `BLOCKLIST_STATE_FILE` | live | engine_state:/app/backend/live_execution/state |
+| `<repo>/.fomo_privy.json` | `FOMO_PRIVY_STATE_FILE` | live | engine_state:/app/backend/live_execution/state |
+| `<repo>/.secret_store.key` | `SECRET_STORE_KEY_FILE` | live | engine_state:/app/backend/live_execution/state |
+| `<backend>/.supabase_fp.txt` | `SUPABASE_PIN_FILE` | api, live | api engine_data:/app/data; live engine_state:/app/backend/live_execution/state |
+| `<repo>/state/session_revocations.json` | `SESSION_REVOCATION_FILE` | api | engine_data:/app/data |
+| `<backend>/knowledge_base/ingested/` | `KB_INGESTED_DIR` | api | engine_data:/app/data |
+| `<LIVE_STATE_DIR>/spend_guard.json` | `SPEND_GUARD_FILE` | api, live | api engine_data:/app/data/spend_guard_api.json; live engine_state |
+| `<LIVE_STATE_DIR>/{break_state,kill_switch,heartbeat,commits,executions,confirmations,safety_counters,crowd_chain_status,wallet_pubkey}.*` | `LIVE_STATE_DIR` | live | engine_state:/app/backend/live_execution/state |
+| `<DB_PATH>/trading_bot.db` | `DB_PATH` | api, live | engine_data:/app/data |
+| `<LOG_DIR>/{app,error,security}.log` | `LOG_DIR` | api, live | engine_logs:/app/logs |
+| `<BACKUP_DIR>/state-*.tar.gz.enc` | `BACKUP_DIR` (CLI/env) | operator | engine_backups:/app/backups |
+| `<LIVE_STATE_DIR>/resolve_pending_buy_audit.log` | `LIVE_STATE_DIR` (operator CLI) | operator | engine_state (or `--audit-log`) |
+| `<backend>/live_execution/dex_labels.json` | fixed repo path (dev script) | operator | image root (dev only) |
+| repo files | mutation harness (dev/CI) | dev | repository checkout |
+
+The API service keeps a **separate** spend-guard counter
+(`/app/data/spend_guard_api.json`) from the live runner's
+(`/app/backend/live_execution/state/spend_guard.json`): API-side LLM calls
+(knowledge-base digests) get their own small budget and cannot consume the
+live runner's entry budget. Both counters roll over at UTC midnight and fail
+closed when unwritable.
+
 ## 2. Control ↔ test map
 
 | Phase | Control | Enforced by | Proof |
