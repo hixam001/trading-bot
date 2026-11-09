@@ -453,12 +453,14 @@ the operator judges the control necessary for the deployment; none is silently
 assumed green by the test suite.
 
 - Docker image digest pinning: the committed digests were resolved from the
-  registry and static tests verify the syntax, but image builds/pulls after
-  pinning were not executed in the review environment. Build on the deployment
-  host/CI and record the result.
-- GitHub Action SHA pinning: SHAs were resolved via `git ls-remote` and static
-  tests verify full-length pins, but no CI run was observed in the review
-  environment. Watch the first green CI run and re-check each SHA when bumping.
+  registry, and CI built the pinned ARM64 image and validated the compose file
+  successfully on 2026-11-09 ([run 42565425194](https://github.com/hixam001/trading-bot/actions/runs/42565425194)).
+  Re-verify the pull on the deployment host and record it.
+- GitHub Action SHA pinning: SHAs were resolved via `git ls-remote`; CI ran the
+  pinned actions successfully on 2026-11-09 ([Tests 42565425194](https://github.com/hixam001/trading-bot/actions/runs/42565425194),
+  [gitleaks 42565425256](https://github.com/hixam001/trading-bot/actions/runs/42565425256),
+  [CodeQL 42565425309](https://github.com/hixam001/trading-bot/actions/runs/42565425309)).
+  Re-check each SHA when bumping.
 - Host firewall/iptables, Docker daemon configuration, and Tailscale ACLs: not
   visible from the repository. Confirm the API is reachable only through the
   intended proxy and that the host is not exposing port 8000.

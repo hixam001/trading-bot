@@ -5,7 +5,8 @@
 - Mutation harness: **109/109 CAUGHT** (95 prior rows + 14 new: 2 S1 backfill, 7 S2 backfill, 5 S9); restorations verified clean; `docs/17_MUTATION_LOG.md` regenerated.
 - Phase commits: S1 `a663e20`, S2 `99999df`, S3 `c16bbbf`, S4 `462e813`, S5 `fc4406c`, S6 `2d39fb4`, S7 `b374095`, S8 `5ff2657`, S9 this commit (message starts `§92 S9:`).
 - Frontend: `npm run build` + `tsc -b` clean; `scripts/scan_frontend_bundle.py` clean; Playwright **41/41** against a local mock API on `:8000` (`RATE_LIMIT_GENERAL_PER_MINUTE` raised only for the 41-test harness run; production config unchanged; rate limiting is separately proven by S6/S7).
-- Local prepush: **9/9 clean** (pytest, pip check, pip-audit, AST keypair isolation, tsc, build, npm audit, Playwright 41/41, gitleaks notice). Full-history gitleaks **v8.30.1 clean** (334 commits, 11.45 MB; only synthetic test sentinels, allowlisted in `.gitleaks.toml`). CI was not observed from this environment.
+- Local prepush: **9/9 clean** (pytest, pip check, pip-audit, AST keypair isolation, tsc, build, npm audit, Playwright 41/41, gitleaks notice). Full history gitleaks **clean under both the CI version (v8.24.3) and v8.30.1**; CI flagged one documentation false positive on the first push (a credential-name list in `docs/18_SECURITY.md`), fixed by rewording the line and adding a precise fingerprint to `.gitleaksignore` (`16bd30c`), then re-scanning clean.
+- GitHub Actions on `16bd30c` (2026-11-09): [Tests & Security Audit 42565425194](https://github.com/hixam001/trading-bot/actions/runs/42565425194) success (includes Docker ARM64 build + compose config); [gitleaks 42565425256](https://github.com/hixam001/trading-bot/actions/runs/42565425256) success; [CodeQL 42565425309](https://github.com/hixam001/trading-bot/actions/runs/42565425309) success.
 
 ### Fixed Defects by Phase
 
