@@ -18,9 +18,10 @@ the incident/rotation runbooks.
    execution ledger, the kill switch, and every signed transaction.
 2. **Operator authority** — `ADMIN_TOKEN`, the HttpOnly session cookie,
    `SESSION_SECRET`, and the persisted revocation registry.
-3. **Provider credentials** — Jupiter/RPC/Helius/Birdeye keys, LLM keys,
-   search keys, Telegram/ntfy tokens, `BACKUP_ENCRYPTION_KEY`,
-   `SECRET_STORE_KEY`, and the Supabase DSN/service role.
+3. **Provider credentials** — Jupiter, RPC, Helius, and Birdeye access;
+   LLM provider access; web-search access; Telegram and ntfy notification
+   tokens; backup-encryption material; secret-store material; and the
+   Supabase DSN/service role.
 4. **Money-adjacent data** — live positions, cash, executions, theses, and
    proof/commit records. Some of these are intentionally public under
    `LIVE_BOOK_PUBLIC=true`.
