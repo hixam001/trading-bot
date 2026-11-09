@@ -78,6 +78,16 @@ case "$ROLE" in
     ;;
 esac
 
+# §93 R3: reject weak operator credentials before starting either API role.
+# Live-only deliberately skips this gate so invalid web credentials cannot
+# disable deterministic exits. Error text names the fix, never the value.
+if [ "$ROLE" != "live" ]; then
+  if ! python -c 'import config; config.validate_api_credentials()'; then
+    echo "[entrypoint] FATAL: invalid API credentials; generate independent ADMIN_TOKEN / SESSION_SECRET with openssl rand -hex 32" >&2
+    exit 78
+  fi
+fi
+
 if [ "$ROLE" = "api" ]; then
   echo "[entrypoint] starting in API-only role (web process has no signing key access)"
   # Single worker is mandatory: rate-limit buckets, the global auth lockout,

@@ -12,6 +12,7 @@ Operator-facing settings (API keys, model URL, backend selection) load from
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from pathlib import Path
@@ -157,36 +158,37 @@ INGESTED_KNOWLEDGE_DIR: Path = Path(KB_INGESTED_DIR)
 from config_helpers import validate_admin_token_entropy
 
 _raw_admin_token = os.getenv("ADMIN_TOKEN", "")
-if _raw_admin_token:
-    if not validate_admin_token_entropy(_raw_admin_token):
-        # FAIL CLOSED AT BOOT. The old behavior logged critical and booted
-        # with auth disabled; a production process that silently loses its
-        # operator gate is worse than one that refuses to start.
-        raise RuntimeError(
-            "ADMIN_TOKEN has insufficient entropy (must be >= 32 characters "
-            "and >= 12 distinct characters). Refusing to start; run "
-            "'openssl rand -hex 32' and update .env."
-        )
-    ADMIN_TOKEN: str = _raw_admin_token
-else:
-    ADMIN_TOKEN: str = ""
+ADMIN_TOKEN_INVALID_REASON: str = ""
+ADMIN_TOKEN: str = _raw_admin_token
+if _raw_admin_token and not validate_admin_token_entropy(_raw_admin_token):
+    ADMIN_TOKEN = ""
+    ADMIN_TOKEN_INVALID_REASON = (
+        "ADMIN_TOKEN must have >= 32 characters and >= 12 distinct characters; "
+        "run 'openssl rand -hex 32' and update .env")
+    logging.getLogger(__name__).critical(ADMIN_TOKEN_INVALID_REASON)
 
-# Optional dedicated session-signing key. When set, browser session cookies
-# are signed with this value instead of ADMIN_TOKEN, so rotating the operator
-# token does not invalidate (or weaken) live sessions. When unset, the legacy
-# ADMIN_TOKEN-derived key remains in use. Invalid values fail boot closed.
+# Invalid operator secrets disable authentication but must never prevent the
+# wallet-holding exit scanner from importing config. Only the API refuses boot.
 from config_helpers import validate_session_secret
 _raw_session_secret = os.getenv("SESSION_SECRET", "")
-if _raw_session_secret:
-    if not validate_session_secret(_raw_session_secret, admin_token=ADMIN_TOKEN):
-        raise RuntimeError(
-            "SESSION_SECRET is invalid: it must be >= 32 characters, have "
-            ">= 12 distinct characters, and must not equal ADMIN_TOKEN. "
-            "Refusing to start; run 'openssl rand -hex 32'."
-        )
-    SESSION_SECRET: str = _raw_session_secret
-else:
-    SESSION_SECRET: str = ""
+SESSION_SECRET_INVALID_REASON: str = ""
+SESSION_SECRET: str = _raw_session_secret
+if _raw_session_secret and not validate_session_secret(
+        _raw_session_secret, admin_token=_raw_admin_token):
+    SESSION_SECRET = ""
+    SESSION_SECRET_INVALID_REASON = (
+        "SESSION_SECRET must have >= 32 characters, >= 12 distinct characters, "
+        "and differ from ADMIN_TOKEN; run 'openssl rand -hex 32' and update .env")
+    logging.getLogger(__name__).critical(SESSION_SECRET_INVALID_REASON)
+
+
+def validate_api_credentials() -> None:
+    """API-only boot gate. An unset credential retains disabled-auth semantics."""
+    reasons = [f"{name}: {reason}" for name, reason in (
+        ("ADMIN_TOKEN", ADMIN_TOKEN_INVALID_REASON),
+        ("SESSION_SECRET", SESSION_SECRET_INVALID_REASON)) if reason]
+    if any(reasons):
+        raise RuntimeError("API startup refused: " + "; ".join(r for r in reasons if r))
 
 DEFAULT_FORWARDED_ALLOW_IPS: str = "127.0.0.1,172.16.0.0/12,::1/128"
 

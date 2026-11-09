@@ -55,6 +55,7 @@ broadcaster = FeedBroadcaster()
 
 @contextlib.asynccontextmanager
 async def lifespan(app: FastAPI):
+    config.validate_api_credentials()
     from api import db
     await db.init_db()
     app.state.provider = build_provider()

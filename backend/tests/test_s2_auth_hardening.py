@@ -337,7 +337,7 @@ def _import_config(env_overrides: dict[str, str], cwd: Path) -> subprocess.Compl
     env.update(env_overrides)
     env["PYTHONPATH"] = str(REPO_ROOT / "backend")
     return subprocess.run(
-        [sys.executable, "-c", "import config"],
+        [sys.executable, "-c", "import config; config.validate_api_credentials()"],
         cwd=cwd,
         env=env,
         capture_output=True,

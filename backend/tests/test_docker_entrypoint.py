@@ -25,6 +25,8 @@ import config
 ENTRYPOINT = config.BASE_DIR / "docker-entrypoint.sh"
 
 _PY_STUB = """#!/usr/bin/env bash
+# Credential pre-check is covered with a real interpreter in §93 R3.
+if [ "${2:-}" = "import config; config.validate_api_credentials()" ]; then exit 0; fi
 echo "PYTHON_CALLED: $*" >> "$CALLS"
 sleep "${STUB_LIVE_SLEEP:-0}"
 exit "${STUB_LIVE_RC:-0}"
