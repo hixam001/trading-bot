@@ -55,6 +55,7 @@ from live_execution.quote_params import build_quote_params
 from live_execution.venue import token_deltas_from_tx
 from live_execution.trade_intent import TradeIntent, usd_to_raw_amount
 from rule_engine.exits import RISK_OFF_RULES
+from public_registry import register_public_value
 
 log = logging.getLogger(__name__)
 
@@ -187,6 +188,7 @@ async def _broadcast_and_confirm(
     from live_execution.exit_errors import SendRejected
 
     signed_swap = await sign_after_checks(swap_b64, payer, intent=intent, quote=quote)
+    register_public_value(signed_swap.signature)
     blockhash = getattr(signed_swap, "blockhash", "") or ""
     if on_signed is not None:
         outcome = on_signed(signed_swap)
@@ -194,6 +196,7 @@ async def _broadcast_and_confirm(
             await outcome
     try:
         sent = await solana.send_checked_swap(signed_swap)
+        register_public_value(sent)
     except SendRejected as exc:
         return OrderResult(
             status="failed",

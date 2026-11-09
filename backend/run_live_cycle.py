@@ -390,6 +390,7 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
     Returns {"adopted", "failed", "expired", "pending"} counts.
     """
     from types import SimpleNamespace
+    from public_registry import register_public_value
 
     stats = {"adopted": 0, "failed": 0, "expired": 0, "pending": 0}
     pending = ledger.pending_buys()
@@ -403,6 +404,8 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
     now = time.time()
     for rec in pending:
         sig = rec.signature or ""
+        register_public_value(sig)
+        register_public_value(rec.memo_signature)
         age = (max(now - float(rec.ts), 0.0)
                if rec.ts is not None else 0.0)
         status = None
@@ -499,14 +502,14 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                     "LATE BUY ADOPTED %s $%.4f -> %.6f tokens sig %s (was "
                     "pending; position now managed by the exit engine)",
                     rec.mint[:8], float(usd_actual), float(tokens_actual),
-                    sig[:16])
+                    sig)
                 try:
                     from alerts import alert_nowait, AlertEvent
                     alert_nowait(
                         AlertEvent.INFO,
                         (f"Late buy adopted for {rec.mint[:8]}: "
                          f"${float(usd_actual):.2f}"
-                         f" -> {float(tokens_actual):.6f} tokens (sig {sig[:16]})"),
+                         f" -> {float(tokens_actual):.6f} tokens (sig {sig})"),
                         key=f"late_buy_adopted:{rec.mint}",
                     )
                 except Exception:
@@ -591,7 +594,7 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                     alert_nowait(
                         AlertEvent.EXIT_UNRESOLVED,
                         (f"Buy still unresolved after {age/60.0:.0f} min for "
-                         f"{rec.mint[:8]} (sig {sig[:16]}, blockhash "
+                         f"{rec.mint[:8]} (sig {sig}, blockhash "
                          f"{rec.blockhash or 'unknown'}) — left PENDING; a late "
                          f"land is adopted, never an unmanaged holding"),
                         key=f"pending_buy:{rec.mint}",

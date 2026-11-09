@@ -12,9 +12,11 @@ from __future__ import annotations
 import re
 from typing import Iterable
 
-# Base58 alphabet (no 0, O, I, l). A 64-byte Solana secret key / signature is
-# 86-90 chars; we only redact when a key-ish context word precedes it so
-# public mint addresses and signatures are not blanket-masked.
+from public_registry import is_public_value
+
+# Base58 alphabet (no 0, O, I, l). A secret key and public signature have the
+# same shape. Unknown values stay masked; only exact registered signatures
+# may pass the raw shape rule, after known secrets have already been removed.
 _BASE58 = r"[1-9A-HJ-NP-Za-km-z]{80,90}"
 _BASE58_KEYPAIR_RE = re.compile(
     rf"(?i)\b(?:keypair|private[\s_-]?key|secret[\s_-]?key|wallet[\s_-]?key)"
@@ -40,7 +42,16 @@ _JSON_SENSITIVE_RE = re.compile(
 # by Helius/Supabase-style RPC URLs (`?api-key=`).
 _SENSITIVE_PARAM_RE = re.compile(
     r"""(?i)((?:[?&]|\b)(?:api[_-]?key|apikey|access[_-]?token|auth[_-]?token|"""
-    r"""refresh[_-]?token|token|secret|password|key)=)[^&#\s,;&"']+"""
+    r"""refresh[_-]?token)=)[^&#\s,;&"']+"""
+)
+_GENERIC_QUERY_PARAM_RE = re.compile(
+    r"""(?i)([?&](?:token|secret|password|key)=)[^&#\s,;&"']+"""
+)
+_CREDENTIAL_HEADER_RE = re.compile(
+    r"(?im)(\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*)([^\r\n]*)"
+)
+_HEADER_PARAM_RE = re.compile(
+    r"""(?i)(\b(?:token|secret|password|key)=)[^&#\s,;&"']+"""
 )
 # Credentials embedded in a URL path: https://rpc.example.com/v2/<key>,
 # https://mainnet.helius-rpc.com/?api-key=... (query handled above), etc.
@@ -117,12 +128,24 @@ def redact_text(
             lambda m: f"{m.group(0)[:len(m.group(0)) - len(m.group(2))]}<REDACTED-KEYPAIR>",
             sanitized,
         )
-        sanitized = _RAW_BASE58_RE.sub("<REDACTED-KEYPAIR>", sanitized)
-        sanitized = _BEARER_RE.sub("Bearer <REDACTED>", sanitized)
+        sanitized = _RAW_BASE58_RE.sub(
+            lambda match: (match.group(0) if is_public_value(match.group(0))
+                           else "<REDACTED-KEYPAIR>"),
+            sanitized,
+        )
         sanitized = _BASIC_AUTH_URL_RE.sub(r"\1***:***@", sanitized)
         sanitized = _URL_PATH_KEY_RE.sub(r"\1<REDACTED>", sanitized)
         sanitized = _JSON_SENSITIVE_RE.sub(r'\1"<REDACTED>"', sanitized)
         sanitized = _SENSITIVE_PARAM_RE.sub(r"\1<REDACTED>", sanitized)
+        sanitized = _GENERIC_QUERY_PARAM_RE.sub(r"\1<REDACTED>", sanitized)
+        sanitized = _CREDENTIAL_HEADER_RE.sub(
+            lambda match: match.group(1) + _HEADER_PARAM_RE.sub(
+                r"\1<REDACTED>", match.group(2)),
+            sanitized,
+        )
+        # Scrub named header parameters first: otherwise "Bearer token=..."
+        # can have its parameter name consumed while leaving the value behind.
+        sanitized = _BEARER_RE.sub("Bearer <REDACTED>", sanitized)
         for pat in _PROVIDER_TOKEN_RES:
             sanitized = pat.sub("<REDACTED-TOKEN>", sanitized)
         return sanitized

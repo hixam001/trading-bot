@@ -30,6 +30,7 @@ from __future__ import annotations
 import logging
 
 from live_execution import config, solana
+from public_registry import register_public_value
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def build_memo_transaction(memo_text: str, payer, blockhash: str) -> bytes:
         msg = Message.new_with_blockhash(
             [ix], payer.pubkey(), SolHash.from_string(blockhash))
         vtx = VersionedTransaction(msg, [payer])
+        register_public_value(str(vtx.signatures[0]))
         return bytes(vtx)
     except MemoError:
         raise
@@ -116,6 +118,7 @@ async def publish_commit_memo(payer, seal_hash: str,
         raise MemoPublishError(f"every rpc refused the memo transaction: {exc}") from exc
     if not sent:
         raise MemoPublishError("every rpc refused the memo transaction")
+    register_public_value(sent)
     conf = await solana.confirm_signature(sent, endpoints=endpoints)
     if not conf["confirmed"]:
         raise MemoPublishError(

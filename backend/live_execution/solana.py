@@ -17,6 +17,7 @@ import httpx
 from typing import Optional, NamedTuple
 
 from live_execution import config
+from public_registry import register_public_value
 
 log = logging.getLogger(__name__)
 
@@ -74,6 +75,9 @@ class SignedSwap:
     # §87 C: the transaction's recent_blockhash, so an ambiguous buy can be
     # proved expired later ("" means unparseable/unknown — never "expired").
     blockhash: str = ""
+
+    def __post_init__(self) -> None:
+        register_public_value(self.signature)
 
 
 async def send_checked_swap(
@@ -465,6 +469,7 @@ async def send_raw_transaction_detailed(
 
             result = body.get("result")
             if isinstance(result, str) and result:
+                register_public_value(result)
                 attempts.append({
                     "endpoint": endpoint,
                     "kind": "accepted",
@@ -531,6 +536,7 @@ async def confirm_signature(
     that is never confirmed is NOT a fill and must never be journalled.
     Returns {confirmed: bool, slot: int|None, err: str|None}.
     """
+    register_public_value(signature)
     deadline = asyncio.get_running_loop().time() + (timeout_s or config.CONFIRM_TIMEOUT_SECONDS)
     while asyncio.get_running_loop().time() < deadline:
         res = await rpc(
@@ -607,6 +613,7 @@ async def get_transaction(sig: str) -> dict | None:
     Fail-closed: a None result means the check cannot be run and should
     be reported as `unknown`, not `pass`. Never raises.
     """
+    register_public_value(sig)
     res = await rpc(
         "getTransaction",
         [sig, {"encoding": "jsonParsed",
@@ -784,6 +791,7 @@ async def get_signature_status(signature: str, endpoints: Optional[list[str]] = 
     """Fetch status for a specific signature with history search (§79 Phase B).
     Returns None if signature is unknown/not found or RPC failed, otherwise the status dict.
     """
+    register_public_value(signature)
     res = await rpc(
         "getSignatureStatuses",
         [[signature], {"searchTransactionHistory": True}],
