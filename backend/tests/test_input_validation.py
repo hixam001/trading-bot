@@ -93,7 +93,8 @@ async def test_login_rejects_oversized_captcha_or_honeypot(client):
 
 
 @pytest.mark.asyncio
-async def test_signup_rejects_malformed_username_format(client):
+async def test_signup_rejects_malformed_username_format(client, monkeypatch):
+    monkeypatch.setattr(config, "ALLOW_SIGNUP", True)
     # Contains illegal characters: spaces, angle brackets, slashes, quotes
     for bad_user in ("admin user", "<script>alert(1)</script>", "admin/root", "user;DROP TABLE"):
         r = await client.post("/api/auth/signup", json={
@@ -104,7 +105,8 @@ async def test_signup_rejects_malformed_username_format(client):
 
 
 @pytest.mark.asyncio
-async def test_signup_rejects_length_bounds(client):
+async def test_signup_rejects_length_bounds(client, monkeypatch):
+    monkeypatch.setattr(config, "ALLOW_SIGNUP", True)
     # Username too short (<3)
     r1 = await client.post("/api/auth/signup", json={"username": "ab", "password": "ValidPassword123!"})
     assert r1.status_code == 422

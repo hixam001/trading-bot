@@ -599,6 +599,13 @@ DEBUG: bool = os.getenv("DEBUG", "false").strip().lower() == "true"
 # those names must not be treated as loopback, or a forged Host header could
 # bypass the HTTPS redirect. Not environment-overridable.
 TESTING: bool = "pytest" in sys.modules
+_SYNTHETIC_TEST_HOSTS = frozenset({"testclient", "testserver", "test", "app"})
+
+
+def is_test_host(host: str) -> bool:
+    """Trust synthetic transport peers only inside a pytest process."""
+    return TESTING and host in _SYNTHETIC_TEST_HOSTS
+
 
 EXTERNAL_API_MAX_RETRIES: int = 3
 EXTERNAL_API_RETRY_BACKOFF_SECONDS: float = 2.0

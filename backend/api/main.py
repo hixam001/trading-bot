@@ -297,10 +297,6 @@ app.add_middleware(RequestBodyLimitMiddleware)
 
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
-# Synthetic hostnames used by httpx/Starlette test transports. They are only
-# loopback while a pytest process is running; otherwise a forged Host header
-# would disable the HTTPS redirect.
-_TEST_HOSTS = frozenset({"testclient", "test", "testserver", "app"})
 
 
 def _is_loopback_host(host: str) -> bool:
@@ -308,7 +304,7 @@ def _is_loopback_host(host: str) -> bool:
         return True
     if host in _LOOPBACK_HOSTS:
         return True
-    return host in _TEST_HOSTS and bool(getattr(config, "TESTING", False))
+    return config.is_test_host(host)
 
 
 @app.middleware("http")

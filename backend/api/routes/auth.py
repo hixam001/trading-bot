@@ -11,6 +11,7 @@ import hmac
 import time
 
 from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 import config
@@ -189,15 +190,22 @@ async def login(req: LoginRequest, request: Request, response: Response):
     raise HTTPException(status_code=403, detail="invalid credentials")
 
 
-@router.post("/signup")
+class _ConcealedSignupRoute(APIRoute):
+    def get_route_handler(self):
+        validate_and_handle = super().get_route_handler()
+
+        async def conceal_before_parsing(request: Request):
+            # Run before FastAPI reads/parses the body, including malformed
+            # JSON. When enabled, preserve the normal schema and bot checks.
+            if not getattr(config, "ALLOW_SIGNUP", False):
+                raise HTTPException(status_code=404, detail="Not Found")
+            return await validate_and_handle(request)
+
+        return conceal_before_parsing
+
+
 async def signup(req: SignupRequest, request: Request):
     """Registration endpoint protected with server-side bot challenge and honeypot."""
-    # Single-operator architecture: conceal the endpoint entirely by default.
-    # An explicit ALLOW_SIGNUP=true opts into the bot-protected 403 path so a
-    # deployment can later add an account store without changing the default.
-    if not getattr(config, "ALLOW_SIGNUP", False):
-        raise HTTPException(status_code=404, detail="Not Found")
-
     client_ip = get_client_ip(request)
     # 1. Server-side Bot Protection check executes BEFORE anything else
     await verify_bot_protection(
@@ -211,6 +219,10 @@ async def signup(req: SignupRequest, request: Request):
         status_code=403,
         detail="Public registration is disabled. Use operator ADMIN_TOKEN to authenticate.",
     )
+
+
+router.add_api_route("/signup", signup, methods=["POST"],
+                     route_class_override=_ConcealedSignupRoute)
 
 
 @router.post("/logout")

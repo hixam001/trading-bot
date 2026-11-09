@@ -378,10 +378,10 @@ def _is_request_https(request: Request | None) -> bool:
 
     client_host = get_client_ip(request) if request else ""
     request_host = getattr(request.url, "hostname", "") or ""
-    loopback_hosts = {"127.0.0.1", "::1", "localhost", "testclient", "test", "testserver", "app"}
+    loopback_hosts = {"127.0.0.1", "::1", "localhost"}
     is_loopback = (
-        (client_host in loopback_hosts or not client_host)
-        and (request_host in loopback_hosts or not request_host)
+        (client_host in loopback_hosts or config.is_test_host(client_host) or not client_host)
+        and (request_host in loopback_hosts or config.is_test_host(request_host) or not request_host)
     )
     if is_loopback:
         return False
@@ -611,8 +611,9 @@ def require_local_or_admin(request: Request) -> None:
     client_ip = get_client_ip(request)
     proxied = any(
         request.headers.get(h) is not None for h in _FORWARDING_HEADERS)
-    if not proxied and client_ip in (
-            "127.0.0.1", "::1", "localhost", "testclient"):
+    if not proxied and (
+            client_ip in ("127.0.0.1", "::1", "localhost")
+            or config.is_test_host(client_ip)):
         return
     require_admin_token(request)
 

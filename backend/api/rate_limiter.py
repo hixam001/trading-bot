@@ -55,7 +55,7 @@ def get_client_ip(request: Request) -> str:
 
     trusted_networks = _get_trusted_proxy_networks()
     is_trusted_peer = False
-    if client_host in ("127.0.0.1", "::1", "localhost", "testclient", "testserver"):
+    if client_host in ("127.0.0.1", "::1", "localhost") or config.is_test_host(client_host):
         is_trusted_peer = True
     else:
         try:
