@@ -190,26 +190,33 @@ compose, copy any existing state files out of the old container and into the
 new volume locations:
 
 ```bash
-# From the old container (names may differ on your deployment)
-docker cp trading-bot-live:/app/backend/blocklist_state.json \
-  ./state-migration/blocklist_state.json
-docker cp trading-bot-live:/app/.fomo_privy.json \
-  ./state-migration/.fomo_privy.json
-docker cp trading-bot-live:/app/.secret_store.key \
-  ./state-migration/.secret_store.key
-docker cp trading-bot-live:/app/backend/.supabase_fp.txt \
-  ./state-migration/.supabase_fp.txt
+# Stop the signer before copying. Keep staging private (it contains secrets).
+install -d -m 700 ./state-migration
+docker compose stop live api
+# Copy existing files while the old container still exists; skip only absent files.
+docker cp trading-bot-live:/app/backend/blocklist_state.json ./state-migration/blocklist_state.json
+docker cp trading-bot-live:/app/.fomo_privy.json ./state-migration/.fomo_privy.json
+docker cp trading-bot-live:/app/.secret_store.key ./state-migration/.secret_store.key
+docker cp trading-bot-live:/app/backend/.supabase_fp.txt ./state-migration/.supabase_fp.txt
 
-# After `docker compose up -d`, place them on the live volume and verify:
-docker compose cp ./state-migration/blocklist_state.json \
-  live:/app/backend/live_execution/state/blocklist_state.json
-docker compose cp ./state-migration/.fomo_privy.json \
-  live:/app/backend/live_execution/state/.fomo_privy.json
-docker compose cp ./state-migration/.secret_store.key \
-  live:/app/backend/live_execution/state/.secret_store.key
-docker compose cp ./state-migration/.supabase_fp.txt \
-  live:/app/backend/live_execution/state/.supabase_fp.txt
-docker compose exec live python scripts/rofs_smoke.py
+# Build/create new containers without starting the decision cycle.
+docker compose build
+docker compose create api live
+docker compose cp ./state-migration/blocklist_state.json live:/app/backend/live_execution/state/blocklist_state.json
+docker compose cp ./state-migration/.fomo_privy.json live:/app/backend/live_execution/state/.fomo_privy.json
+docker compose cp ./state-migration/.secret_store.key live:/app/backend/live_execution/state/.secret_store.key
+docker compose cp ./state-migration/.supabase_fp.txt live:/app/backend/live_execution/state/.supabase_fp.txt
+docker compose cp ./state-migration/.supabase_fp.txt api:/app/data/.supabase_fp.txt
+# docker cp may create root-owned files; repair only the copied state files.
+docker compose run --rm --no-deps --user 0 --entrypoint sh live -c \
+  'chown 10001:10001 /app/backend/live_execution/state/blocklist_state.json /app/backend/live_execution/state/.fomo_privy.json /app/backend/live_execution/state/.secret_store.key /app/backend/live_execution/state/.supabase_fp.txt; chmod 600 /app/backend/live_execution/state/blocklist_state.json /app/backend/live_execution/state/.fomo_privy.json /app/backend/live_execution/state/.secret_store.key /app/backend/live_execution/state/.supabase_fp.txt'
+docker compose run --rm --no-deps --user 0 --entrypoint sh api -c \
+  'chown 10001:10001 /app/data/.supabase_fp.txt; chmod 600 /app/data/.supabase_fp.txt'
+# Probe before starting, then verify the running service too.
+docker compose run --rm --no-deps live python /app/scripts/rofs_smoke.py
+docker compose run --rm --no-deps api python /app/scripts/rofs_smoke.py
+docker compose up -d
+docker compose exec live python /app/scripts/rofs_smoke.py
 ```
 
 `blocklist_state.json` now lives on the `engine_state` volume, so the loss

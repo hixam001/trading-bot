@@ -1,6 +1,7 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §93 local implementation and regression checks: **1934 backend passes**, **137/137 mutations caught**. See `docs/19_ROOTFS_AUDIT.md` for failing-first phase tables, projection assumptions and remaining operational verification. Docker unavailable; CI not verified by author.
 - [x] §92 Security hardening before real-money launch (2026-11-08, phases S1–S9):
       1. S1: one `backend/redaction.py` contract for logs/errors/alerts/security monitor; built-frontend secret scanner; gitignore/gitleaks hardening. Tests `test_redaction_adversarial.py` (22), `test_secret_hygiene.py` (29).
       2. S2: CSRF header + Origin/Referer; persistent revocations; global + per-IP auth ceilings; single-use PoW; concealed signup; Pydantic `extra="forbid"`; boot-time `ADMIN_TOKEN`/`SESSION_SECRET` validation; dedicated `SESSION_SECRET`; route-matrix test.

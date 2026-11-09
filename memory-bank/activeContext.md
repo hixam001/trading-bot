@@ -1,6 +1,25 @@
 # Active Context — trading-bot
 
-**Current — 2026-11-08 (§92 Security Hardening Before Real-Money Launch — complete, phases S1–S9):**
+**Current — 2026-11-09 (§93):**
+R1–R7 implemented and locally verified: strict runtime-write inventory and
+compose contract; safe sibling-only ROFS smoke; loud persistence failures;
+TLS pin enforced during each handshake before PostgreSQL auth; API-only
+credential boot gate; bounded public-signature registry with secret precedence;
+normalized ticker keys with collision/placeholder exclusion; 1 MiB global body
+cap and bounded UTF-8/escaped-JSON ingest override; offline spend projection;
+shared pytest-only host trust, pre-validation signup concealment and real route
+auth probes. Container controls, spend-cap defaults, gates, sizing and exits
+remain unchanged. Separate API/live counters and restored persisted loss memory
+are documented. Full report: docs/19_ROOTFS_AUDIT.md.
+
+Observed verification: backend 1934 passed, 0 failed, 0 skipped (102 existing
+deprecation warnings); mutation 137/137 caught, 0 survivors, restorations clean,
+no-flags log regenerated; dependency audits report no known vulnerabilities.
+Canonical prepush: all nine steps passed; Playwright 41/41; TypeScript/build/
+bundle scanner clean. Gitleaks absent locally, so its history scan is unverified.
+Docker unavailable; actual VM/Supabase behavior unverified. CI not verified by author.
+
+**Previous — 2026-11-08 (§92 Security Hardening Before Real-Money Launch — complete, phases S1–S9):**
 - **S1 — secret containment**: `backend/redaction.py` is the single scrubbing contract (config/runtime values, keypairs, PEM, Bearer/Basic URLs, credentialed query/path params, provider token shapes) for logs, errors, alerts, and the security monitor; `scripts/scan_frontend_bundle.py` scans the built bundle; `.gitignore`/`.gitleaks.toml` deny runtime material.
 - **S2 — auth boundary**: CSRF header + Origin/Referer on cookie mutations; persistent revocations (0600, fail-closed, bounded); global + per-IP auth ceilings; single-use PoW; concealed signup; `extra="forbid"`; boot-time `ADMIN_TOKEN`/`SESSION_SECRET` entropy validation; optional dedicated `SESSION_SECRET`; enforced route matrix.
 - **S3 — public surface**: fixed public fail-soft reasons; binding mismatch withholds wallet/fee payer; no exception/path echo; every Public GET scanned for sentinels.

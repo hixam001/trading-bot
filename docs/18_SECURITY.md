@@ -122,7 +122,7 @@ Auth legend:
 | GET | /api/auth/challenge | Public | Single-use signed PoW challenge. |
 | POST | /api/auth/login | Public | Rate-limited; bot check; constant-time token compare. |
 | POST | /api/auth/signup | Concealed | 404 unless `ALLOW_SIGNUP=true`; never creates accounts. |
-| POST | /api/auth/logout | Cookie+CSRF | Revokes signature and clears cookie. |
+| POST | /api/auth/logout | Cookie+CSRF | Revokes signature and clears cookie. Explicit no-cookie exemption: idempotent 200; a cookie-bearing mutation still requires CSRF. |
 | GET | /api/auth/session | Public | Reports auth state; never returns the token. |
 | GET | /api/live/portfolio | Loopback/Admin | Live book; public only with `LIVE_BOOK_PUBLIC=true`. |
 | GET | /api/live/executions | Loopback/Admin | Live ledger; public only with `LIVE_BOOK_PUBLIC=true`. |
@@ -155,15 +155,23 @@ fails when a new write path resolves to the read-only root.
 | `<LIVE_STATE_DIR>/{break_state,kill_switch,heartbeat,commits,executions,confirmations,safety_counters,crowd_chain_status,wallet_pubkey}.*` | `LIVE_STATE_DIR` | live | engine_state:/app/backend/live_execution/state |
 | `<DB_PATH>/trading_bot.db` | `DB_PATH` | api, live | engine_data:/app/data |
 | `<LOG_DIR>/{app,error,security}.log` | `LOG_DIR` | api, live | engine_logs:/app/logs |
-| `<BACKUP_DIR>/state-*.tar.gz.enc` | `BACKUP_DIR` (CLI/env) | operator | engine_backups:/app/backups |
-| `<LIVE_STATE_DIR>/resolve_pending_buy_audit.log` | `LIVE_STATE_DIR` (operator CLI) | operator | engine_state (or `--audit-log`) |
-| `<backend>/live_execution/dex_labels.json` | fixed repo path (dev script) | operator | image root (dev only) |
-| repo files | mutation harness (dev/CI) | dev | repository checkout |
+| `<BACKUP_DIR>/state-*.tar.gz.enc` | `BACKUP_DIR (CLI/env)` | operator | engine_backups:/app/backups |
+| `<LIVE_STATE_DIR>/resolve_pending_buy_audit.log` | `LIVE_STATE_DIR (operator CLI)` | operator | engine_state (or operator-specified --audit-log) |
+| `<LIVE_STATE_DIR>/safety_counters.json (ack script)` | `LIVE_STATE_DIR (operator CLI)` | operator | engine_state (or operator-specified state dir) |
+| `<backend>/live_execution/dex_labels.json (dev refresh)` | `fixed repo path (operator/dev script)` | operator | image root (dev only; not a compose service) |
+| `repo files mutated by the mutation harness (dev/CI)` | `repo root (dev/CI tool)` | dev | repository checkout |
+| `<LIVE_STATE_DIR>/break_state.json` | `BREAK_STATE_FILE` | live | engine_state |
+| `<LIVE_STATE_DIR>/kill_switch.json` | `KILL_SWITCH_FILE` | live | engine_state |
+| `<backend>/live_execution/state` | `LIVE_EXECUTION_STATE_DIR` | live | engine_state |
+| `<LOG_DIR>/app.log` | `LOG_FILE` | api, live | engine_logs |
+| `<LOG_DIR>/error.log` | `ERROR_LOG_FILE` | api, live | engine_logs |
+| `<LOG_DIR>/security.log` | `SECURITY_LOG_FILE` | api, live | engine_logs |
+| `unique .rofs-smoke-* siblings of configured runtime paths` | `runtime inventory (smoke only)` | operator, dev | same mounts as the selected compose service |
 
 The API service keeps a **separate** spend-guard counter
 (`/app/data/spend_guard_api.json`) from the live runner's
 (`/app/backend/live_execution/state/spend_guard.json`): API-side LLM calls
-(knowledge-base digests) get their own small budget and cannot consume the
+(knowledge-base digests) get an independent capped budget and cannot consume the
 live runner's entry budget. Both counters roll over at UTC midnight and fail
 closed when unwritable.
 
@@ -180,7 +188,7 @@ closed when unwritable.
 | S2 | PoW challenge single-use | `_USED_POW_NONCES` | `test_s2_auth_hardening.py` |
 | S2 | Signup concealed by default | `ALLOW_SIGNUP=false` → 404 | `test_s2_auth_hardening.py` |
 | S2 | Request schemas reject unknown fields | Pydantic `extra="forbid"` | `test_mass_assignment.py` |
-| S2 | Weak ADMIN_TOKEN/SESSION_SECRET refuses boot | `config.py` `RuntimeError` | `test_s2_auth_hardening.py` |
+| S2 / R3 | Invalid operator secrets disable auth; API refuses boot; live imports continue | `config.validate_api_credentials`, API lifespan and entrypoint | `test_s2_auth_hardening.py`, `test_audit_93_r3.py` |
 | S2 | Session signing key separable from operator token | `SESSION_SECRET` | `test_s2_auth_hardening.py` |
 | S3 | Public fail-soft reasons are fixed strings, never exception text | `disclosure.py`, `live_book.py` | `test_public_surface_leaks.py` |
 | S3 | Binding checks withhold the configured wallet and fee payer | `proof.py` `_verify_binding_checks` | `test_public_surface_leaks.py` |
@@ -223,7 +231,38 @@ closed when unwritable.
 Phases S1–S9 are complete; this table is the authoritative control↔test map,
 not a marketing summary.
 
+| R1 | Every writer classified; composed paths respect mounts, nested read-only mounts and independent overrides; smoke preserves state | `audit_runtime_writes.py`, preflight, compose and CI smoke | `test_audit_93_r1.py` |
+| R2 | State failures ERROR-log and enqueue hourly alerts/security events; TLS exact pin enforced during each handshake before DB auth | `alerts.py`, blocklist/auth/Privy, `api/db_pg.py` | `test_audit_93_r2.py` |
+| R3 | API-only weak-secret boot gate; live exit scanner can import | `config.py`, API lifespan, entrypoint | `test_audit_93_r3.py` |
+| R4 | Registered public signatures survive shape redaction; configured/runtime secrets always win | `public_registry.py`, redactor, signing/send/confirmation/pending receipts | `test_audit_93_r4.py`, unchanged `test_redaction_adversarial.py` |
+| R5 | Sanitised ticker keys shared by prompt/parse/lookup; duplicate/placeholder keys excluded before bounding | `llm/llm_brain.py` | `test_audit_93_r5.py` |
+| R6 | 1 MiB global pre-auth buffer; ingest accounts for UTF-8/JSON escapes; spend projection warns and logs without cap increases | ASGI body middleware, preflight, `spend_projection.py`, runner startup | `test_audit_93_r6.py`, `test_spend_projection.py` |
+| R7 | All synthetic peers pytest-only; disabled signup concealed before validation; real credential-free route probes | shared host helper, signup route, route matrix tests | `test_audit_93_r7.py`, `test_route_matrix.py` |
+
 ## 3. Residual risks
+
+- §93: API/live spend counters are independent, not a shared global budget.
+  Both apply the configured caps; set smaller per-service API caps if desired.
+  The projection covers live demand, excludes API digests, and uses stated
+  scenarios and the repository pricing snapshot. Token/cost estimates are not
+  mathematical upper bounds or measurements of actual provider billing.
+- §93: an unwritable TOFU pin is held only for the process lifetime. Restart
+  loses that pin unless an operator fingerprint or persisted file exists.
+  Every pinned connection checks the actual certificate during its TLS
+  handshake before PostgreSQL authentication; the pool init hook checks it
+  again. A known-pin probe failure refuses connection. A genuinely unpinned,
+  unverifiable last resort remains encrypted but unauthenticated, with ERROR
+  logging and one alert per process. Real Supabase integration is unverified.
+- §93: the bounded public-signature registry is process-local (5,000 LRU entries).
+  Evicted/unregistered signatures are conservatively masked; callers must
+  register persisted signatures when receiving them again. Configured and
+  runtime secrets are replaced before public exemptions.
+- §93: normal request bodies default to 1,048,576 bytes. Only KB ingest uses
+  `12 * MAX_INGEST_CHARS + 65,536` bytes: four UTF-8 bytes plus up to eight
+  extra JSON-escape bytes per character, with fixed metadata overhead. At
+  defaults this is 2,465,536 bytes, still bounded before auth. Batches must fit
+  this aggregate request ceiling; split larger batches into separate requests.
+
 
 - S1: redaction is heuristic for unknown token shapes. Configured/runtime
   values and the provider shapes used by this repo are covered; a brand-new
@@ -326,8 +365,11 @@ not a marketing summary.
   still trusted upstream code. Review the action diff when bumping a SHA.
 - S8: `read_only` relies on the app writing only to its mounted volumes and
   `/tmp`. A future dependency that writes elsewhere (for example a new browser
-  cache) needs a tmpfs/volume and a test update; otherwise the container will
-  fail closed rather than silently run with a writable root.
+  cache) needs a tmpfs/volume and a test update. A write outside those mounts
+  raises EROFS; code that catches it can keep running with degraded features.
+  The §93 compose contract in `test_audit_93_r1.py` and
+  `scripts/rofs_smoke.py` check the shipped write paths; they cannot guarantee
+  that every future dependency handles a failed write safely.
 - S8: `pids_limit`, `mem_limit`, and `cpus` are coarse host protections, not a
   guarantee that the process stays within its own heap or provider quota.
   Keep the application and provider alerts as the backstop.
@@ -374,7 +416,10 @@ not a marketing summary.
 3. `LIVE_BOOK_PUBLIC` is false unless the live book is intentionally public.
 4. `FRONTEND_ORIGIN` lists only real dashboard origins (no `*`).
 5. `SESSION_REVOCATION_FILE` lives on persistent storage, owned by the
-   service user, and is included in backups.
+   service user. The default backup covers `LIVE_STATE_DIR`; the API's
+   revocation file on `engine_data` is outside that backup set. After loss of
+   that volume, rotate the session signing secret before serving traffic so
+   previously revoked cookies cannot become valid again.
 6. Built frontend has been scanned (`python scripts/scan_frontend_bundle.py`).
 7. `gitleaks detect` is clean on the deployed commit and its history.
 8. `LLM_DAILY_CALL_CAP`, `LLM_DAILY_TOKEN_CAP`, `LLM_DAILY_COST_CAP_USD`, and
@@ -419,8 +464,9 @@ not a marketing summary.
     `INTERNAL_ERROR` alerts reach the operator channel, and that log rotation
     (10 MB × 5) is adequate for the expected traffic. Ship `security.log`
     off-host if host tampering is in scope.
-17. Confirm `SESSION_REVOCATION_FILE` is persistent, mode 0600, and included
-    in the backup set; confirm `LIVE_STATE_DIR/spend_guard.json` is writable and
+17. Confirm `SESSION_REVOCATION_FILE` is persistent and mode 0600. It is outside
+    the default `LIVE_STATE_DIR` backup set; rotate the session signing secret
+    if its volume is lost. Confirm `LIVE_STATE_DIR/spend_guard.json` is writable and
     that a corrupt guard pauses entries rather than exits.
 18. Do not clear a restored kill switch until reconcile reports clean. The
     restore command intentionally trips it with `run reconcile and clear
@@ -622,3 +668,26 @@ approved custody boundary.
    against the real API on `:8000`, prepush, and CI on the deployed commit.
 10. Re-check every UNVERIFIED item in §8 and record the evidence before
     declaring launch sign-off.
+
+
+## 10. §93 findings — 2026-11-09
+
+These IDs refer to the follow-up root-filesystem audit, separately from §92
+section 9. Full failing/passing evidence, projection assumptions and operational
+limitations are in [the §93 report](19_ROOTFS_AUDIT.md).
+
+| ID | Severity | Evidence | Fix | Test |
+|---|---|---|---|---|
+| F1 | High | Read-only defaults had no writable mount; smoke initially overwrote configured state | Compose homes, strict AST/site inventory, expanded-mount preflight, simulated EROFS and exclusive sibling smoke; loud persistence failures | `test_audit_93_r1.py`, `test_audit_93_r2.py` |
+| F2 | High | Weak-token config import stopped the wallet-holding runner | Clear invalid credential, record CRITICAL reason; reject API startup only | `test_audit_93_r3.py` |
+| F3 | Medium | FILLED signatures matched raw secret-key shape; plain `token=BONK` was masked | Bounded public registry after secret replacement; context-sensitive generic params | `test_audit_93_r4.py` |
+| F4 | Medium | Sanitised model ticker disagreed with raw candidate key | Shared normalization, collision/placeholder exclusions and candidate-owned mint selection | `test_audit_93_r5.py` |
+| F5 | Medium | 60-second tick already needs 1,440 brain calls/day before other stages | Offline per-provider call/token/cost/search scenarios, startup log and preflight WARN; caps unchanged | `test_spend_projection.py`, `test_audit_93_r6.py` |
+| F6 | Medium | 200 simultaneous 16 MiB bodies could buffer about 3.2 GB | 1 MiB global limit; bounded ingest override including escaped JSON; >4 MiB preflight WARN | `test_audit_93_r6.py` |
+| F7 | Low | Synthetic hosts received trust outside pytest | Shared `config.is_test_host` used by all four consumers | `test_audit_93_r7.py` |
+| F8 | Low | Disabled signup returned 422 for empty/invalid bodies | Conceal at route handler entry before FastAPI parses input | `test_audit_93_r7.py` |
+| F9 | Low | Route matrix listed auth without testing it | Probe all matrix rows without credentials; explicit idempotent logout exception | `test_route_matrix.py` |
+| F10 | Low | Backup and read-only failure claims exceeded behavior | Corrected revocation backup exclusion and silent-write residual; contract/smoke evidence linked | `test_audit_93_r1.py`, this document |
+
+CI not verified by author. Docker is unavailable in the author environment;
+the real-container smoke is wired into CI and has not been run locally.

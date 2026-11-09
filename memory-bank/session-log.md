@@ -1,3 +1,23 @@
+## Memory-bank update — §93 — read-only-root audit follow-through (2026-11-09)
+
+R1–R7 implemented and locally verified: strict runtime-write inventory and
+compose contract; safe sibling-only ROFS smoke; loud persistence failures;
+TLS pin enforced during each handshake before PostgreSQL auth; API-only
+credential boot gate; bounded public-signature registry with secret precedence;
+normalized ticker keys with collision/placeholder exclusion; 1 MiB global body
+cap and bounded UTF-8/escaped-JSON ingest override; offline spend projection;
+shared pytest-only host trust, pre-validation signup concealment and real route
+auth probes. Container controls, spend-cap defaults, gates, sizing and exits
+remain unchanged. Separate API/live counters and restored persisted loss memory
+are documented. Full report: docs/19_ROOTFS_AUDIT.md.
+
+Observed verification: backend 1934 passed, 0 failed, 0 skipped (102 existing
+deprecation warnings); mutation 137/137 caught, 0 survivors, restorations clean,
+no-flags log regenerated; dependency audits report no known vulnerabilities.
+Canonical prepush: all nine steps passed; Playwright 41/41; TypeScript/build/
+bundle scanner clean. Gitleaks absent locally, so its history scan is unverified.
+Docker unavailable; actual VM/Supabase behavior unverified. CI not verified by author.
+
 ## Memory-bank update — 2026-11-08 (§92 security hardening before real-money launch)
 
 - **Task**: implement §92 phases S1–S9 with failing-first tests, one commit per phase, mutation coverage, and an operator-facing security record.
