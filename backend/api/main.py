@@ -233,7 +233,11 @@ class RequestBodyLimitMiddleware:
         if scope.get("type") != "http":
             return await self.app(scope, receive, send)
 
-        cap = int(getattr(config, "MAX_REQUEST_BODY_BYTES", 16 * 1024 * 1024))
+        cap = int(getattr(config, "MAX_REQUEST_BODY_BYTES", 1024 * 1024))
+        if scope.get("path", "").rstrip("/") == "/api/knowledge-base/ingest":
+            # Four UTF-8 bytes/character, plus JSON escaping overhead (an
+            # astral character may occupy a 12-byte surrogate-pair escape).
+            cap = max(0, int(config.MAX_INGEST_CHARS)) * 12 + 65536
         if cap <= 0:
             return await self.app(scope, receive, send)
 

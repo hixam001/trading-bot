@@ -55,34 +55,21 @@ FORBIDDEN_NTFY_TOPICS = frozenset({
 # Shell-exported values override .env for interpolation, matching compose.
 # Kept in one tuple so tests can isolate the process environment.
 ENV_OVERRIDE_KEYS = (
-    'DATA_BACKEND',
-    'MAIN_LLM_PROVIDER',
-    'DEEPSEEK_API_KEY',
-    'GROQ_API_KEY',
-    'ADMIN_TOKEN',
-    'SEARXNG_SECRET',
-    'BACKUP_ENCRYPTION_KEY',
-    'SECRET_STORE_KEY',
-    'FRONTEND_ORIGIN',
-    'SOLANA_RPC_URL',
-    'SOLANA_RPC_URL_2',
-    'ALERT_NTFY_URL',
-    'ALERT_NTFY_TOPIC',
-    'ALERT_NTFY_TOKEN',
-    'ALERT_TELEGRAM_BOT_TOKEN',
-    'ALERT_TELEGRAM_CHAT_ID',
-    'WALLET_KEYPAIR_PATH',
-    'WALLET_KEYPAIR_HOST_PATH',
-    'EXPECTED_WALLET_ADDRESS',
-    'DEBUG',
-    'RATE_LIMIT_ENABLED',
-    'FORCE_HTTPS',
-    'MAX_REQUEST_BODY_BYTES',
-    'TRUSTED_PROXY_CIDRS',
-    'SESSION_SECRET',
-    'USE_SUPABASE_DB',
-    'SUPABASE_CERT_FINGERPRINT',
-    'SUPABASE_PIN_FILE',
+    "DATA_BACKEND", "MAIN_LLM_PROVIDER", "DEEPSEEK_API_KEY",
+    "GROQ_API_KEY", "ADMIN_TOKEN", "SEARXNG_SECRET",
+    "BACKUP_ENCRYPTION_KEY", "SECRET_STORE_KEY", "FRONTEND_ORIGIN",
+    "SOLANA_RPC_URL", "SOLANA_RPC_URL_2", "ALERT_NTFY_URL",
+    "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
+    "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
+    "WALLET_KEYPAIR_PATH", "WALLET_KEYPAIR_HOST_PATH",
+    "EXPECTED_WALLET_ADDRESS", "DEBUG", "RATE_LIMIT_ENABLED",
+    "FORCE_HTTPS", "MAX_REQUEST_BODY_BYTES", "TRUSTED_PROXY_CIDRS",
+    "SESSION_SECRET", "USE_SUPABASE_DB", "SUPABASE_CERT_FINGERPRINT",
+    "SUPABASE_PIN_FILE", "TICK_INTERVAL_SECONDS", "MAX_CANDIDATES_PER_TICK",
+    "RESEARCH_PER_TICK", "LLM_BRAIN", "SOCIAL_LLM_API_KEY",
+    "BRAVE_SEARCH_API_KEY", "SEARXNG_URL", "FIRECRAWL_API_KEY",
+    "LLM_DAILY_CALL_CAP", "LLM_DAILY_TOKEN_CAP", "LLM_DAILY_COST_CAP_USD",
+    "SEARCH_DAILY_CALL_CAP",
 )
 
 # The two wallet secret channels are mutually exclusive (see wallet.py):
@@ -828,6 +815,32 @@ def check_compose(config: dict | None, error: str = "") -> list[Check]:
     return checks
 
 
+def check_body_buffering(env: dict[str, str]) -> Check:
+    """Global unauthenticated buffering: 200 concurrent requests must fit."""
+    try:
+        cap = int(_value(env, "MAX_REQUEST_BODY_BYTES") or 1048576)
+    except ValueError:
+        return _check("body buffering", FAIL, "MAX_REQUEST_BODY_BYTES is not an integer")
+    if cap <= 0:
+        return _check("body buffering", FAIL, "MAX_REQUEST_BODY_BYTES must be positive")
+    if cap > 4 * 1024 * 1024:
+        return _check("body buffering", WARN,
+            f"global body cap {cap} bytes exceeds 4 MiB; 200 concurrent bodies "
+            f"can buffer {cap * 200 / 1024**2:.0f} MiB before parsing")
+    return _check("body buffering", PASS, f"global body cap {cap} bytes")
+
+
+def check_spend_projection(env: dict[str, str]) -> Check:
+    try:
+        from scripts.spend_projection import project
+    except ModuleNotFoundError:  # direct invocation on the VM
+        from spend_projection import project
+    projection = project(env)
+    return _check("spend projection", WARN if projection.warnings else PASS,
+        "; ".join(projection.warnings) if projection.warnings else
+        "configured caps cover projected typical and worst-case workloads")
+
+
 def run_preflight(env: dict[str, str], root: Path,
                   compose_config: dict | None = None,
                   compose_error: str = "",
@@ -850,6 +863,8 @@ def run_preflight(env: dict[str, str], root: Path,
         check_alert_channel(env),
         check_wallet_channel(env),
     ])
+    checks.append(check_body_buffering(env))
+    checks.append(check_spend_projection(env))
     checks.extend(check_wallet_file(env, root, uid_reader=uid_reader,
                                     euid_reader=euid_reader))
     if include_compose:

@@ -41,6 +41,8 @@ from pathlib import Path
 BACKEND = Path(__file__).resolve().parent
 if str(BACKEND) not in sys.path:
     sys.path.insert(0, str(BACKEND))
+if str(BACKEND.parent) not in sys.path:
+    sys.path.insert(0, str(BACKEND.parent))
 
 import config as paper_config                     # noqa: E402
 from data_providers import build_provider         # noqa: E402
@@ -1772,6 +1774,12 @@ def main() -> None:
         steps = asyncio.run(run_drill())
         failed = [s for s in steps if not s["ok"]]
         sys.exit(1 if failed else 0)
+
+    from scripts.spend_projection import project, render_projection
+    log.info("effective spend caps per provider: calls=%s tokens=%s cost_usd=%s; search_calls=%s",
+             paper_config.LLM_DAILY_CALL_CAP, paper_config.LLM_DAILY_TOKEN_CAP,
+             paper_config.LLM_DAILY_COST_CAP_USD, paper_config.SEARCH_DAILY_CALL_CAP)
+    log.info("%s", render_projection(project(paper_config)))
 
     if paper_config.DATA_BACKEND != "live":
         log.error("DATA_BACKEND=%s - the live cycle runs on the live stack only.", paper_config.DATA_BACKEND)

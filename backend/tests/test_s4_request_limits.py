@@ -32,7 +32,7 @@ async def test_oversized_body_is_rejected_before_parsing(client, monkeypatch):
     monkeypatch.setattr(config, "MAX_REQUEST_BODY_BYTES", 1024)
     body = b"x" * 2048
     response = await client.post(
-        "/api/knowledge-base/ingest", content=body,
+        "/api/auth/login", content=body,
         headers={"Content-Type": "application/json"})
 
     assert response.status_code == 413, response.text
@@ -59,7 +59,7 @@ async def test_chunked_body_without_content_length_is_capped(client, monkeypatch
             yield b"x" * 256
 
     response = await client.post(
-        "/api/knowledge-base/ingest", content=_chunks(),
+        "/api/auth/login", content=_chunks(),
         headers={"Content-Type": "application/json"})
     assert response.status_code == 413, response.text
 
