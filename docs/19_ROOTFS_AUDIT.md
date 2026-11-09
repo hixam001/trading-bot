@@ -26,8 +26,9 @@ FAILED ...::test_ci_smoke_mounts_and_env_are_derived_from_compose
 12 failed, 7 deselected in 0.82s
 ```
 
-Docker is unavailable locally. Native build plus compose-derived, network-disabled
-smokes for both roles are wired into CI; no real-container execution is claimed.
+Docker is unavailable locally. CI actually built the ARM64 and native images
+and passed the compose-derived, network-disabled real-container smokes for
+both roles: [verified run 42665808979](https://github.com/hixam001/trading-bot/actions/runs/42665808979). No local container run is claimed.
 The deployment note migrates existing state before starting the signer and fixes
 ownership after docker cp. Smoke never writes to configured state filenames.
 
@@ -220,20 +221,23 @@ decides the spend budget; do not blindly apply the CLI's stress suggestions.
   binary was downloaded to /tmp, verified against release SHA-256 checksums,
   and a redacted full-history scan passed with no leaks. The canonical gate
   was repeated with that binary on PATH.
-- Visible CI Backend & Frontend Tests job on b58de47 passed (pytest, audits,
-  type check, build, bundle scan and Playwright):
-  https://github.com/hixam001/trading-bot/actions/runs/42665808979/job/129329014286
-  The Docker ARM64/native smoke job was still running when inspected.
-  CI not verified by author for the complete workflow.
+- **Verified green full CI** on application commit b58de47:
+  [Tests & Security Audit 42665808979](https://github.com/hixam001/trading-bot/actions/runs/42665808979).
+  Backend/frontend tests and audits, ARM64 image build, native image build,
+  and real-container read-only-root smoke for both roles all succeeded.
+- **Verified green gitleaks CI** after the exact fixture exclusions on 0a9b40a:
+  [gitleaks 42666899068](https://github.com/hixam001/trading-bot/actions/runs/42666899068).
+  [Code scanning 42666899034](https://github.com/hixam001/trading-bot/actions/runs/42666899034)
+  also succeeded. Application source is unchanged between b58de47 and 0a9b40a;
+  that follow-up changes only scan fingerprints and documentation.
 
 ## UNVERIFIED
 
-- Docker is not installed: native/ARM images, named-volume ownership and real
-  container smoke were not executed locally. CI smoke is wired; simulated
-  EROFS and compose-contract tests pass for both roles.
+- Docker is not installed locally. Container verification was observed in
+  the successful CI run, including fresh named-volume write paths for both
+  roles; no production VM migration or local Docker execution is claimed.
 - Actual VM migration, reboot, production backup/restore, real wallet and
   Supabase certificate/rotation behavior were not contacted or exercised.
-- Full GitHub CI not verified by author; Docker ARM64/native smoke remained in progress. The visible backend/frontend job passed; no complete green workflow is claimed.
 - Current provider pricing and live traffic were not measured. Estimates use
   the repository snapshot and stated assumptions.
 
@@ -244,3 +248,5 @@ decides the spend budget; do not blindly apply the CLI's stress suggestions.
 3. Body cap default is 1 MiB.
 
 CI follow-up: the extra §93 R8 commit records the exact synthetic-fixture exclusions after the first pushed scan; published phase commits were not rewritten.
+
+The final documentation follow-up records these observed successful CI runs; it changes no application code.

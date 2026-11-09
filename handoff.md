@@ -18,8 +18,11 @@ Canonical prepush: all nine steps passed; Playwright 41/41; TypeScript/build/
 bundle scanner clean. CI initially flagged synthetic R4 credential strings; six exact fingerprint
 exclusions preserve scanning rules. CI-pinned gitleaks 8.24.3 was checksum-verified
 and its local full-history scan passed. The visible backend/frontend CI job
-passed; Docker/complete CI remains unverified.
-Docker unavailable; actual VM/Supabase behavior unverified. CI not verified by author.
+passed. Full Tests & Security Audit CI is now verified green:
+https://github.com/hixam001/trading-bot/actions/runs/42665808979 (backend/frontend,
+ARM64/native images and real-container ROFS smoke for both roles).
+Gitleaks follow-up CI passed: https://github.com/hixam001/trading-bot/actions/runs/42666899068.
+Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 
 ## §92 — Security Hardening Before Real-Money Launch (2026-11-08)
 
