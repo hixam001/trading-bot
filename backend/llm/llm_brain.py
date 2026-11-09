@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -387,6 +388,37 @@ _MAX_WATCH = 5
 _MAX_BRAIN_CANDIDATES = 8
 
 
+# Tickers must have exactly the representation displayed in the snapshot.
+# Every lookup and the model parser share this boundary; raw Unicode is never
+# used as an alternate key.
+_SYMBOL_PLACEHOLDERS = (
+    "[INSTRUCTION-LIKE TEXT REMOVED]", "[PERSONA TEXT REMOVED]",
+    "[ROLE MARKER REMOVED]", "[TAG REMOVED]", "[/TAG REMOVED]",
+    "[ENCODED BLOB OMITTED]", "[PROMPT-EXTRACTION TEXT REMOVED]",
+)
+
+
+def normalize_symbol_key(symbol) -> str:
+    """Use the prompt's bounded sanitisation, then normalise case and '$'."""
+    return sanitize_untrusted(symbol, 40).upper().lstrip("$")
+
+
+def _usable_symbol_key(key: str) -> bool:
+    # A placeholder embedded in a longer ticker is still an injection, not
+    # an identity. Exclude it too, so adding a suffix cannot bypass this rule.
+    return bool(key) and not any(marker in key for marker in _SYMBOL_PLACEHOLDERS)
+
+
+def _unique_symbol_keys(candidates: list[Candidate]) -> tuple[set[str], int, int]:
+    keys = [normalize_symbol_key(c.symbol) for c in candidates]
+    counts = Counter(keys)
+    invalid = sum(not _usable_symbol_key(key) for key in keys)
+    collisions = sum(_usable_symbol_key(key) and counts[key] > 1 for key in keys)
+    valid = {key for key, count in counts.items()
+             if count == 1 and _usable_symbol_key(key)}
+    return valid, invalid, collisions
+
+
 @dataclass
 class LLMVerdict:
     symbol: str
@@ -405,7 +437,7 @@ class LLMVerdict:
 
 @dataclass
 class LLMBrainResult:
-    verdicts: dict                 # symbol(upper) -> LLMVerdict
+    verdicts: dict                 # normalised display key -> LLMVerdict
     thoughts: list = field(default_factory=list)
     actions: list = field(default_factory=list)
     theses: list = field(default_factory=list)
@@ -420,7 +452,8 @@ class LLMBrainResult:
     llm_usage: Optional[LLMResult] = None
 
     def verdict_for(self, symbol: str) -> Optional[LLMVerdict]:
-        return self.verdicts.get(symbol.upper())
+        key = normalize_symbol_key(symbol)
+        return self.verdicts.get(key) if _usable_symbol_key(key) else None
 
 
 def _str_list(v, cap: int) -> list:
@@ -451,8 +484,8 @@ def _as_int(v, default: int = 0) -> int:
 
 def parse_llm_tick(raw: str, valid_symbols: set) -> Optional[dict]:
     """Extract + validate the brain tick JSON. Returns a normalized dict or None
-    (None => caller fails closed). `valid_symbols` is the UPPER-cased ticker set
-    actually passed to the model."""
+    (None => caller fails closed). `valid_symbols` contains unique normalised
+    display keys from the actual screener snapshot."""
     if not raw:
         return None
     match = re.search(r"\{[\s\S]*\}", raw)
@@ -472,9 +505,9 @@ def parse_llm_tick(raw: str, valid_symbols: set) -> Optional[dict]:
         for v in raw_verdicts[:_MAX_VERDICTS]:
             if not isinstance(v, dict):
                 continue
-            symbol = str(v.get("symbol") or "").strip().upper().lstrip("$")
+            symbol = normalize_symbol_key(v.get("symbol"))
             call = str(v.get("call") or "").strip().lower()
-            if not symbol or symbol not in valid_symbols:
+            if not _usable_symbol_key(symbol) or symbol not in valid_symbols:
                 continue                      # invented/unknown name -> drop
             if call not in _VALID_CALLS:
                 continue                      # invalid call -> drop (fail closed)
@@ -536,13 +569,19 @@ class LLMBrain:
         memory_block: str = "",
         recent_fills: Optional[list] = None,
     ) -> LLMBrainResult:
-        valid_symbols = {c.symbol.upper() for c in candidates}
-
         # Hermetic: mock mode never touches a provider (defense-first + tests).
         if config.DATA_BACKEND != "live" or not config.LLM_BRAIN:
             return LLMBrainResult(verdicts={}, source="template", degraded=True)
         if not candidates:
             return LLMBrainResult(verdicts={}, source="template", degraded=True)
+
+        # Detect collisions across the WHOLE screener before bounding it.
+        # Otherwise a low-volume omitted candidate could borrow the verdict
+        # of a displayed ticker with the same key at the downstream lookup.
+        valid_symbols, invalid, collisions = _unique_symbol_keys(candidates)
+        if invalid or collisions:
+            log.info("llm_brain ticker keys excluded: invalid_candidates=%d "
+                     "collision_candidates=%d", invalid, collisions)
 
         # Bound the board the brain grades so the single JSON output stays within
         # the token budget (a truncated body fails closed). Highest 1h-volume rows
@@ -551,7 +590,7 @@ class LLMBrain:
             candidates = sorted(candidates,
                                 key=lambda c: (c.volume_1h_usd or 0.0),
                                 reverse=True)[:_MAX_BRAIN_CANDIDATES]
-            valid_symbols = {c.symbol.upper() for c in candidates}
+            valid_symbols &= {normalize_symbol_key(c.symbol) for c in candidates}
 
         user_prompt = build_tick_prompt(
             snapshot_block=build_snapshot_block(candidates),
