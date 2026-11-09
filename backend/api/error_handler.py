@@ -306,6 +306,31 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
         cleaned_errors.append(clean_item)
 
+    # §92 S9: an ingest request rejected at the schema boundary is still a
+    # suspicious upload attempt. Without this, the route-level handler only
+    # saw payloads that already passed Pydantic, so .exe/binary/shebang probes
+    # were silently absent from the security event stream.
+    if request.url.path.rstrip("/") == "/api/knowledge-base/ingest":
+        try:
+            from api.rate_limiter import get_client_ip
+            from api.security_monitor import (
+                SecurityEventType,
+                record_security_event,
+            )
+            record_security_event(
+                SecurityEventType.SUSPICIOUS_UPLOAD,
+                client_ip=get_client_ip(request),
+                path=request.url.path,
+                method=request.method,
+                detail=(
+                    "Knowledge-base ingest rejected at schema validation "
+                    f"({len(cleaned_errors)} error(s)); no file was stored"
+                ),
+                severity="WARNING",
+            )
+        except Exception:
+            pass
+
     return apply_security_headers(
         request,
         JSONResponse(

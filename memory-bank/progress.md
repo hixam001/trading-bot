@@ -1,6 +1,18 @@
 # Progress — trading-bot
 
 ## Works (all verified)
+- [x] §92 Security hardening before real-money launch (2026-11-08, phases S1–S9):
+      1. S1: one `backend/redaction.py` contract for logs/errors/alerts/security monitor; built-frontend secret scanner; gitignore/gitleaks hardening. Tests `test_redaction_adversarial.py` (22), `test_secret_hygiene.py` (29).
+      2. S2: CSRF header + Origin/Referer; persistent revocations; global + per-IP auth ceilings; single-use PoW; concealed signup; Pydantic `extra="forbid"`; boot-time `ADMIN_TOKEN`/`SESSION_SECRET` validation; dedicated `SESSION_SECRET`; route-matrix test.
+      3. S3: fixed public disclosure/live-book/proof leaks; binding mismatch withholds wallet/fee payer; every Public GET scanned for sentinels.
+      4. S4: guarded reset-table identifiers; migration 007 revoke+RLS; pure-ASGI body cap; v2 scrypt+AES-256-GCM backup envelope with legacy Fernet restore; XSS static guard + Playwright spec.
+      5. S5: untrusted-text sanitiser/fencing; persisted LLM/search daily caps; entries pause but exits never depend on the LLM; prompts/transcripts exclude keys/wallet/full config. Tests 33 + 14.
+      6. S6: `(tier, IP)` LRU limiter with hard bound/expiry sweep; trusted-proxy CIDRs; 429 `Retry-After`; `--workers 1` + bounded uvicorn flags at every launch site; finite public scan ceilings.
+      7. S7: shared security headers on 404/405/413/429/500/static/SPA; CSP `base-uri 'none'`; pytest-only synthetic hosts; DEBUG cannot bypass auth/CSRF/rate limits; debug text redacted.
+      8. S8: Actions pinned by full SHA; images/SearXNG by digest; read-only/cap-drop/no-new-privileges/resource-limited compose; preflight runtime+compose checks; JSON wallet-channel warning.
+      9. S9: bounded 10 s event dedupe with true counts; one burst alert per IP/10 min; schema-rejected uploads emit `SUSPICIOUS_UPLOAD`; restore drill verifies rows, excludes keypair, forces kill-switch latch. Tests 9.
+      10. Verification: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT** (14 new rows); Playwright **41/41** against a local mock API; tsc/build + bundle scanner clean; prepush **9/9**; gitleaks v8.30.1 full-history clean (334 commits, synthetic fixtures allowlisted); docs/18 carries threat model, S1–S9 map, residuals, checklist, runbooks, findings F1–F10, and verified-safe/rotate-now/operator-must-do/UNVERIFIED lists. CI not observed.
+      11. Known limits: heuristic redaction; per-host revocation/limiter/spend state; structural (not mathematical) prompt-injection containment; RPC/Birdeye outside the LLM guard because exits use them; monitoring in-memory; synthetic restore drill; infrastructure items in docs/18 §8. No arming/gate/sizing/signing/exit/Jupiter/Privy changes.
 - [x] §91 Prove absence before expiring a pending buy (2026-11-03, phases A1–C):
       1. §91-A1: new `solana.get_signature_status_all_strict()` keeps `ABSENT` (200 + `value:[null]`) separate from `UNREACHABLE` (rpc `None`, malformed body, exception) with identity-only sentinels whose `__bool__` raises; `get_signature_status_all` is unchanged.
       2. §91-A2: operator `--expire`/`--force-expire` require at least two endpoints and every one to return `ABSENT`; any found status refuses with `the transaction landed (status ...): use --adopt-from-sig` (found outranks unreachable). `--force-expire` skips only blockhash/age. Audit lines add `endpoint_verdicts`; docs state RPC-fully-down has no unproven expiry.

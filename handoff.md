@@ -1,3 +1,74 @@
+## §92 — Security Hardening Before Real-Money Launch (2026-11-08)
+
+### Baseline & Measured Suite Counts
+- Baseline before S1: **1535 passed**, 102 warnings; final suite: **1751 passed**, 0 failed, 102 warnings (+216 items). No tests were skipped in the final run because `frontend/dist` was present (the two build-conditional scanner/SPA tests ran).
+- Mutation harness: **109/109 CAUGHT** (95 prior rows + 14 new: 2 S1 backfill, 7 S2 backfill, 5 S9); restorations verified clean; `docs/17_MUTATION_LOG.md` regenerated.
+- Phase commits: S1 `a663e20`, S2 `99999df`, S3 `c16bbbf`, S4 `462e813`, S5 `fc4406c`, S6 `2d39fb4`, S7 `b374095`, S8 `5ff2657`, S9 this commit (message starts `§92 S9:`).
+- Frontend: `npm run build` + `tsc -b` clean; `scripts/scan_frontend_bundle.py` clean; Playwright **41/41** against a local mock API on `:8000` (`RATE_LIMIT_GENERAL_PER_MINUTE` raised only for the 41-test harness run; production config unchanged; rate limiting is separately proven by S6/S7).
+- Local prepush: **9/9 clean** (pytest, pip check, pip-audit, AST keypair isolation, tsc, build, npm audit, Playwright 41/41, gitleaks notice). Full-history gitleaks **v8.30.1 clean** (334 commits, 11.45 MB; only synthetic test sentinels, allowlisted in `.gitleaks.toml`). CI was not observed from this environment.
+
+### Fixed Defects by Phase
+
+1. **S1 — secret containment (`a663e20`)**
+   - `backend/redaction.py` is now the single scrubbing contract for config/runtime secrets, keypairs, PEM, Bearer/Basic URLs, credentialed query/path parameters, JSON secret keys, and provider token shapes. The logging filter, 4xx/5xx handlers, alert payloads, and security monitor all delegate to it.
+   - `scripts/scan_frontend_bundle.py` fails the build when a `VITE_*`/backend secret name or secret shape reaches `frontend/dist`; `.gitignore`/`.gitleaks.toml` deny wallet/DB/backup/runtime material.
+   - Tests: `test_redaction_adversarial.py` (22), `test_secret_hygiene.py` (29); gitleaks clean on the S1 tree.
+
+2. **S2 — authentication/session boundary (`99999df`)**
+   - CSRF middleware requires `X-Requested-With: XMLHttpRequest` on cookie-authenticated unsafe `/api/*` mutations (login/challenge exempt) and rejects a mismatched `Origin`/`Referer` even with the header.
+   - Session revocations persist as signature+expiry in a 0600 registry, survive restart, fail closed on corruption, and are bounded. A global auth-failure window defeats IP rotation; per-IP lockout remains. PoW challenges are single-use and only consumed after a valid solution. Signup is 404 unless explicitly enabled and still never creates accounts.
+   - Login/signup models use Pydantic `extra="forbid"`; weak `ADMIN_TOKEN`/`SESSION_SECRET` refuse boot; a dedicated `SESSION_SECRET` lets sessions survive operator-token rotation.
+   - `docs/18_SECURITY.md` route matrix is enforced by `test_route_matrix.py`: adding a route without an auth row fails.
+   - Tests: `test_s2_auth_hardening.py`, `test_mass_assignment.py`, `test_route_matrix.py`.
+
+3. **S3 — public-surface truth (`c16bbbf`)**
+   - `disclosure.py`, `live_book.py`, and `proof.py` no longer return exception text or filesystem paths; fail-soft reasons are fixed strings.
+   - A binding mismatch withholds the configured wallet/fee payer, and transaction/memo error objects are not publicly stringified.
+   - Every documented Public GET is scanned against sentinel secrets/tracebacks through the real ASGI app.
+   - Tests: `test_public_surface_leaks.py` (11).
+
+4. **S4 — data/integrity boundary (`462e813`)**
+   - Admin reset interpolates identifiers only from a guarded module constant in both SQLite/Postgres paths; migration 007 revokes `anon`/`authenticated` table+sequence rights and requires RLS on every public table (tested by parsing migrations).
+   - A pure ASGI `RequestBodyLimitMiddleware` enforces `MAX_REQUEST_BODY_BYTES` (default 16 MiB) before parsing, including chunked bodies.
+   - Backups moved to a v2 envelope (`TBACKUP2\0 | header | AES-256-GCM`) with per-archive random salt, scrypt n=2^15/r=8/p=1, 12-byte nonce, and header-as-AAD; legacy Fernet archives still restore.
+   - Static/XSS guard + Playwright XSS spec; no multipart upload surface.
+   - Tests: `test_s4_sql_allowlist.py`, `test_s4_migrations_rls.py`, `test_s4_request_limits.py`, `test_s4_backup_v2.py`, `test_s4_xss_surface.py`.
+
+5. **S5 — prompt/spend containment (`fc4406c`)**
+   - `backend/llm/untrusted.py` normalises, bounds, strips personas/instruction overrides, and fences every third-party field as data; fence labels are safe identifiers and truncation stays within `max_chars`.
+   - `backend/llm/spend_guard.py` enforces hard daily call/token/cost ceilings for LLM and a hard search-call ceiling, persisted in `LIVE_STATE_DIR/spend_guard.json` (0600, corrupt/unreadable fails closed). A spent budget pauses entries; exits never call the LLM and keep running.
+   - Prompt builders/transcripts exclude API keys, the wallet address, and full config; `llm_call_usage` stores metadata only. One deduped `SPEND_CAP` alert per provider/day.
+   - Tests: `test_s5_prompt_injection.py` (33), `test_s5_spend_caps.py` (14).
+
+6. **S6 — rate/server/scan bounds (`2d39fb4`)**
+   - Limiter buckets are `(tier, client IP)` with auth/paid/general ceilings; the backing map is an OrderedDict LRU with a hard `max_tracked` bound, expiry sweep, and new-client counting. `X-Forwarded-For` is trusted only from `TRUSTED_PROXY_CIDRS`.
+   - Every 429 carries a positive `Retry-After`, coherent reset epoch, and remaining count. Every launch site pins `--workers 1 --limit-concurrency 200 --timeout-keep-alive 5 --h11-max-incomplete-event-size 65536 --timeout-graceful-shutdown 20`.
+   - Public feed/funnel/events/mint-history/journal/regime scans declare finite `limit`/`offset` ceilings; over-max is rejected before the handler.
+   - Tests: `test_s6_rate_limit_buckets.py` (15), `test_s6_deploy_limits.py` (10).
+
+7. **S7 — response hardening (`b374095`)**
+   - `backend/api/security_headers.py` is the shared header helper applied by middleware and every error handler, so 404/405/413/429/500/static/SPA responses all carry CSP/nosniff/DENY/no-referrer/COOP/Permissions-Policy. CSP adds `base-uri 'none'`.
+   - Synthetic test hosts are trusted only while `"pytest" in sys.modules` (`config.TESTING`); DEBUG does not bypass auth/CSRF/rate limits; debug exception text is redacted.
+   - Tests: `test_s7_response_hardening.py` (12).
+
+8. **S8 — supply chain/deploy hardening (`5ff2657`)**
+   - All GitHub Actions pinned to full 40-char commit SHAs; Docker base images and SearXNG pinned by registry digest.
+   - Compose: read-only root, `cap_drop: ALL`, `no-new-privileges`, pid/memory/CPU limits, loopback-only API, SearXNG internal-only with no host port.
+   - `scripts/preflight_deploy.py` now fails on DEBUG, disabled rate limits/HTTPS, wildcard proxy trust, zero body cap, and unhardened compose services; selecting the JSON wallet channel logs a `docker inspect` exposure warning.
+   - Tests: `test_s8_supply_chain.py` (11), `test_preflight_deploy.py`.
+
+9. **S9 — detection/recovery closure (this commit)**
+   - `SecurityMonitor` now collapses identical events within 10 s into one event with `occurrences`/`last_seen`, hard-caps the dedupe map (2,000 LRU keys), keeps true total counts, and emits one `LOGIN_FAILURE_BURST` alert per IP/10 min with a bounded 2,000-key suppression map. `clear()` resets all of it.
+   - Schema-rejected `/api/knowledge-base/ingest` uploads now emit `SUSPICIOUS_UPLOAD` (previously they vanished at the Pydantic boundary).
+   - The backup-restore drill verifies SQLite rows and integrity, asserts the wallet keypair is excluded, and asserts the restored kill switch is `tripped: true` with `run reconcile and clear manually`.
+   - Tests: `test_s9_monitoring_and_restore.py` (9). Failing-first was proven by stashing the S9 code: 4 tests failed; restored: 9 passed.
+
+### Verification & Known Limits
+- `docs/18_SECURITY.md` now carries the threat model, route matrix, S1–S9 control↔test map, residual risks, operator checklist, rotation/incident runbooks, findings F1–F10 with severity/evidence/fix/test, verified-safe list, rotate-now list, operator-must-do list, and UNVERIFIED list.
+- Residual limits are documented rather than hidden: heuristic redaction, per-host revocation/limiter/spend state, prompt injection containment being structural, RPC/Birdeye intentionally outside the LLM guard, in-memory monitoring lost on restart, no SIEM/tamper-evident log, synthetic restore drill, and all infrastructure items in §8 of `docs/18_SECURITY.md`.
+- No money-path behaviour changed: arming flags, the 11-rule gate, sizing/signing/thresholds, Jupiter Swap V1, the fomo/Privy path, exit scanning, and the public transparency endpoints are untouched.
+- Operator-only work remains: hosted Supabase migration 007 application, provider billing caps, real backup/restore on the host, proxy/TLS/firewall/Tailscale verification, real alert delivery, and the first supervised live buy/sell.
+
 ## §91 — Prove Absence Before Expiring a Pending Buy (2026-11-03)
 
 ### Baseline & Measured Suite Counts

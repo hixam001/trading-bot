@@ -10,4 +10,10 @@ regexes = [
     '''(?i)test-operator-secret''',
     '''(?i)my-secret-api-key''',
     '''(?i)test-operator-admin-token''',
+    # Synthetic S3 public-surface sentinels (fake, test-only values).
+    '''S3-[A-Z]+-SENTINEL-[0-9a-f]+''',
+    # Synthetic 48-hex binding-mismatch fixture (test-only, never a key).
+    '''7b1d5f9c3e8a2d6b4f8c1a9e3b7d5f2c6a8e4b9d1f3c7a5e''',
+    # Dummy PEM body used to prove the redactor masks private-key blocks.
+    '''MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQ''',
 ]

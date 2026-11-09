@@ -10,6 +10,68 @@ the incident/rotation runbooks.
 > protects operator actions and money-adjacent read surfaces; it never
 > creates accounts, charges cards, or stores customer PII.
 
+## 0. Threat model
+
+### Assets
+
+1. **Funds and signing authority** — the Solana wallet keypair, the live
+   execution ledger, the kill switch, and every signed transaction.
+2. **Operator authority** — `ADMIN_TOKEN`, the HttpOnly session cookie,
+   `SESSION_SECRET`, and the persisted revocation registry.
+3. **Provider credentials** — Jupiter/RPC/Helius/Birdeye keys, LLM keys,
+   search keys, Telegram/ntfy tokens, `BACKUP_ENCRYPTION_KEY`,
+   `SECRET_STORE_KEY`, and the Supabase DSN/service role.
+4. **Money-adjacent data** — live positions, cash, executions, theses, and
+   proof/commit records. Some of these are intentionally public under
+   `LIVE_BOOK_PUBLIC=true`.
+5. **Availability and spend** — the API, the live cycle, the exit scanner,
+   log/evidence retention, and every paid provider quota.
+
+### Adversaries and trust boundaries
+
+| Adversary / boundary | Capability assumed | Primary controls |
+|---|---|---|
+| Anonymous internet client | Can call every Public route, spoof headers, open many connections, send large/slow bodies, probe paths | Route matrix auth, request caps, limiter, headers, WebSocket caps, fail-closed 404s |
+| Cross-site attacker | Can make a victim browser send a cookie-authenticated request | CSRF custom header + Origin/Referer validation; SameSite cookies |
+| Credential guesser / botnet | Can rotate source IPs and replay captured challenges | Per-IP + global auth ceilings, single-use PoW, constant-time compare, concealed signup |
+| Malicious upstream data | Controls token names, social posts, web pages, or knowledge documents that reach a model | Untrusted-text sanitiser/fencing; fixed model output schema; deterministic gate/sizing |
+| Malicious or compromised dependency / CI action / base image | Can execute in the build or at runtime | Action SHA pinning, image digest pinning, read-only containers, cap drop, gitleaks/bundle scan, preflight |
+| Network attacker on the proxy path | Can spoof `X-Forwarded-For` unless the peer is trusted; can inject Host/Origin | `TRUSTED_PROXY_CIDRS`, Origin checks, HTTPS redirect, host validation at the proxy |
+| Curious/compromised host user | Can read process environment, mounted files, Docker metadata, logs | File-channel wallet preferred, mode 0600 state files, redaction, backup denylist, operator rotation |
+| Accidental operator disclosure | Pastes secrets into logs/chat or commits runtime files | Central redaction, gitleaks, frontend scanner, `.gitignore`, boot entropy checks |
+| Backup thief | Steals an archive at rest | scrypt + AES-256-GCM v2 envelope, denylisted key material, integrity-before-restore |
+| Restore/operator error | Restores stale or partial state and arms it | Multi-pass restore, SQLite integrity check, pre-restore snapshot, forced kill-switch latch, reconcile-before-arm runbook |
+
+### Security objectives
+
+- No unauthenticated request can mutate state, spend money, or read the
+  private book.
+- No secret value or keypair appears in a log, error body, alert payload,
+  prompt, transcript, backup, or built frontend.
+- Funds move only through the deterministic gate, sizing, signing, and
+  simulation path; the LLM can return a verdict but cannot set size, mint,
+  stops, caps, slippage, or the kill switch.
+- A spent or unavailable LLM/search budget stops **entries** and never stops
+  exits.
+- Paid-provider spend is bounded in-process and at the provider dashboard.
+- Logs and security events survive a flood without unbounded memory growth.
+- Backups are confidential, tamper-evident, restorable, and never include the
+  wallet keypair; a restore starts disarmed only after reconcile.
+- Deployed artifacts are pinned and a deployment that loses a control fails
+  preflight.
+
+### Assumptions
+
+- One API worker per state directory. Multi-replica deployments must add a
+  shared limiter/revocation/spend store or an edge control.
+- `TRUSTED_PROXY_CIDRS` contains only the real proxy/LB addresses.
+- The host OS, Docker daemon, firewall, and Tailscale ACLs are administered
+  separately and reviewed before launch.
+- Provider dashboards enforce the billing caps described in §4 item 10; the
+  application guard is the first line, not the only line.
+- The operator keeps `.env`, wallet material, and backups off the repository
+  and off chat/log surfaces.
+
 ## 1. Route matrix
 
 Every HTTP route, WebSocket, and static mount registered by `api.main.app`
@@ -118,9 +180,14 @@ Auth legend:
 | S8 | App containers use a read-only root, `cap_drop: ALL`, `no-new-privileges`, pid/memory/CPU limits; API binds loopback and SearXNG publishes no host port | `docker-compose.yml` | `test_s8_supply_chain.py` |
 | S8 | Deploy preflight rejects DEBUG, disabled rate limits/HTTPS, wildcard proxy trust, a zero body cap, and unhardened compose services | `scripts/preflight_deploy.py` | `test_s8_supply_chain.py`, `test_preflight_deploy.py` |
 | S8 | Selecting the JSON wallet channel logs a warning that env secrets are visible to `docker inspect`; the mounted file channel remains preferred | `live_execution/wallet.py`, `docs/11_DEPLOYMENT.md` | `test_s8_supply_chain.py` |
+| S9 | Every `SecurityEventType` has a production emitter; a new enum member without one fails the test | `backend/api/*` + monitoring schema | `test_s9_monitoring_and_restore.py::test_every_security_event_type_has_a_production_emitter` |
+| S9 | Schema-rejected knowledge-base uploads still produce `SUSPICIOUS_UPLOAD` evidence | `backend/api/error_handler.py` validation handler | `test_s9_monitoring_and_restore.py::test_schema_rejected_upload_records_suspicious_upload` |
+| S9 | Repeated identical events collapse into one bounded event with `occurrences` and `last_seen`; the dedupe map has a hard LRU cap | `SecurityMonitor.record_event`, `MAX_DEDUPE_KEYS` | `test_s9_monitoring_and_restore.py::test_repeated_events_collapse_but_keep_the_true_count`, `test_dedupe_map_is_hard_bounded` |
+| S9 | A login-failure burst alerts once per IP/window, not once per failed request; suppression state is bounded and cleared by `clear()` | `SecurityMonitor._record_burst_locked`, `MAX_BURST_KEYS` | `test_s9_monitoring_and_restore.py::test_login_burst_alert_fires_once_per_ip_per_window` |
+| S9 | A backup restore drill verifies SQLite rows, excludes the wallet keypair, and forcibly engages the kill switch with an operator reason | `scripts/restore_state.py` Pass 4 safety latch | `test_s9_monitoring_and_restore.py::test_backup_restore_drill_verifies_book_and_trips_kill_switch` |
 
-Phases S5–S9 are appended as they land; this table is the authoritative
-control↔test map, not a marketing summary.
+Phases S1–S9 are complete; this table is the authoritative control↔test map,
+not a marketing summary.
 
 ## 3. Residual risks
 
@@ -236,6 +303,34 @@ control↔test map, not a marketing summary.
 - S8: the JSON wallet channel warning is advisory. An operator who accepts the
   `docker inspect` exposure can still use it; the mounted file channel is the
   documented safe default.
+- S9: the security event ring buffer and dedupe index are in memory. A restart
+  loses the operator-visible recent events, and the compiled summary counters
+  reset. `logs/security.log` survives rotation (10 MB × 5), but off-host
+  retention/SIEM shipping is an operator responsibility.
+- S9: dedupe collapses identical events inside a 10-second window. The event
+  keeps the true total in `occurrences`, the first `timestamp`, and the latest
+  `last_seen`; it does not retain every individual timestamp. If per-request
+  timing is required for an investigation, read the raw `security.log` before
+  it rotates, or add an external log sink.
+- S9: the burst alert is deduped per IP for 10 minutes and the suppression map
+  is bounded at 2,000 IPs. An attacker with many real addresses can still cause
+  one alert per address; the alert subsystem's global flood cap is the
+  backstop, not a replacement for provider/edge rate limiting.
+- S9: event detail strings are scrubbed through `sanitize_error_detail`, but
+  they are still operator-supplied/request-derived. Keep them fixed strings
+  where possible; a future emitter that interpolates raw user input must be
+  tested against the S1 redaction contract.
+- S9: the restore drill uses a synthetic SQLite book and throwaway directory.
+  It proves the code path, the archive denylist, and the kill-switch latch; it
+  does not prove a specific production archive is the right recovery point.
+  Reconcile against the chain before arming after any real restore.
+- S9: the forced kill-switch latch is a state file. A process/operator with
+  write access can clear it without reconcile. The runbook and the
+  reconcile-before-arm rule are the human control; do not automate a clear on
+  startup.
+- S9: no tamper-evident log signing or remote syslog is configured. An attacker
+  with host write access can alter local logs; ship security.log off-host if
+  that adversary is in scope.
 
 ## 4. Operator checklist (pre-launch)
 
@@ -280,6 +375,23 @@ control↔test map, not a marketing summary.
 14. Keep the API port bound to `127.0.0.1` and SearXNG without a host port.
     Bump Docker digests and GitHub Action SHAs deliberately, then re-run
     `docker compose config` and the preflight.
+15. Run `python -m pytest -q backend/tests/test_s9_monitoring_and_restore.py`
+    (or the full suite) and then perform a backup→restore drill into a
+    throwaway directory with the current archive. Verify the book row-for-row,
+    confirm no keypair is present, and confirm the restored kill switch is
+    `{"tripped": true}`. Never point a drill at the live state directory.
+16. After arming, review `/api/admin/monitoring/security-events` and
+    `logs/security.log`. Confirm `LOGIN_FAILURE_BURST`, `SPEND_CAP`, and
+    `INTERNAL_ERROR` alerts reach the operator channel, and that log rotation
+    (10 MB × 5) is adequate for the expected traffic. Ship `security.log`
+    off-host if host tampering is in scope.
+17. Confirm `SESSION_REVOCATION_FILE` is persistent, mode 0600, and included
+    in the backup set; confirm `LIVE_STATE_DIR/spend_guard.json` is writable and
+    that a corrupt guard pauses entries rather than exits.
+18. Do not clear a restored kill switch until reconcile reports clean. The
+    restore command intentionally trips it with `run reconcile and clear
+    manually`; clearing without reconcile is an operator error, not a code
+    path.
 
 ## 5. Rotation runbook
 
@@ -335,10 +447,142 @@ secret-store keys, sidecars, `.env`, and `.pem` files.
 ## 8. UNVERIFIED items
 
 The following require infrastructure outside the repository and are tracked
-here until an operator supplies evidence:
+here until an operator supplies evidence. They are launch blockers only where
+the operator judges the control necessary for the deployment; none is silently
+assumed green by the test suite.
 
-- Docker image digest pinning: registry digests must be resolved on the
-  deployment host/CI and committed; local builds cannot prove them.
-- GitHub Action SHA pinning: SHAs must be resolved from each action's
-  release tag at review time; tag refs are not immutable.
-- Host firewall/iptables and Tailscale ACLs: not visible from the repo.
+- Docker image digest pinning: the committed digests were resolved from the
+  registry and static tests verify the syntax, but image builds/pulls after
+  pinning were not executed in the review environment. Build on the deployment
+  host/CI and record the result.
+- GitHub Action SHA pinning: SHAs were resolved via `git ls-remote` and static
+  tests verify full-length pins, but no CI run was observed in the review
+  environment. Watch the first green CI run and re-check each SHA when bumping.
+- Host firewall/iptables, Docker daemon configuration, and Tailscale ACLs: not
+  visible from the repository. Confirm the API is reachable only through the
+  intended proxy and that the host is not exposing port 8000.
+- Hosted Supabase migration 007: the repository test proves the migration is
+  present and complete; it cannot prove the hosted project ran it. Apply it and
+  run the verification queries at the bottom of the migration.
+- Provider-side billing/quota caps (Groq/OpenRouter, Birdeye, Helius/RPC,
+  Oracle budget, Telegram/ntfy): dashboard state is not observable from code.
+  Configure and screenshot/record each cap before launch.
+- Real backup restore on the host: the automated drill uses a synthetic book
+  in a throwaway directory. Restore a current archive into a throwaway target
+  on the real host, verify the rows and kill-switch latch, then destroy the
+  throwaway target.
+- Full Playwright suite against a real backend: the dashboard/operator specs
+  need the API on `:8000`; a `vite preview`-only run has pre-existing
+  dashboard/operator failures unrelated to §92. Run the suite against the real
+  API before declaring the UI green.
+- Reverse proxy behavior: TLS termination, Host allowlist, body/header/
+  connection limits, and forwarded-header hygiene are proxy configuration, not
+  app code. Verify on the deployed proxy.
+- OS patch level, Docker engine version, and at-rest disk encryption: host
+  controls outside the repository.
+- Real alert delivery: the code path and flood caps are tested; delivery to the
+  operator's actual ntfy/Telegram destination must be tested once.
+- Wallet keypair custody and rotation: the repository never reads or prints the
+  real keypair in tests. Confirm the production file channel/permissions and
+  custody procedure separately.
+- gitleaks history/tracked-tree scan and the built-frontend secret scan: both
+  were re-run on the §92 tree on 2026-11-09 (gitleaks v8.30.1: 334 commits,
+  11.45 MB, no leaks after allowlisting synthetic test sentinels; frontend
+  scanner clean). Re-run both on the exact deployed commit before launch.
+
+## 9. Findings and launch sign-off
+
+This is the engineering-review findings record for §92. Severity is scoped to
+this single-operator system: **High** = auth, secret, supply-chain, or
+money-path exposure that could lead to loss/compromise; **Medium** = DoS,
+availability, or defense-in-depth weakness; **Low** = evidence/recovery gap.
+
+| ID | Severity | Finding and evidence | Fix | Proof |
+|---|---|---|---|---|
+| F1 | High | Logs, 4xx/5xx bodies, alert payloads, and the security monitor used ad-hoc formatting; a provider token, Bearer header, keypair, PEM, or credentialed URL could reach disk/operator chat. | Central `backend/redaction.py`; logging filter, error handlers, alerts, security monitor all delegate to it. | `test_redaction_adversarial.py`, `test_error_handling_security.py`, `test_logging_and_monitoring.py` |
+| F2 | High | A backend-only secret name/value could be inlined into the built frontend; runtime wallet/DB/backup files were not uniformly ignored. | `scripts/scan_frontend_bundle.py`, CI scan, `.gitignore`/`.gitleaks.toml` hardening. | `test_secret_hygiene.py`, gitleaks run recorded in S1 |
+| F3 | High | Cookie-authenticated mutations lacked a CSRF proof; logout revocations died on restart; brute force was per-IP only; PoW challenges were replayable; signup was discoverable; unknown JSON fields were silently accepted; weak `ADMIN_TOKEN`/`SESSION_SECRET` could boot. | CSRF middleware + Origin/Referer check, persisted revocations, global failure ceiling, single-use PoW, concealed signup, Pydantic `extra="forbid"`, boot-time entropy validation, optional dedicated `SESSION_SECRET`. | `test_s2_auth_hardening.py`, `test_mass_assignment.py`, `test_route_matrix.py` |
+| F4 | High | Public disclosure/live-book/proof paths could return exception text, filesystem paths, or the configured wallet/fee payer on a binding mismatch. | Fixed public reasons, binding mismatch withholds wallet/fee payer, no raw exception stringification. | `test_public_surface_leaks.py` |
+| F5 | High | Admin reset interpolated SQL identifiers; PostgREST `anon`/`authenticated` retained table rights and some public tables lacked RLS; request bodies were unbounded; backups used a fast KDF. | Guarded reset-table allowlist, migration 007 revoke+RLS, ASGI body cap, v2 scrypt+AES-256-GCM backup envelope. | `test_s4_sql_allowlist.py`, `test_s4_migrations_rls.py`, `test_s4_request_limits.py`, `test_s4_backup_v2.py` |
+| F6 | High | Untrusted token/social/web/KB text reached prompts without a stable data boundary; LLM/search spend had no hard daily ceiling; secrets could be interpolated into prompts/transcripts. | `backend/llm/untrusted.py` fencing/sanitisation, fixed output schema, persisted `spend_guard.py`, prompt field allowlists, usage metadata only. | `test_s5_prompt_injection.py`, `test_s5_spend_caps.py` |
+| F7 | Medium | Limiter state was unbounded, `X-Forwarded-For` trust was too broad, multiple workers could each grant a full quota, 429s did not prove `Retry-After`, public DB scans were open-ended, and server body/header/keep-alive/concurrency limits were implicit. | Ordered LRU limiter with expiry sweep, trusted-proxy CIDR check, `--workers 1` + bounded uvicorn flags at every launch site, finite query ceilings. | `test_s6_rate_limit_buckets.py`, `test_s6_deploy_limits.py` |
+| F8 | Medium | Security headers were only reliably present on 200s; CSP lacked `base-uri`; debug/test paths could weaken auth/CSRF/rate limits; debug exception text was not redacted. | Shared `security_headers.py` used by middleware and error handlers, `base-uri 'none'`, pytest-only test-host trust, debug bypass tests, redacted debug text. | `test_s7_response_hardening.py` |
+| F9 | Medium | Actions/images used movable tags, compose services had writable roots/capabilities/no resource caps, preflight did not reject lost runtime controls, and the JSON wallet channel was silent about `docker inspect` exposure. | Full SHA/digest pinning, read-only/cap-drop/no-new-privileges/resource limits, SearXNG internal-only, preflight runtime+compose checks, wallet-channel warning. | `test_s8_supply_chain.py`, `test_preflight_deploy.py` |
+| F10 | Low | Schema-rejected uploads produced no security event; identical event floods could evict evidence; login-burst alerts fired per request; no automated restore drill proved the kill-switch latch. | Bounded dedupe with true counts, schema-rejection event, once-per-IP/window burst alert, restore drill test. | `test_s9_monitoring_and_restore.py`, `docs/17_MUTATION_LOG.md` |
+
+### Verified safe (evidence-backed)
+
+- No unauthenticated route can mutate state or move funds. Every mutating
+  route is Operator, Cookie+CSRF, or Concealed in the matrix, and
+  `test_route_matrix.py` fails if a route is added without a row.
+- The money path is unchanged: the deterministic gate, sizing, simulation,
+  signing, kill switch, and exit scanner still control execution. The LLM can
+  only return a verdict; `test_s5_prompt_injection.py` proves model output
+  cannot set size/mint/stops/caps/slippage/kill switch.
+- A spent or unavailable LLM/search budget pauses **entries** only. Exits do
+  not call the LLM, and the S5 tests assert the exit path remains operational.
+- There is no payment surface, no card data, no customer PII, no file upload/
+  multipart endpoint, and no frontend Supabase client. Knowledge-base ingest is
+  JSON-only with extension/size/path checks.
+- No real credential was found in the tracked tree, git history, or built frontend. Full-history gitleaks v8.30.1 scanned 334 commits / 11.45 MB with no leaks after allowlisting only synthetic test sentinels; the frontend scanner currently passes.
+- The wallet keypair is excluded from backup archives by the denylist, and the
+  restore drill asserts the restored state contains no `wallet_keypair.json`.
+- CSRF is not satisfied by SameSite alone; a cross-site form cannot set
+  `X-Requested-With`, and a mismatched `Origin`/`Referer` is rejected even with
+  the header.
+- Single-worker launch is asserted at all four launch sites; the limiter has a
+  hard key bound, expiry sweep, and new-client accounting; 429s carry
+  `Retry-After`.
+- Containers run read-only with `cap_drop: ALL`, `no-new-privileges`, resource
+  limits, loopback-only API, and no SearXNG host port.
+- Supply-chain references are pinned by full SHA/digest and preflight rejects a
+  deployment that loses DEBUG/HTTPS/rate-limit/body-cap/compose hardening.
+- Every security event type has a production emitter; dedupe and burst-alert
+  state are hard-bounded; a restore forces the kill switch engaged.
+- The decisions listed in the prompt were preserved: fomo/Privy, hardcoded
+  live flags, Jupiter Swap V1, kill-switch default off, the 11-rule gate, and
+  the public transparency endpoints. §92 did not change money-path behaviour.
+
+### Rotate-now list
+
+No credential was proven exposed by this review. Rotate immediately if any of
+the following is true, because the review cannot see the operator's shell
+history, chat, host backups, or provider dashboards:
+
+- `ADMIN_TOKEN` or `SESSION_SECRET` was ever pasted into chat, a ticket, a
+  shell transcript, or a log.
+- The Solana wallet keypair, `BACKUP_ENCRYPTION_KEY`, `SECRET_STORE_KEY`, or a
+  provider key was stored outside the server `.env`/mounted key file.
+- A pre-§92 backup archive or log bundle left the host without encryption.
+- A hosted Supabase `service_role` key or DSN was used in a frontend build or
+  committed `.env`.
+- Any S1/S8 scan is non-clean on the exact deployed commit.
+
+If in doubt, rotate `ADMIN_TOKEN`, `SESSION_SECRET`, provider keys, and alert
+tokens; treat the wallet as compromised if its keypair was ever outside the
+approved custody boundary.
+
+### Operator-must-do list
+
+1. Generate real `ADMIN_TOKEN`, `SESSION_SECRET`, `BACKUP_ENCRYPTION_KEY`, and
+   `SECRET_STORE_KEY` with `openssl rand -hex 32`; keep them distinct, mode
+   0600, server-only.
+2. Apply Supabase migration 007 and run its verification queries; do not assume
+   the repository test applied it remotely.
+3. Configure provider-side hard billing/quota caps and alerting for every paid
+   surface listed in §4 item 10.
+4. Run `scripts/preflight_deploy.py`; require `0 FAIL`, `DEBUG=false`, HTTPS/
+   rate limits on, exact `TRUSTED_PROXY_CIDRS`, and a non-zero body cap.
+5. Confirm API loopback binding, no SearXNG host port, and host firewall/
+   Tailscale ACLs that expose only the intended proxy.
+6. Create a current encrypted backup; run the restore drill into a throwaway
+   directory; verify rows, denylist, and the forced kill-switch latch.
+7. Test real alert delivery (`LOGIN_FAILURE_BURST`, `SPEND_CAP`,
+   `INTERNAL_ERROR`) and confirm `security.log` rotation/retention/off-host
+   copying.
+8. Keep `SESSION_REVOCATION_FILE` persistent and backed up; keep
+   `LIVE_STATE_DIR/spend_guard.json` writable/mode 0600.
+9. Run the full pytest suite, tsc/build, frontend secret scan, Playwright
+   against the real API on `:8000`, prepush, and CI on the deployed commit.
+10. Re-check every UNVERIFIED item in §8 and record the evidence before
+    declaring launch sign-off.

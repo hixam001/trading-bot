@@ -1144,6 +1144,155 @@ MUTATIONS: list[Mutation] = [
         test_selector="backend/tests/test_s8_supply_chain.py",
         description="JSON wallet channel no longer warns that env secrets are visible",
     ),
+    # §92-S1 backfill
+    Mutation(
+        phase="§92-S1",
+        mutation_id="92S1_PROVIDER_TOKEN_REDACTION_OFF",
+        file_path="backend/redaction.py",
+        exact_old_text="        for pat in _PROVIDER_TOKEN_RES:",
+        new_text="        for pat in ():",
+        test_selector="backend/tests/test_redaction_adversarial.py",
+        description="Provider-shaped tokens skip structural redaction",
+    ),
+    Mutation(
+        phase="§92-S1",
+        mutation_id="92S1_FRONTEND_SECRET_NAME_SCAN_OFF",
+        file_path="scripts/scan_frontend_bundle.py",
+        exact_old_text="    for name in SECRET_ENV_NAMES:",
+        new_text="    for name in ():",
+        test_selector="backend/tests/test_secret_hygiene.py",
+        description="Frontend bundle scanner ignores backend secret names",
+    ),
+    # §92-S2 backfill
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_CSRF_HEADER_CHECK_OFF",
+        file_path="backend/api/main.py",
+        exact_old_text="        if supplied.lower() != _CSRF_HEADER_VALUE.lower():",
+        new_text="        if False:",
+        test_selector="backend/tests/test_s2_auth_hardening.py",
+        description="Cookie-authenticated mutation accepted without X-Requested-With",
+    ),
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_REVOCATION_PERSISTENCE_OFF",
+        file_path="backend/api/auth.py",
+        exact_old_text="def _persist_revocations() -> None:\n    path = _revocation_path()",
+        new_text="def _persist_revocations() -> None:\n    path = None",
+        test_selector="backend/tests/test_s2_auth_hardening.py",
+        description="Session revocation is not written to disk",
+    ),
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_GLOBAL_LOCKOUT_OFF",
+        file_path="backend/api/routes/auth.py",
+        exact_old_text="    if len(attempts) >= _MAX_FAILED_ATTEMPTS or _global_lockout_active(now):",
+        new_text="    if len(attempts) >= _MAX_FAILED_ATTEMPTS:",
+        test_selector="backend/tests/test_s2_auth_hardening.py",
+        description="Global auth-failure ceiling removed; IP rotation defeats lockout",
+    ),
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_POW_REPLAY_ALLOWED",
+        file_path="backend/api/bot_protection.py",
+        exact_old_text="        if nonce in _USED_POW_NONCES:\n            return False",
+        new_text="        if False:\n            return False",
+        test_selector="backend/tests/test_s2_auth_hardening.py",
+        description="Solved proof-of-work challenge can be replayed",
+    ),
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_SIGNUP_CONCEALMENT_OFF",
+        file_path="backend/api/routes/auth.py",
+        exact_old_text='    if not getattr(config, "ALLOW_SIGNUP", False):',
+        new_text="    if False:",
+        test_selector="backend/tests/test_s2_auth_hardening.py",
+        description="Signup endpoint is reachable when disabled",
+    ),
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_ADMIN_TOKEN_ENTROPY_OFF",
+        file_path="backend/config.py",
+        exact_old_text="    if not validate_admin_token_entropy(_raw_admin_token):",
+        new_text="    if False:",
+        test_selector="backend/tests/test_s2_auth_hardening.py",
+        description="Weak ADMIN_TOKEN boots instead of failing closed",
+    ),
+    Mutation(
+        phase="§92-S2",
+        mutation_id="92S2_LOGIN_MODEL_EXTRA_ALLOWED",
+        file_path="backend/api/routes/auth.py",
+        exact_old_text='    model_config = ConfigDict(extra="forbid", populate_by_name=True)',
+        new_text="    model_config = ConfigDict(populate_by_name=True)",
+        test_selector="backend/tests/test_mass_assignment.py",
+        description="Login model silently accepts unknown mass-assignment fields",
+    ),
+    # §92-S9
+    Mutation(
+        phase="§92-S9",
+        mutation_id="92S9_EVENT_DEDUPE_OFF",
+        file_path="backend/api/security_monitor.py",
+        exact_old_text="            retained = self._dedupe.get(dedupe_key)",
+        new_text="            retained = None",
+        test_selector=(
+            "backend/tests/test_s9_monitoring_and_restore.py::"
+            "test_repeated_events_collapse_but_keep_the_true_count"
+        ),
+        description="Repeated security events are never collapsed",
+    ),
+    Mutation(
+        phase="§92-S9",
+        mutation_id="92S9_DEDUPE_BOUND_OFF",
+        file_path="backend/api/security_monitor.py",
+        exact_old_text="                while len(self._dedupe) > self._max_dedupe:",
+        new_text="                while False:",
+        test_selector=(
+            "backend/tests/test_s9_monitoring_and_restore.py::"
+            "test_dedupe_map_is_hard_bounded"
+        ),
+        description="Dedupe map grows without a hard bound",
+    ),
+    Mutation(
+        phase="§92-S9",
+        mutation_id="92S9_BURST_ALERT_DEDUPE_OFF",
+        file_path="backend/api/security_monitor.py",
+        exact_old_text="        if client_ip in self._burst_alerted:",
+        new_text="        if False:",
+        test_selector=(
+            "backend/tests/test_s9_monitoring_and_restore.py::"
+            "test_login_burst_alert_fires_once_per_ip_per_window"
+        ),
+        description="Login burst alerts fire per request instead of once per IP/window",
+    ),
+    Mutation(
+        phase="§92-S9",
+        mutation_id="92S9_INGEST_SCHEMA_EVENT_OFF",
+        file_path="backend/api/error_handler.py",
+        exact_old_text=(
+            '    if request.url.path.rstrip("/") == "/api/knowledge-base/ingest":'
+        ),
+        new_text="    if False:",
+        test_selector=(
+            "backend/tests/test_s9_monitoring_and_restore.py::"
+            "test_schema_rejected_upload_records_suspicious_upload"
+        ),
+        description="Schema-rejected upload attempts leave no security event",
+    ),
+    Mutation(
+        phase="§92-S9",
+        mutation_id="92S9_RESTORE_KILL_SWITCH_LATCH_OFF",
+        file_path="scripts/restore_state.py",
+        exact_old_text=(
+            "    kill_switch.trip(trip_reason, state_dir=target_state_dir)"
+            "  # Pass 4 safety latch"
+        ),
+        new_text="    pass  # Pass 4 safety latch disabled",
+        test_selector=(
+            "backend/tests/test_s9_monitoring_and_restore.py::"
+            "test_backup_restore_drill_verifies_book_and_trips_kill_switch"
+        ),
+        description="Restored state is left armed with the kill switch clear",
+    ),
 ]
 
 
@@ -1273,9 +1422,9 @@ def main() -> int:
 
     # Format Markdown document
     doc_lines = [
-        "# §81–§91 Mutation Log",
+        "# §81–§92 Mutation Log",
         "",
-        "This document records the automated, reproducible mutation verification discipline executed across all phases of Master Prompts §81, §82, §87, §88, §90 and §91.",
+        "This document records the automated, reproducible mutation verification discipline executed across all phases of Master Prompts §81, §82, §87, §88, §90, §91 and §92.",
         "Generated by `scripts/mutation_check.py`. For every refusal rule, security barrier, and classification branch,",
         "the active enforcement line was mutated and tested against real test suites to prove that tests fail when guards are broken.",
         "",

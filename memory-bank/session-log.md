@@ -1,3 +1,18 @@
+## Memory-bank update — 2026-11-08 (§92 security hardening before real-money launch)
+
+- **Task**: implement §92 phases S1–S9 with failing-first tests, one commit per phase, mutation coverage, and an operator-facing security record.
+- **S1**: centralized `backend/redaction.py`; logging/error/alert/monitor delegation; built-frontend secret scanner; gitignore/gitleaks hardening. Tests 22 + 29.
+- **S2**: CSRF header + Origin/Referer; persistent 0600 revocations; global + per-IP auth ceilings; single-use PoW; concealed signup; `extra="forbid"`; boot-time `ADMIN_TOKEN`/`SESSION_SECRET` entropy; dedicated `SESSION_SECRET`; route-matrix enforcement.
+- **S3**: fixed public disclosure/live-book/proof leaks; binding mismatch withholds wallet/fee payer; all Public GETs scanned for sentinels.
+- **S4**: guarded reset-table identifiers; migration 007 revoke+RLS; pure-ASGI body cap; v2 scrypt+AES-256-GCM backup envelope (legacy Fernet restore); XSS static + Playwright guard.
+- **S5**: `llm/untrusted.py` fencing/sanitisation; persisted `llm/spend_guard.py` daily call/token/cost + search caps; entries pause on spend, exits never call the LLM; prompts/transcripts exclude keys/wallet/full config.
+- **S6**: OrderedDict LRU limiter with hard key bound/expiry sweep; trusted-proxy CIDRs; positive `Retry-After`; `--workers 1` + bounded uvicorn flags at every launch site; finite public scan ceilings.
+- **S7**: shared header helper on 404/405/413/429/500/static/SPA; CSP `base-uri 'none'`; pytest-only synthetic hosts; debug cannot bypass auth/CSRF/rate limits; debug text redacted.
+- **S8**: full-SHA Actions; digest-pinned images/SearXNG; read-only/cap-drop/no-new-privileges/resource-limited compose; preflight runtime+compose checks; JSON wallet-channel warning.
+- **S9**: bounded 10 s event dedupe with true `occurrences`/`last_seen`; one burst alert per IP/10 min; schema-rejected uploads emit `SUSPICIOUS_UPLOAD`; restore drill verifies rows, denies keypair, forces kill-switch latch. Tests 9; failing-first proven by stashing S9 code (4 failed → 9 passed).
+- **Docs**: `docs/18_SECURITY.md` now has the threat model, route matrix, S1–S9 control↔test map, residual risks, operator checklist, rotation/incident runbooks, findings F1–F10 (severity/evidence/fix/test), verified-safe, rotate-now, operator-must-do, and UNVERIFIED lists; handoff §92; memory-bank updated; mutation log regenerated.
+- **Verification**: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT**; Playwright **41/41** against a local mock API on `:8000` (limiter raised only for the harness run); tsc/build + frontend scanner clean; prepush **9/9**; gitleaks v8.30.1 full-history clean (334 commits, synthetic fixtures allowlisted). No arming/gate/sizing/signing/exit/Jupiter/Privy changes.
+
 ## Memory-bank update — 2026-11-03 (§91 prove absence before expiring a pending buy)
 
 - **Task**: implement §91 in five commits (A1, A2, A3, B, C) so an all-`None`/all-unreachable status re-query can never be read as proof that a pending transaction did not land.
