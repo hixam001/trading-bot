@@ -6,3 +6,12 @@ ce0ad76522df5593807096f41bb4cd28719fbff0:backend/tests/test_audit_77_e.py:generi
 # (names only, no value; line reworded in the follow-up commit).
 c8d7405259280007cd0687c70166f8e606b92c1a:docs/18_SECURITY.md:generic-api-key:22
 
+
+# §93 R4: synthetic URL/header credential strings used only to test redaction.
+# Exact commit/file/line fingerprints; no general secret-scanning exclusion.
+f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:generic-api-key:91
+f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:generic-api-key:92
+f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:generic-api-key:93
+f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:generic-api-key:94
+f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:generic-api-key:95
+f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:generic-api-key:96

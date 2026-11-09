@@ -689,5 +689,8 @@ limitations are in [the §93 report](19_ROOTFS_AUDIT.md).
 | F9 | Low | Route matrix listed auth without testing it | Probe all matrix rows without credentials; explicit idempotent logout exception | `test_route_matrix.py` |
 | F10 | Low | Backup and read-only failure claims exceeded behavior | Corrected revocation backup exclusion and silent-write residual; contract/smoke evidence linked | `test_audit_93_r1.py`, this document |
 
-CI not verified by author. Docker is unavailable in the author environment;
+CI not verified by author for the full workflow. The first pushed backend/frontend
+CI job passed; Docker ARM64/native smoke was still running when inspected.
+The gitleaks synthetic test-fixture findings have exact fingerprint exclusions
+and a local CI-pinned scanner rerun found no leaks. Docker is unavailable in the author environment;
 the real-container smoke is wired into CI and has not been run locally.

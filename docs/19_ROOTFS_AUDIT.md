@@ -213,8 +213,18 @@ decides the spend budget; do not blindly apply the CLI's stress suggestions.
   scanner, changed-module pyflakes, inventory `--check` and `git diff --check`
   passed. Python dependency tooling and browser verification ran outside the
   sandbox because DB-backed tests hung inside its restricted environment.
-- Local gitleaks was skipped by the canonical script because its binary is
-  absent; no new full-history scan is claimed. CI not verified by author.
+- Initial local gitleaks step was skipped because no binary was installed.
+  CI then flagged only the synthetic URL/header credential strings in the R4
+  tests. Six exact commit/file/line fingerprints were added to .gitleaksignore;
+  no scanning rule or general path was excluded. The official CI-pinned 8.24.3
+  binary was downloaded to /tmp, verified against release SHA-256 checksums,
+  and a redacted full-history scan passed with no leaks. The canonical gate
+  was repeated with that binary on PATH.
+- Visible CI Backend & Frontend Tests job on b58de47 passed (pytest, audits,
+  type check, build, bundle scan and Playwright):
+  https://github.com/hixam001/trading-bot/actions/runs/42665808979/job/129329014286
+  The Docker ARM64/native smoke job was still running when inspected.
+  CI not verified by author for the complete workflow.
 
 ## UNVERIFIED
 
@@ -223,8 +233,7 @@ decides the spend budget; do not blindly apply the CLI's stress suggestions.
   EROFS and compose-contract tests pass for both roles.
 - Actual VM migration, reboot, production backup/restore, real wallet and
   Supabase certificate/rotation behavior were not contacted or exercised.
-- Local gitleaks/history scan was not run (binary absent).
-- GitHub CI not verified by author; no green CI link is claimed.
+- Full GitHub CI not verified by author; Docker ARM64/native smoke remained in progress. The visible backend/frontend job passed; no complete green workflow is claimed.
 - Current provider pricing and live traffic were not measured. Estimates use
   the repository snapshot and stated assumptions.
 
@@ -233,3 +242,5 @@ decides the spend budget; do not blindly apply the CLI's stress suggestions.
 1. The loss-memory/auto-block control now persists.
 2. API-side LLM calls use their own spend counter.
 3. Body cap default is 1 MiB.
+
+CI follow-up: the extra §93 R8 commit records the exact synthetic-fixture exclusions after the first pushed scan; published phase commits were not rewritten.

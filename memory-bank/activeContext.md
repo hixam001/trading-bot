@@ -16,7 +16,10 @@ Observed verification: backend 1934 passed, 0 failed, 0 skipped (102 existing
 deprecation warnings); mutation 137/137 caught, 0 survivors, restorations clean,
 no-flags log regenerated; dependency audits report no known vulnerabilities.
 Canonical prepush: all nine steps passed; Playwright 41/41; TypeScript/build/
-bundle scanner clean. Gitleaks absent locally, so its history scan is unverified.
+bundle scanner clean. CI initially flagged synthetic R4 credential strings; six exact fingerprint
+exclusions preserve scanning rules. CI-pinned gitleaks 8.24.3 was checksum-verified
+and its local full-history scan passed. The visible backend/frontend CI job
+passed; Docker/complete CI remains unverified.
 Docker unavailable; actual VM/Supabase behavior unverified. CI not verified by author.
 
 **Previous — 2026-11-08 (§92 Security Hardening Before Real-Money Launch — complete, phases S1–S9):**
