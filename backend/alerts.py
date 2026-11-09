@@ -26,6 +26,7 @@ from enum import Enum
 import logging
 import os
 import re
+import threading
 import time
 from typing import Any, Callable, Optional
 import httpx
@@ -126,6 +127,7 @@ class AlertEvent(str, Enum):
     WALLET_DROP = "WALLET_DROP"
     LOGIN_FAILURE_BURST = "LOGIN_FAILURE_BURST"
     SPEND_CAP = "SPEND_CAP"
+    STATE_WRITE_FAILURE = "STATE_WRITE_FAILURE"
     TEST = "TEST"
     INFO = "INFO"
 
@@ -146,6 +148,7 @@ EVENT_DEFAULT_PRIORITY: dict[AlertEvent, AlertPriority] = {
     AlertEvent.SELL_NO_REF_PRICE: AlertPriority.HIGH,
     AlertEvent.LOGIN_FAILURE_BURST: AlertPriority.HIGH,
     AlertEvent.SPEND_CAP: AlertPriority.HIGH,
+    AlertEvent.STATE_WRITE_FAILURE: AlertPriority.HIGH,
     AlertEvent.LIVE_BOOT: AlertPriority.INFO,
     AlertEvent.HEARTBEAT_RECOVERED: AlertPriority.INFO,
     AlertEvent.TEST: AlertPriority.INFO,
@@ -482,6 +485,48 @@ def alert_nowait(
     except Exception as exc:
         # Alerting failure must NEVER raise into caller
         log.error("Failed to enqueue alert: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# §93 R2 — deduped hourly state-write failure alerts
+# ---------------------------------------------------------------------------
+_STATE_WRITE_ALERT_LOCK = threading.Lock()
+_STATE_WRITE_ALERT_LAST: dict[str, float] = {}
+_STATE_WRITE_ALERT_COOLDOWN_SECONDS = 3600.0
+
+
+def alert_state_write_failure(source: str, detail: str, *,
+                              cooldown: float | None = None) -> None:
+    """Emit at most one ``STATE_WRITE_FAILURE`` alert per source per hour.
+
+    Never raises: alerting must not turn a state-write failure into a tick
+    failure.  The detail must contain no secret values.
+    """
+    try:
+        window = (_STATE_WRITE_ALERT_COOLDOWN_SECONDS if cooldown is None
+                  else max(0.0, float(cooldown)))
+        now = time.monotonic()
+        with _STATE_WRITE_ALERT_LOCK:
+            last = _STATE_WRITE_ALERT_LAST.get(source, -float("inf"))
+            if now - last < window:
+                return
+            _STATE_WRITE_ALERT_LAST[source] = now
+        alert_nowait(
+            AlertEvent.STATE_WRITE_FAILURE,
+            f"Runtime state write failed ({source}): {detail}. The affected "
+            "control could lose persisted state; inspect the write failure.",
+            key=f"state_write:{source}",
+            source=source,
+        )
+    except Exception:
+        log.warning("could not enqueue STATE_WRITE_FAILURE alert",
+                    exc_info=True)
+
+
+def _reset_state_write_alerts() -> None:
+    """Clear the hourly dedupe (testing utility)."""
+    with _STATE_WRITE_ALERT_LOCK:
+        _STATE_WRITE_ALERT_LAST.clear()
 
 
 async def alert(

@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import secrets
 import threading
@@ -184,13 +185,27 @@ def _persist_revocations() -> None:
         tmp.write_text(payload, encoding="utf-8")
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
-    except Exception:
-        # Persistence is best-effort at the HTTP layer, but the operator must
-        # see it: a restart could otherwise resurrect revoked sessions.
-        import logging
-        logging.getLogger("api.auth").exception(
-            "failed to persist session revocation registry"
-        )
+    except Exception as exc:
+        # §93 R2: a restart could resurrect revoked sessions. Persistence is
+        # still best-effort at the HTTP layer, but the operator must see it.
+        logger = logging.getLogger("api.auth")
+        logger.error("failed to persist session revocation registry at %s: %s",
+                     path, type(exc).__name__, exc_info=True)
+        try:
+            from api.security_monitor import (
+                SecurityEventType, record_security_event,
+            )
+            record_security_event(
+                SecurityEventType.INTERNAL_ERROR,
+                client_ip="unknown",
+                path="/api/auth/logout",
+                method="POST",
+                detail=("session revocation registry could not be persisted: "
+                        f"{type(exc).__name__}"),
+                severity="ERROR",
+            )
+        except Exception:
+            pass
 
 
 def reset_session_revocations(delete_file: bool = False) -> None:

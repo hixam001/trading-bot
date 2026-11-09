@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import builtins
 import errno
-import io
 import os
 import shutil
 import sqlite3
@@ -22,6 +21,7 @@ import tempfile
 from pathlib import Path
 
 import yaml
+from scripts import audit_runtime_writes as inventory
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 COMPOSE_PATH = REPO_ROOT / "docker-compose.yml"
@@ -39,28 +39,11 @@ def load_compose() -> dict:
 
 
 def writable_mounts(service: dict) -> list[str]:
-    """Container paths that are writable for this service (compose-derived)."""
-    mounts: list[str] = []
-    for volume in service.get("volumes") or []:
-        parts = str(volume).split(":")
-        if len(parts) >= 2:
-            mode = parts[2] if len(parts) > 2 else "rw"
-            if mode != "ro":
-                mounts.append(parts[1].rstrip("/"))
-    for tmpfs in service.get("tmpfs") or []:
-        mounts.append(str(tmpfs).rstrip("/"))
-    return mounts
+    return inventory.writable_mounts(service)
 
 
 def service_environment(service: dict) -> dict[str, str]:
-    raw = service.get("environment") or {}
-    if isinstance(raw, dict):
-        return {str(k): "" if v is None else str(v) for k, v in raw.items()}
-    out: dict[str, str] = {}
-    for item in raw:
-        key, _, value = str(item).partition("=")
-        out[key] = value
-    return out
+    return inventory.service_environment(service)
 
 
 def service_by_name(compose: dict, name: str) -> dict:
@@ -68,11 +51,7 @@ def service_by_name(compose: dict, name: str) -> dict:
 
 
 def _under(path: Path, root: str) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
+    return inventory.is_under(str(path), root)
 
 
 class ErofsGuard:
@@ -81,7 +60,8 @@ class ErofsGuard:
     def __init__(self, role: str, temp_root: Path):
         self.role = role
         self.temp_root = Path(temp_root)
-        self.mounts = writable_mounts(service_by_name(load_compose(), role))
+        self.service = service_by_name(load_compose(), role)
+        self.mounts = writable_mounts(self.service)
         self._originals: dict = {}
         self._installed = False
 
@@ -107,9 +87,7 @@ class ErofsGuard:
 
     def allowed(self, path) -> bool:
         logical = self.logical(path)
-        if _under(logical, "/tmp"):
-            return True
-        return any(_under(logical, mount) for mount in self.mounts)
+        return inventory.writable_path(str(logical), self.service)
 
     def _ensure_parent(self, path: Path) -> None:
         parent = path.parent
@@ -118,6 +96,8 @@ class ErofsGuard:
 
     # -- patched primitives ----------------------------------------------
     def _open(self, file, mode="r", *args, **kwargs):
+        if isinstance(file, int):
+            return self._originals["open"](file, mode, *args, **kwargs)
         if any(c in str(mode) for c in _WRITE_MODE_CHARS):
             if not self.allowed(file):
                 raise OSError(errno.EROFS, "Read-only file system (simulated)",
@@ -160,14 +140,14 @@ class ErofsGuard:
         return self._originals["mkdir"](target, *args, **kwargs)
 
     def _os_replace(self, src, dst, *args, **kwargs):
-        if not self.allowed(dst):
+        if not self.allowed(src) or not self.allowed(dst):
             raise OSError(errno.EROFS, "Read-only file system (simulated)",
                           str(dst))
         return self._originals["os_replace"](self.to_temp(src),
                                              self.to_temp(dst), *args, **kwargs)
 
     def _os_rename(self, src, dst, *args, **kwargs):
-        if not self.allowed(dst):
+        if not self.allowed(src) or not self.allowed(dst):
             raise OSError(errno.EROFS, "Read-only file system (simulated)",
                           str(dst))
         return self._originals["os_rename"](self.to_temp(src),
@@ -184,7 +164,7 @@ class ErofsGuard:
         return self._originals["path_open"](path, mode, *args, **kwargs)
 
     def _path_replace(self, path, target, *args, **kwargs):
-        if not self.allowed(target):
+        if not self.allowed(path) or not self.allowed(target):
             raise OSError(errno.EROFS, "Read-only file system (simulated)",
                           str(target))
         return self._originals["path_replace"](self.to_temp(path),
@@ -202,25 +182,22 @@ class ErofsGuard:
                           str(path))
         return self._originals["path_mkdir"](self.to_temp(path), *args, **kwargs)
 
-    def _mkstemp(self, *args, **kwargs):
-        directory = kwargs.get("dir")
-        if directory is None and len(args) >= 4:
-            directory = args[3]
+    def _tempfile_call(self, name, *args, **kwargs):
+        directory = kwargs.get("dir", args[2] if len(args) > 2 else None)
         if directory and not self.allowed(directory):
-            raise OSError(errno.EROFS, "Read-only file system (simulated)",
-                          str(directory))
+            raise OSError(errno.EROFS, "Read-only file system (simulated)", str(directory))
         if directory:
-            kwargs["dir"] = str(self.to_temp(directory))
-        return self._originals["mkstemp"](*args, **kwargs)
+            if len(args) > 2:
+                args = (*args[:2], str(self.to_temp(directory)), *args[3:])
+            else:
+                kwargs["dir"] = str(self.to_temp(directory))
+        return self._originals[name](*args, **kwargs)
+
+    def _mkstemp(self, *args, **kwargs):
+        return self._tempfile_call("mkstemp", *args, **kwargs)
 
     def _mkdtemp(self, *args, **kwargs):
-        directory = kwargs.get("dir")
-        if directory and not self.allowed(directory):
-            raise OSError(errno.EROFS, "Read-only file system (simulated)",
-                          str(directory))
-        if directory:
-            kwargs["dir"] = str(self.to_temp(directory))
-        return self._originals["mkdtemp"](*args, **kwargs)
+        return self._tempfile_call("mkdtemp", *args, **kwargs)
 
     def _shutil_copy(self, src, dst, *args, **kwargs):
         if not self.allowed(dst):
@@ -230,6 +207,8 @@ class ErofsGuard:
                                               *args, **kwargs)
 
     def _sqlite_connect(self, database, *args, **kwargs):
+        if database == ":memory:":
+            return self._originals["sqlite_connect"](database, *args, **kwargs)
         if database and not self.allowed(database):
             raise OSError(errno.EROFS, "Read-only file system (simulated)",
                           str(database))
@@ -348,8 +327,9 @@ def apply_service_env(guard: ErofsGuard, monkeypatch, role: str,
             monkeypatch.setattr(config, key, Path(translated))
         else:
             monkeypatch.setattr(config, key, str(translated))
-    if role == "live" and "LIVE_STATE_DIR" in applied:
-        live_config.STATE_DIR = Path(applied["LIVE_STATE_DIR"])
+    if role == "live":
+        engine_state = inventory.resolved_runtime_paths(env)["LIVE_EXECUTION_STATE_DIR"]
+        monkeypatch.setattr(live_config, "STATE_DIR", guard.to_temp(engine_state))
     # Make the standard throwaway dirs real.
     for key in ("LIVE_STATE_DIR", "LOG_DIR", "DB_PATH",
                 "KB_INGESTED_DIR", "SPEND_GUARD_FILE",

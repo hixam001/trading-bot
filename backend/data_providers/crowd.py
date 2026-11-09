@@ -233,9 +233,18 @@ def _persist_refresh(value: str) -> None:
         pass
     if not secret_store.encrypt_to_file(_state_file(),
                                         {"refresh_token": value}):
-        log.warning("fomo: could not persist rotated refresh token "
-                    "ENCRYPTED — keeping in-memory chain only (a restart "
-                    "will need the .env bootstrap)")
+        log.error("fomo: could not persist rotated refresh token "
+                  "ENCRYPTED — keeping in-memory chain only (a restart "
+                  "will need the .env bootstrap)")
+        try:
+            from alerts import alert_state_write_failure
+            alert_state_write_failure(
+                "fomo-privy",
+                "rotated refresh token was not persisted; a restart will "
+                "fall back to the .env bootstrap token",
+            )
+        except Exception:
+            pass
 
 
 def _lock_for(app_id: str) -> asyncio.Lock:

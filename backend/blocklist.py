@@ -130,8 +130,34 @@ def _load() -> dict:
 
 def _save(data: dict) -> None:
     path = _path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2, sort_keys=True))
+    except Exception as exc:
+        # §93 R2: a silent swallow is what hid the read-only-root data loss.
+        # The tick stays non-fatal, but the failure is ERROR and deduped
+        # hourly to the operator.
+        log.error("blocklist state write failed at %s: %s", path, exc)
+        try:
+            from alerts import alert_state_write_failure
+            alert_state_write_failure(
+                "blocklist",
+                f"state write failed at {path}: {type(exc).__name__}",
+            )
+        except Exception:
+            pass
+        raise
+
+
+def _save_or_alert(data: dict, operation: str) -> bool:
+    """Persist without raising; return True on success (§93 R2)."""
+    try:
+        _save(data)
+        return True
+    except Exception:
+        log.error("blocklist %s failed (non-fatal)", operation,
+                  exc_info=True)
+        return False
 
 
 def _is_block_entry(entry: Optional[dict]) -> bool:
@@ -165,7 +191,7 @@ def block_mint(mint: str, symbol: str = "", reason: str = "",
     }
     if closes:
         mints[mint]["closes"] = closes
-    _save(data)
+    _save_or_alert(data, "block")
 
 
 def unblock_mint(mint: str) -> bool:
@@ -180,11 +206,11 @@ def unblock_mint(mint: str) -> bool:
     if closes:
         # History-only entry: keep it, drop the block fields.
         mints[mint] = {"symbol": entry.get("symbol", ""), "closes": closes}
-        _save(data)
+        _save_or_alert(data, "unblock")
         return True
     removed = mints.pop(mint, None)
     if removed is not None:
-        _save(data)
+        _save_or_alert(data, "unblock")
     return removed is not None
 
 
@@ -268,10 +294,10 @@ def record_close_outcome(mint: str, symbol: str, rule_id: str,
             "book": str(book or "paper"),
         })
         del closes[_MAX_CLOSE_HISTORY:]
-        _save(data)
+        _save_or_alert(data, "close-outcome")
     except Exception:
-        log.warning("close-outcome recording failed for %s (non-fatal)",
-                    symbol or mint[:8], exc_info=True)
+        log.error("close-outcome recording failed for %s (non-fatal)",
+                  symbol or mint[:8], exc_info=True)
 
 
 def summary() -> dict:
@@ -340,8 +366,8 @@ def maybe_autoblock(mint: str, symbol: str) -> bool:
             "for entry on either book", symbol, mint[:12], rules)
         return True
     except Exception:
-        log.warning("auto-block check failed for %s (non-fatal)",
-                    symbol or mint[:8], exc_info=True)
+        log.error("auto-block check failed for %s (non-fatal)",
+                  symbol or mint[:8], exc_info=True)
         return False
 
 

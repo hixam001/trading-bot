@@ -55,16 +55,34 @@ FORBIDDEN_NTFY_TOPICS = frozenset({
 # Shell-exported values override .env for interpolation, matching compose.
 # Kept in one tuple so tests can isolate the process environment.
 ENV_OVERRIDE_KEYS = (
-    "DATA_BACKEND", "MAIN_LLM_PROVIDER", "DEEPSEEK_API_KEY",
-    "GROQ_API_KEY", "ADMIN_TOKEN", "SEARXNG_SECRET",
-    "BACKUP_ENCRYPTION_KEY", "SECRET_STORE_KEY", "FRONTEND_ORIGIN",
-    "SOLANA_RPC_URL", "SOLANA_RPC_URL_2", "ALERT_NTFY_URL",
-    "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
-    "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
-    "WALLET_KEYPAIR_PATH", "WALLET_KEYPAIR_HOST_PATH",
-    "EXPECTED_WALLET_ADDRESS", "DEBUG", "RATE_LIMIT_ENABLED",
-    "FORCE_HTTPS", "MAX_REQUEST_BODY_BYTES", "TRUSTED_PROXY_CIDRS",
-    "SESSION_SECRET",
+    'DATA_BACKEND',
+    'MAIN_LLM_PROVIDER',
+    'DEEPSEEK_API_KEY',
+    'GROQ_API_KEY',
+    'ADMIN_TOKEN',
+    'SEARXNG_SECRET',
+    'BACKUP_ENCRYPTION_KEY',
+    'SECRET_STORE_KEY',
+    'FRONTEND_ORIGIN',
+    'SOLANA_RPC_URL',
+    'SOLANA_RPC_URL_2',
+    'ALERT_NTFY_URL',
+    'ALERT_NTFY_TOPIC',
+    'ALERT_NTFY_TOKEN',
+    'ALERT_TELEGRAM_BOT_TOKEN',
+    'ALERT_TELEGRAM_CHAT_ID',
+    'WALLET_KEYPAIR_PATH',
+    'WALLET_KEYPAIR_HOST_PATH',
+    'EXPECTED_WALLET_ADDRESS',
+    'DEBUG',
+    'RATE_LIMIT_ENABLED',
+    'FORCE_HTTPS',
+    'MAX_REQUEST_BODY_BYTES',
+    'TRUSTED_PROXY_CIDRS',
+    'SESSION_SECRET',
+    'USE_SUPABASE_DB',
+    'SUPABASE_CERT_FINGERPRINT',
+    'SUPABASE_PIN_FILE',
 )
 
 # The two wallet secret channels are mutually exclusive (see wallet.py):
@@ -688,75 +706,86 @@ def _compose_hardening_issues(services: dict) -> list[str]:
     return issues
 
 
+def _runtime_inventory():
+    try:
+        from scripts import audit_runtime_writes
+    except ModuleNotFoundError:  # direct `python scripts/preflight_deploy.py`
+        import audit_runtime_writes
+    return audit_runtime_writes
+
+
 def _writable_mounts(service: dict) -> list[str]:
-    """Container paths writable for this service (volumes without :ro + tmpfs)."""
-    mounts: list[str] = []
-    for volume in service.get("volumes") or []:
-        parts = str(volume).split(":")
-        if len(parts) >= 2:
-            mode = parts[2] if len(parts) > 2 else "rw"
-            if mode != "ro":
-                mounts.append(parts[1].rstrip("/"))
-    for tmpfs in service.get("tmpfs") or []:
-        mounts.append(str(tmpfs).rstrip("/"))
-    return mounts
+    return _runtime_inventory().writable_mounts(service)
 
 
 def _is_under(path: str, root: str) -> bool:
-    try:
-        Path(path).relative_to(root)
-        return True
-    except ValueError:
-        return False
+    return _runtime_inventory().is_under(path, root)
 
 
-# §93 R1: every runtime write path owned by a compose service. The path is
-# resolved from the service environment (compose overrides .env) with the
-# config defaults for anything compose does not set.
-RUNTIME_WRITE_PATHS: dict[str, tuple[str, ...]] = {
-    "live": (
-        "LIVE_STATE_DIR", "BLOCKLIST_STATE_FILE", "FOMO_PRIVY_STATE_FILE",
-        "SECRET_STORE_KEY_FILE", "SUPABASE_PIN_FILE", "SPEND_GUARD_FILE",
-        "DB_PATH", "LOG_DIR",
-    ),
-    "api": (
-        "SESSION_REVOCATION_FILE", "KB_INGESTED_DIR", "SPEND_GUARD_FILE",
-        "SUPABASE_PIN_FILE", "DB_PATH", "LOG_DIR",
-    ),
+RUNTIME_WRITE_PATHS = {
+    role: _runtime_inventory().runtime_keys(role) for role in ("api", "live")
 }
 
 
 def check_runtime_write_paths(config: dict | None, env: dict[str, str],
                               error: str = "") -> list[Check]:
-    """§93 R1: no runtime write may resolve onto the read-only root."""
+    """No runtime write may resolve onto the read-only root or a :ro mount."""
     if config is None:
         return [_check("runtime write paths", FAIL,
                        error or "compose config unavailable")]
+    inventory = _runtime_inventory()
     services = config.get("services") or {}
     findings: list[str] = []
-    resolved_rows: list[str] = []
-    for role, keys in RUNTIME_WRITE_PATHS.items():
+    checked = 0
+    for role in ("api", "live"):
         service = services.get(role) or {}
-        mounts = _writable_mounts(service)
-        service_env = _service_env(service)
-        live_state = (service_env.get("LIVE_STATE_DIR")
-                      or _value(env, "LIVE_STATE_DIR")
-                      or "/app/backend/live_execution/state")
-        for key in keys:
-            raw = service_env.get(key) or _value(env, key) or ""
-            if key == "SPEND_GUARD_FILE" and not raw:
-                raw = str(Path(live_state) / "spend_guard.json")
-            if not raw:
-                findings.append(f"{role}: {key} is unset and has no default")
-                continue
-            if not any(_is_under(raw, mount) for mount in mounts) and not _is_under(raw, "/tmp"):
-                findings.append(f"{role}: {key}={raw} is on the read-only root")
+        effective = {**env, **_service_env(service)}
+        paths = inventory.resolved_runtime_paths(effective)
+        for key in inventory.runtime_keys(role):
+            raw = paths.get(key)
+            if not raw or not inventory.writable_path(raw, service):
+                findings.append(f"{role}: {key} is on the read-only root or a read-only mount")
             else:
-                resolved_rows.append(f"{role}:{key}")
+                checked += 1
     if findings:
         return [_check("runtime write paths", FAIL, "; ".join(findings))]
     return [_check("runtime write paths", PASS,
-                   f"{len(resolved_rows)} write paths on writable mounts/tmpfs")]
+                   f"{checked} write paths on writable mounts/tmpfs")]
+
+
+def check_supabase_tls(config: dict | None, env: dict[str, str],
+                       error: str = "") -> list[Check]:
+    """Each DB-using service needs an operator pin or a writable TOFU path."""
+    if config is None:
+        if _value(env, "USE_SUPABASE_DB") != "1":
+            return [_check("supabase tls pin", PASS, "USE_SUPABASE_DB is not 1")]
+        if _value(env, "SUPABASE_CERT_FINGERPRINT"):
+            return [_check("supabase tls pin", PASS,
+                           "SUPABASE_CERT_FINGERPRINT is set (no TOFU)")]
+        return [_check("supabase tls pin", WARN,
+                       error or "compose config unavailable; cannot verify pin path")]
+    inventory = _runtime_inventory()
+    findings: list[str] = []
+    enabled = []
+    for role in ("api", "live"):
+        service = (config.get("services") or {}).get(role) or {}
+        effective = {**env, **_service_env(service)}
+        if str(effective.get("USE_SUPABASE_DB", "")) != "1":
+            continue
+        enabled.append(role)
+        if effective.get("SUPABASE_CERT_FINGERPRINT"):
+            continue
+        pin = inventory.resolved_runtime_paths(effective)["SUPABASE_PIN_FILE"]
+        if not inventory.writable_path(pin, service):
+            findings.append(role)
+    if findings:
+        return [_check("supabase tls pin", WARN,
+                       "No operator pin or writable SUPABASE_PIN_FILE for "
+                       + ", ".join(findings)
+                       + "; TOFU pin will be held in memory for the process lifetime")]
+    return [_check("supabase tls pin", PASS,
+                   "operator pin or writable TOFU path for each enabled service"
+                   if enabled else "USE_SUPABASE_DB is not 1")]
 
 
 def check_compose(config: dict | None, error: str = "") -> list[Check]:
@@ -827,6 +856,7 @@ def run_preflight(env: dict[str, str], root: Path,
         checks.extend(check_compose(compose_config, compose_error))
         checks.extend(check_runtime_write_paths(compose_config, env,
                                                 compose_error))
+        checks.extend(check_supabase_tls(compose_config, env, compose_error))
     return checks
 
 

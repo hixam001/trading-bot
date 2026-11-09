@@ -46,6 +46,20 @@ log = logging.getLogger(__name__)
 
 _pool: Optional[asyncpg.Pool] = None
 
+# §93 R2: when the TOFU pin file cannot be written (read-only root, volume
+# full), the probed fingerprint is held in memory for the process lifetime
+# and every later pool refill is still verified against it.  A failed file
+# write must never downgrade to "encrypted but NOT authenticated".
+_MEMORY_PIN: Optional[str] = None
+_FALLBACK_ALERTED = False
+
+
+def _reset_tls_pin_state_for_tests() -> None:
+    """Clear in-memory pin/fallback state (testing utility)."""
+    global _MEMORY_PIN, _FALLBACK_ALERTED
+    _MEMORY_PIN = None
+    _FALLBACK_ALERTED = False
+
 
 def _dsn() -> str:
     """SUPABASE_DB_URL with TLS enforced (Supabase poolers require SSL)."""
@@ -70,11 +84,17 @@ def _fetch_cert_fingerprint(host: str, port: int) -> str:
     """TLS-probe the server ourselves and return the SHA-256 of its cert."""
     import hashlib
     import socket
+    import struct
 
     probe = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
     probe.check_hostname = False
     probe.verify_mode = ssl.CERT_NONE
     with socket.create_connection((host, port), timeout=10) as sock:
+        # Match asyncpg's PostgreSQL STARTTLS negotiation. Sending a raw
+        # TLS ClientHello to a normal PG port cannot retrieve its cert.
+        sock.sendall(struct.pack("!II", 8, 80877103))
+        if sock.recv(1) != b"S":
+            raise ssl.SSLError("PostgreSQL SSLRequest was not accepted")
         with probe.wrap_socket(sock, server_hostname=host) as tls:
             der = tls.getpeercert(binary_form=True)
     return hashlib.sha256(der).hexdigest()
@@ -85,61 +105,142 @@ async def _tls_context() -> ssl.SSLContext:
     Strongest available TLS for the pooler, in order:
       1. SYSTEM   — normal public-CA verification (if Supabase serves one).
       2. PINNED   — fingerprint probe: hash the presented cert and require an
-                    exact match against .supabase_fp.txt (written on first
-                    ever connect). Any mismatch = hard abort (MITM guard).
-                    Delete the pin file after a LEGITIMATE Supabase cert
-                    rotation to re-pin.
-      3. FALLBACK — encrypted-but-unverified, loudly logged (never silent).
+                    exact match against the operator pin, the TOFU pin file,
+                    or the in-memory pin captured earlier this process.
+                    Any mismatch = hard abort (MITM guard).
+      3. FALLBACK — encrypted-but-unverified, ERROR-logged and alerted once.
     The returned context is intentionally unverified at the OpenSSL layer;
     authentication is provided by our own fingerprint probe performed at
     pool creation, immediately before asyncpg dials.
     """
-    # 1. normal system trust store
-    try:
-        strict = ssl.create_default_context()
-        conn = await asyncpg.connect(_dsn(), ssl=strict, timeout=10)
-        await conn.close()
-        log.info("db_pg: TLS verified against system CAs")
-        return strict
-    except ssl.SSLCertVerificationError:
-        pass  # expected: self-signed pooler chain
+    global _MEMORY_PIN, _FALLBACK_ALERTED
+    operator_pin = str(config.SUPABASE_CERT_FINGERPRINT or "").strip()
+    expected = operator_pin or _MEMORY_PIN
+    pin_path = _pin_path()
+    if not expected and pin_path.exists():
+        expected = pin_path.read_text().strip()
+    # A known pin must be checked before any PostgreSQL authentication.
+    # Without a pin, normal CA validation authenticates the first connection.
+    if not expected:
+        try:
+            strict = ssl.create_default_context()
+            conn = await asyncpg.connect(_dsn(), ssl=strict, timeout=10)
+            await conn.close()
+            log.info("db_pg: TLS verified against system CAs")
+            return strict
+        except ssl.SSLCertVerificationError:
+            pass  # self-signed pooler chain: TOFU below
 
-    # 2. fingerprint pinning (TOFU on first run, exact-match afterwards)
+    # 2. fingerprint pinning (operator pin > TOFU file > in-memory pin)
     try:
         fp = _fetch_cert_fingerprint(*_host_port(_dsn()))
-        expected: Optional[str] = None
-        pin_path = _pin_path()
-        if pin_path.exists():
-            expected = pin_path.read_text().strip()
-            if expected and fp != expected:
-                raise RuntimeError(
-                    f"SUPABASE CERTIFICATE FINGERPRINT MISMATCH "
-                    f"(pinned {expected[:16]}…, got {fp[:16]}…) — "
-                    f"possible MITM. If Supabase rotated certs legitimately, "
-                    f"delete {pin_path} to re-pin.")
+        if expected and fp != expected:
+            raise RuntimeError(
+                f"SUPABASE CERTIFICATE FINGERPRINT MISMATCH "
+                f"(pinned {expected[:16]}…, got {fp[:16]}…) — "
+                f"possible MITM. If Supabase rotated certs legitimately, "
+                f"delete {pin_path} to re-pin.")
         if not expected:
-            pin_path.write_text(fp)
-            log.warning("db_pg: TOFU pinned Supabase cert %s… -> %s",
-                        fp[:16], pin_path)
+            try:
+                pin_path.parent.mkdir(parents=True, exist_ok=True)
+                pin_path.write_text(fp)
+                log.warning("db_pg: TOFU pinned Supabase cert %s… -> %s",
+                            fp[:16], pin_path)
+            except Exception as exc:
+                # §93 R2: hold the pin in memory and keep verifying.  Never
+                # fall through to unauthenticated TLS because a file write
+                # failed.
+                _MEMORY_PIN = fp
+                log.error("db_pg: pin file %s is unwritable (%s) — holding "
+                          "the certificate fingerprint in memory for this "
+                          "process and verifying every connection against it",
+                          pin_path, type(exc).__name__)
+                try:
+                    from alerts import alert_state_write_failure
+                    alert_state_write_failure(
+                        "supabase-pin",
+                        "certificate pin file is unwritable; the pin is held "
+                        "in memory for this process only",
+                    )
+                except Exception:
+                    pass
+            else:
+                _MEMORY_PIN = fp
         else:
             log.info("db_pg: Supabase cert fingerprint matches pin (%s…)",
                      fp[:16])
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE  # identity enforced by the pin above
-        return ctx
+        _MEMORY_PIN = fp
+        return _pinned_context(fp)
     except RuntimeError:
         raise  # MITM suspicion must never be swallowed
     except Exception as exc:
-        log.warning("db_pg: fingerprint probe failed (%s)", exc)
+        if expected:
+            raise RuntimeError("Supabase pin verification unavailable; refusing connection") from exc
+        log.warning("db_pg: fingerprint probe failed (%s)", type(exc).__name__)
 
-    # 3. last resort: encrypt without verifying
+    # 3. last resort: encrypt without verifying.  This is the ONLY path that
+    # may run without authentication, so it is ERROR + one alert per process.
     ctx = ssl.create_default_context()
     ctx.check_hostname = False
     ctx.verify_mode = ssl.CERT_NONE
-    log.warning("db_pg: TLS verification UNAVAILABLE — "
-                "connection encrypted but NOT authenticated")
+    log.error("db_pg: TLS verification UNAVAILABLE — connection encrypted "
+              "but NOT authenticated")
+    if not _FALLBACK_ALERTED:
+        _FALLBACK_ALERTED = True
+        try:
+            from alerts import alert_state_write_failure
+            alert_state_write_failure(
+                "supabase-tls",
+                "TLS verification unavailable; connections are encrypted "
+                "but NOT authenticated",
+            )
+        except Exception:
+            pass
     return ctx
+
+
+def _pinned_context(fingerprint: str) -> ssl.SSLContext:
+    """Pin each actual asyncio TLS handshake BEFORE PostgreSQL sends a password.
+
+    asyncio uses SSLObject via wrap_bio. Its do_handshake must return before
+    the application protocol can send startup/auth messages. Keep the hash
+    check here as well as the pool init check, which alone would be too late.
+    """
+    import hashlib
+
+    class PinnedSSLObject(ssl.SSLObject):
+        def do_handshake(self):
+            result = super().do_handshake()
+            cert = self.getpeercert(binary_form=True)
+            if not cert or hashlib.sha256(cert).hexdigest() != fingerprint:
+                raise ssl.SSLCertVerificationError(
+                    "SUPABASE CERTIFICATE FINGERPRINT MISMATCH during TLS handshake")
+            return result
+
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE  # exact certificate hash authenticates the peer
+    ctx.sslobject_class = PinnedSSLObject
+    return ctx
+
+
+async def _verify_pool_connection(conn) -> None:
+    """Verify the actual TLS peer on EVERY physical pool connection/refill.
+
+    asyncpg's init hook runs once per newly created connection, before it is
+    handed to a caller. A separate TOFU probe alone cannot authenticate a
+    later pooled connection. The transport is private to the pinned asyncpg
+    release; a missing SSL object fails closed when a pin is known.
+    """
+    import hashlib
+    expected = str(config.SUPABASE_CERT_FINGERPRINT or "").strip() or _MEMORY_PIN
+    if not expected:
+        return  # CA-verified or the explicitly alerted, unpinned last resort
+    transport = getattr(conn, "_transport", None)
+    tls = transport.get_extra_info("ssl_object") if transport else None
+    cert = tls.getpeercert(binary_form=True) if tls else None
+    if not cert or hashlib.sha256(cert).hexdigest() != expected:
+        raise RuntimeError("SUPABASE CERTIFICATE FINGERPRINT MISMATCH on pool connection")
 
 
 async def _get_pool() -> asyncpg.Pool:
@@ -148,7 +249,7 @@ async def _get_pool() -> asyncpg.Pool:
         _pool = await asyncpg.create_pool(
             _dsn(), min_size=1, max_size=5,
             command_timeout=30, timeout=15,
-            ssl=await _tls_context(),
+            ssl=await _tls_context(), init=_verify_pool_connection,
         )
     return _pool
 
