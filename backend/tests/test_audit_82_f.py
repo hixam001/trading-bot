@@ -31,8 +31,8 @@ from live_execution import kill_switch
 def restore_env(tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    (state_dir / "executions.json").write_text(json.dumps([{"kind": "buy", "status": "OPEN", "mint": "MINT1", "tokens_out": 10.0, "usd_size": 25.0}]), encoding="utf-8")
-    (state_dir / "commits.json").write_text(json.dumps([{"hash": "h1"}]), encoding="utf-8")
+    (state_dir / "executions.json").write_text(json.dumps({"records": [{"kind": "buy", "status": "confirmed", "idempotency_key": "buy1", "ts": 1.0, "mint": "MINT1", "tokens_out": 10.0, "usd_size": 25.0}]}), encoding="utf-8")
+    (state_dir / "commits.json").write_text(json.dumps([{"hash": "h1", "nonce": "n1", "kind": "buy", "status": "sealed", "payload": {"mint": "MINT1"}, "sealed_at": 1.0}]), encoding="utf-8")
 
     db_path = tmp_path / "trading_bot.db"
     conn = sqlite3.connect(str(db_path))

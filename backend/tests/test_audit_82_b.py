@@ -19,6 +19,7 @@ from __future__ import annotations
 import base64
 
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 import live_execution.config as le_config
 from live_execution import executor as ex
@@ -139,7 +140,7 @@ async def test_preflight_reject_escalates_even_when_blockhash_still_valid(
 
     async def fake_sign(b64, payer, intent=None, quote=None):
         sign_count[0] += 1
-        return ex.solana.SignedSwap(f"SIG_{sign_count[0]}", b"raw", _checked=True)
+        return ex.solana.SignedSwap("FILL_SIG_3" if sign_count[0] == 3 else f"SIG_{sign_count[0]}", b"raw", _checked=True)
 
     # First two sends fail at preflight with SendRejected (ERR_6001).
     # Third send succeeds.
@@ -354,7 +355,7 @@ async def test_send_raw_transaction_detailed_feeds_classifier(monkeypatch):
         def json(self):
             return rpc_error_body
 
-    class _MockClient:
+    class _MockClient(LegacyHTTPStreamClient):
         async def post(self, url, json=None, timeout=None):
             return _MockResponse()
         async def __aenter__(self):

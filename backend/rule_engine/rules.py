@@ -15,9 +15,22 @@ None semantics:
 from __future__ import annotations
 
 
+import math
+
 import config
 from models import Candidate, PortfolioState, RuleResult
 from rule_engine.regime import MarketRegime
+
+
+def _finite_number(value, *, count: bool = False) -> bool:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        if not math.isfinite(value):
+            return False
+    except (TypeError, OverflowError):
+        return False
+    return not count or (isinstance(value, int) and value >= 0)
 
 
 def _unavailable(rule_id: str, field_name: str) -> RuleResult:
@@ -33,7 +46,7 @@ def _unavailable(rule_id: str, field_name: str) -> RuleResult:
 # --- liquidity_floor -------------------------------------------------------
 
 def liquidity_floor(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
-    if c.liquidity_usd is None:
+    if not _finite_number(c.liquidity_usd):
         return _unavailable("liquidity_floor", "liquidity_usd")
     ok = c.liquidity_usd >= config.MIN_LIQUIDITY_USD
     return RuleResult(
@@ -46,7 +59,7 @@ def liquidity_floor(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleRes
 # --- volume_alive ----------------------------------------------------------
 
 def volume_alive(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
-    if c.volume_1h_usd is None:
+    if not _finite_number(c.volume_1h_usd):
         return _unavailable("volume_alive", "volume_1h_usd")
     ok = c.volume_1h_usd >= config.MIN_VOLUME_1H_USD
     return RuleResult(
@@ -59,7 +72,7 @@ def volume_alive(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult
 # --- buy_pressure ----------------------------------------------------------
 
 def buy_pressure(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
-    if c.buys_1h is None or c.sells_1h is None:
+    if not _finite_number(c.buys_1h, count=True) or not _finite_number(c.sells_1h, count=True):
         return _unavailable("buy_pressure", "buys_1h/sells_1h")
     ok = c.buys_1h > c.sells_1h
     return RuleResult(
@@ -72,7 +85,7 @@ def buy_pressure(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult
 # --- not_newborn_fade (joint age+momentum condition) -----------------------
 
 def not_newborn_fade(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
-    if c.age_hours is None or c.price_change_1h_pct is None:
+    if not _finite_number(c.age_hours) or not _finite_number(c.price_change_1h_pct):
         return _unavailable("not_newborn_fade", "age_hours/price_change_1h_pct")
     is_newborn = c.age_hours < config.NEWBORN_AGE_HOURS
     is_fading = c.price_change_1h_pct <= -config.NEWBORN_FADE_PCT
@@ -117,6 +130,8 @@ def market_regime_ok(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleRe
 
 def cash_available(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
     size = config.INTENDED_POSITION_SIZE_USD
+    if not _finite_number(p.cash_usd):
+        return _unavailable("cash_available", "cash_usd")
     ok = p.cash_usd >= size
     return RuleResult(
         "cash_available", ok,
@@ -160,6 +175,8 @@ def crowd_heat(c: Candidate, p: PortfolioState, r: MarketRegime) -> RuleResult:
             "every other rule (this one did not; no quota spent)",
             value=None, evaluated=False,
         )
+    if c.fomo_heat is not None and not _finite_number(c.fomo_heat, count=True):
+        return _unavailable("crowd_heat", "fomo_heat")
     heat = compute_crowd_heat(c)
     source = (c.crowd_heat_source or "proxy").strip() or "proxy"
     ok = config.CROWD_HEAT_MIN <= heat <= config.CROWD_HEAT_MAX

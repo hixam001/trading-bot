@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 import httpx
+from bounded_http import bounded_request
 
 import config
 import secret_store
@@ -174,6 +175,7 @@ class _PrivyApp:
         return "fomo.family"
 
 
+_rotated_refresh: dict[str, str] = {}  # latest per-app credential, even if encrypted persistence fails
 _sessions: dict[str, tuple[str, float]] = {}      # app_id -> (jwt, exp_ms)
 _locks: dict[str, asyncio.Lock] = {}
 
@@ -268,14 +270,14 @@ async def _mint_privy_session(app: _PrivyApp) -> Optional[str]:
     """Exchange the newest refresh token for an access JWT. When Privy
     rotates the refresh token in the response, persist it so the chain is
     self-sustaining across restarts."""
-    refresh = _load_persisted_refresh()
+    refresh = _rotated_refresh.get(app.app_id) or _load_persisted_refresh()
     if not app.refresh_token and not refresh:
         return None
     if not refresh:
         refresh = app.refresh_token
     try:
         async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-            resp = await client.post(
+            resp = await bounded_request(client, "POST",
                 config.PRIVY_SESSIONS_URL,
                 headers={
                     "content-type": "application/json",
@@ -298,8 +300,9 @@ async def _mint_privy_session(app: _PrivyApp) -> Optional[str]:
         # Capture rotation: Privy may hand back a NEW refresh token that
         # invalidates ours. Persist it or the next mint 401s.
         rotated = body.get("refresh_token")
-        if rotated and rotated != refresh:
-            _persist_refresh(str(rotated))
+        if isinstance(rotated, str) and rotated and rotated != refresh:
+            _rotated_refresh[app.app_id] = rotated
+            _persist_refresh(rotated)
         exp_ms = _jwt_exp_ms(token) or (time.time() * 1000.0 + 45 * 60_000)
         _sessions[app.app_id] = (token, exp_ms)
         minutes = max(0, int((exp_ms - time.time() * 1000.0) / 60_000))
@@ -367,6 +370,9 @@ async def _direct_get(url: str, headers: dict) -> Optional[dict]:
     (same two-transport-attempt + never-retry-real-HTTP semantics as
     before). A real HTTP response (even 403/430) is NOT retried — only
     transport errors are."""
+    from data_providers.stealth_browser import _credential_destination_allowed
+    if not _credential_destination_allowed(url, headers):
+        return None
     try:
         from data_providers.stealth_browser import curl_get
         direct = None
@@ -384,7 +390,7 @@ async def _direct_get(url: str, headers: dict) -> Optional[dict]:
     for attempt in range(2):
         try:
             async with httpx.AsyncClient(timeout=_TIMEOUT) as client:
-                resp = await client.get(url, headers={
+                resp = await bounded_request(client, "GET", url, headers={
                     "accept": "application/json",
                     **headers,
                 })
@@ -566,6 +572,9 @@ async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
     proxy:"stealth" — this one FORWARDS our auth headers, which matters
     because prod-api requires the Privy bearer even through a proxy.
     """
+    from data_providers.stealth_browser import _credential_destination_allowed
+    if not _credential_destination_allowed(url, headers):
+        return None
     body = {
         "url": url,
         "formats": ["rawHtml"],
@@ -575,7 +584,7 @@ async def _scrape_firecrawl(url: str, headers: dict) -> Optional[dict]:
     }
     try:
         async with httpx.AsyncClient(timeout=_STEALTH_TIMEOUT) as client:
-            resp = await client.post(
+            resp = await bounded_request(client, "POST",
                 config.FIRECRAWL_SCRAPE_URL,
                 headers={"authorization": f"Bearer {config.FIRECRAWL_API_KEY}",
                          "content-type": "application/json"},
@@ -613,12 +622,15 @@ async def _scrape_get_template(name: str, template: str,
     echo). This is what lets ZenRows/ScrapeOps carry the Privy bearer.
     """
     from urllib.parse import quote
+    from data_providers.stealth_browser import _credential_destination_allowed
+    if not _credential_destination_allowed(url, fwd_headers or {}):
+        return None
     target = quote(url, safe="")
     get_url = template.format(api_key=api_key, url=target)
     req_headers = {"accept": "*/*", **(fwd_headers or {})}
     try:
         async with httpx.AsyncClient(timeout=_STEALTH_TIMEOUT) as client:
-            resp = await client.get(get_url, headers=req_headers)
+            resp = await bounded_request(client, "GET", get_url, headers=req_headers)
     except Exception as exc:
         log.warning("%s: scrape error: %s", name,
                     str(exc) or type(exc).__name__)

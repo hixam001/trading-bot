@@ -141,6 +141,9 @@ async def test_actual_filled_log_contains_full_signature(side, tmp_path, monkeyp
     monkeypatch.setattr(ex.wallet, "verify_expected_address", lambda p: None)
     monkeypatch.setattr(ex.wallet, "pubkey_string", lambda p: "WALLETADDR")
     _arm_balances(monkeypatch)
+    async def chain_decimals(mint):
+        return 6  # native fact for the existing six-decimal fixture
+    monkeypatch.setattr(ex.solana, "get_mint_decimals", chain_decimals)
     if side == "buy":
         _arm_fill(monkeypatch, [])
     else:
@@ -187,12 +190,16 @@ async def test_pending_buy_alert_has_full_registered_signature(tmp_path, monkeyp
     monkeypatch.setattr(runner.wallet, "load_keypair", lambda: object())
     monkeypatch.setattr(runner.wallet, "pubkey_string", lambda _: "WALLETADDR")
     async def status(*args, **kwargs):
-        return {"confirmationStatus": "confirmed", "err": None} if confirmed else None
+        return {"slot": 10, "confirmationStatus": "confirmed", "err": None} if confirmed else None
+    async def strict_statuses(*args, **kwargs):
+        observation = await status()
+        return [observation, dict(observation)] if observation is not None else [runner.solana.UNREACHABLE, runner.solana.UNREACHABLE]
     async def valid(*args, **kwargs):
         return True
     async def actuals(*args, **kwargs):
         return {"tokens_delta": 2.0, "usdc_delta": 1.0}
     monkeypatch.setattr(runner.solana, "get_signature_status", status)
+    monkeypatch.setattr(runner.solana, "get_signature_status_all_strict", strict_statuses)
     monkeypatch.setattr(runner.solana, "is_blockhash_valid", valid)
     monkeypatch.setattr(runner.time, "time", lambda: 2000.0)
     monkeypatch.setattr(runner, "_fill_actuals", actuals)

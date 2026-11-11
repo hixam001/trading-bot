@@ -35,6 +35,7 @@ from typing import Any, Optional
 import config
 from api import db
 from llm.client import build_main_client, main_max_tokens, _is_peak_window
+from llm.untrusted import sanitize_untrusted, wrap_untrusted
 
 log = logging.getLogger(__name__)
 
@@ -114,7 +115,9 @@ def validate_restatement(text: Any) -> Optional[str]:
     """Cleaned rewrite, or None when the model output is rejected."""
     if not isinstance(text, str):
         return None
-    cleaned = text.strip()
+    if len(text.strip()) > MAX_RESTATEMENT_CHARS:
+        return None
+    cleaned = sanitize_untrusted(text, MAX_RESTATEMENT_CHARS).strip()
     if len(cleaned) < MIN_RESTATEMENT_CHARS:
         return None
     if len(cleaned) > MAX_RESTATEMENT_CHARS:
@@ -155,7 +158,7 @@ def build_brief(row: dict, pos: dict) -> str:
     """The prompt body: the position's current numbers + the current text.
     Concise by construction (performance-discipline: prompt length costs
     real tokens on every call)."""
-    lines = [f"name: {row.get('symbol')} ({row.get('mint_address')})"]
+    lines = ["name: " + wrap_untrusted("position_identity", f"{row.get('symbol')} ({row.get('mint_address')})", max_chars=300)]
     bits = []
     if pos.get("size_usd") is not None:
         bits.append(f"${pos['size_usd']:.2f} open")
@@ -173,7 +176,7 @@ def build_brief(row: dict, pos: dict) -> str:
     )
     if pos.get("opened_at"):
         lines.append(f"opened: {pos['opened_at']}")
-    lines.append(f"current write-up: {row.get('thesis') or 'none on file'}")
+    lines.append("current write-up: " + wrap_untrusted("current_thesis", row.get("thesis") or "none on file", max_chars=1000))
     return "\n".join(lines)
 
 

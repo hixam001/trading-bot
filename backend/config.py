@@ -291,7 +291,7 @@ LLM_BRAIN_MAX_TOKENS: int = int(os.getenv("LLM_BRAIN_MAX_TOKENS", "4000"))
 LLM_BRAIN_TIMEOUT_SECONDS: float = float(os.getenv("LLM_BRAIN_TIMEOUT_SECONDS", "60"))
 
 # ---------------------------------------------------------------------------
-# §92 S5 — hard daily spend ceilings.
+# §92 S5 — daily call reservations and post-response usage stop thresholds.
 #
 # The LLM decides WHETHER to enter, never the size, and exits never call it.
 # When a ceiling is reached the client fails closed with a `spend_cap`

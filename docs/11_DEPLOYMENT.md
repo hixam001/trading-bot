@@ -124,10 +124,21 @@ those are inlined into the public JS bundle.
 **Rotation:** generate a fresh keypair, fund it, update
 `EXPECTED_WALLET_ADDRESS`, restart the container. Revoke/sweep the old wallet.
 
-**Session Revocation Durability (§78 E3):**
-Revocations are stored in memory and reset on process restart. An operator who needs immediate
-cluster-wide revocation across restarts should rotate `ADMIN_TOKEN` (which
-also invalidates every existing cookie because sessions are derived from it).
+**Session revocation and disabling authentication:**
+Logout persists the cookie signature and expiry in `SESSION_REVOCATION_FILE`
+(mode 0600); preserve its writable state volume across API restarts. Corrupt or
+unreadable revocation state refuses sessions. This registry is per host; multiple
+API hosts need a shared revocation policy.
+
+With a dedicated `SESSION_SECRET`, replacing a valid nonempty `ADMIN_TOKEN`
+preserves sessions signed by that secret. Without it, operator-token rotation
+invalidates sessions. Rotating `SESSION_SECRET` invalidates cookies signed by
+that secret; legacy cookies signed by a still-accepted admin token can remain
+valid. Rotate both secrets to revoke every accepted signing key across hosts.
+Clearing `ADMIN_TOKEN` disables operator authorization, including old dedicated-
+secret sessions; `/api/auth/session` reports `auth_disabled`, and login, reset
+and ingestion refuse. Re-enabling the same secrets can restore unexpired,
+unrevoked sessions, so disable is not a substitute for incident key rotation.
 
 
 ## 3. Dashboard on Vercel (split mode)
@@ -152,7 +163,17 @@ spin-down. On Oracle's always-on VM this is unnecessary.
 - **Default:** SQLite at `DB_PATH` (resolved as `backend/ + $DB_PATH`, i.e. app-relative) — put it on a mounted volume (compose does). `scripts/backup_state.py` and `scripts/restore_state.py` resolve the same path through `backend/config.py` and load `.env`, so a host-run backup can never silently archive a different (or missing) database; a missing DB refuses the backup outright (§83 Phase G).
 - **Supabase:** run `migrations/supabase/*.sql` in the SQL editor, then set
   `USE_SUPABASE_DB=1`, `SUPABASE_DB_URL` (direct asyncpg connection to the pooler).
-  `api/db_pg.py` is a drop-in with the identical surface.
+  `api/db_pg.py` is a drop-in with the identical surface. Database TLS requires
+  normal CA/hostname validation or an exact certificate pin enforced during
+  each actual handshake before PostgreSQL authentication. CA failure plus a
+  failed certificate probe prevents pool creation. There is no unverified TLS
+  fallback. Prefer an independently verified `SUPABASE_CERT_FINGERPRINT`.
+  Without a configured/persisted pin, successful TOFU probing establishes the
+  first pin: this trusts the first observed certificate and cannot detect an
+  attacker present at bootstrap. An unwritable pin file keeps enforced pinning
+  in memory for the process lifetime; restart loses that continuity. Preserve
+  the pin on the writable state volume or configure an independently verified
+  pin. Known-pin mismatches or unavailable verification refuse connection.
 
 ## 5. Persistence rules (real-money safety)
 

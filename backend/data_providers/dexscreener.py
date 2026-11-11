@@ -69,7 +69,7 @@ def _extract_pair_fields(pair: dict) -> dict:
 
     has_twitter = _has_channel("twitter", socials)
     has_telegram = _has_channel("telegram", socials)
-    has_website = True if websites else None   # any website URL counts; absent list = unknown
+    has_website = True if any(isinstance(s, dict) and isinstance(s.get("url"), str) and s["url"].strip() for s in websites) else None   # any website URL counts; absent list = unknown
 
     market_cap = require_type(pair.get("marketCap"), (int, float), "marketCap", "dexscreener")
     if market_cap is None:
@@ -95,8 +95,8 @@ def _extract_pair_fields(pair: dict) -> dict:
         "price_change_6h_pct": require_type(chg_obj.get("h6"), (int, float), "priceChange.h6", "dexscreener"),
         "price_change_24h_pct": require_type(chg_obj.get("h24"), (int, float), "priceChange.h24", "dexscreener"),
         "fdv_usd": fdv_usd,
-        "buys_6h": None if h6t.get("buys") is None else int(h6t.get("buys")),
-        "sells_6h": None if h6t.get("sells") is None else int(h6t.get("sells")),
+        "buys_6h": require_type(h6t.get("buys"), int, "txns.h6.buys", "dexscreener"),
+        "sells_6h": require_type(h6t.get("sells"), int, "txns.h6.sells", "dexscreener"),
         "volume_6h_usd": require_type(vol_obj.get("h6"), (int, float), "volume.h6", "dexscreener"),
     }
 
@@ -132,8 +132,8 @@ class DexscreenerProvider:
         # Prefer the deepest Solana pair for this mint (highest liquidity).
         best_pair = None
         best_liq = -1.0
-        for p in pairs or []:
-            if not isinstance(p, dict):
+        for p in pairs if isinstance(pairs, list) else []:
+            if not isinstance(p, dict) or p.get("chainId") != "solana":
                 continue
             token = p.get("baseToken", {})
             if isinstance(token, dict) and token.get("address") == mint:

@@ -1,3 +1,49 @@
+## §94 — Security-audit remediation source and offline verification (2026-11-11)
+
+Implemented A1–A3 and preventive B1–B2, with explicit dispositions for all
+H01–H24 in `docs/SECURITY_REMEDIATION.md`. Disabled operator auth now wins over
+old dedicated-secret sessions; unauthenticated DB TLS fallback is removed;
+signed unresolved sells persist before send and block retry/restart replay;
+settlement uses strict native endpoint outcomes and signature-idempotent
+accounting. Output uses net gain, every monitored signing account participates
+in consensus, approvals bind canonical operations, chain decimals and wallet
+identity are checked, restored ledger/commit/wallet snapshots validate before
+adoption, and process locks protect authority writes/restores. Reserved,
+noncanonical and symlinked child restore paths refuse. Protective strategy,
+arming/confirmation defaults, risk ceilings and wallet settings are unchanged.
+
+Observed final offline checks: **2227 backend tests passed**, no skips/failures,
+102 existing warnings; TypeScript/Vite/bundle scanner clean; isolated Chromium
+**41/41 passed**; `pip check` clean. Three retargeted mutations caught by actual
+assertion failures. Independent auth/TLS, signing, settlement, restore and
+sandbox reviews resolved their blocking findings. Target code ran only in the
+retained `docs/security-remediation/sandbox_runner.py` OS sandbox with dummy
+state; browser checks used a separate memory/task-bounded delegated cgroup.
+Historical audit records remain unchanged. No real transactions, provider
+calls, wallet/state reads, duplicate fills, loss or production validation.
+
+**Release workflow remains incomplete:** no current advisory-clean/CI claim.
+`pip-audit` and npm audit cannot resolve their advisory services inside the
+required no-network namespace. npm's exploratory offline zero result was not
+counted as evidence. Docker and a local gitleaks executable are unavailable.
+The canonical pre-push gate has not passed end-to-end. This entry accompanies the local remediation commit without contributor
+trailers; push is pending completion of required checks;
+never bypass them or run tests against host state.
+
+Retained limits: first successful TOFU trust; configured credential-forwarding
+proxy trust; browser/Scrapling internal body allocation; post-response token/cost
+stop thresholds and separate single-writer service counters; one production
+trading decision-maker; native/WSOL output minima net of fees/rent paid and more
+pool-drift refusals; old unbound approvals need reproposal; pre-fix unjournaled
+exits need reconciliation. B1/B2 native approved-DEX exploitability is still
+unproven without a pinned offline program/transaction/account fixture. The
+rejected WebSocket connection-cap race is not relabeled a vulnerability.
+
+Next: resolve the advisory-only network policy (or supply trusted offline
+advisory data), finish applicable release checks, then push the local remediation commit
+using existing author identity and no contributor trailers. Existing untracked
+`.agents/` and `skills-lock.json` belong to the user and must remain excluded.
+
 ## §93 — read-only-root audit follow-through (2026-11-09)
 
 R1–R7 implemented and locally verified: strict runtime-write inventory and

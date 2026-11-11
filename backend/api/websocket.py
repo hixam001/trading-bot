@@ -21,6 +21,7 @@ from api.rate_limiter import get_client_ip
 
 log = logging.getLogger(__name__)
 
+WS_SEND_TIMEOUT_SECONDS: float = 1.0
 MAX_WS_CLIENTS: int = 32
 MAX_WS_PER_IP: int = 4
 
@@ -34,15 +35,19 @@ class FeedBroadcaster:
         self._last_id = 0
 
     async def _broadcast(self, payload: dict) -> None:
-        dead: list[WebSocket] = []
         data = json.dumps(payload)
-        for ws in list(self._clients):
+
+        async def send(ws: WebSocket) -> None:
             try:
-                await ws.send_text(data)
+                await asyncio.wait_for(ws.send_text(data), WS_SEND_TIMEOUT_SECONDS)
             except Exception:
-                dead.append(ws)
-        for ws in dead:
-            self.disconnect(ws)
+                self.disconnect(ws)
+                with contextlib.suppress(Exception):
+                    await asyncio.wait_for(ws.close(code=1013), WS_SEND_TIMEOUT_SECONDS)
+
+        # One bounded task per admitted client; gather propagates cancellation
+        # to every send. There is no unbounded per-client backlog.
+        await asyncio.gather(*(send(ws) for ws in tuple(self._clients)))
 
     async def _poll_loop(self) -> None:
         with contextlib.suppress(asyncio.CancelledError):

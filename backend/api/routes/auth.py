@@ -23,6 +23,7 @@ from api.auth import (
     _global_lockout_active,
     _prune_failures,
     _record_global_failure,
+    admin_auth_enabled,
     clear_session_cookie,
     create_session_token,
     revoke_session_token,
@@ -131,7 +132,7 @@ async def login(req: LoginRequest, request: Request, response: Response):
     attempts = _prune_failures(client_ip, now)
 
     configured = config.ADMIN_TOKEN
-    if not configured or len(configured) < 32:
+    if not admin_auth_enabled():
         raise HTTPException(
             status_code=403,
             detail="operator login is disabled (ADMIN_TOKEN not set)",
@@ -239,7 +240,7 @@ async def logout(response: Response, request: Request):
 async def get_session(request: Request):
     """Check current session validity and report remaining session lifetime."""
     configured = config.ADMIN_TOKEN
-    if not configured or len(configured) < 32:
+    if not admin_auth_enabled():
         return {"authenticated": False, "reason": "auth_disabled"}
 
     # 1. Check header

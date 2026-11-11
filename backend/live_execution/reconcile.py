@@ -207,6 +207,7 @@ def check_wallet_drop(
     skips the drop check without alerting and without overwriting the snapshot.
     """
     import json
+    from live_execution.state_validation import validate_wallet_snapshot
     try:
         from live_execution import config as live_config
         target_dir = Path(state_dir or live_config.STATE_DIR)
@@ -230,6 +231,15 @@ def check_wallet_drop(
             "unexplained_sol_drop": 0.0,
         })
 
+    try:
+        validate_wallet_snapshot({"ts": now, "usdc": current_usdc, "sol": current_sol})
+    except RuntimeError as exc:
+        log.warning("reconcile: current wallet facts refused: %s", exc)
+        return WalletDropResult({"alerted": False, "skipped": True,
+                                 "reason": f"current_snapshot_invalid: {exc}",
+                                 "unexplained_drop_usd": 0.0,
+                                 "unexplained_sol_drop": 0.0})
+
     result = WalletDropResult({
         "alerted": False,
         "skipped": False,
@@ -242,9 +252,10 @@ def check_wallet_drop(
     if snap_file.is_file():
         try:
             prev = json.loads(snap_file.read_text())
-            prev_ts = float(prev.get("ts", 0.0))
-            prev_usdc = float(prev.get("usdc", 0.0))
-            prev_sol = float(prev.get("sol", 0.0))
+            validate_wallet_snapshot(prev)
+            prev_ts = float(prev["ts"])
+            prev_usdc = float(prev["usdc"])
+            prev_sol = float(prev["sol"])
 
             records = getattr(ledger, "_load", lambda: [])()
             period_buys_usd = 0.0

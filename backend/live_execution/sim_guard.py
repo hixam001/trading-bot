@@ -304,7 +304,9 @@ async def simulate_and_assert(
     all_addresses = list(dict.fromkeys(
         [payer_pubkey, payer_in_ata_spl, payer_in_ata_2022, payer_out_ata_spl, payer_out_ata_2022] + writable_accounts
     ))
-    wallet_owned_set = [payer_pubkey, payer_in_ata_spl, payer_in_ata_2022, payer_out_ata_spl, payer_out_ata_2022]
+    # Ownership discovery itself depends on agreement. Include every monitored
+    # writable account before trusting either pre-state or simulation output.
+    wallet_owned_set = all_addresses
 
     # 1. Fetch pre-state with getMultipleAccounts across quorum
     try:
@@ -394,61 +396,6 @@ async def simulate_and_assert(
             decoded["lamports"] = acc_info.get("lamports", 0)
             post_token_accounts[addr] = decoded
 
-    # B. Input-token decrease check (bound against intent.in_amount_raw)
-    max_input_decrease = int(intent.in_amount_raw * (1.0 + config.SIM_INPUT_TOLERANCE))
-    total_input_decrease = 0
-    # Sum decrease across all wallet-owned token accounts matching input_mint
-    for addr, pre_tok in wallet_owned_pre_accounts.items():
-        if pre_tok["mint"] == input_mint:
-            post_tok = post_token_accounts.get(addr)
-            post_amt = post_tok["amount"] if (post_tok and post_tok["owner"] == payer_pubkey) else 0
-            if pre_tok["amount"] > post_amt:
-                total_input_decrease += (pre_tok["amount"] - post_amt)
-
-    if total_input_decrease > max_input_decrease:
-        _refuse(
-            f"input token decrease {total_input_decrease} exceeds expected {intent.in_amount_raw} "
-            f"+ tolerance ({max_input_decrease})"
-        )
-
-    # C. Output-token increase check (bound against max(otherAmountThreshold, intent.min_out_raw))
-    effective_min_out = max(other_amount_threshold, intent.min_out_raw or 0)
-    total_output_increase = 0
-    # Sum increase across all post token accounts owned by wallet matching output_mint
-    for addr, post_tok in post_token_accounts.items():
-        if post_tok["owner"] == payer_pubkey and post_tok["mint"] == output_mint:
-            pre_tok = wallet_owned_pre_accounts.get(addr)
-            pre_amt = pre_tok["amount"] if pre_tok else 0
-            if post_tok["amount"] > pre_amt:
-                total_output_increase += (post_tok["amount"] - pre_amt)
-
-    # If output mint is WSOL and transaction unwrap is enabled, output lands in native SOL of payer
-    if output_mint == _WSOL_MINT:
-        sol_gain = post_payer_sol - pre_payer_sol
-        if sol_gain > 0:
-            total_output_increase += sol_gain
-
-    if total_output_increase < effective_min_out:
-        _refuse(
-            f"output token increase {total_output_increase} below minimum otherAmountThreshold {effective_min_out} "
-            f"(token output must land in wallet-owned ATA)"
-        )
-
-    # D. Every other wallet-owned token account unchanged
-    for addr, pre_tok in wallet_owned_pre_accounts.items():
-        if pre_tok["mint"] not in (input_mint, output_mint):
-            post_tok = post_token_accounts.get(addr)
-            if not post_tok:
-                # Account was closed! Only allowed if WSOL unwrap
-                if pre_tok["mint"] != _WSOL_MINT:
-                    _refuse(f"wallet token account {addr} (mint {pre_tok['mint']}) closed without authorization")
-            else:
-                if post_tok["amount"] != pre_tok["amount"]:
-                    _refuse(
-                        f"unrelated wallet token account {addr} (mint {pre_tok['mint']}) balance changed: "
-                        f"{pre_tok['amount']} -> {post_tok['amount']}"
-                    )
-
     # E. Wallet-owned token account control fields and ownership assertions (§79 Phase A-4, §81 Phase C-1)
     # 1. Newly created accounts owned by wallet: must have all control fields clear and state initialized
     for addr, post_tok in post_token_accounts.items():
@@ -480,6 +427,8 @@ async def simulate_and_assert(
         if post_tok:
             if post_tok["owner"] != payer_pubkey:
                 _refuse(f"wallet token account {addr} owner changed to {post_tok['owner']}", category="guard_refused")
+            if post_tok["mint"] != pre_tok["mint"] or post_state[addr].get("owner") != pre_state[addr].get("owner"):
+                _refuse(f"wallet token account {addr} mint or token program changed", category="guard_refused")
 
             if post_tok.get("delegate") != pre_tok.get("delegate"):
                 _refuse(
@@ -507,6 +456,77 @@ async def simulate_and_assert(
         else:
             if pre_tok["mint"] != _WSOL_MINT:
                 _refuse(f"wallet-owned token account {addr} (mint {pre_tok['mint']}) was closed (not WSOL)", category="guard_refused")
+
+
+    # D. Every other wallet-owned token account unchanged
+    for addr, pre_tok in wallet_owned_pre_accounts.items():
+        if pre_tok["mint"] not in (input_mint, output_mint):
+            post_tok = post_token_accounts.get(addr)
+            if not post_tok:
+                # Account was closed! Only allowed if WSOL unwrap
+                if pre_tok["mint"] != _WSOL_MINT:
+                    _refuse(f"wallet token account {addr} (mint {pre_tok['mint']}) closed without authorization")
+            else:
+                if post_tok["amount"] != pre_tok["amount"]:
+                    _refuse(
+                        f"unrelated wallet token account {addr} (mint {pre_tok['mint']}) balance changed: "
+                        f"{pre_tok['amount']} -> {post_tok['amount']}"
+                    )
+
+
+    # B. Input-token decrease check (bound against intent.in_amount_raw)
+    max_input_decrease = int(intent.in_amount_raw * (1.0 + config.SIM_INPUT_TOLERANCE))
+    total_input_decrease = 0
+    # Sum decrease across all wallet-owned token accounts matching input_mint
+    for addr, pre_tok in wallet_owned_pre_accounts.items():
+        if pre_tok["mint"] == input_mint:
+            post_tok = post_token_accounts.get(addr)
+            post_amt = post_tok["amount"] if (post_tok and post_tok["owner"] == payer_pubkey) else 0
+            if pre_tok["amount"] > post_amt:
+                total_input_decrease += (pre_tok["amount"] - post_amt)
+
+    if total_input_decrease > max_input_decrease:
+        _refuse(
+            f"input token decrease {total_input_decrease} exceeds expected {intent.in_amount_raw} "
+            f"+ tolerance ({max_input_decrease})"
+        )
+
+    # C. Output-token increase check (bound against max(otherAmountThreshold, intent.min_out_raw))
+    effective_min_out = max(other_amount_threshold, intent.min_out_raw or 0)
+    total_output_increase = 0
+    # Signed aggregate change: an existing output-account debit must offset
+    # credits elsewhere, including a closed or newly created account.
+    total_output_increase = sum(
+        tok["amount"] for tok in post_token_accounts.values()
+        if tok["owner"] == payer_pubkey and tok["mint"] == output_mint
+    ) - sum(
+        tok["amount"] for tok in wallet_owned_pre_accounts.values()
+        if tok["mint"] == output_mint
+    )
+
+    # WSOL and native SOL are representations of one asset. Include signed
+    # payer change so wrapping existing native balance cannot fabricate output.
+    # Subtract each released wallet-account rent reserve; new rent deposits
+    # are never output, even when a pool funds them. Fees and rent paid remain
+    # costs, so this is a conservative minimum net of native transaction costs.
+    if output_mint == _WSOL_MINT:
+        def rent_reserve(tok):
+            if not tok or tok["owner"] != payer_pubkey:
+                return 0
+            return max(0, tok["lamports"] - (tok["amount"] if tok["mint"] == _WSOL_MINT else 0))
+
+        rent_refunds = sum(
+            max(0, rent_reserve(pre_tok) - rent_reserve(post_token_accounts.get(addr)))
+            for addr, pre_tok in wallet_owned_pre_accounts.items()
+        )
+        native_change = post_payer_sol - pre_payer_sol
+        total_output_increase += native_change - rent_refunds
+
+    if total_output_increase < effective_min_out:
+        _refuse(
+            f"output token increase {total_output_increase} below minimum otherAmountThreshold {effective_min_out} "
+            f"(token output must land in wallet-owned ATA)"
+        )
 
     # F. Value redirection detection: foreign token accounts gaining balance unexpectedly
     if total_input_decrease > intent.in_amount_raw:

@@ -11,6 +11,8 @@ every mint once fabricated 1000× prices on 6-decimal tokens.
 """
 from __future__ import annotations
 
+from live_execution.trade_intent import valid_decimals
+
 import logging
 import time
 from typing import Optional
@@ -25,7 +27,7 @@ log = logging.getLogger(__name__)
 
 def raw_units_for_one_token(decimals: int) -> int:
     """Raw mint units representing exactly 1 token (pure; unit-tested)."""
-    if decimals < 0:
+    if not valid_decimals(decimals):
         raise ValueError(f"decimals must be >= 0, got {decimals!r}")
     return 10 ** decimals
 
@@ -65,7 +67,7 @@ class JupiterProvider:
         """
         # Zero is a valid decimals value (whole-token mints); only an unknown
         # (None) or negative value is unevaluable.
-        if decimals is None or decimals < 0:
+        if not valid_decimals(decimals):
             raise ProviderError(
                 f"jupiter: token decimals unknown for {mint_address} — "
                 f"refusing to quote (a wrong decimals value would fabricate "

@@ -17,6 +17,7 @@ switch. Execution happens solely via jupiter_executor with an approved id.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 
@@ -48,6 +49,8 @@ def cmd_list(_args) -> int:
         print(f"{pc.id:14s} {pc.status:9s} {pc.usd_size:8.2f} "
               f"{pc.decimals:3d} {max(0.0, pc.expires_at - now):9.0f}s  "
               f"{mint}  {snap}")
+        print("  operation: " + (json.dumps(pc.operation, sort_keys=True)
+                                 if pc.operation else "UNBOUND — propose again before execution"))
     return 0
 
 

@@ -36,6 +36,7 @@ from __future__ import annotations
 import logging
 import time
 import httpx
+from bounded_http import bounded_request
 
 import config
 from llm.untrusted import sanitize_untrusted
@@ -177,7 +178,7 @@ async def brave_search(client, symbol: str):
         "Accept": "application/json",
     }
     try:
-        resp = await client.get(config.BRAVE_SEARCH_URL, params=params,
+        resp = await bounded_request(client, "GET", config.BRAVE_SEARCH_URL, params=params,
                                 headers=headers)
         body = resp.text
         if resp.status_code != 200:
@@ -211,7 +212,7 @@ async def searxng_search(client, symbol: str):
         "safesearch": "0",
     }
     try:
-        resp = await client.get(
+        resp = await bounded_request(client, "GET",
             config.SEARXNG_URL.rstrip("/") + "/search", params=params,
             headers={"Accept": "application/json"},
             timeout=config.WEB_RESEARCH_TIMEOUT_SECONDS)
@@ -252,10 +253,8 @@ async def firecrawl_search(client, symbol: str):
     """POST /v1/search (the §48 call, verbatim). Same (rows, status, body)
     contract as the free hops; never raises."""
     try:
-        req = client.build_request("POST", SEARCH_URL,
-                                   json=_payload(symbol),
-                                   headers=_headers())
-        resp = await client.send(req)
+        resp = await bounded_request(client, "POST", SEARCH_URL,
+                                     json=_payload(symbol), headers=_headers())
         body = resp.text
         if resp.status_code != 200:
             return None, resp.status_code, body

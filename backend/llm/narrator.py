@@ -26,7 +26,7 @@ from typing import Optional
 import config
 from llm.client import build_main_client, main_max_tokens, LLMResult, _is_peak_window
 from llm.grounding import validate_numbers, validate_thesis
-from llm.untrusted import sanitize_untrusted
+from llm.untrusted import sanitize_untrusted, wrap_untrusted
 from models import GateDecision
 
 log = logging.getLogger(__name__)
@@ -109,7 +109,7 @@ def build_prompt(gate: GateDecision) -> str:
         + f" ({sanitize_untrusted(r.detail, 400)})"
         for r in gate.rules
     ]
-    base = NARRATION_PROMPT.format(verdict=verdict, rules_block="\n".join(lines))
+    base = NARRATION_PROMPT.format(verdict=verdict, rules_block=wrap_untrusted("rule_details", "\n".join(lines), max_chars=8000))
     # Item 1: rotate the framing angle so consecutive narrations differ. The
     # angle is style-only — it never adds facts or changes the verdict.
     angle = _ANGLES[_next_angle()]
@@ -193,7 +193,7 @@ class Narrator:
             log.warning("narration grounding flags for %s: %s",
                         gate.candidate.symbol, flags)
 
-        return NarrationResult(thesis.strip(), source, flags, llm_usage=locals().get('llm_usage'))
+        return NarrationResult(sanitize_untrusted(thesis, 2000).strip(), source, flags, llm_usage=locals().get('llm_usage'))
 
 
 # ---------------------------------------------------------------------------
@@ -213,8 +213,8 @@ realized P&L ${pnl_usd:+.4f} ({pnl_pct:+.1f}%).
 
 async def generate_reflection(trade, rule_summary: str) -> str:
     prompt = REFLECTION_PROMPT.format(
-        rule_summary=sanitize_untrusted(rule_summary, 800),
-        exit_reason=sanitize_untrusted(trade.exit_reason, 300),
+        rule_summary=wrap_untrusted("reflection_rules", rule_summary, max_chars=800),
+        exit_reason=wrap_untrusted("reflection_exit", trade.exit_reason, max_chars=300),
         exit_price=trade.exit_price_usd or 0.0,
         entry_price=trade.entry_price_usd,
         pnl_usd=trade.realized_pnl_usd or 0.0,
@@ -240,12 +240,12 @@ async def generate_reflection(trade, rule_summary: str) -> str:
                     json_mode=False,
                 )
                 if result and result.text:
-                    return result.text
+                    return sanitize_untrusted(result.text, 2000)
             finally:
                 await n.aclose()
     pnl_pct = trade.realized_pnl_pct or 0.0
-    return (
+    return sanitize_untrusted((
         f"[template reflection] Exited {trade.symbol} via {trade.exit_reason} "
         f"with {pnl_pct:+.1f}% realized P&L. Entry rules said: {rule_summary}"
-    )
+    ), 2000)
 

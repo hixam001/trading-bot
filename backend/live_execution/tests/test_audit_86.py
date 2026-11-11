@@ -6,6 +6,7 @@ Everything here is hermetic: rpc()/httpx are faked, no sockets.
 from __future__ import annotations
 
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 from live_execution import solana
 
@@ -19,7 +20,7 @@ class _Resp:
         return self._payload
 
 
-class _Client:
+class _Client(LegacyHTTPStreamClient):
     def __init__(self, responses):
         self._responses = list(responses)
 
@@ -161,7 +162,7 @@ async def test_usdc_balance_non_object_error_does_not_crash(monkeypatch, error):
         def json(self):
             return {"error": error}
 
-    class _C:
+    class _C(LegacyHTTPStreamClient):
         async def __aenter__(self):
             return self
 

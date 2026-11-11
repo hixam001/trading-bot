@@ -32,3 +32,32 @@ def usd_to_raw_amount(usd: float, decimals: int = 6) -> int:
     return int((d_usd * d_scale).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
 
 
+
+def valid_decimals(value) -> bool:
+    """SPL mint decimals is an unsigned byte, never a boolean/coerced float."""
+    return isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 255
+
+
+def canonical_operation(*, side: str, wallet: str, input_mint: str,
+                        output_mint: str, in_amount_raw: int, decimals: int,
+                        slippage_bps: int, min_out_raw: int | None = None) -> dict:
+    """Stable manual-approval identity and raw-unit bounds, independent of quotes."""
+    if side not in ("buy", "sell") or not all(
+        isinstance(v, str) and v for v in (wallet, input_mint, output_mint)
+    ):
+        raise ValueError("invalid operation identity")
+    if not valid_decimals(decimals):
+        raise ValueError("invalid operation decimals")
+    for value, name, minimum, maximum in (
+        (in_amount_raw, "raw amount", 1, None),
+        (slippage_bps, "slippage", 0, 10000),
+        (min_out_raw, "minimum output", 0, None),
+    ):
+        if value is None and name == "minimum output":
+            continue
+        if not isinstance(value, int) or isinstance(value, bool) or value < minimum or (maximum is not None and value > maximum):
+            raise ValueError(f"invalid operation {name}")
+    return dict(side=side, wallet=wallet, input_mint=input_mint,
+                output_mint=output_mint, in_amount_raw=in_amount_raw,
+                decimals=decimals, slippage_bps=slippage_bps,
+                min_out_raw=min_out_raw)

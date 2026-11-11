@@ -13,6 +13,7 @@ import base64
 import logging
 
 import httpx
+from bounded_http import bounded_request
 
 from typing import Optional, NamedTuple
 
@@ -35,7 +36,7 @@ async def rpc(
     async with httpx.AsyncClient(timeout=timeout) as client:
         for endpoint in endpoints or config.RPC_URLS:
             try:
-                resp = await client.post(
+                resp = await bounded_request(client, "POST",
                     endpoint,
                     json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
                 )
@@ -139,7 +140,7 @@ def responses_agree(
     Pure agreement rule comparing two simulation responses a and b (§81 Phase C-2):
     - Both err equal (both None or equal JSON/dict)
     - Same account count
-    - For payer and every address in wallet_owned_addrs:
+    - For every monitored address (ownership must not be inferred from one RPC):
       - decoded token amount within SIM_AMOUNT_TOLERANCE_BPS (absolute floor 1 unit)
       - same owner
       - exact delegate pubkey match
@@ -148,12 +149,14 @@ def responses_agree(
       - exact state match
       - payer lamports within SIM_LAMPORT_TOLERANCE
     """
-    if a.get("err") != b.get("err"):
+    if not isinstance(a, dict) or not isinstance(b, dict) or a.get("err") != b.get("err"):
         return False
 
     accs_a = a.get("post_accounts", [])
     accs_b = b.get("post_accounts", [])
-    if len(accs_a) != len(accs_b):
+    if not isinstance(accs_a, list) or not isinstance(accs_b, list) or len(accs_a) != len(accs_b):
+        return False
+    if all_addresses is not None and (len(all_addresses) != len(accs_a) or len(set(all_addresses)) != len(all_addresses)):
         return False
 
     from live_execution.jupiter_executor import (
@@ -165,7 +168,7 @@ def responses_agree(
     # Map addresses to accounts if all_addresses is provided, else match by index
     addr_to_a: dict[str, dict | None] = {}
     addr_to_b: dict[str, dict | None] = {}
-    if all_addresses and len(all_addresses) == len(accs_a):
+    if all_addresses is not None:
         addr_to_a = dict(zip(all_addresses, accs_a))
         addr_to_b = dict(zip(all_addresses, accs_b))
     else:
@@ -174,18 +177,9 @@ def responses_agree(
             addr_to_a[str(i)] = accs_a[i]
             addr_to_b[str(i)] = accs_b[i]
 
-    # Check payer lamports (index 0 / first account)
-    if accs_a and accs_b:
-        p_a = accs_a[0]
-        p_b = accs_b[0]
-        if isinstance(p_a, dict) and isinstance(p_b, dict):
-            lamp_a = p_a.get("lamports", 0)
-            lamp_b = p_b.get("lamports", 0)
-            if abs(lamp_a - lamp_b) > config.SIM_LAMPORT_TOLERANCE:
-                return False
-
-    # Check wallet-owned accounts
-    check_addrs = [addr for addr in wallet_owned_addrs if addr in addr_to_a] if all_addresses else list(addr_to_a.keys())
+    # The caller's derived ATA list is not an independent ownership oracle.
+    # Compare the complete monitored set before any returned account is trusted.
+    check_addrs = list(addr_to_a)
     for addr in check_addrs:
         acc_a = addr_to_a.get(addr)
         acc_b = addr_to_b.get(addr)
@@ -194,15 +188,19 @@ def responses_agree(
         if (acc_a is None) != (acc_b is None):
             return False
         if not isinstance(acc_a, dict) or not isinstance(acc_b, dict):
-            continue
+            return False
 
         owner_a = acc_a.get("owner")
         owner_b = acc_b.get("owner")
-        if owner_a != owner_b:
+        if not isinstance(owner_a, str) or not owner_a or owner_a != owner_b:
+            return False
+        if acc_a.get("executable", False) != acc_b.get("executable", False):
             return False
 
-        lamp_a = acc_a.get("lamports", 0)
-        lamp_b = acc_b.get("lamports", 0)
+        lamp_a = acc_a.get("lamports")
+        lamp_b = acc_b.get("lamports")
+        if any(type(value) is not int or value < 0 for value in (lamp_a, lamp_b)):
+            return False
         if abs(lamp_a - lamp_b) > config.SIM_LAMPORT_TOLERANCE:
             return False
 
@@ -212,19 +210,23 @@ def responses_agree(
             data_b = acc_b.get("data")
             raw_a = b""
             raw_b = b""
-            if isinstance(data_a, list) and data_a:
-                raw_a = base64.b64decode(data_a[0])
-            elif isinstance(data_a, str):
-                raw_a = base64.b64decode(data_a)
-            if isinstance(data_b, list) and data_b:
-                raw_b = base64.b64decode(data_b[0])
-            elif isinstance(data_b, str):
-                raw_b = base64.b64decode(data_b)
-
             try:
+                if isinstance(data_a, list) and len(data_a) == 2 and data_a[1] == "base64":
+                    raw_a = base64.b64decode(data_a[0], validate=True)
+                elif isinstance(data_a, str):
+                    raw_a = base64.b64decode(data_a, validate=True)
+                if isinstance(data_b, list) and len(data_b) == 2 and data_b[1] == "base64":
+                    raw_b = base64.b64decode(data_b[0], validate=True)
+                elif isinstance(data_b, str):
+                    raw_b = base64.b64decode(data_b, validate=True)
                 dec_a = decode_token_account_data(raw_a)
                 dec_b = decode_token_account_data(raw_b)
             except Exception:
+                return False
+
+            # Mint, control fields, native reserve and Token-2022 extension
+            # bytes are identity/policy facts, never amount-tolerant.
+            if raw_a[:64] != raw_b[:64] or raw_a[72:] != raw_b[72:]:
                 return False
 
             if dec_a["owner"] != dec_b["owner"]:
@@ -244,6 +246,10 @@ def responses_agree(
             max_allowed = max(1, int(max(amt_a, amt_b) * config.SIM_AMOUNT_TOLERANCE_BPS / 10000))
             if diff > max_allowed:
                 return False
+        elif acc_a.get("data") != acc_b.get("data"):
+            # Conservative for opaque pool/program state: do not adopt a
+            # first-endpoint snapshot that was never agreed by the quorum.
+            return False
 
     return True
 
@@ -266,7 +272,7 @@ async def get_multiple_accounts(
 
     async def _fetch(ep: str) -> dict:
         async with _get_async_client(timeout=8.0) as client:
-            resp = await client.post(
+            resp = await bounded_request(client, "POST",
                 ep,
                 json={"jsonrpc": "2.0", "id": 1, "method": "getMultipleAccounts", "params": params},
             )
@@ -281,7 +287,10 @@ async def get_multiple_accounts(
             val = result.get("value") if isinstance(result, dict) else None
             if not isinstance(val, list):
                 raise SimulationError(f"{ep}: malformed getMultipleAccounts response")
-            return {"endpoint": ep, "err": None, "post_accounts": val}
+            response = {"endpoint": ep, "err": None, "post_accounts": val}
+            if not responses_agree(response, response, addresses, all_addresses=addresses):
+                raise SimulationError("malformed getMultipleAccounts account state")
+            return response
 
     raw_results = await asyncio.gather(*[_fetch(ep) for ep in target_endpoints], return_exceptions=True)
     valid_results = [r for r in raw_results if isinstance(r, dict)]
@@ -346,7 +355,7 @@ async def simulate_transaction(
 
     async def _query_ep(endpoint: str) -> dict:
         async with _get_async_client(timeout=8.0) as client:
-            resp = await client.post(
+            resp = await bounded_request(client, "POST",
                 endpoint,
                 json={"jsonrpc": "2.0", "id": 1, "method": "simulateTransaction", "params": params},
             )
@@ -359,15 +368,18 @@ async def simulate_transaction(
                 raise SimulationError(f"{endpoint}: {body.get('error')}")
             result = body.get("result", {})
             value = result.get("value") if isinstance(result, dict) else None
-            if not isinstance(value, dict):
+            if not isinstance(value, dict) or "err" not in value:
                 raise SimulationError(f"{endpoint}: malformed result value")
-            return {
+            response = {
                 "endpoint": endpoint,
                 "err": value.get("err"),
                 "logs": value.get("logs", []),
                 "units": value.get("unitsConsumed", 0),
                 "post_accounts": value.get("accounts", []),
             }
+            if not responses_agree(response, response, accounts, all_addresses=accounts):
+                raise SimulationError("malformed simulateTransaction account state")
+            return response
 
     raw_results = await asyncio.gather(*[_query_ep(ep) for ep in target_endpoints], return_exceptions=True)
     valid_results = [r for r in raw_results if isinstance(r, dict)]
@@ -420,7 +432,7 @@ async def send_raw_transaction_detailed(
     async with httpx.AsyncClient(timeout=15.0) as client:
         for endpoint in endpoints or config.RPC_URLS:
             try:
-                resp = await client.post(
+                resp = await bounded_request(client, "POST",
                     endpoint,
                     json={
                         "jsonrpc": "2.0",
@@ -588,7 +600,7 @@ async def get_mint_decimals(mint: str) -> int | None:
         return None
     value = res.get("value")
     dec = value.get("decimals") if isinstance(value, dict) else None
-    if not isinstance(dec, int) or isinstance(dec, bool) or dec < 0:
+    if not isinstance(dec, int) or isinstance(dec, bool) or not 0 <= dec <= 255:
         return None
     return dec
 
@@ -677,7 +689,7 @@ async def get_usdc_balance(address: str) -> float | None:
     async with httpx.AsyncClient(timeout=15.0) as client:
         for endpoint in config.RPC_URLS:
             try:
-                resp = await client.post(
+                resp = await bounded_request(client, "POST",
                     endpoint,
                     json={"jsonrpc": "2.0", "id": 1,
                           "method": "getTokenAccountBalance", "params": [ata]},

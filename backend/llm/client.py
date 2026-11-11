@@ -17,6 +17,7 @@ from typing import Any, Optional
 from datetime import datetime, timezone
 
 import httpx
+from bounded_http import bounded_request
 
 import config
 
@@ -136,7 +137,7 @@ class LLMClient:
             self._ok_at = now
             return False
         try:
-            resp = await self.client.get(
+            resp = await bounded_request(self.client, "GET",
                 f"{self.base_url}/models", headers=self._headers(),
                 timeout=10.0)
             self._ok = resp.status_code == 200
@@ -199,7 +200,7 @@ class LLMClient:
         is_peak = _is_peak_window() if self.provider == "deepseek" else False
         
         try:
-            response = await self.client.post(
+            response = await bounded_request(self.client, "POST",
                 f"{self.base_url}/chat/completions",
                 headers=self._headers(),
                 json=payload,

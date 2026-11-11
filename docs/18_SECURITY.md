@@ -202,7 +202,7 @@ closed when unwritable.
 | S5 | Every third-party field sent to a model is normalised, bounded, and fenced as data | `backend/llm/untrusted.py`; thinker/brain/social/KB/web callers | `test_s5_prompt_injection.py` |
 | S5 | Injection cannot change size, mint, stops, caps, slippage, or the kill switch | fixed model schema + deterministic gate/sizing | `test_s5_prompt_injection.py` |
 | S5 | Prompts and stored transcripts contain no API keys, wallet address, or full config; usage table stores metadata only | prompt builders + `llm_call_usage` schema | `test_s5_prompt_injection.py` |
-| S5 | LLM calls have hard daily call/token/cost ceilings, persisted across restart and fail-closed | `backend/llm/spend_guard.py`, `llm/client.py` | `test_s5_spend_caps.py` |
+| S5 | LLM call attempts are reserved before requests; token/cost stop thresholds use post-response accounting (overshoot is possible), persisted and fail-closed | `backend/llm/spend_guard.py`, `llm/client.py` | `test_s5_spend_caps.py` |
 | S5 | Entry-side web search has a hard daily call ceiling | `spend_guard.reserve_search`, `web_research.search_web` | `test_s5_spend_caps.py` |
 | S5 | A spent model budget pauses entries but never exits; exits do not call the LLM | price-only exit scanner; post-close reflection is fire-and-forget | `test_s5_spend_caps.py` |
 | S5 | One deduped `SPEND_CAP` alert per provider/day | `spend_guard._alert`, `AlertEvent.SPEND_CAP` | `test_s5_spend_caps.py` |
@@ -250,9 +250,10 @@ not a marketing summary.
   loses that pin unless an operator fingerprint or persisted file exists.
   Every pinned connection checks the actual certificate during its TLS
   handshake before PostgreSQL authentication; the pool init hook checks it
-  again. A known-pin probe failure refuses connection. A genuinely unpinned,
-  unverifiable last resort remains encrypted but unauthenticated, with ERROR
-  logging and one alert per process. Real Supabase integration is unverified.
+  again. Any probe failure after CA verification fails prevents pool creation;
+  there is no encrypted-but-unauthenticated fallback. TOFU still trusts the
+  first successfully probed certificate; prefer an independently verified
+  operator pin to protect bootstrap. Real Supabase integration is unverified.
 - §93: the bounded public-signature registry is process-local (5,000 LRU entries).
   Evicted/unregistered signatures are conservatively masked; callers must
   register persisted signatures when receiving them again. Configured and
@@ -305,10 +306,16 @@ not a marketing summary.
   could delay a stop-loss. Their hard ceilings are provider-side quotas plus
   operator alerting; document and review them at the provider. If a future
   design splits read-only entry RPC from exit RPC, add a separate entry cap.
-- S5: the spend guard is per-host. Two API process replicas sharing one
-  `LIVE_STATE_DIR` serialize on the filesystem atomic replace but do not share
-  an in-process lock; use one writer per state directory, or move the counter
-  to a transactional store before horizontal scaling.
+- S5: each spend counter requires one writer process. Atomic replacement keeps
+  file contents whole but does not serialize cross-process read-modify-write;
+  replicas sharing a counter can lose increments. API and live counters remain
+  intentionally separate scopes. Do not combine them or add writers without
+  transactional reservations; there is no combined multi-service hard maximum.
+- S5: token and estimated-cost values are post-response usage stop thresholds.
+  Concurrent in-flight responses can overshoot them, and missing usage or billed
+  failures can undercount them. Calls are reserved before sending; unknown
+  tokenization/pricing is not converted into a claimed conservative cost bound.
+  Zero caps still deny requests; provider billing limits remain the backstop.
 - S5: cost is estimated from the provider's advertised token prices. A
   provider-side price change or a missing `usage` block makes the estimate
   stale; the call/token caps and provider dashboard remain the backstops.
@@ -479,16 +486,21 @@ not a marketing summary.
 
 1. Generate `openssl rand -hex 32`.
 2. Update `.env` on the server (mode 0600); do not paste it into chat/logs.
-3. Restart the API; confirm `/api/auth/session` is unauthenticated and old
-   tokens are rejected.
+3. Restart the API; confirm the old header token is rejected. With a dedicated
+   session secret, an existing cookie may still report authenticated.
 4. If `SESSION_SECRET` is unset, all sessions are invalidated by this
    rotation — expected. If set, sessions survive.
-5. Revoke any leaked token by rotating immediately; check security events.
+5. Clearing `ADMIN_TOKEN` disables login and operator authorization even for
+   dedicated-secret cookies; session status reports `auth_disabled`. Re-enabling
+   the old secrets can restore unexpired/unrevoked sessions. For an incident,
+   rotate both accepted signing secrets; check security events.
 
 ### Session secret (`SESSION_SECRET`)
 
 1. Generate a new distinct value; update `.env`.
-2. Restart the API. All existing browser sessions become invalid.
+2. Restart the API. Cookies signed by the old dedicated secret become invalid.
+   Legacy admin-token-signed cookies remain accepted while that token remains
+   configured. Rotate both secrets to invalidate all accepted signing keys.
 3. Confirm login issues a new cookie and logout persists a revocation.
 
 ### Provider keys (Jupiter, LLM, alerts)

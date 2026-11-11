@@ -31,6 +31,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Query
 from api import db
+from api.singleflight import singleflight
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -213,6 +214,7 @@ async def _verify_memo(row: dict, recomputed_hash: str, _get_tx,
 
 
 @router.get("/api/verify.json")
+@singleflight
 async def get_verify():
     """Recompute sha256(nonce|canonical_payload) for every decision commit
     and report pass/fail per row. REF-R11: rows carrying an on-chain memo
@@ -408,6 +410,7 @@ def _verify_binding_checks(tx: dict, commit_payload: dict,
 
 
 @router.get("/api/binding.json")
+@singleflight
 async def get_binding():
     """
     REF-R1: pair committed mint vs mint actually touched in the fill tx.

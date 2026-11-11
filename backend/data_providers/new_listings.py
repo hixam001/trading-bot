@@ -80,6 +80,8 @@ class NewListingFeed:
     # ------------------------------------------------------------------ #
 
     def _buffer(self, data: dict) -> None:
+        if not isinstance(data, dict):
+            return
         mint = require_type(data.get("address"), str, "address", "new_listings")
         if not mint:
             return

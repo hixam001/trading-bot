@@ -38,10 +38,10 @@ def sample(tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
     (state_dir / "executions.json").write_text(
-        json.dumps([{"kind": "buy", "mint": "MINT1", "usd_size": 25.0}]),
+        json.dumps({"records": [{"kind": "buy", "mint": "MINT1", "usd_size": 25.0, "status": "confirmed", "idempotency_key": "dummy-buy", "ts": 1.0}]}),
         encoding="utf-8")
     (state_dir / "commits.json").write_text(
-        json.dumps([{"hash": "h1"}]), encoding="utf-8")
+        json.dumps([{"hash": "h1", "nonce": "dummy-nonce", "kind": "buy", "status": "sealed", "payload": {"mint": "MINT1"}, "sealed_at": 1.0}]), encoding="utf-8")
     (state_dir / "wallet_keypair.json").write_text(
         json.dumps(list(range(64))), encoding="utf-8")
 
@@ -102,8 +102,7 @@ def test_new_archive_round_trips_and_excludes_keypairs(sample, keys):
     result = restore_state.restore_backup(
         archive, target_state, target_db, key)
 
-    assert json.loads((target_state / "executions.json").read_text()) == [
-        {"kind": "buy", "mint": "MINT1", "usd_size": 25.0}]
+    assert json.loads((target_state / "executions.json").read_text()) == {"records": [{"kind": "buy", "mint": "MINT1", "usd_size": 25.0, "status": "confirmed", "idempotency_key": "dummy-buy", "ts": 1.0}]}
     assert not (target_state / "wallet_keypair.json").exists()
     assert any("wallet_keypair" not in f["name"]
                for f in result["manifest"]["files"])
@@ -150,7 +149,7 @@ def test_legacy_fernet_archive_still_restores(tmp_path, keys):
     key, _secret = keys
     state_dir = tmp_path / "legacy-state"
     state_dir.mkdir()
-    payload = json.dumps([{"kind": "sell", "mint": "OLD1"}]).encode()
+    payload = json.dumps({"records": [{"kind": "close", "mint": "OLD1", "usd_size": 1.0, "status": "recorded", "idempotency_key": "legacy-close", "ts": 1.0}]}).encode()
     manifest = json.dumps({
         "created_at_utc": "2026-10-01T00:00:00Z",
         "files": [{
@@ -173,8 +172,7 @@ def test_legacy_fernet_archive_still_restores(tmp_path, keys):
 
     target = tmp_path / "legacy-target"
     restore_state.restore_backup(legacy, target, None, key)
-    assert json.loads((target / "executions.json").read_text()) == [
-        {"kind": "sell", "mint": "OLD1"}]
+    assert json.loads((target / "executions.json").read_text()) == {"records": [{"kind": "close", "mint": "OLD1", "usd_size": 1.0, "status": "recorded", "idempotency_key": "legacy-close", "ts": 1.0}]}
 
 
 def test_weak_backup_key_is_refused(sample):

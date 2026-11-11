@@ -19,7 +19,7 @@ import logging
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from fastapi import FastAPI, Request, WebSocket
+from fastapi import FastAPI, HTTPException, Request, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -403,6 +403,13 @@ async def ws_feed(ws: WebSocket):
 FRONTEND_DIST = config.BASE_DIR.parent / "frontend" / "dist"
 
 
+class RestrictedStaticFiles(StaticFiles):
+    async def get_response(self, path: str, scope):
+        if _is_blocked_static_path(path):
+            raise HTTPException(status_code=404)
+        return await super().get_response(path, scope)
+
+
 def _safe_dist_file(full_path: str) -> Path | None:
     """Resolve `full_path` to a file INSIDE FRONTEND_DIST, or None.
 
@@ -446,7 +453,7 @@ async def root():
 if FRONTEND_DIST.exists():
     assets_dir = FRONTEND_DIST / "assets"
     if assets_dir.exists():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="assets")
+        app.mount("/assets", RestrictedStaticFiles(directory=assets_dir), name="assets")
 
 # §57: the /api/* loud-404 guarantee is INDEPENDENT of the frontend build.
 # Before, this catch-all was registered only when a built SPA existed — so a
@@ -472,7 +479,7 @@ async def unknown_api_path(full_path: str = ""):
 _BLOCKED_STATIC_EXTENSIONS = frozenset({
     ".map", ".git", ".env", ".py", ".db", ".key", ".pem", ".cert",
     ".bak", ".log", ".yml", ".yaml", ".toml", ".sh", ".ini", ".conf",
-    ".sql", ".sqlite",
+    ".sql", ".sqlite", ".sqlite3", ".enc", ".ts", ".tsx", ".jsx", ".vue", ".svelte", ".db-wal", ".db-shm",
 })
 
 _DISABLED_DEBUG_PATHS = frozenset({"docs", "redoc", "openapi.json"})
@@ -489,7 +496,7 @@ def _is_blocked_static_path(path: str) -> bool:
     # Check for dotfiles/directories (.git, .env, etc.) anywhere in the path
     segments = [seg for seg in cleaned.split("/") if seg]
     for seg in segments:
-        if seg.startswith("."):
+        if seg.startswith(".") or seg in {"credentials.json", "secrets.json", "wallet_keypair.json", "id_rsa", "id_ed25519"}:
             return True
     # Check for blocked extensions (sourcemaps, secrets, server files)
     p = Path(cleaned)

@@ -278,18 +278,18 @@ def test_build_brief_carries_numbers_and_text():
     row = _row(thesis="entered on buyers leading the hour")
     pos = thesis_restate.position_numbers(_trade(), 0.0012)
     brief = thesis_restate.build_brief(row, pos)
-    assert "name: ALPHA (MintAlpha111111111111111111111111111111111)" in brief
+    assert 'name: <untrusted_data source="position_identity">\nALPHA (MintAlpha111111111111111111111111111111111)\n</untrusted_data>' in brief
     assert "$100.00 open" in brief
     assert "current mark $0.00120000" in brief
     assert "unrealized $+16.42 (+16.4%)" in brief
-    assert "current write-up: entered on buyers leading the hour" in brief
+    assert 'current write-up: <untrusted_data source="current_thesis">\nentered on buyers leading the hour\n</untrusted_data>' in brief
 
 
 def test_build_brief_degrades_without_position():
     brief = thesis_restate.build_brief(_row(),
                                        thesis_restate.position_numbers(None, None))
     assert "(numbers unavailable this pass)" in brief
-    assert "current write-up: original write-up text" in brief
+    assert 'current write-up: <untrusted_data source="current_thesis">\noriginal write-up text\n</untrusted_data>' in brief
 
 
 # ---------------------------------------------------------------------------

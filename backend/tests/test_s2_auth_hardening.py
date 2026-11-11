@@ -403,3 +403,58 @@ def test_session_signing_uses_dedicated_secret_and_survives_admin_rotation(monke
     # Rotating the operator token does not invalidate live dashboard sessions.
     monkeypatch.setattr(config, "ADMIN_TOKEN", "rotated-operator-token-" + "9" * 24)
     assert verify_session_token(token) is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("disabled_token", ["", "short", None, False])
+async def test_disabled_admin_rejects_dedicated_session_after_restart(
+        client, monkeypatch, disabled_token):
+    """A1: status, reset and ingest agree even with a valid old session."""
+    from collections import OrderedDict
+    from api.routes import knowledge_base
+
+    monkeypatch.setattr(config, "SESSION_SECRET", SESSION_ONLY)
+    await _login(client)
+    old_cookie = client.cookies.get(config.SESSION_COOKIE_NAME)
+    assert verify_session_token(old_cookie)
+    monkeypatch.setattr(config, "ADMIN_TOKEN", disabled_token)
+    # Model fresh auth globals after restart while retaining configuration
+    # and persisted revocations. Route imports still invoke the actual module.
+    monkeypatch.setattr(auth, "_ACTIVE_SIGNING_KEYS", OrderedDict())
+    monkeypatch.setattr(auth, "_REVOCATIONS_LOADED", False)
+    monkeypatch.setattr(auth, "_REVOCATIONS_ERROR", False)
+    monkeypatch.setattr(auth, "_REVOKED_SESSION_SIGS", OrderedDict())
+    mutations = []
+
+    async def forbidden_mutation(*args, **kwargs):
+        mutations.append("mutation")
+        raise AssertionError("disabled auth reached a mutation")
+
+    monkeypatch.setattr(db, "reset_book", forbidden_mutation)
+    monkeypatch.setattr(knowledge_base.loader, "ingest_file", forbidden_mutation)
+    headers = {"X-Requested-With": "XMLHttpRequest", "Origin": "http://127.0.0.1"}
+    reset = await client.post("/api/admin/reset?confirm=yes&mode=reset_book", headers=headers)
+    ingest = await client.post("/api/knowledge-base/ingest", headers=headers,
+        json={"documents": [{"filename": "dummy.txt", "content": "dummy knowledge"}]})
+    assert reset.status_code == ingest.status_code == 403
+    assert "disabled" in reset.json()["detail"]
+    assert "disabled" in ingest.json()["detail"]
+    assert mutations == []
+    status = await client.get("/api/auth/session")
+    assert status.json() == {"authenticated": False, "reason": "auth_disabled"}
+    login = await client.post("/api/auth/login", json={"token": TOKEN}, headers=headers)
+    assert login.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_nonempty_admin_rotation_keeps_dedicated_session_authorized(client, monkeypatch):
+    monkeypatch.setattr(config, "SESSION_SECRET", SESSION_ONLY)
+    await _login(client)
+    monkeypatch.setattr(config, "ADMIN_TOKEN", "rotated-operator-token-" + "9" * 24)
+    assert (await client.get("/api/auth/session")).json()["authenticated"] is True
+    # Actual guard, with a legitimate cookie and CSRF, still permits an
+    # enabled operation. Empty ingest is rejected by the handler after auth.
+    response = await client.post("/api/knowledge-base/ingest",
+        headers={"X-Requested-With": "XMLHttpRequest"}, json={"documents": []})
+    assert response.status_code == 400
+    assert response.json()["detail"] == "no documents provided"

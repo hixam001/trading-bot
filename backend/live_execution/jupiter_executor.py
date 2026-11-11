@@ -43,6 +43,7 @@ import sys
 from pathlib import Path
 
 import httpx
+from bounded_http import bounded_request
 
 # The package lives INSIDE backend/ now (single deployable module): backend/
 # is this file's grandparent. Keep the defensive insert so the module stays
@@ -70,7 +71,7 @@ from live_execution.confirmation_queue import (  # noqa: E402
 from live_execution.models import ExecutionLedger  # noqa: E402
 from live_execution.jupiter_client import get_headers  # noqa: E402
 from live_execution.quote_params import build_quote_params  # noqa: E402
-from live_execution.trade_intent import TradeIntent, usd_to_raw_amount  # noqa: E402
+from live_execution.trade_intent import valid_decimals, canonical_operation, TradeIntent, usd_to_raw_amount  # noqa: E402
 
 log = logging.getLogger(__name__)
 
@@ -103,7 +104,7 @@ def assert_decimals_known(output_decimals: int | None, mint: str) -> int:
     refuse the trade. A wrong raw-unit amount scales the trade size by
     10**(9 - true_decimals); there is no safe default.
     """
-    if output_decimals is None or output_decimals < 0:
+    if not valid_decimals(output_decimals):
         raise Refusal(
             f"output token {mint} has UNKNOWN decimals — refusing to trade. "
             f"Never assume a default decimals value."
@@ -207,7 +208,7 @@ async def _post_json(url: str, payload: dict, headers: dict | None = None) -> di
     for attempt in range(1, 4):
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.post(url, json=payload, headers=req_headers or None)
+                resp = await bounded_request(client, "POST", url, json=payload, headers=req_headers or None)
             if resp.status_code == 429:
                 raise ProviderError(f"HTTP 429 from {url}")
             resp.raise_for_status()
@@ -231,7 +232,7 @@ async def _get_json(url: str, params: dict, headers: dict | None = None) -> dict
     for attempt in range(1, 4):
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
-                resp = await client.get(url, params=params, headers=req_headers or None)
+                resp = await bounded_request(client, "GET", url, params=params, headers=req_headers or None)
             if resp.status_code == 429:
                 raise ProviderError(f"HTTP 429 from {url}")
             resp.raise_for_status()
@@ -807,6 +808,8 @@ async def sign_after_checks(
     """
     from solders.transaction import VersionedTransaction  # type: ignore
 
+    # Shared signing boundary, including callers outside either orchestration path.
+    wallet.verify_expected_address(payer)
     raw_unsigned = base64.b64decode(swap_b64)
     tx = VersionedTransaction.from_bytes(raw_unsigned)
     try:
@@ -869,6 +872,12 @@ async def propose_trade(
     Nothing is sent here — this only proposes.
     """
     queue = queue or default_queue()
+    preflight(usd_size, output_mint, output_decimals, ledger or default_ledger())
+    payer = wallet.load_keypair()
+    address = wallet.verify_expected_address(payer)
+    chain_decimals = await solana.get_mint_decimals(output_mint)
+    if not valid_decimals(chain_decimals) or chain_decimals != output_decimals:
+        raise Refusal("mint decimals unavailable or disagree with chain")
     quote = await get_jupiter_quote(
         output_mint, output_decimals, usd_size, ledger=ledger
     )
@@ -876,6 +885,12 @@ async def propose_trade(
         output_mint,
         assert_decimals_known(output_decimals, output_mint),
         usd_size,
+        operation=canonical_operation(
+            side="buy", wallet=address, input_mint=_BACKEND_USDC_MINT,
+            output_mint=output_mint,
+            in_amount_raw=usd_to_raw_amount(usd_size, USDC_DECIMALS),
+            decimals=chain_decimals, slippage_bps=config.SLIPPAGE_BPS,
+        ),
         quote_snapshot={
             "tokens_out": quote["tokens_out"],
             "price_usd": quote["price_usd"],
@@ -945,7 +960,7 @@ async def execute_confirmed_trade(
                 "mandatory"
             )
         try:
-            queue.consume(confirmation_id)
+            queue.require_approved(confirmation_id)
         except ConfirmationError as exc:
             raise Refusal(f"confirmation refused: {exc}") from exc
     else:
@@ -955,13 +970,18 @@ async def execute_confirmed_trade(
         )
 
     payer = wallet.load_keypair()
-    user_public_key = wallet.pubkey_string(payer)
+    user_public_key = wallet.verify_expected_address(payer)
 
     # Reference price floor for buys (fail closed). A NaN/inf reference
     # price passes "is None or <= 0" but later explodes in math.floor —
     # after memo publication. Reject it here instead.
     if not has_valid_reference_price(reference_price_usd):
         raise Refusal("no reference price available for buy (fail closed)")
+
+    chain_decimals = await solana.get_mint_decimals(output_mint)
+    if not valid_decimals(chain_decimals) or chain_decimals != output_decimals:
+        raise Refusal("mint decimals unavailable or disagree with chain")
+    output_decimals = chain_decimals
 
     min_out_raw = math.floor(
         usd_size
@@ -978,6 +998,17 @@ async def execute_confirmed_trade(
         min_out_raw=min_out_raw,
         reference_price_usd=reference_price_usd,
     )
+
+    if config.REQUIRE_MANUAL_CONFIRMATION:
+        try:
+            queue.consume(confirmation_id, operation=canonical_operation(
+                side="buy", wallet=user_public_key, input_mint=_BACKEND_USDC_MINT,
+                output_mint=output_mint, in_amount_raw=intent.in_amount_raw,
+                decimals=output_decimals, slippage_bps=intent.slippage_bps,
+                min_out_raw=intent.min_out_raw,
+            ))
+        except ConfirmationError as exc:
+            raise Refusal(f"confirmation refused: {exc}") from exc
 
     quote_result = await get_jupiter_quote(
         output_mint, output_decimals, usd_size, ledger=ledger

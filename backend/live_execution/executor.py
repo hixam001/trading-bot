@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import base64
 import inspect
+import json
 import logging
 from dataclasses import asdict, dataclass, field
 from typing import Optional
@@ -53,7 +54,7 @@ from live_execution.models import ExecutionLedger
 from live_execution.commit_log import CommitLog
 from live_execution.quote_params import build_quote_params
 from live_execution.venue import token_deltas_from_tx
-from live_execution.trade_intent import TradeIntent, usd_to_raw_amount
+from live_execution.trade_intent import TradeIntent, usd_to_raw_amount, canonical_operation, valid_decimals
 from rule_engine.exits import RISK_OFF_RULES
 from public_registry import register_public_value
 
@@ -190,6 +191,9 @@ async def _broadcast_and_confirm(
     signed_swap = await sign_after_checks(swap_b64, payer, intent=intent, quote=quote)
     register_public_value(signed_swap.signature)
     blockhash = getattr(signed_swap, "blockhash", "") or ""
+    if intent.side == "sell" and logc is not None and sealed is not None:
+        logc.record_sell_attempt(sealed["hash"], signed_swap.signature,
+                                blockhash, sealed["_sell_terms"])
     if on_signed is not None:
         outcome = on_signed(signed_swap)
         if inspect.isawaitable(outcome):
@@ -205,78 +209,38 @@ async def _broadcast_and_confirm(
             blockhash=blockhash,
             error=exc,
         )
-    if not sent:
-        # An ambiguous send (transport failure or "already processed") is not
-        # a definitive rejection: the signed transaction may have landed.
-        # Resolve the LOCAL signature before declaring failure — otherwise a
-        # real fill stays unjournaled and a retried buy could double-spend.
-        try:
-            status = await solana.get_signature_status(signed_swap.signature)
-        except Exception as exc:
-            log.warning("signature status lookup failed for %s: %s",
-                        signed_swap.signature[:16], exc)
-            status = None
-        if status is None:
-            return OrderResult(
-                status="failed",
-                reason="send outcome unresolved (signature not found on-chain)",
-                signature=signed_swap.signature,
-                blockhash=blockhash,
-                unresolved=True,
-            )
-        if status.get("err"):
-            return OrderResult(
-                status="failed",
-                reason=f"landed-failed (fee paid): {status['err']}",
-                signature=signed_swap.signature,
-                blockhash=blockhash,
-                error=status.get("err"),
-            )
-        if status.get("confirmationStatus") in ("confirmed", "finalized"):
-            conf = {"confirmed": True, "slot": status.get("slot"), "err": None}
-        else:
-            try:
-                conf = await solana.confirm_signature(signed_swap.signature)
-            except Exception as exc:
-                return OrderResult(
-                    status="failed",
-                    reason=f"confirmation unreadable: {exc}",
-                    signature=signed_swap.signature,
-                    blockhash=blockhash,
-                    unresolved=True,
-                )
-            if not conf["confirmed"]:
-                return OrderResult(
-                    status="failed",
-                    reason=conf["err"] or "unconfirmed",
-                    signature=signed_swap.signature,
-                    blockhash=blockhash,
-                    unresolved=True,
-                )
-        sent = signed_swap.signature
-    else:
+    # The transaction's local signature is its identity; an RPC receipt naming
+    # another transaction cannot settle the pre-send journal entry.
+    needs_resolution = not sent or sent != signed_swap.signature
+    conf = None
+    if not needs_resolution:
         try:
             conf = await solana.confirm_signature(sent)
-        except Exception as exc:
+        except Exception:
+            needs_resolution = True
+        else:
+            # Retain the documented immediate single-provider success policy,
+            # but never turn a malformed or negative observation into finality.
+            needs_resolution = not (
+                isinstance(conf, dict) and conf.get("confirmed") is True
+                and "err" in conf
+                and _valid_terminal_status({
+                    "confirmationStatus": "confirmed", "slot": conf.get("slot"),
+                    "err": conf["err"],
+                }) and conf["err"] is None
+            )
+    if needs_resolution:
+        state, error, slot = await _resolve_signature_outcome(signed_swap.signature)
+        if state != "confirmed":
             return OrderResult(
                 status="failed",
-                reason=f"confirmation unreadable: {exc}",
-                signature=sent,
-                blockhash=blockhash,
-                unresolved=True,
+                reason=(f"landed-failed (fee paid): {error}" if state == "failed"
+                        else "send outcome unresolved (strict finality unavailable)"),
+                signature=signed_swap.signature, blockhash=blockhash,
+                unresolved=state == "pending", error=error,
             )
-        if not conf["confirmed"]:
-            # An on-chain error is conclusive (fee paid, no tokens); a plain
-            # confirmation timeout is NOT — the tx may still land.
-            landed_err = bool(conf.get("err")) and (
-                conf["err"] != "not confirmed before timeout")
-            return OrderResult(
-                status="failed",
-                reason=conf["err"] or "unconfirmed",
-                signature=sent,
-                blockhash=blockhash,
-                unresolved=not landed_err,
-            )
+        sent = signed_swap.signature
+        conf = {"confirmed": True, "slot": slot, "err": None}
     if sealed is not None and logc is not None:
         logc.bind(sealed["hash"], sent)
     return OrderResult(status="filled", signature=sent, slot=conf.get("slot"),
@@ -349,14 +313,9 @@ async def place_buy(
                                reason="deduplicated", side="buy", symbol=symbol, mint=mint,
                                usd_value=prior.usd_size, tokens=prior.tokens_out, signature=prior.signature)
 
-    if config.REQUIRE_MANUAL_CONFIRMATION:
-        if not confirmation_id:
-            return OrderResult(**{**base.to_json(), "status": "blocked",
-                                  "reason": "REQUIRE_MANUAL_CONFIRMATION is True and no confirmation_id given"})
-        try:
-            queue.consume(confirmation_id)
-        except ConfirmationError as exc:
-            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"confirmation refused: {exc}"})
+    if config.REQUIRE_MANUAL_CONFIRMATION and not confirmation_id:
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": "REQUIRE_MANUAL_CONFIRMATION is True and no confirmation_id given"})
 
     try:
         payer = wallet.load_keypair()
@@ -388,6 +347,27 @@ async def place_buy(
     if not has_valid_reference_price(reference_price_usd):
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": "no reference price available for buy (fail closed)"})
+
+    try:
+        chain_decimals = await solana.get_mint_decimals(mint)
+    except Exception:
+        chain_decimals = None
+    if not valid_decimals(chain_decimals) or chain_decimals != output_decimals:
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": "mint decimals unavailable or disagree with chain — refusing"})
+    output_decimals = chain_decimals
+    if config.REQUIRE_MANUAL_CONFIRMATION:
+        approved_floor = math.floor(
+            usd / (reference_price_usd * (1.0 + config.BUY_MAX_PRICE_DEVIATION))
+            * raw_units(output_decimals))
+        operation = canonical_operation(side="buy", wallet=addr,
+            input_mint=_BACKEND_USDC_MINT, output_mint=mint,
+            in_amount_raw=usd_to_raw_amount(usd, USDC_DECIMALS), decimals=output_decimals,
+            slippage_bps=config.SLIPPAGE_BPS, min_out_raw=approved_floor)
+        try:
+            queue.consume(confirmation_id, operation=operation)
+        except ConfirmationError as exc:
+            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"confirmation refused: {exc}"})
 
     # REF-R11 commit-reveal, fail-closed ordering:
     #   seal -> publish memo -> CONFIRM memo -> quote -> build -> broadcast.
@@ -566,6 +546,119 @@ async def place_buy(
     return outcome
 
 
+async def _resolve_signature_outcome(signature: str) -> tuple[str, object, int | None]:
+    """Resolve ambiguous/negative observations before changing authority."""
+    try:
+        observations = await solana.get_signature_status_all_strict(signature)
+    except Exception:
+        return "pending", None, None
+    state, error = resolve_signature_observations(observations)
+    slot = None
+    if state == "confirmed":
+        slot = next(status["slot"] for status in observations
+                    if _valid_terminal_status(status) and status["err"] is None)
+    return state, error, slot
+
+
+async def _resolve_sell_signature(signature: str) -> tuple[str, object]:
+    """Historical absence/unknown never proves non-execution.
+
+    Shared immediate and pending recovery uses native terminal statuses.
+    Confirmed success prevents replay; conflicting outcomes remain pending.
+    Failure authorizes a retry only when every endpoint reports the same
+    terminal failure.
+    """
+    state, error, _slot = await _resolve_signature_outcome(signature)
+    return state, error
+
+
+def _valid_terminal_status(status) -> bool:
+    if (not isinstance(status, dict)
+            or status.get("confirmationStatus") not in ("confirmed", "finalized")
+            or not isinstance(status.get("slot"), int)
+            or isinstance(status.get("slot"), bool) or status["slot"] < 0
+            or "err" not in status):
+        return False
+    # Let the installed native SDK validate Solana's error enums and integer
+    # domain. Build only the deprecated status mirror when omitted by fixtures
+    # or providers; if supplied it must agree with the authoritative err field.
+    from solders.transaction_status import TransactionStatus
+    legacy = {"Ok": None} if status["err"] is None else {"Err": status["err"]}
+    if "status" in status and status["status"] != legacy:
+        return False
+    try:
+        TransactionStatus.from_json(json.dumps(dict(status, status=legacy)))
+    except (ValueError, TypeError, OverflowError):
+        return False
+    return True
+
+
+def resolve_signature_observations(observations) -> tuple[str, object]:
+    """Shared terminal-outcome rule for pending buy and sell recovery."""
+    if not isinstance(observations, list):
+        return "pending", None
+    final = [s for s in observations if _valid_terminal_status(s)]
+    successes = [s for s in final if s["err"] is None]
+    failures = [s for s in final if s["err"] is not None]
+    conflicting_errors = [s for s in observations if isinstance(s, dict)
+                          and s.get("err") is not None]
+    if successes and not conflicting_errors:
+        return "confirmed", None
+    if (observations and len(failures) == len(observations)
+            and all(s["err"] == failures[0]["err"] for s in failures)):
+        return "failed", failures[0]["err"]
+    return "pending", None
+
+
+def _notify_unresolved_sell(mint: str, reason: str) -> None:
+    log.error("DOUBLE FILL SAFETY: %s", reason)
+    try:
+        from alerts import alert_nowait, AlertEvent
+        alert_nowait(AlertEvent.EXIT_UNRESOLVED,
+                     f"Exit unresolved for {mint[:8]}: {reason}",
+                     key=f"exit_unresolved:{mint}")
+    except Exception:
+        pass
+
+
+async def _recover_sell(rec: dict, ledger: ExecutionLedger, logc: CommitLog,
+                        resolution: tuple[str, object] | None = None) -> OrderResult:
+    attempt = rec["sell_attempt"]
+    signature = attempt["signature"]
+    mint = rec["payload"]["mint"]
+    state, error = resolution or await _resolve_sell_signature(signature)
+    fields = dict(side="sell", mint=mint, symbol=rec["payload"].get("symbol", ""),
+                  signature=signature, commit_hash=rec["hash"],
+                  commit_nonce=rec["nonce"], commit_payload=rec["payload"],
+                  commit_sealed_at=rec.get("sealed_at"),
+                  memo_signature=rec.get("memo_signature") or "",
+                  memo_slot=rec.get("memo_slot"))
+    if state == "confirmed":
+        actuals = await _fill_actuals("sell", mint, signature, owner=attempt["wallet"])
+        proceeds = actuals["usdc_delta"]
+        if proceeds is None:
+            proceeds = attempt["proceeds_usd"]
+        ledger.reduce_position(mint, attempt["fraction"], proceeds,
+                               full_close=attempt["full_close"],
+                               rule_id=attempt.get("rule_id"), signature=signature)
+        logc.bind(rec["hash"], signature, allow_failed=True)
+        logc.settle_sell_attempt(rec["hash"], signature, "confirmed")
+        tokens = actuals["tokens_delta"]
+        return OrderResult(status="filled", usd_value=proceeds,
+                           tokens=attempt["tokens"] if tokens is None else tokens,
+                           **fields)
+    if state == "failed":
+        logc.settle_sell_attempt(rec["hash"], signature, "failed")
+        return OrderResult(status="failed", reason=f"landed-failed (fee paid): {error}",
+                           error=error, **fields)
+    reason = (f"exit_unresolved: signature {signature} is pending and blockhash "
+              "expiry cannot establish historical non-execution")
+    logc.note(rec["hash"], reason)
+    _notify_unresolved_sell(mint, reason)
+    return OrderResult(status="failed", reason=reason, unresolved=True,
+                       blockhash=attempt.get("blockhash", ""), **fields)
+
+
 async def place_sell(
     mint: str,
     symbol: str,
@@ -591,6 +684,21 @@ async def place_sell(
     except Exception as exc:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": str(exc)})
 
+    # Resolve a previous signed sell before calculating a new fraction or
+    # spending a memo fee. This survives cycles, failed commits and restarts.
+    logc = CommitLog(config.STATE_DIR / "commits.json")
+    try:
+        pending = logc.pending_sells(mint)
+    except RuntimeError as exc:
+        return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"commit log unavailable: {exc}"})
+    if pending:
+        recovered = await _recover_sell(pending[0], ledger, logc)
+        if recovered.unresolved or recovered.status == "filled":
+            return recovered
+        # A conclusive failure releases this attempt; a later call can make
+        # a new decision. Never recover and authorize in the same call.
+        return recovered
+
     amounts = ledger.open_token_amounts()
     position_amount = amounts.get(mint, 0.0)
     if position_amount <= 0:
@@ -606,7 +714,7 @@ async def place_sell(
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": "sell size rounds to zero"})
 
     decimals = await solana.get_mint_decimals(mint)
-    if decimals is None:
+    if not valid_decimals(decimals):
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": "could not read mint decimals on-chain - refusing"})
 
@@ -620,14 +728,6 @@ async def place_sell(
     except Exception as exc:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"wallet: {exc}"})
 
-    # Human approval is consumed BEFORE any irreversible step (the memo is an
-    # on-chain commitment; it must not precede the operator's sign-off).
-    if config.REQUIRE_MANUAL_CONFIRMATION:
-        try:
-            queue.consume(confirmation_id)
-        except ConfirmationError as exc:
-            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"confirmation refused: {exc}"})
-
     addr = wallet.pubkey_string(payer)
     sol_bal = await solana.get_sol_balance(addr)
     if sol_bal is None or sol_bal < config.MIN_SOL_RESERVE:
@@ -635,10 +735,24 @@ async def place_sell(
         return OrderResult(**{**base.to_json(), "status": "blocked",
                               "reason": f"SOL reserve {detail} below floor {config.MIN_SOL_RESERVE}"})
 
-    logc = CommitLog(config.STATE_DIR / "commits.json")
     amount_raw = int(sell_amount * raw_units(decimals))
     if amount_raw <= 0:
         return OrderResult(**{**base.to_json(), "status": "blocked", "reason": "raw sell size rounds to zero"})
+
+    # Approval binds the raw sell quantity and the maximum permitted ladder
+    # slippage before the first memo/signing boundary.
+    if config.REQUIRE_MANUAL_CONFIRMATION:
+        approval_floor = (math.floor(sell_amount * reference_price_usd
+            * (1.0 - config.SELL_MAX_PRICE_DEVIATION) * raw_units(USDC_DECIMALS))
+            if has_valid_reference_price(reference_price_usd) else None)
+        operation = canonical_operation(side="sell", wallet=addr, input_mint=mint,
+            output_mint=_BACKEND_USDC_MINT, in_amount_raw=amount_raw, decimals=decimals,
+            slippage_bps=max(getattr(config, "EXIT_SLIPPAGE_LADDER_BPS", (50, 150, 300))),
+            min_out_raw=approval_floor)
+        try:
+            queue.consume(confirmation_id, operation=operation)
+        except ConfirmationError as exc:
+            return OrderResult(**{**base.to_json(), "status": "blocked", "reason": f"confirmation refused: {exc}"})
 
     # REF-R11 commit-reveal (fail closed): seal -> memo -> CONFIRM memo ->
     # quote -> build -> broadcast. A sell decision that cannot be committed
@@ -679,76 +793,31 @@ async def place_sell(
     for attempt_idx, slippage_rung in enumerate(ladder, start=1):
         if attempt_idx > 1 and last_sig:
             logc.note(sealed["hash"], f"attempt {attempt_idx}: resolving previous signature {last_sig}")
-            sig_status = await solana.get_signature_status(last_sig)
-            if sig_status and sig_status.get("confirmationStatus") in ("confirmed", "finalized"):
-                sig_err = sig_status.get("err")
-                if not sig_err:
-                    logc.note(sealed["hash"], f"previous signature {last_sig} landed on-chain — stopping ladder")
-                    logc.bind(sealed["hash"], last_sig)
-                    actuals = await _fill_actuals("sell", mint, last_sig, owner=addr)
-                    proceeds_actual = actuals["usdc_delta"] or proceeds_usd
-                    tokens_sold_actual = actuals["tokens_delta"] or sell_amount
-                    try:
-                        ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close, rule_id=rule_id)
-                    except ValueError as exc:
-                        log.error("post-fill ledger reduce failed: %s", exc)
-                    outcome = OrderResult(
-                        side="sell",
-                        symbol=symbol,
-                        mint=mint,
-                        status="filled",
-                        signature=last_sig,
-                        usd_value=proceeds_actual,
-                        tokens=tokens_sold_actual,
-                        **commit_fields,
-                    )
-                    return outcome
-                else:
-                    # Landed on-chain but failed: conclusive failure, fee was paid, can never double-fill.
-                    from live_execution.exit_errors import classify_exit_failure, custom_error_code
-                    failure = classify_exit_failure(sig_err)
-                    if failure.retry and attempt_idx <= len(ladder):
-                        prev_rung = ladder[attempt_idx - 2]
-                        code = custom_error_code(sig_err)
-                        rung_notes.append(f"{prev_rung}bps=landed-failed({code or 'retryable'})")
-                        log.warning(
-                            "Previous exit signature %s landed with retryable error: %s. Escalating ladder.",
-                            last_sig, sig_err,
-                        )
-                        last_sig = None
-                    else:
-                        fail_reason = f"landed-failed (fee paid): {sig_err}"
-                        logc.fail(sealed["hash"], fail_reason)
-                        return OrderResult(
-                            **{
-                                **base.to_json(),
-                                "status": "failed",
-                                "reason": fail_reason,
-                                "signature": last_sig,
-                                **commit_fields,
-                            }
-                        )
-            else:
-                # §84: an unparseable/empty blockhash means we cannot prove
-                # the previous signed exit is dead. Treating that as "expired"
-                # retried the ladder and risked a second fill. Unknown must
-                # stay unresolved (fail closed).
-                is_valid = (await solana.is_blockhash_valid(last_blockhash)
-                            if last_blockhash else None)
-                if is_valid is not False:
-                    state = ("unknown" if not last_blockhash
-                             else f"may still be valid ({last_blockhash})")
-                    reason = (f"exit_unresolved: signature {last_sig} is "
-                              f"pending and blockhash is {state}")
-                    log.error("DOUBLE FILL SAFETY: %s", reason)
-                    try:
-                        from alerts import alert_nowait, AlertEvent
-                        alert_nowait(AlertEvent.EXIT_UNRESOLVED, f"Exit unresolved for {mint[:8]}: {reason}", key=f"exit_unresolved:{mint}")
-                    except Exception:
-                        pass
-                    logc.note(sealed["hash"], reason)
+            state, sig_err = await _resolve_sell_signature(last_sig)
+            if state == "confirmed":
+                rec = next(r for r in logc.pending_sells(mint)
+                           if r["hash"] == sealed["hash"])
+                return await _recover_sell(rec, ledger, logc, (state, sig_err))
+            if state == "failed":
+                logc.settle_sell_attempt(sealed["hash"], last_sig, "failed")
+                from live_execution.exit_errors import classify_exit_failure, custom_error_code
+                if not classify_exit_failure(sig_err).retry:
+                    reason = f"landed-failed (fee paid): {sig_err}"
                     logc.fail(sealed["hash"], reason)
-                    return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason, "signature": last_sig, **commit_fields})
+                    return OrderResult(**{**base.to_json(), "status": "failed",
+                                          "reason": reason, "signature": last_sig,
+                                          **commit_fields})
+                code = custom_error_code(sig_err)
+                rung_notes.append(f"{ladder[attempt_idx - 2]}bps=landed-failed({code or 'retryable'})")
+                last_sig = None
+            else:
+                reason = (f"exit_unresolved: signature {last_sig} is pending and blockhash "
+                          "expiry cannot establish historical non-execution")
+                logc.note(sealed["hash"], reason)
+                _notify_unresolved_sell(mint, reason)
+                return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason,
+                                      "signature": last_sig, "unresolved": True,
+                                      "blockhash": last_blockhash or "", **commit_fields})
 
         logc.note(sealed["hash"], f"attempt {attempt_idx}/{len(ladder)} with slippage {slippage_rung} bps")
         try:
@@ -837,11 +906,20 @@ async def place_sell(
         except Exception:
             last_blockhash = ""
 
+        sealed["_sell_terms"] = dict(wallet=addr, fraction=frac, tokens=sell_amount,
+                                     full_close=full_close, rule_id=rule_id,
+                                     proceeds_usd=proceeds_usd)
         try:
             outcome = await _broadcast_and_confirm(
                 swap_b64, payer, intent=trade_intent, logc=logc, sealed=sealed, quote=quote
             )
             last_sig = outcome.signature
+            # Also supports boundaries that return a signed outcome directly.
+            # Real execution has already journaled this before send.
+            if last_sig:
+                logc.record_sell_attempt(sealed["hash"], last_sig,
+                                        outcome.blockhash or last_blockhash or "",
+                                        sealed["_sell_terms"])
             from live_execution.exit_errors import SendRejected, is_already_processed
             if isinstance(outcome.error, SendRejected):
                 attempts = outcome.error.attempts
@@ -851,9 +929,13 @@ async def place_sell(
                     and not any(is_already_processed(a) for a in attempts)
                 ):
                     # Definitive preflight rejection: transaction never entered the network
+                    logc.settle_sell_attempt(sealed["hash"], last_sig, "failed")
                     last_sig = None
                     last_blockhash = None
         except Exception as exc:
+            pending_attempts = logc.pending_sells(mint)
+            if pending_attempts:
+                return await _recover_sell(pending_attempts[0], ledger, logc)
             err_str = str(exc)
             if not is_retryable_exit_error(exc) or attempt_idx >= len(ladder):
                 logc.fail(sealed["hash"], f"{type(exc).__name__}: {exc}")
@@ -867,17 +949,21 @@ async def place_sell(
 
         if outcome.status == "filled":
             actuals = await _fill_actuals("sell", mint, outcome.signature, owner=addr)
-            proceeds_actual = actuals["usdc_delta"] or proceeds_usd
-            tokens_sold_actual = actuals["tokens_delta"] or sell_amount
+            proceeds_actual = proceeds_usd if actuals["usdc_delta"] is None else actuals["usdc_delta"]
+            tokens_sold_actual = sell_amount if actuals["tokens_delta"] is None else actuals["tokens_delta"]
             if actuals["usdc_delta"] is None and actuals["tokens_delta"] is None:
                 log.warning(
                     "fill actuals unreadable for %s — journaling the quote "
                     "snapshot (proceeds=%.2f)",
                     outcome.signature[:16], proceeds_usd)
             try:
-                ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close, rule_id=rule_id)
-            except ValueError as exc:
-                log.error("post-fill ledger reduce failed: %s", exc)
+                ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close,
+                                       rule_id=rule_id, signature=outcome.signature)
+            except ValueError:
+                # Keep the durable attempt pending for repair; reporting filled
+                # here would hide that authoritative accounting did not happen.
+                raise
+            logc.settle_sell_attempt(sealed["hash"], outcome.signature, "confirmed")
             outcome.usd_value = proceeds_actual
             outcome.tokens = tokens_sold_actual
             outcome.price_impact_pct = impact
@@ -893,6 +979,18 @@ async def place_sell(
             last_error_reason = reason
             err_target = getattr(outcome, "error", None) or reason
             if not is_retryable_exit_error(err_target) or attempt_idx >= len(ladder):
+                if last_sig:
+                    state, err = await _resolve_sell_signature(last_sig)
+                    if state == "confirmed":
+                        rec = next(r for r in logc.pending_sells(mint)
+                                   if r["hash"] == sealed["hash"])
+                        return await _recover_sell(rec, ledger, logc, (state, err))
+                    if state == "failed":
+                        logc.settle_sell_attempt(sealed["hash"], last_sig, "failed")
+                    else:
+                        outcome.unresolved = True
+                        outcome.reason = f"exit_unresolved: {reason}"
+                        _notify_unresolved_sell(mint, outcome.reason)
                 logc.fail(sealed["hash"], reason)
                 outcome.commit_hash = sealed["hash"]
                 outcome.commit_nonce = sealed["nonce"]

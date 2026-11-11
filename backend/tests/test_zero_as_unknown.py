@@ -118,7 +118,7 @@ def test_discovery_missing_price_change_stays_none():
     assert _safe_float_signed("0") == 0.0
     # volumes keep the positive-only policy
     assert _safe_float("-5") is None
-    assert _safe_float("0") is None
+    assert _safe_float("0") == 0.0  # reported zero is available data
 
     client = httpx.AsyncClient()
     kd = KeywordScanner(client)

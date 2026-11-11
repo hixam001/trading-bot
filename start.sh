@@ -104,7 +104,7 @@ fi
 if [ ! -x "$ROOT/.venv/bin/python" ]; then
   echo "[setup] creating venv and installing backend deps..."
   python3 -m venv "$ROOT/.venv"
-  "$ROOT/.venv/bin/pip" install -q -r "$ROOT/backend/requirements.txt"
+  "$ROOT/.venv/bin/pip" install -q -r "$ROOT/backend/requirements.lock"
 fi
 
 # --- 2) Verify the MAIN LLM provider key is set ------------------------------

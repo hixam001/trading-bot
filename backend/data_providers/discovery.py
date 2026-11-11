@@ -15,13 +15,16 @@ could never absorb never reach the reasoning layer).
 """
 from __future__ import annotations
 import logging
+import math
 import re
 import time
 from typing import Optional
 
 import httpx
+from bounded_http import bounded_request
 
 from models import Candidate
+from data_providers.base import require_type
 
 log = logging.getLogger(__name__)
 
@@ -76,10 +79,12 @@ def _is_fake_chart(liq_usd: float, vol_1h: float) -> bool:
 
 
 def _safe_float(v) -> Optional[float]:
+    if isinstance(v, bool):
+        return None
     try:
         f = float(v)
-        return f if f > 0 else None
-    except (TypeError, ValueError):
+        return f if math.isfinite(f) and f >= 0 else None
+    except (TypeError, ValueError, OverflowError):
         return None
 
 
@@ -94,9 +99,11 @@ def _safe_float_signed(v) -> Optional[float]:
     A negative change is data; zero is a real reading. Only unparseable /
     non-finite inputs are None.
     """
+    if isinstance(v, bool):
+        return None
     try:
         f = float(v)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
     if f != f or f in (float("inf"), float("-inf")):
         return None
@@ -104,7 +111,7 @@ def _safe_float_signed(v) -> Optional[float]:
 
 
 def _age_hours(created_ms) -> Optional[float]:
-    if not created_ms:
+    if isinstance(created_ms, bool) or _safe_float(created_ms) is None:
         return None
     try:
         return max(0.0, (time.time() * 1000.0 - float(created_ms)) / 3_600_000)
@@ -134,7 +141,7 @@ class KeywordScanner:
         mints: set = set()
         for url in (BOOSTS_TOP_URL, LATEST_BOOSTS_URL):
             try:
-                resp = await self._client.get(url, headers={"accept": "application/json"})
+                resp = await bounded_request(self._client, "GET", url, headers={"accept": "application/json"})
                 if resp.status_code != 200:
                     continue
                 rows = resp.json()
@@ -167,7 +174,7 @@ class KeywordScanner:
                 all_pairs.extend(cached[1])
                 continue
             try:
-                resp = await self._client.get(
+                resp = await bounded_request(self._client, "GET",
                     SEARCH_URL, params={"q": q},
                     headers={"accept": "application/json"})
                 if resp.status_code != 200:
@@ -192,30 +199,40 @@ class KeywordScanner:
         """Dedupe + fake-chart filter + the reference slot composition (capped)."""
         best: dict[str, dict] = {}
         for pair in all_pairs:
-            base = pair.get("baseToken") or {}
+            if not isinstance(pair, dict):
+                continue
+            base = pair.get("baseToken")
+            if not isinstance(base, dict):
+                continue
             mint = base.get("address")
             if not mint or not is_valid_solana_address(mint) or mint in best:
                 continue
 
-            liq = (pair.get("liquidity") or {}).get("usd") or 0
-            vol_1h = (pair.get("volume") or {}).get("h1") or 0
+            liq_obj = pair.get("liquidity")
+            vol_obj = pair.get("volume")
+            liq = _safe_float(liq_obj.get("usd")) if isinstance(liq_obj, dict) else None
+            vol_1h = _safe_float(vol_obj.get("h1")) if isinstance(vol_obj, dict) else None
+            if liq is None or vol_1h is None:
+                continue
             if _is_fake_chart(liq_usd=liq, vol_1h=vol_1h):
                 continue
             best[mint] = {"pair": pair, "liq": liq or 0,
-                          "symbol": (base.get("symbol") or "?").replace("$", ""),
-                          "name": base.get("name") or ""}
+                          "symbol": str(base.get("symbol") or "?").replace("$", ""),
+                          "name": str(base.get("name") or "")}
 
         def enrich(info: dict) -> None:
             pair = info["pair"]
-            vol = pair.get("volume") or {}
-            chg = pair.get("priceChange") or {}
-            txns = pair.get("txns") or {}
-            h1 = txns.get("h1") or {}
-            h6t = txns.get("h6") or {}
-            info_obj = pair.get("info") or {}
-            socials = [s.get("type") for s in (info_obj.get("socials") or [])
-                       if isinstance(s, dict)]
-            sites = info_obj.get("websites") or []
+            vol = pair.get("volume") if isinstance(pair.get("volume"), dict) else {}
+            chg = pair.get("priceChange") if isinstance(pair.get("priceChange"), dict) else {}
+            txns = pair.get("txns") if isinstance(pair.get("txns"), dict) else {}
+            h1 = txns.get("h1") if isinstance(txns.get("h1"), dict) else {}
+            h6t = txns.get("h6") if isinstance(txns.get("h6"), dict) else {}
+            info_obj = pair.get("info") if isinstance(pair.get("info"), dict) else {}
+            social_rows = info_obj.get("socials")
+            social_rows = social_rows if isinstance(social_rows, list) else []
+            socials = [s.get("type") for s in social_rows if isinstance(s, dict)]
+            site_rows = info_obj.get("websites")
+            sites = [s for s in site_rows if isinstance(s, dict) and isinstance(s.get("url"), str) and s["url"].strip()] if isinstance(site_rows, list) else []
             info.update(
                 vol_1h=_safe_float(vol.get("h1")) or 0.0,
                 vol_24h=_safe_float(vol.get("h24")) or 0.0,
@@ -225,10 +242,10 @@ class KeywordScanner:
                 chg_1h=_safe_float_signed(chg.get("h1")),
                 chg_6h=_safe_float_signed(chg.get("h6")),
                 chg_24h=_safe_float_signed(chg.get("h24")),
-                buys_1h=None if h1.get("buys") is None else int(h1.get("buys")),
-                sells_1h=None if h1.get("sells") is None else int(h1.get("sells")),
-                buys_6h=None if h6t.get("buys") is None else int(h6t.get("buys")),
-                sells_6h=None if h6t.get("sells") is None else int(h6t.get("sells")),
+                buys_1h=require_type(h1.get("buys"), int, "buys", "discovery"),
+                sells_1h=require_type(h1.get("sells"), int, "sells", "discovery"),
+                buys_6h=require_type(h6t.get("buys"), int, "buys", "discovery"),
+                sells_6h=require_type(h6t.get("sells"), int, "sells", "discovery"),
                 age_h=_age_hours(pair.get("pairCreatedAt")),
                 socials=socials,
                 has_site=bool(sites),

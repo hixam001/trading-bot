@@ -346,6 +346,10 @@ class _StubPayer:
 def _wire_fake_network(monkeypatch, calls: list[dict]):
     from live_execution import solana as le_solana
 
+    async def mint_decimals(mint):
+        return 6  # dummy chain fact for this six-decimal quote fixture
+    monkeypatch.setattr(le_solana, "get_mint_decimals", mint_decimals)
+
     async def fake_get(url, params):
         calls.append({"verb": "get", "url": url, "params": params})
         if url.endswith("/quote"):

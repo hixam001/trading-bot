@@ -232,8 +232,9 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
     """Record token signature as revoked and prune expired entries (§77 E5, §78 E1–E3).
 
     Revocations are persisted (signature + expiry only) and survive process
-    restart. Rotating ADMIN_TOKEN / SESSION_SECRET still provides cluster-wide
-    revocation; this file covers a single host's logout semantics.
+    restart. Rotate all accepted signing secrets for cluster-wide revocation;
+    nonempty ADMIN_TOKEN rotation preserves dedicated-secret sessions. This
+    file covers a single host's logout semantics.
 
     Validates HMAC signature and timestamp before storing to prevent memory-growth
     attacks from unauthenticated forged cookies.
@@ -499,6 +500,16 @@ def _clear_auth_failures(client_ip: str) -> None:
     _GLOBAL_FAILED_ATTEMPTS.clear()
 
 
+def admin_auth_enabled() -> bool:
+    """One disabled-state policy for authorization, login and session status.
+
+    Configuration normalizes weak configured secrets to an empty string.
+    Keep malformed/short runtime values fail closed as well.
+    """
+    token = config.ADMIN_TOKEN
+    return isinstance(token, str) and len(token) >= 32
+
+
 def require_admin_token(request: Request) -> None:
     """Raise 403 unless the request carries the configured operator token
     or a valid, non-expired HttpOnly session cookie.
@@ -519,6 +530,13 @@ def require_admin_token(request: Request) -> None:
     attempts = _prune_failures(client_ip, now)
 
     configured = config.ADMIN_TOKEN
+    # Disabling operator auth wins over every credential, including sessions
+    # signed by an unchanged dedicated secret and restored after a restart.
+    if not admin_auth_enabled():
+        raise HTTPException(
+            status_code=403,
+            detail="operator endpoints are disabled (ADMIN_TOKEN not set)",
+        )
 
     # 1. Header authentication (API, CLI, scripts)
     supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
@@ -536,12 +554,6 @@ def require_admin_token(request: Request) -> None:
         _clear_auth_failures(client_ip)
         return
 
-    if not configured or len(configured) < 32:
-        # Fail closed: no token configured or too short -> endpoint disabled.
-        raise HTTPException(
-            status_code=403,
-            detail="operator endpoints are disabled (ADMIN_TOKEN not set)",
-        )
     if len(attempts) >= _MAX_FAILED_ATTEMPTS or _global_lockout_active(now):
         try:
             from api.security_monitor import SecurityEventType, record_security_event

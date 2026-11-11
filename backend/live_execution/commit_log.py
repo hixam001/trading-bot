@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from live_execution.state_validation import finite_number
+from live_execution.state_lock import serialized_write
 import os
 import time
 from pathlib import Path
@@ -47,14 +49,17 @@ class CommitLog:
                 f"commit log at {self.path} is malformed (expected a list, "
                 f"got {type(data).__name__}) — refusing to overwrite its history"
             )
+        validate_commits(data)
         return data
 
     def _save(self, commits) -> None:
+        validate_commits(commits)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps(commits, indent=2))
         os.replace(tmp, self.path)
 
+    @serialized_write
     def seal(self, kind: str, payload: dict) -> dict:
         nonce = uuid.uuid4().hex
         canonical = json.dumps(payload, sort_keys=True)
@@ -76,6 +81,7 @@ class CommitLog:
         self._save(commits)
         return rec
 
+    @serialized_write
     def record_memo(self, digest: str, memo_signature: str,
                     memo_slot: Optional[int]) -> bool:
         """Attach the confirmed on-chain memo (sealed -> published).
@@ -93,6 +99,7 @@ class CommitLog:
                 return True
         return False
 
+    @serialized_write
     def fail(self, digest: str, reason: str) -> bool:
         """Mark a commit that could not be published/executed (honest record).
 
@@ -107,6 +114,7 @@ class CommitLog:
                 return True
         return False
 
+    @serialized_write
     def bind(self, digest: str, signature: str,
              allow_failed: bool = False) -> bool:
         """Attach the confirmed fill signature to the sealed intent.
@@ -132,6 +140,7 @@ class CommitLog:
                 return True
         return False
 
+    @serialized_write
     def note(self, digest: str, text: str) -> bool:
         """Attach an informational audit note to a commit record (§79 Phase B ladder)."""
         commits = self._load()
@@ -147,9 +156,55 @@ class CommitLog:
         commits = self._load()
         return list(reversed(commits[-limit:]))
 
+    @serialized_write
+    def record_sell_attempt(self, digest: str, signature: str, blockhash: str,
+                            terms: dict) -> None:
+        """Durably remember a signed exit BEFORE it can be sent.
+
+        This marker is independent of the public commit status: a confirmation
+        can bind the commit before the accounting write completes.
+        """
+        commits = self._load()
+        for rec in commits:
+            if rec.get("hash") == digest:
+                previous = rec.get("sell_attempt")
+                if previous and previous.get("status") == "pending":
+                    if previous.get("signature") != signature:
+                        raise RuntimeError("unresolved sell attempt cannot be replaced")
+                    return
+                if previous:
+                    # Preserve failed signed attempts when a conclusive retry
+                    # replaces the active marker; audit history is append-only.
+                    rec.setdefault("sell_attempt_history", []).append(previous)
+                rec["sell_attempt"] = dict(terms, signature=signature,
+                                            blockhash=blockhash, status="pending")
+                self._save(commits)
+                return
+        raise RuntimeError("sell commit missing before broadcast")
+
+    @serialized_write
+    def settle_sell_attempt(self, digest: str, signature: str, status: str) -> None:
+        if status not in ("confirmed", "failed"):
+            raise ValueError("invalid sell settlement")
+        commits = self._load()
+        for rec in commits:
+            attempt = rec.get("sell_attempt")
+            if rec.get("hash") == digest and attempt and attempt.get("signature") == signature:
+                attempt["status"] = status
+                self._save(commits)
+                return
+        raise RuntimeError("sell attempt missing at settlement")
+
+    def pending_sells(self, mint: str) -> list[dict]:
+        return [rec for rec in self._load()
+                if rec.get("kind") == "sell"
+                and rec.get("payload", {}).get("mint") == mint
+                and rec.get("sell_attempt", {}).get("status") == "pending"]
+
     def all(self) -> list:
         return self._load()
 
+    @serialized_write
     def reconcile_orphaned(self, max_age_seconds: float = 600.0) -> int:
         """Heal commits stuck at "published" that never filled (item 3).
 
@@ -168,6 +223,8 @@ class CommitLog:
         for rec in commits:
             if rec.get("status") != "published":
                 continue
+            if rec.get("sell_attempt", {}).get("status") == "pending":
+                continue  # Age alone never proves a signed exit did not land.
             published_at = (rec.get("memo_published_at")
                             or rec.get("sealed_at") or 0.0)
             if now - float(published_at) < max_age_seconds:
@@ -179,3 +236,33 @@ class CommitLog:
         if healed:
             self._save(commits)
         return healed
+
+
+def validate_commits(commits):
+    for index, row in enumerate(commits):
+        bad = f"commit log record {index} invalid; preserve history and repair explicitly"
+        if not isinstance(row, dict) or row.get("kind") not in ("buy", "sell") or row.get("status") not in ("sealed", "published", "bound", "failed"):
+            raise RuntimeError(bad)
+        for field in ("hash", "nonce"):
+            if not isinstance(row.get(field), str) or not row[field]:
+                raise RuntimeError(bad + ": " + field)
+        if not isinstance(row.get("payload"), dict):
+            raise RuntimeError(bad + ": payload")
+        for field in ("sealed_at", "memo_published_at"):
+            value = row.get(field)
+            if value is not None and (not finite_number(value) or value < 0):
+                raise RuntimeError(bad + ": " + field)
+        attempt = row.get("sell_attempt")
+        if attempt is not None:
+            if row["kind"] != "sell" or not isinstance(row["payload"].get("mint"), str) or not row["payload"]["mint"].strip():
+                raise RuntimeError(bad + ": signed sell mint identity")
+            if not isinstance(attempt, dict) or attempt.get("status") not in ("pending", "confirmed", "failed") or not isinstance(attempt.get("signature"), str) or not attempt["signature"]:
+                raise RuntimeError(bad + ": sell_attempt")
+            if not isinstance(attempt.get("blockhash"), str):
+                raise RuntimeError(bad + ": sell blockhash")
+            for field in ("fraction", "tokens", "proceeds_usd"):
+                value = attempt.get(field)
+                if not finite_number(value) or value < 0:
+                    raise RuntimeError(bad + ": sell_attempt." + field)
+            if not 0 < attempt["fraction"] <= 1 or not isinstance(attempt.get("wallet"), str) or not attempt["wallet"] or not isinstance(attempt.get("full_close"), bool):
+                raise RuntimeError(bad + ": sell terms")

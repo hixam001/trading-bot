@@ -51,14 +51,12 @@ _pool: Optional[asyncpg.Pool] = None
 # and every later pool refill is still verified against it.  A failed file
 # write must never downgrade to "encrypted but NOT authenticated".
 _MEMORY_PIN: Optional[str] = None
-_FALLBACK_ALERTED = False
 
 
 def _reset_tls_pin_state_for_tests() -> None:
-    """Clear in-memory pin/fallback state (testing utility)."""
-    global _MEMORY_PIN, _FALLBACK_ALERTED
+    """Clear in-memory pin state (testing utility)."""
+    global _MEMORY_PIN
     _MEMORY_PIN = None
-    _FALLBACK_ALERTED = False
 
 
 def _dsn() -> str:
@@ -108,17 +106,25 @@ async def _tls_context() -> ssl.SSLContext:
                     exact match against the operator pin, the TOFU pin file,
                     or the in-memory pin captured earlier this process.
                     Any mismatch = hard abort (MITM guard).
-      3. FALLBACK — encrypted-but-unverified, ERROR-logged and alerted once.
-    The returned context is intentionally unverified at the OpenSSL layer;
-    authentication is provided by our own fingerprint probe performed at
-    pool creation, immediately before asyncpg dials.
+    If neither path can authenticate the peer, refuse pool creation. TOFU
+    establishes initial trust from the successful probe; every actual pinned
+    connection independently checks the exact certificate during its handshake
+    before PostgreSQL authentication (not merely during the separate probe).
     """
-    global _MEMORY_PIN, _FALLBACK_ALERTED
+    global _MEMORY_PIN
     operator_pin = str(config.SUPABASE_CERT_FINGERPRINT or "").strip()
     expected = operator_pin or _MEMORY_PIN
     pin_path = _pin_path()
     if not expected and pin_path.exists():
-        expected = pin_path.read_text().strip()
+        try:
+            expected = pin_path.read_text().strip()
+        except Exception:
+            raise RuntimeError("Supabase persisted pin unreadable; refusing connection") from None
+        if not expected:
+            raise RuntimeError("Supabase persisted pin empty; refusing connection")
+    if expected and (len(expected) != 64
+                     or any(c not in "0123456789abcdef" for c in expected)):
+        raise RuntimeError("Supabase certificate pin invalid; refusing connection")
     # A known pin must be checked before any PostgreSQL authentication.
     # Without a pin, normal CA validation authenticates the first connection.
     if not expected:
@@ -131,72 +137,49 @@ async def _tls_context() -> ssl.SSLContext:
         except ssl.SSLCertVerificationError:
             pass  # self-signed pooler chain: TOFU below
 
-    # 2. fingerprint pinning (operator pin > TOFU file > in-memory pin)
+    # 2. fingerprint pinning (operator pin > in-memory pin > TOFU file)
     try:
         fp = _fetch_cert_fingerprint(*_host_port(_dsn()))
-        if expected and fp != expected:
-            raise RuntimeError(
-                f"SUPABASE CERTIFICATE FINGERPRINT MISMATCH "
-                f"(pinned {expected[:16]}…, got {fp[:16]}…) — "
-                f"possible MITM. If Supabase rotated certs legitimately, "
-                f"delete {pin_path} to re-pin.")
-        if not expected:
-            try:
-                pin_path.parent.mkdir(parents=True, exist_ok=True)
-                pin_path.write_text(fp)
-                log.warning("db_pg: TOFU pinned Supabase cert %s… -> %s",
-                            fp[:16], pin_path)
-            except Exception as exc:
-                # §93 R2: hold the pin in memory and keep verifying.  Never
-                # fall through to unauthenticated TLS because a file write
-                # failed.
-                _MEMORY_PIN = fp
-                log.error("db_pg: pin file %s is unwritable (%s) — holding "
-                          "the certificate fingerprint in memory for this "
-                          "process and verifying every connection against it",
-                          pin_path, type(exc).__name__)
-                try:
-                    from alerts import alert_state_write_failure
-                    alert_state_write_failure(
-                        "supabase-pin",
-                        "certificate pin file is unwritable; the pin is held "
-                        "in memory for this process only",
-                    )
-                except Exception:
-                    pass
-            else:
-                _MEMORY_PIN = fp
-        else:
-            log.info("db_pg: Supabase cert fingerprint matches pin (%s…)",
-                     fp[:16])
+    except Exception:
+        # Provider exceptions can contain credentials. Never expose them or
+        # downgrade authentication when no trustworthy probe is available.
+        raise RuntimeError(
+            "Supabase pin verification unavailable; refusing connection"
+        ) from None
+    if (not isinstance(fp, str) or len(fp) != 64
+            or any(c not in "0123456789abcdef" for c in fp)):
+        raise RuntimeError("Supabase certificate probe invalid; refusing connection")
+    if expected and fp != expected:
+        raise RuntimeError(
+            "SUPABASE CERTIFICATE FINGERPRINT MISMATCH — refusing connection; "
+            "verify any legitimate certificate rotation independently")
+    if not expected:
+        # Establish the pin before trying persistence. A failed write keeps
+        # authenticated connections available, with process-local continuity.
         _MEMORY_PIN = fp
-        return _pinned_context(fp)
-    except RuntimeError:
-        raise  # MITM suspicion must never be swallowed
-    except Exception as exc:
-        if expected:
-            raise RuntimeError("Supabase pin verification unavailable; refusing connection") from exc
-        log.warning("db_pg: fingerprint probe failed (%s)", type(exc).__name__)
-
-    # 3. last resort: encrypt without verifying.  This is the ONLY path that
-    # may run without authentication, so it is ERROR + one alert per process.
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
-    log.error("db_pg: TLS verification UNAVAILABLE — connection encrypted "
-              "but NOT authenticated")
-    if not _FALLBACK_ALERTED:
-        _FALLBACK_ALERTED = True
         try:
-            from alerts import alert_state_write_failure
-            alert_state_write_failure(
-                "supabase-tls",
-                "TLS verification unavailable; connections are encrypted "
-                "but NOT authenticated",
-            )
-        except Exception:
-            pass
-    return ctx
+            pin_path.parent.mkdir(parents=True, exist_ok=True)
+            pin_path.write_text(fp)
+            log.warning("db_pg: TOFU pinned Supabase cert %s… -> %s",
+                        fp[:16], pin_path)
+        except Exception as exc:
+            log.error("db_pg: pin file %s is unwritable (%s) — holding "
+                      "the certificate fingerprint in memory for this "
+                      "process and verifying every connection against it",
+                      pin_path, type(exc).__name__)
+            try:
+                from alerts import alert_state_write_failure
+                alert_state_write_failure(
+                    "supabase-pin",
+                    "certificate pin file is unwritable; the pin is held "
+                    "in memory for this process only",
+                )
+            except Exception:
+                pass
+    else:
+        log.info("db_pg: Supabase cert fingerprint matches pin (%s…)", fp[:16])
+    _MEMORY_PIN = fp
+    return _pinned_context(fp)
 
 
 def _pinned_context(fingerprint: str) -> ssl.SSLContext:
@@ -235,7 +218,7 @@ async def _verify_pool_connection(conn) -> None:
     import hashlib
     expected = str(config.SUPABASE_CERT_FINGERPRINT or "").strip() or _MEMORY_PIN
     if not expected:
-        return  # CA-verified or the explicitly alerted, unpinned last resort
+        return  # _tls_context permits only CA verification when no pin exists
     transport = getattr(conn, "_transport", None)
     tls = transport.get_extra_info("ssl_object") if transport else None
     cert = tls.getpeercert(binary_form=True) if tls else None

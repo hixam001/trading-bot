@@ -115,3 +115,13 @@ Append-only. Newest last. Full rationale lives in handoff.md §5 and docs/.
 | 103 | 2026-11-09 | §93: give every runtime writer a writable role-specific home; preserve read-only container controls; isolate invalid operator secrets to API boot; verify exact TLS pins before DB auth and retain unwritable pins in process memory; make public signatures explicit and normalize ticker identities once; bound request bodies and report spend demand without raising caps. | Restores persisted loss controls and observability without changing gate/sizing/exit rules. API digests use an independent counter. Verification: 1934 backend passes; 137/137 mutations caught; Docker/VM/Supabase/CI unverified. Full evidence: docs/19_ROOTFS_AUDIT.md. |
 
 | 104 | 2026-11-09 | §93 CI closure: exact commit/file/line fingerprints for six synthetic redaction-test findings, no broad exclusion. Verified full Tests & Security Audit run 42665808979, including ARM64/native image builds and both roles ROFS smoke; gitleaks run 42666899068 and code scanning run 42666899034 succeeded. | Application source unchanged since b58de47; local full-history scanner 8.24.3 and repeated nine-step prepush pass. VM and real Supabase behavior remain unverified. |
+
+## §94 — 2026-11-11 security remediation decisions
+
+- Disabled auth overrides old cookies; dedicated-secret nonempty rotation remains intentional.
+- Database authentication requires CA/hostname validation or handshake-time exact pin; no unverified fallback. TOFU initial trust remains explicit.
+- Unknown sell/ambiguous buy outcomes retain durable exposure; native terminal status and strict endpoint recovery precede retry/failure release. No financial-loss claim.
+- Net signing output and complete monitored-account consensus are defensive invariants; missing native DEX fixtures remain an evidence limit.
+- POSIX per-authority locks serialize RMW and sorted restore locks; one live strategy process remains required. Authenticated schema validation includes wallet snapshots and rejects path aliases/lock inode replacement.
+- Retain post-response token/cost stop thresholds instead of promising unproved maxima. Keep API/live scopes and exit-critical RPC separate.
+- Offline tests passed (2227 backend,41 browser); advisory checks unavailable. Do not bypass the pre-push gate or add contributor trailers. Original untracked skill files remain user-owned.

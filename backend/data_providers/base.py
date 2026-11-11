@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Any, Optional, Protocol
 
 import httpx
+from bounded_http import bounded_request
 
 import config
 
@@ -94,7 +96,7 @@ async def fetch_json(
         rate_limited = False
         failed = False
         try:
-            resp = await client.get(
+            resp = await bounded_request(client, "GET",
                 url, params=params, headers=headers,
                 timeout=config.EXTERNAL_API_TIMEOUT_SECONDS,
             )
@@ -163,6 +165,12 @@ def require_type(value: Any, expected: type | tuple, field: str, source: str) ->
         # bool is a subclass of int; a boolean is NOT a valid numeric field.
         return None
     if isinstance(value, expected) and not isinstance(value, bool):
+        if isinstance(value, (int, float)):
+            try:
+                if not math.isfinite(value):
+                    return None
+            except (OverflowError, TypeError):
+                return None
         return value
     log.debug("%s: field %r has unexpected type %s", source, field, type(value).__name__)
     return None

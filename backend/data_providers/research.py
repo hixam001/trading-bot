@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from typing import Optional
 
 import httpx
+from bounded_http import bounded_request
 
 import config
 from models import Candidate
@@ -23,71 +25,91 @@ log = logging.getLogger(__name__)
 RESEARCH_URL = config.DEXSCREENER_BASE_URL + "/latest/dex/tokens/"
 
 
-def _f(v) -> float:
-    try:
-        return float(v or 0)
-    except (TypeError, ValueError):
-        return 0.0
-
-
-
-
-def _parse_count(v) -> Optional[int]:
-    if v is None or isinstance(v, bool):
+def _f(value) -> Optional[float]:
+    """A finite provider number, or unavailable; zero is a real observation."""
+    if value is None or isinstance(value, bool):
         return None
     try:
-        return int(float(v))
-    except (TypeError, ValueError):
+        number = float(value)
+    except (TypeError, ValueError, OverflowError):
         return None
+    return number if math.isfinite(number) else None
 
 
-def _liq_of(pair: dict) -> float:
-    return _f((pair.get("liquidity") or {}).get("usd"))
+def _parse_count(value) -> Optional[int]:
+    number = _f(value)
+    if number is None or number < 0 or not number.is_integer():
+        return None
+    return int(number)
+
+
+def _nested(pair: dict, key: str) -> dict:
+    value = pair.get(key)
+    return value if isinstance(value, dict) else {}
+
+
+def _liq_of(pair: dict) -> Optional[float]:
+    value = _f(_nested(pair, "liquidity").get("usd"))
+    return value if value is not None and value >= 0 else None
+
+
+def _complete_sum(values) -> Optional[float]:
+    if any(value is None for value in values):
+        return None
+    try:
+        total = math.fsum(values)
+    except (OverflowError, ValueError):
+        return None
+    return total if math.isfinite(total) else None
 
 
 def aggregate_pairs(pairs: list) -> Optional[dict]:
-    """Pure aggregation over Dexscreener pairs for ONE mint (unit-testable).
+    """Aggregate Solana pools without fabricating unreadable facts.
 
-    Returns None when no Solana pair exists - never fabricates defaults."""
+    Total liquidity/volume are available only with complete finite coverage.
+    Counts retain the existing sum-of-reporting-pools policy; missing and bad
+    records contribute no alleged zero. No useful sibling is discarded.
+    """
+    if not isinstance(pairs, list):
+        return None
     solana = [p for p in pairs if isinstance(p, dict) and p.get("chainId") == "solana"]
     if not solana:
         return None
-    total_liq = sum(_liq_of(p) for p in solana)
-    deepest = max(solana, key=_liq_of)
-    vol6h = sum(_f((p.get("volume") or {}).get("h6")) for p in solana)
+    liquidities = [_liq_of(p) for p in solana]
+    total_liq = _complete_sum(liquidities)
+    known_pools = [(p, liq) for p, liq in zip(solana, liquidities) if liq is not None]
+    deepest, deepest_liq = max(known_pools, key=lambda item: item[1]) if known_pools else (None, None)
+    volumes = [_f(_nested(p, "volume").get("h6")) for p in solana]
+    vol6h = _complete_sum([value if value is not None and value >= 0 else None for value in volumes])
     buys_reported: list[int] = []
     sells_reported: list[int] = []
-    for p in solana:
-        txns = p.get("txns")
-        h6 = txns.get("h6") if isinstance(txns, dict) else None
-        if isinstance(h6, dict):
-            b = _parse_count(h6.get("buys"))
-            if b is not None:
-                buys_reported.append(b)
-            s = _parse_count(h6.get("sells"))
-            if s is not None:
-                sells_reported.append(s)
-
-    buys6h: Optional[int] = sum(buys_reported) if buys_reported else None
-    sells6h: Optional[int] = sum(sells_reported) if sells_reported else None
-    try:
-        chg6h: Optional[float] = float(((deepest.get("priceChange") or {}).get("h6")))
-    except (TypeError, ValueError):
-        chg6h = None
+    for pair in solana:
+        h6 = _nested(pair, "txns").get("h6")
+        if not isinstance(h6, dict):
+            continue
+        buys = _parse_count(h6.get("buys"))
+        sells = _parse_count(h6.get("sells"))
+        if buys is not None:
+            buys_reported.append(buys)
+        if sells is not None:
+            sells_reported.append(sells)
+    # Unknown liquidity cannot establish which pool is deepest.
+    change = (_f(_nested(deepest, "priceChange").get("h6"))
+              if deepest is not None and total_liq is not None else None)
     return {
         "pool_count": len(solana),
         "total_liquidity_usd": total_liq,
-        "top_pool_share": (_liq_of(deepest) / total_liq) if total_liq > 0 else 1.0,
+        "top_pool_share": (deepest_liq / total_liq) if total_liq is not None and total_liq > 0 else None,
         "volume_6h_usd": vol6h,
-        "buys_6h": buys6h,
-        "sells_6h": sells6h,
-        "price_change_6h_pct": chg6h,
+        "buys_6h": sum(buys_reported) if buys_reported else None,
+        "sells_6h": sum(sells_reported) if sells_reported else None,
+        "price_change_6h_pct": change,
     }
 
 
 async def _fetch_pairs(client: httpx.AsyncClient, mint: str) -> Optional[list]:
     try:
-        resp = await client.get(RESEARCH_URL + mint, headers={"accept": "application/json"})
+        resp = await bounded_request(client, "GET", RESEARCH_URL + mint, headers={"accept": "application/json"})
         if resp.status_code != 200:
             return None
         data = resp.json()
@@ -131,9 +153,9 @@ async def enrich_with_research(
         if not agg:
             continue
         cand.pool_count = agg["pool_count"]
-        cand.total_liquidity_usd = agg["total_liquidity_usd"] or None
+        cand.total_liquidity_usd = agg["total_liquidity_usd"]
         cand.top_pool_share = agg["top_pool_share"]
-        cand.volume_6h_usd = agg["volume_6h_usd"] or None
+        cand.volume_6h_usd = agg["volume_6h_usd"]
         cand.buys_6h = None if agg["buys_6h"] is None else int(agg["buys_6h"])
         cand.sells_6h = None if agg["sells_6h"] is None else int(agg["sells_6h"])
         if cand.price_change_6h_pct is None:

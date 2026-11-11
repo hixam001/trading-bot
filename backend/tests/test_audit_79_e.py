@@ -50,8 +50,8 @@ def keys():
 def sample_state(tmp_path):
     state_dir = tmp_path / "state"
     state_dir.mkdir()
-    (state_dir / "executions.json").write_text(json.dumps([{"id": "exec1", "usd_size": 10.0}]), encoding="utf-8")
-    (state_dir / "commits.json").write_text(json.dumps([{"id": "commit1", "symbol": "BONK"}]), encoding="utf-8")
+    (state_dir / "executions.json").write_text(json.dumps({"records": [{"id": "exec1", "kind": "buy", "mint": "DUMMY", "idempotency_key": "exec1", "status": "confirmed", "ts": 1.0, "usd_size": 10.0}]}), encoding="utf-8")
+    (state_dir / "commits.json").write_text(json.dumps([{"id": "commit1", "symbol": "BONK", "hash": "h1", "nonce": "n1", "kind": "buy", "status": "sealed", "payload": {"mint": "DUMMY"}, "sealed_at": 1.0}]), encoding="utf-8")
     (state_dir / "kill_switch.json").write_text(json.dumps({"latched": False}), encoding="utf-8")
 
     db_path = tmp_path / "trading_bot.db"

@@ -156,36 +156,66 @@ async def test_unwritable_tls_pin_is_held_in_memory_and_verified(
 
 
 @pytest.mark.asyncio
-async def test_tls_last_resort_logs_error_and_alerts_once(
-        rofs_service, monkeypatch, caplog):
+@pytest.mark.parametrize("probe_error", [OSError, RuntimeError])
+async def test_ca_and_probe_failure_refuse_before_pool_authentication(
+        monkeypatch, tmp_path, caplog, probe_error):
     from api import db_pg
 
-    sent = _capture_alerts(monkeypatch)
-    rofs_service("live")
-    monkeypatch.setattr(config, "SUPABASE_PIN_FILE",
-                        "/app/backend/.supabase_fp.txt")
+    monkeypatch.setattr(config, "SUPABASE_PIN_FILE", str(tmp_path / "pin"))
     monkeypatch.setattr(config, "SUPABASE_CERT_FINGERPRINT", "")
-    db_pg._reset_tls_pin_state_for_tests()
+    monkeypatch.setattr(config, "SUPABASE_DB_URL",
+                        "postgresql://dummy_user:dummy_password@db.invalid/test")
+    monkeypatch.setattr(db_pg, "_MEMORY_PIN", None)
+    monkeypatch.setattr(db_pg, "_pool", None)
+    calls = []
 
-    def _probe_failure(_h, _p):
-        raise OSError("probe unreachable")
+    async def strict_refusal(*args, **kwargs):
+        calls.append("strict")
+        context = kwargs["ssl"]
+        assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+        raise ssl.SSLCertVerificationError("untrusted")
 
-    monkeypatch.setattr(db_pg, "_fetch_cert_fingerprint", _probe_failure)
+    def probe_failure(*args):
+        calls.append("probe")
+        raise probe_error("dummy_password must not appear in errors")
 
-    async def _no_system_trust(*_a, **_kw):
-        raise ssl.SSLCertVerificationError("self-signed pooler chain")
+    async def forbidden_pool(*args, **kwargs):
+        calls.append("pool authentication")
+        raise AssertionError("unverified pool creation")
 
-    monkeypatch.setattr(db_pg.asyncpg, "connect", _no_system_trust)
+    monkeypatch.setattr(db_pg.asyncpg, "connect", strict_refusal)
+    monkeypatch.setattr(db_pg, "_fetch_cert_fingerprint", probe_failure)
+    monkeypatch.setattr(db_pg.asyncpg, "create_pool", forbidden_pool)
+    with pytest.raises(RuntimeError, match="refusing connection") as exc:
+        await db_pg._get_pool()
+    assert calls == ["strict", "probe"]
+    assert db_pg._pool is None
+    assert not (tmp_path / "pin").exists()
+    assert "dummy_password" not in str(exc.value) + caplog.text
+    assert exc.value.__suppress_context__ is True
 
-    with caplog.at_level(logging.ERROR):
-        ctx = await db_pg._tls_context()
-        ctx2 = await db_pg._tls_context()
 
-    assert ctx is not None and ctx2 is not None
-    assert any("NOT authenticated" in r.getMessage()
-               for r in caplog.records if r.levelno == logging.ERROR)
-    assert len([s for s in sent
-                if s[0] == alerts.AlertEvent.STATE_WRITE_FAILURE]) == 1
+@pytest.mark.asyncio
+async def test_strict_ca_context_remains_authenticated(monkeypatch, tmp_path):
+    from api import db_pg
+    monkeypatch.setattr(config, "SUPABASE_PIN_FILE", str(tmp_path / "pin"))
+    monkeypatch.setattr(config, "SUPABASE_CERT_FINGERPRINT", "")
+    monkeypatch.setattr(db_pg, "_MEMORY_PIN", None)
+    calls = []
+    class Connection:
+        async def close(self):
+            calls.append("closed")
+    async def trusted(*args, **kwargs):
+        assert kwargs["ssl"].verify_mode == ssl.CERT_REQUIRED
+        assert kwargs["ssl"].check_hostname is True
+        return Connection()
+    def no_probe(*args):
+        raise AssertionError("CA authentication must not downgrade to TOFU")
+    monkeypatch.setattr(db_pg.asyncpg, "connect", trusted)
+    monkeypatch.setattr(db_pg, "_fetch_cert_fingerprint", no_probe)
+    context = await db_pg._tls_context()
+    assert context.verify_mode == ssl.CERT_REQUIRED and context.check_hostname
+    assert calls == ["closed"]
 
 @pytest.mark.asyncio
 async def test_pool_refill_verifies_the_actual_connection(monkeypatch):
@@ -331,3 +361,23 @@ def test_certificate_probe_negotiates_postgres_starttls(monkeypatch, reply):
     else:
         with pytest.raises(ssl.SSLError, match='SSLRequest'):
             db_pg._fetch_cert_fingerprint('unit-test.invalid', 5432)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("contents", ["", "not-a-fingerprint"])
+async def test_invalid_persisted_pin_never_rebootstraps(monkeypatch, tmp_path, contents):
+    from api import db_pg
+    pin = tmp_path / "pin"
+    pin.write_text(contents)
+    monkeypatch.setattr(config, "SUPABASE_PIN_FILE", str(pin))
+    monkeypatch.setattr(config, "SUPABASE_CERT_FINGERPRINT", "")
+    monkeypatch.setattr(db_pg, "_MEMORY_PIN", None)
+    async def forbidden_connect(*args, **kwargs):
+        raise AssertionError("corrupt known pin must not authenticate")
+    def forbidden_probe(*args):
+        raise AssertionError("corrupt known pin must not rebootstrap")
+    monkeypatch.setattr(db_pg.asyncpg, "connect", forbidden_connect)
+    monkeypatch.setattr(db_pg, "_fetch_cert_fingerprint", forbidden_probe)
+    with pytest.raises(RuntimeError, match="pin.*refusing connection"):
+        await db_pg._tls_context()
+    assert pin.read_text() == contents

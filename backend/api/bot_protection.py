@@ -22,6 +22,7 @@ from collections import OrderedDict
 from typing import Any
 
 import httpx
+from bounded_http import bounded_request
 from fastapi import HTTPException, Request
 
 import config
@@ -237,7 +238,7 @@ async def _verify_external_captcha(token: str, client_ip: str | None = None) -> 
 
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            resp = await client.post(verify_url, data=form_data)
+            resp = await bounded_request(client, "POST", verify_url, data=form_data)
             if resp.status_code != 200:
                 log.warning("CAPTCHA provider returned status %d", resp.status_code)
                 return False

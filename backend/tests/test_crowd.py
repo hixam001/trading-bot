@@ -15,6 +15,7 @@ import json
 import os
 import stat
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 import config
 import data_providers.crowd as crowd
@@ -43,6 +44,7 @@ def fresh_state(monkeypatch):
     §47: scrapling stays OFF and the backend stays mock so the legacy
     tests exercise the httpx fallback paths exactly as they always did —
     the suite is offline/hermetic with scrapling installed or not."""
+    monkeypatch.setattr(crowd, "_rotated_refresh", {})
     monkeypatch.setattr(crowd, "_sessions", {})
     monkeypatch.setattr(crowd, "_fomo_cache", crowd._TtlCache(60))
     monkeypatch.setattr(crowd, "_BENCHED_UNTIL", {})
@@ -70,7 +72,7 @@ class FakeResponse:
         return self._payload
 
 
-class FakeClient:
+class FakeClient(LegacyHTTPStreamClient):
     """Replaces httpx.AsyncClient inside data_providers.crowd."""
 
     get_result = None

@@ -82,6 +82,11 @@ def env(monkeypatch, tmp_path):
 
     monkeypatch.setattr(ex.solana, "get_mint_decimals", fake_decimals)
 
+    async def strict_status(signature, endpoints=None):
+        status = await ex.solana.get_signature_status(signature)
+        return [ex.solana.ABSENT, ex.solana.ABSENT] if status is None else [status, status]
+    monkeypatch.setattr(ex.solana, "get_signature_status_all_strict", strict_status)
+
     # Commit memo always OK
     async def fake_memo(payer, seal_hash, endpoints=None):
         return {"signature": "MEMOSIG", "slot": 5}
@@ -201,7 +206,7 @@ async def test_sim_slippage_escalates_and_fills(env, monkeypatch):
         return ex.solana.SignedSwap("FILLSIG", b"raw", _checked=True)
 
     async def fake_send(signed, endpoints=None):
-        return "FILLSIG"
+        return signed.signature
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": True, "slot": 10, "err": None}
@@ -391,7 +396,7 @@ async def test_preflight_all_rpc_slippage_escalates(env, monkeypatch):
                      "err": ERR_6001},
                 ],
             )
-        return "FILLSIG"
+        return signed.signature
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": True, "slot": 10, "err": None}
@@ -495,8 +500,8 @@ async def test_landed_with_error_6001_escalates_without_blockhash_check(env, mon
     async def fake_send_checked(signed, endpoints=None):
         send_call_count[0] += 1
         if send_call_count[0] == 1:
-            return "FIRST_SIG"  # first attempt returns a sig
-        return "SECOND_SIG"    # escalated attempt returns a sig too
+            return signed.signature  # first attempt returns a sig
+        return signed.signature    # escalated attempt returns a sig too
 
     confirm_call_count = [0]
 
@@ -557,7 +562,7 @@ async def test_landed_with_error_6024_stops_not_unresolved(env, monkeypatch):
         return ex.solana.SignedSwap("SIG1", b"raw", _checked=True)
 
     async def fake_send_checked(signed, endpoints=None):
-        return "FIRST_SIG"
+        return signed.signature
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": False, "slot": None, "err": "not confirmed before timeout"}
@@ -610,7 +615,7 @@ async def test_status_none_blockhash_valid_is_unresolved(env, monkeypatch):
         return ex.solana.SignedSwap("SIG1", b"raw", _checked=True)
 
     async def fake_send_checked(signed, endpoints=None):
-        return "FIRST_SIG"
+        return signed.signature
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": False, "slot": None, "err": "not confirmed before timeout"}
@@ -652,7 +657,7 @@ async def test_status_none_blockhash_rpc_fail_is_unresolved(env, monkeypatch):
         return ex.solana.SignedSwap("SIG1", b"raw", _checked=True)
 
     async def fake_send_checked(signed, endpoints=None):
-        return "FIRST_SIG"
+        return signed.signature
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": False, "slot": None, "err": "not confirmed before timeout"}
@@ -678,9 +683,9 @@ async def test_status_none_blockhash_rpc_fail_is_unresolved(env, monkeypatch):
     assert "exit_unresolved" in res.reason
 
 
-async def test_status_none_blockhash_expired_escalates(env, monkeypatch):
+async def test_status_none_blockhash_expired_stays_unresolved(env, monkeypatch):
     """
-    Regression: status=None + blockhash expired (False) → escalates to next rung.
+    Regression: status=None + blockhash expired remains unresolved; no new rung.
     """
     sign_calls = []
     send_calls = []
@@ -699,8 +704,8 @@ async def test_status_none_blockhash_expired_escalates(env, monkeypatch):
     async def fake_send_checked(signed, endpoints=None):
         send_calls.append(True)
         if len(send_calls) == 1:
-            return "FIRST_SIG"
-        return "SECOND_SIG"
+            return signed.signature
+        return signed.signature
 
     confirm_calls = [0]
 
@@ -714,7 +719,7 @@ async def test_status_none_blockhash_expired_escalates(env, monkeypatch):
         return None  # sig not found anywhere
 
     async def fake_blockhash_valid(blockhash, endpoints=None):
-        return False  # expired → safe to retry
+        return False  # Expiry alone cannot prove non-execution.
 
     monkeypatch.setattr(ex, "_get_json", fake_get)
     monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
@@ -727,8 +732,9 @@ async def test_status_none_blockhash_expired_escalates(env, monkeypatch):
     ledger = _ledger_with_position(env)
     res = await ex.place_sell(MINT, "TEST", 1.0, ledger=ledger)
 
-    assert res.status == "filled", f"Expected filled, got {res.status}: {res.reason}"
-    assert len(send_calls) == 2, f"Expected escalation, got {len(send_calls)} send calls"
+    assert res.status == "failed" and res.unresolved
+    assert "exit_unresolved" in res.reason
+    assert len(send_calls) == 1, "absence plus expiry must never authorize another send"
 
 
 # ---------------------------------------------------------------------------

@@ -36,6 +36,7 @@ import json
 import logging
 import time
 from typing import Optional
+from urllib.parse import urlsplit
 
 import config
 
@@ -52,10 +53,51 @@ _consecutive_failures: int = 0
 _import_ok: Optional[bool] = None
 
 
+_MAX_BODY_BYTES = 4 * 1024 * 1024
+_CREDENTIAL_HEADERS = frozenset({"authorization", "cookie", "proxy-authorization", "x-api-key", "api-key"})
+
+
+def _origin(url: str):
+    try:
+        parsed = urlsplit(url)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password:
+            return None
+        return parsed.scheme.lower(), parsed.hostname.lower(), parsed.port or (443 if parsed.scheme == "https" else 80)
+    except ValueError:
+        return None
+
+
+def _credential_destination_allowed(url: str, headers: dict) -> bool:
+    credentialed = any(k.lower() in _CREDENTIAL_HEADERS for k in headers)
+    return not credentialed or (_origin(url) is not None and _origin(url) == _origin(config.FOMO_API_BASE))
+
+
+async def _scoped_browser_setup(page, url: str, headers: dict) -> None:
+    """Inject headers only into same-origin requests; never follow a credentialed redirect.
+
+    route.fetch has redirects disabled, so browser routing cannot propagate
+    Authorization across a redirect before our callback sees its destination.
+    No credential-bearing context-wide extra_headers are configured.
+    """
+    allowed = _origin(url)
+    async def route_request(route):
+        if _origin(route.request.url) != allowed:
+            await route.abort()
+            return
+        response = await route.fetch(headers=headers, max_redirects=0)
+        if 300 <= response.status < 400:
+            await route.abort()
+            return
+        await route.fulfill(response=response)
+    await page.route("**/*", route_request)
+
+
 def _body_text(response) -> str:
     """Scrapling returns .body as bytes (browser) or str/bytes (curl-cffi)."""
     raw = getattr(response, "body", None)
     if raw is None:
+        return ""
+    if isinstance(raw, (str, bytes)) and len(raw) > _MAX_BODY_BYTES:
         return ""
     if isinstance(raw, bytes):
         return raw.decode("utf-8", "ignore")
@@ -89,6 +131,8 @@ async def curl_get(url: str, headers: dict,
     a host without scrapling installed degrades to None (caller's chain
     continues) instead of breaking the process.
     """
+    if not _credential_destination_allowed(url, headers):
+        return None
     try:
         from scrapling.fetchers import AsyncFetcher
     except ImportError:
@@ -96,7 +140,7 @@ async def curl_get(url: str, headers: dict,
     try:
         r = await AsyncFetcher.get(
             url, impersonate="chrome", headers=headers,
-            timeout=int(timeout_seconds), follow_redirects=True,
+            timeout=int(timeout_seconds), follow_redirects=False,
         )
         if int(getattr(r, "status", 0) or 0) != 200:
             return None
@@ -155,6 +199,8 @@ async def browser_fetch_json(url: str, headers: dict) -> Optional[dict]:
     docstring — patchright's own UA must match its fingerprint).
     """
     global _consecutive_failures
+    if not _credential_destination_allowed(url, headers):
+        return None
     async with _session_lock:
         if not getattr(config, "SCRAPLING_ENABLED", True):
             return None
@@ -175,7 +221,9 @@ async def browser_fetch_json(url: str, headers: dict) -> Optional[dict]:
         try:
             extra = {k: v for k, v in headers.items()
                      if k.lower() not in ("user-agent", "accept")}
-            page = await session.fetch(url, extra_headers=extra)
+            async def setup(page):
+                await _scoped_browser_setup(page, url, extra)
+            page = await session.fetch(url, extra_headers={}, page_setup=setup)
             if int(getattr(page, "status", 0) or 0) != 200:
                 _consecutive_failures += 1
                 if _consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:

@@ -274,6 +274,14 @@ def resolved_runtime_paths(env: dict[str, str]) -> dict[str, str]:
 
 
 APPROVED_WRITES: dict[str, str] = {
+    'scripts/restore_state.py#restore_backup#mkdir#target_state_dir': 'operator target directory',
+    'backend/live_execution/state_lock.py#state_lock#remove#held': 'non-filesystem thread-local set removal',
+    'backend/live_execution/state_lock.py#state_lock#mkdir#path.parent': 'LIVE_STATE_DIR',
+    "backend/live_execution/state_lock.py#state_lock#open#str(path) + '.lock'": 'LIVE_STATE_DIR',
+    'scripts/backup_state.py#create_backup#mkstemp#backup_dir': 'BACKUP_DIR (CLI/env)',
+    'scripts/restore_state.py#restore_backup#open#pre_db': 'operator target directory',
+    'scripts/restore_state.py#restore_backup#fdopen#fd': 'operator target directory',
+
     'backend/api/auth.py#_persist_revocations#mkdir#path.parent': 'SESSION_REVOCATION_FILE',
     'backend/api/auth.py#_persist_revocations#write_text#tmp': 'SESSION_REVOCATION_FILE',
     'backend/api/auth.py#_persist_revocations#replace#path': 'SESSION_REVOCATION_FILE',

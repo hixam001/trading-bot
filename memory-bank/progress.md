@@ -1,5 +1,11 @@
 # Progress — trading-bot
 
+## Current §94 status — 2026-11-11
+
+Source remediation and offline checks: A1–A3/B1–B2 implemented; H01–H24 explicitly dispositioned. Backend **2227 passed**, browser **41/41**, build/type/bundle scanner and pip check clean. See `docs/SECURITY_REMEDIATION.md` for actual evidence and retained limits.
+
+Release checks and push remain pending; this entry accompanies the local commit: advisory services unavailable under the no-network policy; no new dependency-clean or remote-CI claim. Preserve user untracked skill files and use only the retained OS sandbox.
+
 ## Works (all verified)
 - [x] §93 local implementation and regression checks: **1934 backend passes**, **137/137 mutations caught**. See `docs/19_ROOTFS_AUDIT.md` for failing-first phase tables, projection assumptions and remaining operational verification. Docker unavailable locally; full Tests & Security Audit CI (42665808979) and gitleaks (42666899068) are verified green, including real-container ROFS smoke.
 - [x] §92 Security hardening before real-money launch (2026-11-08, phases S1–S9):

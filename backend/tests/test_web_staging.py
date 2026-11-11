@@ -17,6 +17,7 @@ no network anywhere. Pins:
 from __future__ import annotations
 
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 import config
 import decision_pipeline as dp
@@ -172,7 +173,7 @@ async def test_brave_only_enables_the_stage_free_first(monkeypatch):
             return {"web": {"results": [
                 {"title": "Brave free evidence", "description": "d"}]}}
 
-    class FakeClient:
+    class FakeClient(LegacyHTTPStreamClient):
         def __init__(self, **kw):
             pass
 
@@ -214,7 +215,7 @@ async def test_cache_hit_costs_no_network(monkeypatch):
         def json(self):
             return {"data": [{"title": "Fresh news", "description": "d"}]}
 
-    class FakeClient:
+    class FakeClient(LegacyHTTPStreamClient):
         def __init__(self, **kw):
             pass
 
@@ -269,7 +270,7 @@ async def test_miss_entry_expires_on_the_short_window(monkeypatch):
 
     state = {"empty": True}
 
-    class FakeClient:
+    class FakeClient(LegacyHTTPStreamClient):
         def __init__(self, **kw):
             pass
 
@@ -321,7 +322,7 @@ async def test_same_ticker_different_mints_never_share_evidence(monkeypatch):
 
     current = {"title": "AAA evidence"}
 
-    class FakeClient:
+    class FakeClient(LegacyHTTPStreamClient):
         def __init__(self, **kw):
             pass
 
@@ -357,7 +358,7 @@ async def test_same_ticker_different_mints_never_share_evidence(monkeypatch):
 async def test_search_error_returns_empty_not_raise(monkeypatch):
     _live(monkeypatch)
 
-    class BoomClient:
+    class BoomClient(LegacyHTTPStreamClient):
         def __init__(self, **kw):
             pass
 

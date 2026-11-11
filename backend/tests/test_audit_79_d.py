@@ -434,7 +434,7 @@ async def test_sim_single_rpc_sell_alert_hook(monkeypatch):
             json={
                 "jsonrpc": "2.0",
                 "id": 1,
-                "result": {"value": {"err": None, "logs": [], "postAccounts": [{"lamports": 1000000000}]}},
+                "result": {"value": {"err": None, "logs": [], "accounts": [{"lamports": 1000000000, "owner": "11111111111111111111111111111111", "executable": False, "data": ["", "base64"]}]}},
             },
         )
 

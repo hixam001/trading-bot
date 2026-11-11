@@ -47,7 +47,7 @@ def test_valid_shape_loads(tmp_path):
     led = ExecutionLedger(tmp_path / "executions.json")
     led.path.write_text(json.dumps({"records": [
         {"kind": "buy", "idempotency_key": "k", "mint": "MINT",
-         "usd_size": 1.0},
+         "usd_size": 1.0, "status": "recorded"},
     ]}, indent=2))
     rows = led._load()
     assert len(rows) == 1

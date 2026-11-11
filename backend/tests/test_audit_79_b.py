@@ -396,6 +396,10 @@ async def test_double_fill_safety_refuses_when_previous_signature_pending_and_bl
     monkeypatch.setattr(executor, "_build_swap_transaction", fake_build)
     monkeypatch.setattr(executor, "_broadcast_and_confirm", fake_broadcast)
     monkeypatch.setattr(solana, "get_signature_status", fake_get_sig_status)
+    async def fake_strict(sig, endpoints=None):
+        status = await fake_get_sig_status(sig)
+        return [solana.ABSENT, solana.ABSENT] if status is None else [status, status]
+    monkeypatch.setattr(solana, "get_signature_status_all_strict", fake_strict)
     monkeypatch.setattr(solana, "is_blockhash_valid", fake_blockhash_valid)
 
     result = await executor.place_sell(
@@ -453,6 +457,10 @@ async def test_double_fill_safety_unparseable_blockhash_is_unresolved(arm_enviro
     monkeypatch.setattr(executor, "_build_swap_transaction", fake_build)
     monkeypatch.setattr(executor, "_broadcast_and_confirm", fake_broadcast)
     monkeypatch.setattr(solana, "get_signature_status", fake_get_sig_status)
+    async def fake_strict(sig, endpoints=None):
+        status = await fake_get_sig_status(sig)
+        return [solana.ABSENT, solana.ABSENT] if status is None else [status, status]
+    monkeypatch.setattr(solana, "get_signature_status_all_strict", fake_strict)
     monkeypatch.setattr(solana, "is_blockhash_valid", must_not_be_called)
 
     result = await executor.place_sell(
@@ -462,7 +470,7 @@ async def test_double_fill_safety_unparseable_blockhash_is_unresolved(arm_enviro
 
     assert result.status == "failed"
     assert "exit_unresolved" in result.reason
-    assert "blockhash is unknown" in result.reason
+    assert "expiry cannot establish historical non-execution" in result.reason
     assert attempt_count == 1
 
 
@@ -513,6 +521,10 @@ async def test_double_fill_safety_recovers_when_previous_signature_landed_late(a
     monkeypatch.setattr(executor, "_broadcast_and_confirm", fake_broadcast)
     monkeypatch.setattr(executor, "_fill_actuals", fake_actuals)
     monkeypatch.setattr(solana, "get_signature_status", fake_get_sig_status)
+    async def fake_strict(sig, endpoints=None):
+        status = await fake_get_sig_status(sig)
+        return [solana.ABSENT, solana.ABSENT] if status is None else [status, status]
+    monkeypatch.setattr(solana, "get_signature_status_all_strict", fake_strict)
 
     result = await executor.place_sell(
         mint=TOKEN_MINT,

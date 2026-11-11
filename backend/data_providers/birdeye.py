@@ -37,6 +37,8 @@ def _parse_candidate(raw: dict[str, Any]) -> Optional[Candidate]:
     they arrive via Dexscreener enrichment and stay None until then.
     Returns None (skip) when identity-critical fields are missing/wrong-typed.
     """
+    if not isinstance(raw, dict):
+        return None
     address = require_type(raw.get("address"), str, "address", "birdeye")
     if not address:
         return None
@@ -117,7 +119,9 @@ class BirdeyeProvider:
         finally:
             if own_client:
                 await client.aclose()
-        tokens = data.get("data", {}).get("tokens", []) if isinstance(data, dict) else []
+        body = data.get("data") if isinstance(data, dict) else None
+        tokens = body.get("tokens") if isinstance(body, dict) else None
+        tokens = tokens if isinstance(tokens, list) else []
         out = [c for c in (_parse_candidate(t) for t in tokens) if c is not None]
         if not out:
             raise ProviderError("birdeye: no parseable candidates in response")
@@ -162,7 +166,8 @@ class BirdeyeProvider:
         finally:
             if own_client:
                 await client.aclose()
-        info = data.get("data", {}) if isinstance(data, dict) else {}
+        info = data.get("data") if isinstance(data, dict) else None
+        info = info if isinstance(info, dict) else {}
 
         def opt_bool(key: str) -> Optional[bool]:
             v = info.get(key)
@@ -189,8 +194,9 @@ class BirdeyeProvider:
         finally:
             if own_client:
                 await client.aclose()
+        payload = data.get("data") if isinstance(data, dict) else None
         price = require_type(
-            data.get("data", {}).get("value") if isinstance(data, dict) else None,
+            payload.get("value") if isinstance(payload, dict) else None,
             (int, float), "value", "birdeye",
         )
         if price is None or price <= 0:

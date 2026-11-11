@@ -30,6 +30,7 @@ import threading
 import time
 from typing import Any, Callable, Optional
 import httpx
+from bounded_http import bounded_request
 
 from secret_registry import register_secret
 
@@ -289,7 +290,7 @@ async def _dispatch_to_ntfy(client: httpx.AsyncClient, item: AlertItem, text: st
             await res
         return
 
-    resp = await client.post(url, content=text.encode("utf-8"), headers=headers, timeout=5.0)
+    resp = await bounded_request(client, "POST", url, content=text.encode("utf-8"), headers=headers, timeout=5.0)
     resp.raise_for_status()
 
 
@@ -312,13 +313,13 @@ async def _dispatch_to_telegram(client: httpx.AsyncClient, item: AlertItem, text
         return
 
     try:
-        resp = await client.post(url, json=payload, timeout=5.0)
+        resp = await bounded_request(client, "POST", url, json=payload, timeout=5.0)
         resp.raise_for_status()
     except Exception:
         # Retry with plain text in case markdown parsing failed on special characters
         payload.pop("parse_mode", None)
         payload["text"] = f"[{item.priority.value}] {item.event.value}\n\n{text}"
-        resp = await client.post(url, json=payload, timeout=5.0)
+        resp = await bounded_request(client, "POST", url, json=payload, timeout=5.0)
         resp.raise_for_status()
 
 
@@ -576,7 +577,7 @@ async def send_test_alert(channel: Optional[str] = None) -> dict[str, Any]:
             if token:
                 headers["Authorization"] = f"Bearer {token}"
             try:
-                r = await client.post(url, content=safe_text.encode("utf-8"), headers=headers)
+                r = await bounded_request(client, "POST", url, content=safe_text.encode("utf-8"), headers=headers)
                 results["ntfy"] = {"ok": r.is_success, "status_code": r.status_code}
             except Exception as e:
                 results["ntfy"] = {"ok": False, "error": sanitize_alert_text(str(e))}
@@ -587,7 +588,7 @@ async def send_test_alert(channel: Optional[str] = None) -> dict[str, Any]:
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             payload = {"chat_id": chat_id, "text": f"✅ *[TEST] trading-bot Alert*\n\n{safe_text}", "parse_mode": "Markdown"}
             try:
-                r = await client.post(url, json=payload)
+                r = await bounded_request(client, "POST", url, json=payload)
                 results["telegram"] = {"ok": r.is_success, "status_code": r.status_code}
             except Exception as e:
                 results["telegram"] = {"ok": False, "error": sanitize_alert_text(str(e))}

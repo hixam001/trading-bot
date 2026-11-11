@@ -15,6 +15,7 @@ import logging
 import time
 
 import httpx
+from bounded_http import bounded_request
 
 import config
 
@@ -180,7 +181,7 @@ async def get_authority_flags(mint: str, timeout: float = 10.0) -> dict:
     async with httpx.AsyncClient(timeout=timeout) as client:
         for endpoint in config.ONCHAIN_RPC_URLS:
             try:
-                resp = await client.post(endpoint, json=payload)
+                resp = await bounded_request(client, "POST", endpoint, json=payload)
                 if resp.status_code != 200:
                     continue
                 if not resp.text.strip():
@@ -227,7 +228,7 @@ async def get_mint_extension_flags(mint: str, timeout: float = 10.0) -> dict:
     async with httpx.AsyncClient(timeout=timeout) as client:
         for endpoint in config.ONCHAIN_RPC_URLS:
             try:
-                resp = await client.post(endpoint, json=payload)
+                resp = await bounded_request(client, "POST", endpoint, json=payload)
                 if resp.status_code != 200 or not resp.text.strip():
                     continue
                 body = _as_dict(resp.json())

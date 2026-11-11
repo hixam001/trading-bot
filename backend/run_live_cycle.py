@@ -70,7 +70,7 @@ from sizing import (                       # noqa: E402
 from live_execution import config as live_config  # noqa: E402
 from live_execution import solana, wallet         # noqa: E402
 from live_execution.commit_log import CommitLog   # noqa: E402
-from live_execution.executor import _fill_actuals, place_order   # noqa: E402
+from live_execution.executor import _fill_actuals, place_order, resolve_signature_observations   # noqa: E402
 from live_execution.models import ExecutionLedger  # noqa: E402
 
 log = logging.getLogger("run_live_cycle")
@@ -384,8 +384,10 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
     Called at the top of every cycle and once at startup. Rules (fail closed):
       * confirmed/finalized without err -> adopt with ACTUAL fill amounts
         (same idempotency key), bind/journal the commit, INFO alert;
-      * status has err                  -> failed (fee paid), no position;
-      * status None + blockhash provably invalid -> expired (can never land);
+      * unanimous terminal error across configured endpoints -> failed;
+      * any valid terminal success without conflicting error -> adopt;
+      * no terminal outcome: expire only after invalid blockhash, minimum
+        age and nonempty all-endpoint strict ABSENT proof;
       * everything else (including an unreadable/unknown blockhash) stays
         pending — unknown NEVER becomes "expired".
 
@@ -419,6 +421,22 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                 log.warning("pending buy %s: status unreadable (%s) — left "
                             "pending", sig[:16], exc)
                 status = None
+
+        if status is not None:
+            # A single-provider observation is only a hint. Resolve across
+            # distinct endpoints before changing authoritative exposure.
+            try:
+                observed = await solana.get_signature_status_all_strict(sig)
+            except Exception:
+                observed = []
+            state, error = resolve_signature_observations(observed)
+            if state == "confirmed":
+                status = {"confirmationStatus": "confirmed", "err": None}
+            elif state == "failed":
+                status = {"confirmationStatus": "confirmed", "err": error}
+            else:
+                stats["pending"] += 1
+                continue
 
         # The status can change when §88 D re-queries every endpoint, so
         # process it in a loop instead of duplicating the adopt/fail branches.
@@ -547,12 +565,17 @@ async def resolve_pending_buys(ledger: ExecutionLedger) -> dict:
                                 "re-query failed (%s) — left pending",
                                 sig[:16], exc)
                         if statuses is not None:
+                            if not statuses:
+                                recheck_ok = False
                             found = next(
                                 (s for s in statuses if isinstance(s, dict)),
                                 None)
                             if found is not None:
-                                status = found
-                                continue
+                                state, error = resolve_signature_observations(statuses)
+                                if state in ("confirmed", "failed"):
+                                    status = {"confirmationStatus": "confirmed", "err": error}
+                                    continue
+                                recheck_ok = False
                             unknown = [s for s in statuses
                                        if s is not solana.ABSENT]
                             if unknown:

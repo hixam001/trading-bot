@@ -37,6 +37,9 @@ def env(monkeypatch, tmp_path):
     monkeypatch.setattr(ex.wallet, "load_keypair", lambda: payer)
     monkeypatch.setattr(ex.wallet, "verify_expected_address", lambda p: None)
     monkeypatch.setattr(ex.wallet, "pubkey_string", lambda p: "WALLETADDR")
+    async def chain_decimals(mint):
+        return 6  # independently mocked chain fact for these six-decimal fixtures
+    monkeypatch.setattr(ex.solana, "get_mint_decimals", chain_decimals)
     return tmp_path
 
 
@@ -138,7 +141,7 @@ async def test_ambiguous_send_resolves_landed_fill_and_journals_it(env, monkeypa
 
     async def fake_status(sig, endpoints=None):
         order.append("status")
-        return {"slot": 10, "err": None, "confirmationStatus": "confirmed"}
+        return [ex.solana.ABSENT, {"slot": 10, "err": None, "confirmationStatus": "confirmed"}]
 
     async def no_confirm(sig, timeout_s=None, endpoints=None):
         raise AssertionError("already-confirmed status must not re-poll")
@@ -148,7 +151,7 @@ async def test_ambiguous_send_resolves_landed_fill_and_journals_it(env, monkeypa
     monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
     monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
     monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send)
-    monkeypatch.setattr(ex.solana, "get_signature_status", fake_status)
+    monkeypatch.setattr(ex.solana, "get_signature_status_all_strict", fake_status)
     monkeypatch.setattr(ex.solana, "confirm_signature", no_confirm)
     ledger = ExecutionLedger(env / "exec.json")
 
@@ -189,14 +192,14 @@ async def test_ambiguous_send_with_unknown_signature_stays_unresolved(env, monke
         return None
 
     async def fake_status(sig, endpoints=None):
-        return None
+        return [ex.solana.ABSENT, ex.solana.UNREACHABLE]
 
     monkeypatch.setattr(ex.memo, "publish_commit_memo", fake_memo)
     monkeypatch.setattr(ex, "get_jupiter_quote", fake_quote)
     monkeypatch.setattr(ex, "_build_swap_transaction", fake_build)
     monkeypatch.setattr(ex, "sign_after_checks", fake_sign)
     monkeypatch.setattr(ex.solana, "send_checked_swap", fake_send)
-    monkeypatch.setattr(ex.solana, "get_signature_status", fake_status)
+    monkeypatch.setattr(ex.solana, "get_signature_status_all_strict", fake_status)
     ledger = ExecutionLedger(env / "exec.json")
 
     res = await ex.place_buy("MINT", "SYM", 1.5, output_decimals=6,

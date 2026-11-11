@@ -15,6 +15,8 @@ Storage is one human-readable JSON file rewritten atomically
 from __future__ import annotations
 
 import json
+from live_execution.state_validation import finite_number
+from live_execution.state_lock import serialized_write
 import os
 import time
 import uuid
@@ -40,6 +42,7 @@ class PendingConfirmation:
     expires_at: float
     status: str = "pending"          # pending|approved|denied|expired|consumed
     quote_snapshot: dict = field(default_factory=dict)   # informational only
+    operation: dict | None = None  # canonical approval identity; legacy proposals are unbound
     approved_at: Optional[float] = None
     consumed_at: Optional[float] = None
 
@@ -130,20 +133,25 @@ class ExecutionLedger:
                 f"execution ledger at {self.path} is corrupt — refusing to "
                 f"trade until a human inspects it"
             )
-        return list(data["records"])
+        records = list(data["records"])
+        validate_execution_records(records)
+        return records
 
     def _save(self, records: list[dict]) -> None:
+        validate_execution_records(records)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         tmp = self.path.with_suffix(".tmp")
         tmp.write_text(json.dumps({"records": records}, indent=2))
         os.replace(tmp, self.path)          # atomic on POSIX
 
     # -- writes -----------------------------------------------------------------
+    @serialized_write
     def append(self, rec: ExecutionRecord) -> None:
         records = self._load()
         records.append(rec.to_json())
         self._save(records)
 
+    @serialized_write
     def record_buy(
         self,
         idempotency_key: str,
@@ -210,6 +218,7 @@ class ExecutionLedger:
         self.append(rec)
         return rec
 
+    @serialized_write
     def record_pending_buy(
         self,
         idempotency_key: str,
@@ -262,6 +271,7 @@ class ExecutionLedger:
                 if r.get("kind") == "buy"
                 and r.get("status") == "pending"]
 
+    @serialized_write
     def settle_pending_buy(
         self,
         idempotency_key: str,
@@ -298,6 +308,7 @@ class ExecutionLedger:
                 return True
         return False
 
+    @serialized_write
     def mark_close(self, mint: str, proceeds_usd: float) -> ExecutionRecord:
         """
         Close the OLDEST open buy of `mint` (FIFO), realize PnL against its
@@ -451,9 +462,11 @@ class ExecutionLedger:
                 total += float(r.get("usd_size") or 0.0)
         return total
 
+    @serialized_write
     def reduce_position(self, mint: str, fraction: float, proceeds_usd: float,
                         full_close: bool = False,
-                        rule_id: Optional[str] = None) -> ExecutionRecord:
+                        rule_id: Optional[str] = None,
+                        signature: str = "") -> ExecutionRecord:
         # Partial-or-full SELL against the OLDEST open buy (FIFO). fraction=1.0
         # closes; smaller fractions shrink the open buy pro-rata - trims need this.
         #
@@ -468,6 +481,14 @@ class ExecutionLedger:
         # rule_id (§50): the exit rule that produced this close, stored for
         # exit-mix forensics and take-profit tranche counting.
         records = self._load()
+        # Recovery can restart after the ledger write but before the commit
+        # marker is finalized. The chain signature is the accounting identity.
+        if signature:
+            for row in records:
+                if row.get("kind") == "close" and row.get("signature") == signature:
+                    if row.get("mint") != mint:
+                        raise RuntimeError("sell signature belongs to another mint")
+                    return ExecutionRecord.from_json(row)
         open_buys = [r for r in records if r["kind"] == "buy" and r["mint"] == mint and r["status"] in self._OPEN]
         if not open_buys:
             raise ValueError(f"no open position for {mint}")
@@ -481,6 +502,7 @@ class ExecutionLedger:
             pnl_usd=None,
             ts=self.now_fn(),
             rule_id=rule_id,
+            signature=signature,
         )
         # A2 (repo audit): a full_close must close EVERY open buy of this
         # mint, not just the oldest. One-position-per-name is enforced by
@@ -516,6 +538,7 @@ class ExecutionLedger:
         self._save(records)
         return rec
 
+    @serialized_write
     def close_out_of_band(
         self, mint: str, proceeds_usd: Optional[float] = None,
         note: str = "",
@@ -575,3 +598,48 @@ class ExecutionLedger:
             records.append(rec.to_json())
         self._save(records)
         return [ExecutionRecord.from_json(r) for r in open_buys] + [rec]
+
+
+def validate_execution_records(records):
+    """Validate restored authority before exposure/idempotency adopts it.
+
+    Older optional fields retain defaults; unknown fields remain preserved.
+    Identity strings allow historical/operator fixture identifiers rather than
+    imposing a new address-format migration on existing authoritative rows.
+    """
+    identities = set()
+    close_signatures = set()
+    for index, row in enumerate(records):
+        bad = f"execution ledger record {index} invalid; preserve history and repair explicitly"
+        if not isinstance(row, dict):
+            raise RuntimeError(bad)
+        if row.get("kind") not in ("buy", "close"):
+            raise RuntimeError(bad + ": kind")
+        if row.get("status") not in ("recorded", "sent", "confirmed", "failed", "closed", "pending", "expired"):
+            raise RuntimeError(bad + ": status")
+        for field in ("mint", "idempotency_key"):
+            if not isinstance(row.get(field), str) or not row[field].strip():
+                raise RuntimeError(bad + ": " + field)
+        if "signature" in row and not isinstance(row["signature"], str):
+            raise RuntimeError(bad + ": signature")
+        identity = (row["kind"], row["idempotency_key"])
+        if identity in identities:
+            raise RuntimeError(bad + ": duplicate accounting identity")
+        identities.add(identity)
+        if row["kind"] == "close" and row.get("signature"):
+            if row["signature"] in close_signatures:
+                raise RuntimeError(bad + ": duplicate settled signature")
+            close_signatures.add(row["signature"])
+        for field in ("usd_size", "tokens_out", "price_usd", "ts"):
+            value = row.get(field, 0 if field != "usd_size" else None)
+            if not finite_number(value) or (value < 0 and not (field == "usd_size" and row["kind"] == "close")):
+                raise RuntimeError(bad + ": " + field)
+        for field in ("pnl_usd", "commit_sealed_at"):
+            value = row.get(field)
+            if value is not None and (not finite_number(value)):
+                raise RuntimeError(bad + ": " + field)
+        for field in ("signature", "blockhash", "commit_hash", "commit_nonce", "memo_signature", "reason"):
+            if field in row and not isinstance(row[field], str):
+                raise RuntimeError(bad + ": " + field)
+        if "commit_payload" in row and not isinstance(row["commit_payload"], dict):
+            raise RuntimeError(bad + ": commit_payload")

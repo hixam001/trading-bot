@@ -1,5 +1,5 @@
 """
-llm/spend_guard.py — hard daily call/token/cost ceilings (§92 S5).
+llm/spend_guard.py — daily call reservations and token/cost stop thresholds (§92 S5).
 
 The guard is deliberately boring and fail-closed:
 

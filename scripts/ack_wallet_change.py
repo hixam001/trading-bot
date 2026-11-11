@@ -25,6 +25,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 from live_execution import config as live_config
+from live_execution.state_validation import validate_wallet_snapshot
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("ack_wallet_change")
@@ -108,7 +109,6 @@ def main() -> int:
         return 1
 
     target_dir = args.state_dir or live_config.STATE_DIR
-    target_dir.mkdir(parents=True, exist_ok=True)
     snap_file = target_dir / "wallet_snapshot.json"
 
     now = time.time()
@@ -119,6 +119,13 @@ def main() -> int:
         "reason": args.reason,
         "acknowledged_by": "operator",
     }
+
+    try:
+        validate_wallet_snapshot(payload)
+    except RuntimeError as exc:
+        log.error("Refusing invalid wallet baseline: %s", exc)
+        return 1
+    target_dir.mkdir(parents=True, exist_ok=True)
 
     # Atomic write via temporary file
     tmp_file = snap_file.with_suffix(".tmp")

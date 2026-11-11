@@ -67,6 +67,11 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(rlc.wallet, "load_keypair", lambda: object())
     monkeypatch.setattr(rlc.wallet, "pubkey_string", lambda payer: "OWNER")
 
+    async def strict_status(sig, endpoints=None):
+        status = await rlc.solana.get_signature_status(sig)
+        return [solana.ABSENT, solana.ABSENT] if status is None else [status, status]
+    monkeypatch.setattr(rlc.solana, "get_signature_status_all_strict", strict_status)
+
     async def fake_journal(conn, **kw):
         journaled.append(kw)
 
@@ -174,7 +179,7 @@ async def test_confirmed_with_unreadable_actuals_uses_quote_snapshot(
     _pending(ledger)
 
     async def status(sig, endpoints=None):
-        return {"err": None, "confirmationStatus": "finalized"}
+        return {"err": None, "confirmationStatus": "finalized", "slot": 9}
 
     async def no_actuals(side, mint, sig, owner=None):
         raise RuntimeError("tx unreadable")
@@ -199,7 +204,7 @@ async def test_confirmed_but_unknowable_amounts_stays_pending(env, monkeypatch):
     _pending(ledger, usd_size=0.0, tokens_out=0.0, price_usd=0.0)
 
     async def status(sig, endpoints=None):
-        return {"err": None, "confirmationStatus": "confirmed"}
+        return {"err": None, "confirmationStatus": "confirmed", "slot": 9}
 
     async def no_actuals(side, mint, sig, owner=None):
         return {"usdc_delta": None, "tokens_delta": None}
@@ -222,8 +227,8 @@ async def test_landed_error_is_failed_and_commit_closed(env, monkeypatch):
     _pending(ledger)
 
     async def status(sig, endpoints=None):
-        return {"err": {"InstructionError": [3, "Custom"]},
-                "confirmationStatus": "confirmed"}
+        return {"err": {"InstructionError": [3, "InvalidAccountData"]},
+                "confirmationStatus": "confirmed", "slot": 9}
 
     monkeypatch.setattr(rlc.solana, "get_signature_status", status)
 
@@ -309,7 +314,7 @@ async def test_invalid_blockhash_recheck_adopts_a_lagging_endpoint_fill(
 
     async def status_all(sig, endpoints=None):
         return [solana.ABSENT,
-                {"err": None, "confirmationStatus": "confirmed"}]
+                {"err": None, "confirmationStatus": "confirmed", "slot": 9}]
 
     async def invalid(blockhash, endpoints=None):
         return False
@@ -456,7 +461,7 @@ async def test_invalid_blockhash_with_absent_and_found_status_adopts(
     _patch_status_all(
         monkeypatch,
         [solana.ABSENT,
-         {"err": None, "confirmationStatus": "confirmed"}],
+         {"err": None, "confirmationStatus": "confirmed", "slot": 9}],
     )
 
     stats = await rlc.resolve_pending_buys(ledger)
@@ -528,3 +533,30 @@ async def test_no_pending_is_a_noop(env):
     stats = await rlc.resolve_pending_buys(env.ledger)
     assert stats == {"adopted": 0, "failed": 0, "expired": 0, "pending": 0}
     assert _FakeCommitLog.instances == []
+
+
+@pytest.mark.parametrize('observations', [
+    [solana.UNREACHABLE, solana.UNREACHABLE],
+    [{'confirmationStatus': 'confirmed', 'err': None},
+     {'confirmationStatus': 'confirmed', 'err': {'InstructionError': [0, 'InvalidAccountData']}}],
+    [{'confirmationStatus': 'processed', 'err': {'InstructionError': [0, 'InvalidAccountData']}}, solana.ABSENT],
+    [{'confirmationStatus': 'confirmed'}, solana.ABSENT],
+    [],
+])
+async def test_single_rpc_hint_never_releases_pending_exposure_on_unknown_or_conflict(env, monkeypatch, observations):
+    ledger = env.ledger
+    _pending(ledger)
+
+    async def hint(sig, endpoints=None):
+        return {'confirmationStatus': 'confirmed', 'err': {'InstructionError': [0, 'InvalidAccountData']}}
+
+    async def strict(sig, endpoints=None):
+        return observations
+
+    monkeypatch.setattr(rlc.solana, 'get_signature_status', hint)
+    monkeypatch.setattr(rlc.solana, 'get_signature_status_all_strict', strict)
+    stats = await rlc.resolve_pending_buys(ledger)
+    assert stats == {'adopted': 0, 'failed': 0, 'expired': 0, 'pending': 1}
+    assert ledger.get_by_idempotency_key('k1').status == 'pending'
+    assert ledger.total_open_exposure() == 2.5
+    assert not _FakeCommitLog.instances

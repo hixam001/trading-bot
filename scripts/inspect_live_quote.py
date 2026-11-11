@@ -22,6 +22,7 @@ if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 
 import httpx
+from bounded_http import bounded_request
 from solders.transaction import VersionedTransaction
 
 from config import JUPITER_QUOTE_URL
@@ -100,7 +101,7 @@ async def fetch_quote_and_swap(client: httpx.AsyncClient, input_mint: str, outpu
         amount_raw=amount_raw,
         slippage_bps=50,
     )
-    r = await client.get(JUPITER_QUOTE_URL, params=params, timeout=10.0)
+    r = await bounded_request(client, "GET", JUPITER_QUOTE_URL, params=params, timeout=10.0)
     r.raise_for_status()
     quote = r.json()
 
@@ -119,7 +120,7 @@ async def fetch_quote_and_swap(client: httpx.AsyncClient, input_mint: str, outpu
                 "global": False,
             }
         }
-    r_swap = await client.post(live_config.JUPITER_SWAP_URL, json=swap_payload, timeout=15.0)
+    r_swap = await bounded_request(client, "POST", live_config.JUPITER_SWAP_URL, json=swap_payload, timeout=15.0)
     r_swap.raise_for_status()
     swap_tx_b64 = r_swap.json().get("swapTransaction", "")
     return quote, swap_tx_b64

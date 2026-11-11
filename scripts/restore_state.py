@@ -74,6 +74,8 @@ def validate_member_path(member: tarfile.TarInfo, target_state_dir: Path) -> Non
     if name.startswith("/") or name.startswith("\\") or (len(name) > 1 and name[1] == ":"):
         raise RuntimeError(f"Archive member '{name}' has an absolute path")
 
+    if "\\" in name or any(part in ("", ".") for part in name.split("/")):
+        raise RuntimeError(f"Archive member '{name}' is not a canonical path")
     parts = Path(name).parts
     if ".." in parts:
         raise RuntimeError(f"Archive member '{name}' contains directory traversal components")
@@ -82,6 +84,16 @@ def validate_member_path(member: tarfile.TarInfo, target_state_dir: Path) -> Non
         return
     elif name.startswith("state/") and len(name) > len("state/"):
         rel_name = name[len("state/"):]
+        # Runtime lock inodes must never be replaced, even by an authenticated
+        # archive. Staging/rollback directories are restore-owned namespaces.
+        if any(part.endswith(".lock") or part.startswith((".staged.", ".rollback.", ".pre-restore-"))
+               for part in Path(rel_name).parts):
+            raise RuntimeError(f"Archive member '{name}' uses a reserved runtime path")
+        parent = target_state_dir
+        for part in Path(rel_name).parts[:-1]:
+            parent = parent / part
+            if parent.is_symlink():
+                raise RuntimeError(f"Archive member '{name}' has a symlinked child directory")
         target_resolved = target_state_dir.resolve()
         dest = (target_state_dir / rel_name).resolve()
         try:
@@ -118,6 +130,8 @@ def _attempt_rollback(pre_restore_dir: Path, target_state_dir: Path, target_db_p
     staged_rollback: list[tuple[Path, Path]] = []
     try:
         for p in pre_restore_dir.iterdir():
+            if p.name.endswith(".lock"):
+                continue
             if not p.is_file():
                 continue
             if target_db_path and p.name == target_db_path.name:
@@ -226,7 +240,20 @@ def restore_backup(
         # JSON parse validation
         if member.name.endswith(".json"):
             try:
-                json.loads(data.decode("utf-8"))
+                decoded = json.loads(data.decode("utf-8"))
+                if member.name == "state/executions.json":
+                    from live_execution.models import validate_execution_records
+                    if not isinstance(decoded, dict) or not isinstance(decoded.get("records"), list):
+                        raise RuntimeError("execution ledger must contain a records list")
+                    validate_execution_records(decoded["records"])
+                elif member.name == "state/commits.json":
+                    from live_execution.commit_log import validate_commits
+                    if not isinstance(decoded, list):
+                        raise RuntimeError("commit log must be a list")
+                    validate_commits(decoded)
+                elif member.name == "state/wallet_snapshot.json":
+                    from live_execution.state_validation import validate_wallet_snapshot
+                    validate_wallet_snapshot(decoded)
             except Exception as e:
                 raise RuntimeError(f"Invalid JSON in '{member.name}': {e}")
 
@@ -239,205 +266,218 @@ def restore_backup(
 
     tar.close()
 
-    # Check target directory emptiness
-    has_existing_state = target_state_dir.is_dir() and any(
-        p for p in target_state_dir.iterdir() if not p.name.startswith(".pre-restore-")
-    )
-    has_existing_db = bool(target_db_path and target_db_path.is_file())
-
-    if (has_existing_state or has_existing_db) and not force:
-        raise RuntimeError(
-            f"Target state directory '{target_state_dir}' is not empty; use --force to overwrite"
+    # Serialize restore with live/repair read-modify-write operations. Acquire
+    # all authority locks in lexical order; ordinary state methods hold one
+    # lock at a time. Keep lock inodes out of snapshots/rollback.
+    from contextlib import ExitStack
+    from live_execution.state_lock import state_lock
+    target_state_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    with ExitStack() as state_locks:
+        for authority in sorted((target_state_dir / "executions.json", target_state_dir / "commits.json")):
+            state_locks.enter_context(state_lock(authority))
+        # Check target directory emptiness
+        has_existing_state = target_state_dir.is_dir() and any(
+            p for p in target_state_dir.iterdir() if not p.name.startswith(".pre-restore-") and not p.name.endswith(".lock")
         )
+        has_existing_db = bool(target_db_path and target_db_path.is_file())
 
-    # =========================================================================
-    # PRE-RESTORE BACKUP: Preserve what was there
-    # =========================================================================
-    pre_restore_dir: Optional[Path] = None
-    if force and (has_existing_state or has_existing_db):
-        now_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        pre_restore_dir = target_state_dir / f".pre-restore-{now_ts}"
-        pre_restore_dir.mkdir(parents=True, exist_ok=True)
+        if (has_existing_state or has_existing_db) and not force:
+            raise RuntimeError(
+                f"Target state directory '{target_state_dir}' is not empty; use --force to overwrite"
+            )
 
-        if target_state_dir.is_dir():
-            for p in target_state_dir.iterdir():
-                if p.is_file() and not p.name.startswith(".pre-restore-") and not p.name.startswith(".staged."):
-                    shutil.copy2(p, pre_restore_dir / p.name)
+        # =========================================================================
+        # PRE-RESTORE BACKUP: Preserve what was there
+        # =========================================================================
+        pre_restore_dir: Optional[Path] = None
+        if force and (has_existing_state or has_existing_db):
+            now_ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+            pre_restore_dir = target_state_dir / f".pre-restore-{now_ts}"
+            pre_restore_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
 
-            if target_db_path and target_db_path.is_file():
-                # §83: copy2 of the main file alone drops committed-but-not-
-                # checkpointed rows living in the -wal sidecar (api/db.py runs
-                # WAL mode), so the "Existing state preserved" rollback snapshot
-                # could silently lose the newest trades. Take a consistent
-                # snapshot through SQLite itself, exactly like backup_state.
-                pre_db = pre_restore_dir / target_db_path.name
-                try:
-                    src_conn = sqlite3.connect(str(target_db_path))
+            if target_state_dir.is_dir():
+                for p in target_state_dir.iterdir():
+                    if p.is_file() and not p.name.startswith(".pre-restore-") and not p.name.startswith(".staged.") and not p.name.endswith(".lock"):
+                        shutil.copy2(p, pre_restore_dir / p.name)
+
+                if target_db_path and target_db_path.is_file():
+                    # §83: copy2 of the main file alone drops committed-but-not-
+                    # checkpointed rows living in the -wal sidecar (api/db.py runs
+                    # WAL mode), so the "Existing state preserved" rollback snapshot
+                    # could silently lose the newest trades. Take a consistent
+                    # snapshot through SQLite itself, exactly like backup_state.
+                    pre_db = pre_restore_dir / target_db_path.name
                     try:
-                        dst_conn = sqlite3.connect(str(pre_db))
+                        src_conn = sqlite3.connect(str(target_db_path))
                         try:
-                            src_conn.backup(dst_conn)
+                            fd = os.open(pre_db, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                            os.close(fd)
+                            dst_conn = sqlite3.connect(str(pre_db))
+                            try:
+                                src_conn.backup(dst_conn)
+                            finally:
+                                dst_conn.close()
                         finally:
-                            dst_conn.close()
-                    finally:
-                        src_conn.close()
-                except sqlite3.DatabaseError as exc:
-                    # A non-SQLite file (foreign or corrupt) cannot be read
-                    # through the backup API; preserve its raw bytes — the
-                    # rollback path copies files back verbatim anyway. Any
-                    # other error (locked, IO) stays fatal: never proceed to
-                    # overwrite a real book we could not snapshot.
-                    if "file is not a database" not in str(exc):
-                        raise
-                    shutil.copy2(target_db_path, pre_db)
+                            src_conn.close()
+                    except sqlite3.DatabaseError as exc:
+                        # A non-SQLite file (foreign or corrupt) cannot be read
+                        # through the backup API; preserve its raw bytes — the
+                        # rollback path copies files back verbatim anyway. Any
+                        # other error (locked, IO) stays fatal: never proceed to
+                        # overwrite a real book we could not snapshot.
+                        if "file is not a database" not in str(exc):
+                            raise
+                        shutil.copy2(target_db_path, pre_db)
+                        os.chmod(pre_db, 0o600)
 
-        print(f"PRE-RESTORE BACKUP: Existing state preserved in {pre_restore_dir}")
-        log.info("Pre-restore backup created at %s", pre_restore_dir)
+            print(f"PRE-RESTORE BACKUP: Existing state preserved in {pre_restore_dir}")
+            log.info("Pre-restore backup created at %s", pre_restore_dir)
 
-    # =========================================================================
-    # PASS 2: Staging & SQLite Integrity
-    # =========================================================================
-    pid = os.getpid()
-    staged_files: list[tuple[Path, Path]] = []
+        # =========================================================================
+        # PASS 2: Staging & SQLite Integrity
+        # =========================================================================
+        pid = os.getpid()
+        staged_files: list[tuple[Path, Path]] = []
 
-    try:
-        for name, data in verified_data.items():
-            if name.startswith("state/"):
-                rel_name = name[len("state/"):]
-                dest_path = target_state_dir / rel_name
-                dest_path.parent.mkdir(parents=True, exist_ok=True)
-                temp_path = dest_path.parent / f".staged.{pid}.{dest_path.name}"
-                with open(temp_path, "wb") as f:
-                    f.write(data)
-                    f.flush()
-                    os.fsync(f.fileno())
-                staged_files.append((temp_path, dest_path))
-
-            elif name == "trading_bot.db":
-                if target_db_path:
-                    dest_path = target_db_path
-                    dest_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            for name, data in verified_data.items():
+                if name.startswith("state/"):
+                    rel_name = name[len("state/"):]
+                    dest_path = target_state_dir / rel_name
+                    dest_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
                     temp_path = dest_path.parent / f".staged.{pid}.{dest_path.name}"
-                    with open(temp_path, "wb") as f:
+                    fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    staged_files.append((temp_path, dest_path))
+                    with os.fdopen(fd, "wb") as f:
                         f.write(data)
                         f.flush()
                         os.fsync(f.fileno())
 
-                    # Track immediately so cleanup will remove it on any failure
-                    staged_files.append((temp_path, dest_path))
+                elif name == "trading_bot.db":
+                    if target_db_path:
+                        dest_path = target_db_path
+                        dest_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+                        temp_path = dest_path.parent / f".staged.{pid}.{dest_path.name}"
+                        fd = os.open(temp_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                        staged_files.append((temp_path, dest_path))
+                        with os.fdopen(fd, "wb") as f:
+                            f.write(data)
+                            f.flush()
+                            os.fsync(f.fileno())
 
-                    # PRAGMA integrity_check on the STAGED copy
-                    conn = sqlite3.connect(str(temp_path))
-                    try:
-                        cur = conn.cursor()
+
+                        # PRAGMA integrity_check on the STAGED copy
+                        conn = sqlite3.connect(str(temp_path))
                         try:
-                            cur.execute("PRAGMA integrity_check;")
-                            res = cur.fetchall()
-                            if not res or res[0][0] != "ok":
-                                raise RuntimeError(f"SQLite PRAGMA integrity_check failed: {res}")
-                        except sqlite3.DatabaseError as db_err:
-                            raise RuntimeError(f"SQLite PRAGMA integrity_check failed: {db_err}")
-                    finally:
-                        conn.close()
-                else:
-                    # Never let a DB-bearing archive look fully restored when
-                    # the book was silently left behind.
-                    print("WARNING: archive contains trading_bot.db but no "
-                          "--target-db-path was given — the DATABASE WAS NOT "
-                          "RESTORED. Re-run with --target-db-path <path> to "
-                          "restore the book.")
-                    log.warning("SQLite DB in archive skipped: no target DB path specified")
+                            cur = conn.cursor()
+                            try:
+                                cur.execute("PRAGMA integrity_check;")
+                                res = cur.fetchall()
+                                if not res or res[0][0] != "ok":
+                                    raise RuntimeError(f"SQLite PRAGMA integrity_check failed: {res}")
+                            except sqlite3.DatabaseError as db_err:
+                                raise RuntimeError(f"SQLite PRAGMA integrity_check failed: {db_err}")
+                        finally:
+                            conn.close()
+                    else:
+                        # Never let a DB-bearing archive look fully restored when
+                        # the book was silently left behind.
+                        print("WARNING: archive contains trading_bot.db but no "
+                              "--target-db-path was given — the DATABASE WAS NOT "
+                              "RESTORED. Re-run with --target-db-path <path> to "
+                              "restore the book.")
+                        log.warning("SQLite DB in archive skipped: no target DB path specified")
 
-    except Exception:
-        # Clean up any staged files
-        for temp_path, _ in staged_files:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        if pre_restore_dir:
-            print(f"ROLLBACK NOTE: Restore failed. Existing state remains intact and was backed up to {pre_restore_dir}")
-            log.warning("Restore failed during staging. Existing state was preserved in %s", pre_restore_dir)
-        raise
-
-    # =========================================================================
-    # PASS 3: Promotion (os.replace)
-    # =========================================================================
-    restored_files: list[str] = []
-    promoted: list[tuple[Path, Path]] = []
-    try:
-        for temp_path, dest_path in staged_files:
-            if target_db_path is not None and dest_path == target_db_path:
-                # §83: the restored DB replaces the whole lineage — stale
-                # -wal/-shm/-journal sidecars from the pre-restore book must
-                # not survive the swap.
-                _remove_sqlite_sidecars(target_db_path)
-            os.replace(temp_path, dest_path)
-            promoted.append((temp_path, dest_path))
-            restored_files.append(str(dest_path))
-    except Exception:
-        for temp_path, _ in staged_files:
-            try:
-                temp_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-        if len(promoted) > 0:
-            from live_execution import kill_switch
-            trip_reason = (
-                f"PARTIAL RESTORE: promoted {len(promoted)} of {len(staged_files)} files "
-                f"from {archive_path.name}; state is inconsistent; do not arm"
-            )
-            try:
-                kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 3 partial restore
-            except Exception as ks_err:
-                log.error("Failed to trip kill switch on partial restore: %s", ks_err)
-
-            if pre_restore_dir and pre_restore_dir.is_dir():
-                print(f"ROLLBACK NOTE: Partial restore failure ({len(promoted)}/{len(staged_files)} promoted). Attempting automatic rollback from {pre_restore_dir}")
-                log.error("Partial restore failure. Attempting automatic rollback from %s", pre_restore_dir)
+        except Exception:
+            # Clean up any staged files
+            for temp_path, _ in staged_files:
                 try:
-                    _attempt_rollback(pre_restore_dir, target_state_dir, target_db_path)
-                except Exception as rb_err:
-                    log.error("Automatic rollback failed: %s", rb_err)
-            else:
-                log.error("No pre-restore backup available for automatic rollback")
-        else:
+                    temp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
             if pre_restore_dir:
-                print(f"ROLLBACK NOTE: Restore failed before any files promoted. Existing state remains intact in {pre_restore_dir}")
-                log.warning("Restore failed before promotion. Existing state in %s", pre_restore_dir)
-        raise
+                print(f"ROLLBACK NOTE: Restore failed. Existing state remains intact and was backed up to {pre_restore_dir}")
+                log.warning("Restore failed during staging. Existing state was preserved in %s", pre_restore_dir)
+            raise
 
-    # =========================================================================
-    # PASS 4: Safety Latch (Always Trip Kill Switch)
-    # =========================================================================
-    from live_execution import kill_switch
-    ts_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    trip_reason = f"restored from {archive_path.name} at {ts_str}; run reconcile and clear manually"
-    kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 4 safety latch
+        # =========================================================================
+        # PASS 3: Promotion (os.replace)
+        # =========================================================================
+        restored_files: list[str] = []
+        promoted: list[tuple[Path, Path]] = []
+        try:
+            for temp_path, dest_path in staged_files:
+                if target_db_path is not None and dest_path == target_db_path:
+                    # §83: the restored DB replaces the whole lineage — stale
+                    # -wal/-shm/-journal sidecars from the pre-restore book must
+                    # not survive the swap.
+                    _remove_sqlite_sidecars(target_db_path)
+                os.replace(temp_path, dest_path)
+                promoted.append((temp_path, dest_path))
+                restored_files.append(str(dest_path))
+        except Exception:
+            for temp_path, _ in staged_files:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
-    notice = f"""
-================================================================================
-MANDATORY OPERATOR WARNING: State restored from backup.
-NEVER arm after restoring until reconcile reports clean.
-The kill switch has been automatically ENGAGED.
-Reason: {trip_reason}
+            if len(promoted) > 0:
+                from live_execution import kill_switch
+                trip_reason = (
+                    f"PARTIAL RESTORE: promoted {len(promoted)} of {len(staged_files)} files "
+                    f"from {archive_path.name}; state is inconsistent; do not arm"
+                )
+                try:
+                    kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 3 partial restore
+                except Exception as ks_err:
+                    log.error("Failed to trip kill switch on partial restore: %s", ks_err)
 
-To inspect state and clear the kill switch:
-  1. Run reconciliation:
-     python scripts/restore_state.py --reconcile-only --target-state-dir {target_state_dir}
-  2. Clear the kill switch manually after verification:
-     python backend/live_execution/scripts/confirm_trade.py resume
-================================================================================
-"""
-    print(notice)
-    log.info("Successfully restored %d file(s) from %s", len(restored_files), archive_path.name)
+                if pre_restore_dir and pre_restore_dir.is_dir():
+                    print(f"ROLLBACK NOTE: Partial restore failure ({len(promoted)}/{len(staged_files)} promoted). Attempting automatic rollback from {pre_restore_dir}")
+                    log.error("Partial restore failure. Attempting automatic rollback from %s", pre_restore_dir)
+                    try:
+                        _attempt_rollback(pre_restore_dir, target_state_dir, target_db_path)
+                    except Exception as rb_err:
+                        log.error("Automatic rollback failed: %s", rb_err)
+                else:
+                    log.error("No pre-restore backup available for automatic rollback")
+            else:
+                if pre_restore_dir:
+                    print(f"ROLLBACK NOTE: Restore failed before any files promoted. Existing state remains intact in {pre_restore_dir}")
+                    log.warning("Restore failed before promotion. Existing state in %s", pre_restore_dir)
+            raise
 
-    return {
-        "restored_files": restored_files,
-        "manifest": manifest_data,
-        "pre_restore_backup": str(pre_restore_dir) if pre_restore_dir else None,
-    }
+        # =========================================================================
+        # PASS 4: Safety Latch (Always Trip Kill Switch)
+        # =========================================================================
+        from live_execution import kill_switch
+        ts_str = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        trip_reason = f"restored from {archive_path.name} at {ts_str}; run reconcile and clear manually"
+        kill_switch.trip(trip_reason, state_dir=target_state_dir)  # Pass 4 safety latch
+
+        notice = f"""
+    ================================================================================
+    MANDATORY OPERATOR WARNING: State restored from backup.
+    NEVER arm after restoring until reconcile reports clean.
+    The kill switch has been automatically ENGAGED.
+    Reason: {trip_reason}
+
+    To inspect state and clear the kill switch:
+      1. Run reconciliation:
+         python scripts/restore_state.py --reconcile-only --target-state-dir {target_state_dir}
+      2. Clear the kill switch manually after verification:
+         python backend/live_execution/scripts/confirm_trade.py resume
+    ================================================================================
+    """
+        print(notice)
+        log.info("Successfully restored %d file(s) from %s", len(restored_files), archive_path.name)
+
+        return {
+            "restored_files": restored_files,
+            "manifest": manifest_data,
+            "pre_restore_backup": str(pre_restore_dir) if pre_restore_dir else None,
+        }
 
 
 async def run_reconcile(state_dir: Path) -> dict[str, Any]:

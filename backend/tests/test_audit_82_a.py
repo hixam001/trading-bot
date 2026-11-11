@@ -286,7 +286,7 @@ async def test_execute_confirmed_trade_send_rejected_is_execution_error(monkeypa
 
     payer = _FakePayer()
     monkeypatch.setattr(jex.wallet, "load_keypair", lambda: payer)
-    monkeypatch.setattr(jex.wallet, "verify_expected_address", lambda p: None)
+    monkeypatch.setattr(jex.wallet, "verify_expected_address", lambda p: WALLET)
     monkeypatch.setattr(jex.wallet, "pubkey_string", lambda p: WALLET)
 
     async def fake_sol(addr):
@@ -297,6 +297,10 @@ async def test_execute_confirmed_trade_send_rejected_is_execution_error(monkeypa
 
     monkeypatch.setattr(jex.solana, "get_sol_balance", fake_sol)
     monkeypatch.setattr(jex.solana, "get_usdc_balance", fake_usdc)
+
+    async def chain_decimals(mint):
+        return 6  # the native decimal fact matching this dummy quote
+    monkeypatch.setattr(jex.solana, "get_mint_decimals", chain_decimals)
 
     async def fake_get_json(url, params=None, headers=None):
         # Return a self-consistent quote

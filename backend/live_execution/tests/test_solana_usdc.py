@@ -9,6 +9,7 @@ httpx client is faked, no network.
 from __future__ import annotations
 
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 from live_execution import solana
 
@@ -22,7 +23,7 @@ class _FakeResp:
         return self._body
 
 
-class _FakeClient:
+class _FakeClient(LegacyHTTPStreamClient):
     def __init__(self, responses):
         # responses: list of _FakeResp returned in order per endpoint
         self._responses = list(responses)

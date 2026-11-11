@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 import config
 import data_providers.onchain_security as ocs
@@ -51,7 +52,7 @@ class FakeResponse:
         return self._payload
 
 
-class RecordingClient:
+class RecordingClient(LegacyHTTPStreamClient):
     """Fakes httpx.AsyncClient; routes per-endpoint results, records posts."""
 
     def __init__(self, results):
@@ -259,7 +260,7 @@ async def test_birdeye_trending_disables_on_quota_400(monkeypatch):
 
     calls = {"n": 0}
 
-    class QuotaClient:
+    class QuotaClient(LegacyHTTPStreamClient):
         async def __aenter__(self):
             return self
 
@@ -309,7 +310,7 @@ async def test_birdeye_security_disables_on_quota_400(monkeypatch):
 
     calls = {"n": 0}
 
-    class QuotaClient:
+    class QuotaClient(LegacyHTTPStreamClient):
         async def __aenter__(self):
             return self
 

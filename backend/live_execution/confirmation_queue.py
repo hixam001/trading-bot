@@ -22,6 +22,8 @@ from pathlib import Path
 from typing import Callable
 
 from live_execution import config
+from live_execution.trade_intent import canonical_operation
+from live_execution.state_lock import serialized_write
 from live_execution.models import PendingConfirmation, new_id
 
 
@@ -73,9 +75,11 @@ class ConfirmationQueue:
         self._save(all_c)
 
     # -- flow ---------------------------------------------------------------------
+    @serialized_write
     def propose(
         self, mint: str, decimals: int, usd_size: float,
         quote_snapshot: dict | None = None,
+        operation: dict | None = None,
     ) -> PendingConfirmation:
         now = self.now_fn()
         pc = PendingConfirmation(
@@ -86,6 +90,7 @@ class ConfirmationQueue:
             proposed_at=now,
             expires_at=now + self.expiry,
             quote_snapshot=quote_snapshot or {},
+            operation=canonical_operation(**operation) if operation is not None else None,
         )
         self._put(pc)
         return pc
@@ -98,6 +103,7 @@ class ConfirmationQueue:
             return True
         return False
 
+    @serialized_write
     def approve(self, cid: str) -> PendingConfirmation:
         pc = self._get(cid)
         if self._expire_if_due(pc):
@@ -113,6 +119,7 @@ class ConfirmationQueue:
         self._put(pc)
         return pc
 
+    @serialized_write
     def deny(self, cid: str) -> PendingConfirmation:
         pc = self._get(cid)
         if pc.status not in ("pending", "approved"):
@@ -123,7 +130,16 @@ class ConfirmationQueue:
         self._put(pc)
         return pc
 
-    def consume(self, cid: str) -> PendingConfirmation:
+    @serialized_write
+    def require_approved(self, cid: str) -> PendingConfirmation:
+        """Check existence/state/expiry without spending the operation approval."""
+        pc = self._get(cid)
+        if self._expire_if_due(pc) or pc.status != "approved":
+            raise ConfirmationError("confirmation is not currently approved")
+        return pc
+
+    @serialized_write
+    def consume(self, cid: str, *, operation: dict | None = None) -> PendingConfirmation:
         """
         THE gate immediately before any network call. Re-checks expiry with
         the current clock so an approval can never outlive its window.
@@ -138,12 +154,29 @@ class ConfirmationQueue:
             raise ConfirmationError(
                 f"confirmation {cid} is {pc.status!r} — not consumable"
             )
+        if operation is not None:
+            try:
+                actual = canonical_operation(**operation)
+                approved = canonical_operation(**pc.operation) if isinstance(pc.operation, dict) else None
+            except (TypeError, ValueError) as exc:
+                raise ConfirmationError("invalid canonical approval operation") from exc
+            if approved is None:
+                raise ConfirmationError("legacy unbound approval; propose the actual operation again")
+            identity = ("side", "wallet", "input_mint", "output_mint", "in_amount_raw", "decimals")
+            if any(actual[k] != approved[k] for k in identity):
+                raise ConfirmationError("approval operation mismatch")
+            if actual["slippage_bps"] > approved["slippage_bps"]:
+                raise ConfirmationError("approval slippage bound exceeded")
+            floor = approved["min_out_raw"]
+            if floor is not None and (actual["min_out_raw"] is None or actual["min_out_raw"] < floor):
+                raise ConfirmationError("approval output floor weakened")
         pc.status = "consumed"
         pc.consumed_at = self.now_fn()
         self._put(pc)
         return pc
 
     # -- views ----------------------------------------------------------------------
+    @serialized_write
     def list_active(self) -> list[PendingConfirmation]:
         """Non-terminal items, expiring any that are due (side-effecting view)."""
         out: list[PendingConfirmation] = []

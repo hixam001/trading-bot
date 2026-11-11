@@ -115,7 +115,11 @@ def _candidate_view(c: Candidate, memory_line: str = "") -> dict:
     crowd_line = ""
     if getattr(c, "fomo_theses", None):
         lines = []
+        if not isinstance(c.fomo_theses, list):
+            raise ValueError("malformed crowd thesis collection")
         for t in c.fomo_theses:
+            if not isinstance(t, dict):
+                raise ValueError("malformed crowd thesis record")
             who = sanitize_untrusted(t.get("who", "unknown"), 40)
             size = t.get("size_usd", 0.0)
             pnl_usd = t.get("realized_usd", 0.0) if t.get("closed") else t.get("unrealized_usd", 0.0)
@@ -186,12 +190,16 @@ def template_think(c: Candidate) -> ThinkResult:
 
 def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str, dict]]:
     """Extract (thesis, invalidation, verdict, break_obj) from raw model text."""
+    if not isinstance(raw, str):
+        return None
     match = re.search(r"\{.*\}", raw, flags=re.DOTALL)
     if not match:
         return None
     try:
         obj = json.loads(match.group(0))
     except ValueError:
+        return None
+    if not isinstance(obj, dict) or any(not isinstance(obj.get(key), str) for key in ("verdict", "thesis", "invalidation")):
         return None
     verdict = str(obj.get("verdict") or "").strip().lower()
     # Model output is untrusted for display/storage too: strip tags/role
@@ -201,9 +209,11 @@ def parse_verdict_json(raw: str) -> Optional[tuple[str, str, str, dict]]:
     invalidation = sanitize_untrusted(obj.get("invalidation"), 500)
     if verdict not in ("buy", "pass") or not thesis or not invalidation:
         return None
-    break_obj = obj.get("break") or {}
-    if not isinstance(break_obj, dict):
+    break_obj = obj.get("break", {})
+    if break_obj is None:
         break_obj = {}
+    if not isinstance(break_obj, dict):
+        return None
     break_obj = {
         "taking": break_obj.get("taking"),
         "minutes": break_obj.get("minutes"),

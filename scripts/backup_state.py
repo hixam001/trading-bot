@@ -32,6 +32,7 @@ import sqlite3
 import subprocess
 import sys
 import tarfile
+import tempfile
 from typing import Optional
 
 from cryptography.fernet import Fernet
@@ -153,6 +154,8 @@ def create_backup(
     dt = now_dt or datetime.now(timezone.utc)
     ts_str = dt.strftime("%Y%m%dT%H%M%SZ")
 
+    # New owner-selected directory is private; leave existing permissions alone.
+    backup_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
     manifest_files = []
     tar_buf = io.BytesIO()
 
@@ -209,14 +212,18 @@ def create_backup(
                 try:
                     # Write a consistent raw SQLite image via the backup API
                     # (never copy live WAL files).
-                    temp_backup_path = backup_dir / f".tmp_db_{ts_str}.sqlite"
-                    temp_backup_path.parent.mkdir(parents=True, exist_ok=True)
-                    file_dst = sqlite3.connect(str(temp_backup_path))
-                    src_conn.backup(file_dst)
-                    file_dst.close()
-
-                    db_data = temp_backup_path.read_bytes()
-                    temp_backup_path.unlink(missing_ok=True)
+                    fd, name = tempfile.mkstemp(prefix=".tmp_db_", suffix=".sqlite", dir=backup_dir)
+                    os.close(fd)  # mkstemp creates exclusively with mode 0600.
+                    temp_backup_path = Path(name)
+                    try:
+                        file_dst = sqlite3.connect(str(temp_backup_path))
+                        try:
+                            src_conn.backup(file_dst)
+                        finally:
+                            file_dst.close()
+                        db_data = temp_backup_path.read_bytes()
+                    finally:
+                        temp_backup_path.unlink(missing_ok=True)
 
                     arcname = "trading_bot.db"
                     ti = tarfile.TarInfo(name=arcname)

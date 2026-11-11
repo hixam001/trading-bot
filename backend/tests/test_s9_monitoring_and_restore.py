@@ -269,10 +269,10 @@ async def test_unhandled_500_records_an_internal_error(client, monkeypatch):
 def _write_state(state_dir: Path) -> None:
     state_dir.mkdir()
     (state_dir / "executions.json").write_text(
-        json.dumps([{"kind": "buy", "mint": "S9MINT", "usd_size": 12.5}]),
+        json.dumps({"records": [{"kind": "buy", "mint": "S9MINT", "usd_size": 12.5, "status": "confirmed", "idempotency_key": "dummy-buy", "ts": 1.0}]}),
         encoding="utf-8")
     (state_dir / "commits.json").write_text(
-        json.dumps([{"hash": "s9-hash"}]), encoding="utf-8")
+        json.dumps([{"hash": "s9-hash", "nonce": "dummy-nonce", "kind": "buy", "status": "sealed", "payload": {"mint": "S9MINT"}, "sealed_at": 1.0}]), encoding="utf-8")
     (state_dir / "kill_switch.json").write_text(
         json.dumps({"tripped": False, "reason": "", "ts": 0}), encoding="utf-8")
     (state_dir / "wallet_keypair.json").write_text(
@@ -311,10 +311,8 @@ def test_backup_restore_drill_verifies_book_and_trips_kill_switch(tmp_path):
     result = restore_state.restore_backup(
         archive, target_state, target_db, backup_key)
 
-    assert json.loads((target_state / "executions.json").read_text()) == [
-        {"kind": "buy", "mint": "S9MINT", "usd_size": 12.5}]
-    assert json.loads((target_state / "commits.json").read_text()) == [
-        {"hash": "s9-hash"}]
+    assert json.loads((target_state / "executions.json").read_text()) == {"records": [{"kind": "buy", "mint": "S9MINT", "usd_size": 12.5, "status": "confirmed", "idempotency_key": "dummy-buy", "ts": 1.0}]}
+    assert json.loads((target_state / "commits.json").read_text()) == [{"hash": "s9-hash", "nonce": "dummy-nonce", "kind": "buy", "status": "sealed", "payload": {"mint": "S9MINT"}, "sealed_at": 1.0}]
     assert not (target_state / "wallet_keypair.json").exists()
 
     conn = sqlite3.connect(str(target_db))

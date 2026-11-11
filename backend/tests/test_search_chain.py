@@ -24,6 +24,7 @@ import time
 
 import httpx
 import pytest
+from tests.http_stream_fixture import LegacyHTTPStreamClient
 
 import config
 import llm.web_research as wr
@@ -87,7 +88,7 @@ def _install_fake(monkeypatch, brave_fn, searxng_fn, firecrawl_fn=None):
         firecrawl_fn = lambda: _Resp(200, {"data": []})
     calls = {"brave": 0, "searxng": 0, "firecrawl": 0}
 
-    class FakeClient:
+    class FakeClient(LegacyHTTPStreamClient):
         def __init__(self, **kw):
             pass
 
