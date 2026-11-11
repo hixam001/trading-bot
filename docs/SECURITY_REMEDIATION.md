@@ -275,3 +275,30 @@ staged gate interface and final report/memory updates. Publication is requested
 by the user; observed push/CI status belongs in the final delivery message.
 Advisory results are point-in-time and scoped to the pinned Python lock and npm
 production graph, not a guarantee of future CVE status or production safety.
+
+## CI browser bootstrap follow-through — 2026-11-11
+
+Observed failure on `f4868ac`: GitHub's Ubuntu 26.04 (`resolute`) runner could
+not resolve the Azure/Ubuntu APT mirror hostnames during Playwright's native
+dependency installation. APT exited 100; browser tests had not started. This
+is an observed hosted-runner DNS failure, not a failed application assertion.
+
+Implementation policy: direct scoped CI change; preserve mandatory native
+dependency installation and all browser assertions. Pin only the backend/frontend
+test job to the explicitly supported `ubuntu-24.04` image instead of the moving
+`ubuntu-latest` label, and bound Chromium setup to ten minutes. The successful
+Docker job and pinned actions/permissions remain unchanged. This removes runner
+version drift but does not promise immunity to a future DNS outage. Verify YAML
+structure and existing workflow/security checks inside the no-network sandbox;
+then verify the actual browser step on the newly provisioned CI runner. No
+local package installation or manual change to resolver/TLS policy is involved.
+
+Primary references: [GitHub runner images](https://github.com/actions/runner-images),
+[Ubuntu 26 runner migration](https://github.blog/changelog/2026-09-17-ubuntu-26-generally-available-and-latest-migration/),
+[Playwright CI installation](https://playwright.dev/docs/ci).
+
+Local affected check: `python3 docs/security-remediation/sandbox_runner.py -q
+backend/tests/test_s8_supply_chain.py backend/tests/test_audit_81_f.py
+backend/tests/test_prepush_stage_selection.py` — **32 passed**, no failures.
+The failed old run is [43050187110](https://github.com/hixam001/trading-bot/actions/runs/43050187110);
+its Docker/ROFS job passed. New hosted setup/E2E verification remains necessary.

@@ -12,7 +12,8 @@ on:
 jobs:
   test:
     name: Backend & Frontend Tests
-    runs-on: ubuntu-latest
+    # Keep browser/native dependency setup on an explicit supported LTS image.
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -80,6 +81,7 @@ jobs:
           npm audit --omit=dev
 
       - name: Install Playwright Chromium
+        timeout-minutes: 10
         run: |
           cd frontend
           npx playwright install --with-deps chromium

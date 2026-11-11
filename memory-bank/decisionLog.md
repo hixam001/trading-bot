@@ -139,3 +139,11 @@ network; only manifest-only advisory stages 3/7 used the explicit exception.
 Original user requested publication without contributor trailers; final
 Git/delivery records actual push/CI status. Earlier offline advisory limitation
 is resolved.
+
+## §94 CI bootstrap decision — 2026-11-11
+
+Observed hosted Ubuntu26 APT DNS failure (exit100), not an application assertion.
+Pin only the browser-test job to supported Ubuntu24.04, bound install to10min,
+retain native dependency installation and all E2E tests.32 affected local checks
+passed under OS isolation. No local installs, resolver overrides or relaxed TLS.
+Fresh hosted runner execution, not the pin itself, must confirm recovery.

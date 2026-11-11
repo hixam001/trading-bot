@@ -1,3 +1,17 @@
+## §94 CI browser bootstrap follow-up — 2026-11-11
+
+The `f4868ac` Tests & Security Audit run failed during Playwright's native
+package installation: Ubuntu26.04/resolute APT mirror DNS resolution failed,
+exit100; CI browser tests never started. Docker/ROFS, gitleaks and CodeQL passed.
+The backend/frontend job is now pinned to `ubuntu-24.04` instead of the moving
+`ubuntu-latest` label, with a ten-minute Chromium-install timeout. Mandatory
+`--with-deps` installation and actual E2E assertions are unchanged; no DNS/TLS
+checks or test failures are suppressed. Local affected workflow/security/gate
+checks: **32 passed** in the network-disabled sandbox. No dependencies or runtime
+trading source changed. A fresh hosted run must establish whether DNS setup
+succeeds; pinning alone is not a guarantee against network outages. Final
+publication/CI outcome is recorded by Git and the delivery message.
+
 ## §94 — Security-audit remediation and isolated release gate (2026-11-11)
 
 Core remediation committed as `04e1feb`: A1–A3 and preventive B1–B2 implemented,
