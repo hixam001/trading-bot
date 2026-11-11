@@ -1,6 +1,6 @@
 # Security remediation — 2026-11-10–11
 
-Status: source remediation and offline regression verification finished; the local remediation commit is prepared, while the release/push workflow remains incomplete because advisory-dependent checks are unavailable. No production all-clear is claimed.
+Status: source remediation is committed as `04e1feb`. All canonical local pre-push stages now pass under split isolation after the user permitted advisory-only lookups. Stage 9 retains its existing missing-gitleaks notice; no local gitleaks/Docker or new remote-CI result is claimed. No production all-clear is claimed.
 
 Source baseline: `028d4e07375946d6c51072fb624342cc83616b77`. Historical audit records remain unchanged. Original confirmed fingerprints: `backend/api/auth.py:require_admin_token:cookie-before-disabled`, `backend/api/db_pg.py:_tls_context:unverified-no-pin-fallback`, `live_execution/executor:partial-sell-retry-after-single-rpc-absence`. B1/B2 remain preventive source invariants with native approved-DEX exploitability unproven. Rejected WebSocket connection-cap race is not treated as a vulnerability.
 
@@ -172,7 +172,7 @@ check, not production verification or advisory cleanliness.
 | Command/check | Observed result |
 |---|---|
 | `python3 docs/security-remediation/sandbox_runner.py --with-frontend -q` | 2,227 passed; 102 existing deprecation warnings; no failures/skips. TypeScript `tsc -b`, Vite build and built-bundle secret scanner passed in the same disposable source copy. |
-| `python3 docs/security-remediation/sandbox_runner.py --e2e` | Final 41/41 passed, 15.9 seconds; newly started isolated **mock** API and installed Chromium only. No ordinary/live runner started. |
+| `python3 docs/security-remediation/sandbox_runner.py --e2e` | Direct check: 41/41 passed, 15.9 seconds; newly started isolated **mock** API and installed Chromium only. No ordinary/live runner started. |
 | `python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -m pip check` | `No broken requirements found.` |
 | `python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/audit_runtime_writes.py --check` | Passed; new lock and private snapshot write homes classified explicitly; full suite also enforces this check. |
 | `git diff --check` | Passed after source changes. |
@@ -193,24 +193,16 @@ the Python virtual-memory profile; the bounded cgroup profile above passed.
 Final results supersede those failed setup/fixture runs; assertions and network
 isolation were preserved.
 
-## Release gate still unavailable
+## Initial offline advisory limitation — resolved with explicit permission
 
-The canonical `scripts/prepush_check.sh` has **not** passed end-to-end. Its
-advisory-dependent stages cannot complete under the requested no-network policy:
-
-- `python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -m pip_audit --disable-pip --no-deps -r backend/requirements.lock` failed because the isolated namespace could not resolve `pypi.org`. No packages were installed.
-- `python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/npm --prefix frontend audit --omit=dev --fetch-retries=0 --fetch-timeout=3000` failed because it could not resolve `registry.npmjs.org`.
-- An exploratory npm `--offline` audit printed zero vulnerabilities, but the
-  installed npm implementation skips advisory collection in offline mode. That
-  output is explicitly excluded from security evidence.
-- A local gitleaks executable and Docker daemon are unavailable. Existing pinned
-  CI scanning/build behavior is preserved, but no new remote CI result is claimed.
-
-Do not infer current CVE cleanliness from unit tests, `pip check` or the bundle
-scanner. The safe next step is an explicitly permitted advisory-only lookup
-using existing trusted tools and pinned manifests, followed by required gate
-and CI verification. Commit/push status is recorded in the handoff and final
-response; no gate bypass is authorized by this report.
+The initial no-network runs could not resolve PyPI/npm advisory services. An
+exploratory npm offline audit printed zero vulnerabilities because the installed
+npm skips advisory collection in offline mode; that output was excluded from
+security evidence. The user subsequently explicitly authorized read-only
+advisory lookups only. Actual lookup and staged gate results follow below.
+No dependency installations, provider requests or relaxed test isolation were
+used to resolve this limitation. Docker and a local gitleaks executable remain
+unavailable; passing unit tests are not substituted for those checks.
 
 ## Historical input trace
 
@@ -224,3 +216,62 @@ The source review used these immutable external audit inputs from
 | `FINDINGS-DETAIL.md` | `4df070cd5ee879ff5573317a6ae385f72a49de6eddfd84dce3cb3128fb3f00bc` |
 | `NEEDS-VALIDATION.md` | `0eec51140b7e32b33829b1314b75eb3348e7e82c5acd61ab94dd416e9b4f51d0` |
 | `coverage-ledger.json` | `764ac43a130a91d76d73e8f6033f9d84dabbfb83d7c5ee6f9e80ea9272b73867` |
+
+## Advisory permission and staged gate follow-through — 2026-11-11
+
+The user explicitly permitted read-only PyPI/npm advisory lookups only, with no
+installs or trading-provider access. The existing trusted audit tools read copied
+pinned manifests from a clean scratch working directory and empty allowlisted
+environment. Python audited all 75 locked packages with `--disable-pip --no-deps`
+(no dependency installation); `pip check` separately verifies installed dependency
+consistency. npm audited the production lock graph with scripts disabled. Both
+returned exit 0: no known Python advisories, zero npm production vulnerabilities.
+
+Decision: add a stage selector to the existing canonical pre-push script. Default
+execution still runs every check in order and stops on failure; no stage is
+removed. Stages 1/2/4/5/6/8/9 stay in the network-disabled OS sandbox. Only stages
+3/7 run the inspected advisory tools with the user's narrow network exception,
+using copied manifests and no application execution or installs. Validate stage
+selection/failure propagation with dummy command executables, review independently,
+and execute every actual stage before push. This is isolation provisioning, not
+a claim that cached outputs or unexecuted commands passed.
+
+## Final canonical pre-push stage results
+
+The existing gate now accepts `--stage 1..9` so every actual check can execute
+in its required environment. Its default remains all nine stages in order and
+stops on the first failure. Selected mode reports only that stage's result;
+it does not claim the entire gate passed. Sixteen executable regressions check
+stage selection, invalid arguments, default ordering and failure propagation;
+independent review found no blocking issue in the selector, browser profile or
+advisory helper. No existing security assertion was weakened.
+
+All nine actual stages were executed successfully, with the original stage-9
+missing-tool notice explicitly retained:
+
+| Stage | Exact invocation from repository root | Observed result |
+|---|---|---|
+| 1 | `python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash scripts/prepush_check.sh --stage 1` | **2243 passed**, no failures/skips, 102 existing warnings; includes the 16 new gate-dispatch tests. |
+| 2 | `python3 docs/security-remediation/sandbox_runner.py --command /bin/bash scripts/prepush_check.sh --stage 2` | No broken requirements found. |
+| 3 | `python3 -I docs/security-remediation/advisory_stage.py 3` | Actual canonical pip-audit invocation passed; **75 locked packages, no known vulnerabilities** at lookup time. |
+| 4 | `python3 docs/security-remediation/sandbox_runner.py --command /bin/bash scripts/prepush_check.sh --stage 4` | API keypair isolation: **1 passed**, 3 deselected. |
+| 5 | `python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash scripts/prepush_check.sh --stage 5` | Installed TypeScript `tsc --noEmit` passed. |
+| 6 | `python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash scripts/prepush_check.sh --stage 6` | Actual production build passed; setup build/bundle scanner also passed. |
+| 7 | `python3 -I docs/security-remediation/advisory_stage.py 7` | Actual npm production audit passed; **0 vulnerabilities**. |
+| 8 | `python3 docs/security-remediation/sandbox_runner.py --gate-e2e` | Actual gate mock-API/browser stage: **41/41 passed**, 15.2 seconds, bounded private cgroup. |
+| 9 | `python3 docs/security-remediation/sandbox_runner.py --command /bin/bash scripts/prepush_check.sh --stage 9` | Existing missing-local-gitleaks notice; stage exits 0 by its existing policy. **No clean local secret-scan claim.** |
+
+For stages 3/7 the inspected advisory helper copies only the current gate and
+pinned manifests into scratch, uses existing trusted tool entry points, an empty
+allowlisted environment and private empty npm configuration. It admits only
+selectors 3/7. Python uses `--disable-pip --no-deps` against the complete lock to
+avoid installs; stage 2 separately checks installed dependency consistency.
+npm uses `--ignore-scripts`. HOME/cache/temp paths are scratch-local, npm's
+registry is explicit and update notices are disabled. The test/build runner
+remains network-disabled. No cached audit output is replayed as a tool result.
+
+The source commit remains `04e1feb`; this follow-through commit contains the
+staged gate interface and final report/memory updates. Publication is requested
+by the user; observed push/CI status belongs in the final delivery message.
+Advisory results are point-in-time and scoped to the pinned Python lock and npm
+production graph, not a guarantee of future CVE status or production safety.

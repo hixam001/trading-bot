@@ -2,9 +2,18 @@
 
 ## Current §94 status — 2026-11-11
 
-Source remediation and offline checks: A1–A3/B1–B2 implemented; H01–H24 explicitly dispositioned. Backend **2227 passed**, browser **41/41**, build/type/bundle scanner and pip check clean. See `docs/SECURITY_REMEDIATION.md` for actual evidence and retained limits.
+A1–A3/B1–B2 source remediation committed as `04e1feb`; H01–H24 explicitly
+recorded with retained limits. Final canonical staged gate: **2243 backend
+passes**, **41 browser passes**, types/build/bundle/AST/dependency consistency
+passed; user-authorized advisory lookups found no known Python-lock advisories
+(75 packages) and zero npm production vulnerabilities. No installs or relaxed
+test isolation. Stage9 retains its existing unavailable-local-gitleaks notice;
+no new Docker/remote CI/production result is claimed. See remediation report.
 
-Release checks and push remain pending; this entry accompanies the local commit: advisory services unavailable under the no-network policy; no new dependency-clean or remote-CI claim. Preserve user untracked skill files and use only the retained OS sandbox.
+Commit/push authorized without contributor trailers; this update accompanies
+the verification follow-through. Preserve user untracked skill files. Use only
+the retained sandbox for target tests/builds and the manifest-only audit helper
+for permitted network advisory checks.
 
 ## Works (all verified)
 - [x] §93 local implementation and regression checks: **1934 backend passes**, **137/137 mutations caught**. See `docs/19_ROOTFS_AUDIT.md` for failing-first phase tables, projection assumptions and remaining operational verification. Docker unavailable locally; full Tests & Security Audit CI (42665808979) and gitleaks (42666899068) are verified green, including real-container ROFS smoke.

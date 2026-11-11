@@ -125,3 +125,17 @@ Append-only. Newest last. Full rationale lives in handoff.md §5 and docs/.
 - POSIX per-authority locks serialize RMW and sorted restore locks; one live strategy process remains required. Authenticated schema validation includes wallet snapshots and rejects path aliases/lock inode replacement.
 - Retain post-response token/cost stop thresholds instead of promising unproved maxima. Keep API/live scopes and exit-critical RPC separate.
 - Offline tests passed (2227 backend,41 browser); advisory checks unavailable. Do not bypass the pre-push gate or add contributor trailers. Original untracked skill files remain user-owned.
+
+## §94 follow-through — advisory-only permission and staged gate
+
+User explicitly permitted read-only PyPI/npm advisory lookups only, no installs.
+Canonical prepush now supports `--stage 1..9`; default all-check order and failure
+behavior preserved, independently reviewed and covered by 16 executable tests.
+Every actual stage passed: 2243 backend, 41 browser, AST/types/build/pipcheck;
+75 locked Python packages had no known advisories and npm reported 0 production
+vulnerabilities. Stage 9 emits its existing missing-gitleaks notice, not a clean
+scan claim. All test/build execution remained OS-sandboxed without external
+network; only manifest-only advisory stages 3/7 used the explicit exception.
+Original user requested publication without contributor trailers; final
+Git/delivery records actual push/CI status. Earlier offline advisory limitation
+is resolved.

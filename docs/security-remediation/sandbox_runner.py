@@ -12,7 +12,7 @@ if '--wall-seconds' in sys.argv:
 with tempfile.TemporaryDirectory(prefix='remediation-source-') as tmp:
  root=pathlib.Path(tmp);src=root/'source';src.mkdir()
  files=subprocess.check_output(['git','ls-files','--cached','--others','--exclude-standard','-z'],cwd=repo).decode().split('\0')
- with_frontend = any(flag in sys.argv for flag in ('--with-frontend','--frontend-only','--e2e'))
+ with_frontend = any(flag in sys.argv for flag in ('--with-frontend','--frontend-only','--e2e','--gate-e2e'))
 
  for name in set(files):
   p=pathlib.Path(name)
@@ -28,7 +28,7 @@ with tempfile.TemporaryDirectory(prefix='remediation-source-') as tmp:
  supervisor=root/'supervisor.py'
  supervisor.write_text('''import os,sys,resource,shutil,subprocess
 limits=[(resource.RLIMIT_CPU,240),(resource.RLIMIT_NOFILE,256),(resource.RLIMIT_FSIZE,16777216),(resource.RLIMIT_CORE,0)]
-if '--e2e' not in sys.argv:limits += [(resource.RLIMIT_AS,2147483648),(resource.RLIMIT_NPROC,64)]
+if '--e2e' not in sys.argv and '--gate-e2e' not in sys.argv:limits += [(resource.RLIMIT_AS,2147483648),(resource.RLIMIT_NPROC,64)]
 for k,v in limits:resource.setrlimit(k,(v,v))
 os.mkdir('/scratch/home');os.mkdir('/scratch/tmp')
 shutil.copytree('/source','/scratch/repo')
@@ -36,14 +36,16 @@ os.chdir('/scratch/repo')
 subprocess.run(['/usr/bin/git','init','-q'],check=True)
 subprocess.run(['/usr/bin/git','add','-A'],check=True)
 sys.path[:0]=['/deps','/scratch/repo','/scratch/repo/backend']
-if any(flag in sys.argv for flag in ('--with-frontend','--frontend-only','--e2e')):
+if any(flag in sys.argv for flag in ('--with-frontend','--frontend-only','--e2e','--gate-e2e')):
  os.symlink('/node_modules','/scratch/repo/frontend/node_modules')
  subprocess.run(['/usr/bin/npm','run','build'],cwd='frontend',check=True)
  subprocess.run(['/usr/bin/python3','scripts/scan_frontend_bundle.py'],check=True)
  if '--frontend-only' in sys.argv: raise SystemExit(0)
- if '--e2e' in sys.argv:
+ if '--e2e' in sys.argv or '--gate-e2e' in sys.argv:
   import socket,time
   env=dict(os.environ,DATA_BACKEND='mock',PYTHONPATH='/scratch/repo/backend',DB_PATH='/scratch/mock.db',LIVE_STATE_DIR='/scratch/state',LIVE_EXECUTION_STATE_DIR='/scratch/state',LOG_DIR='/scratch/logs',ADMIN_TOKEN='dummy-operator-token-0123456789abcdef',SESSION_SECRET='dummy-session-secret-9876543210abcdef',RATE_LIMIT_GENERAL_PER_MINUTE='2000',RATE_LIMIT_PAID_PER_MINUTE='1000',PLAYWRIGHT_BROWSERS_PATH='/browsers',BASE_URL='http://127.0.0.1:8000')
+  if '--gate-e2e' in sys.argv:
+   raise SystemExit(subprocess.run(['/bin/bash','scripts/prepush_check.sh','--stage','8'],env=env).returncode)
   with open('/scratch/mock-api.log','w') as log:
    server=subprocess.Popen(['/usr/bin/python3','-m','uvicorn','api.main:app','--app-dir','backend','--host','127.0.0.1','--port','8000','--workers','1'],env=env,stdout=log,stderr=subprocess.STDOUT)
    try:
@@ -73,11 +75,11 @@ raise SystemExit(pytest.main(['-p','pytest_asyncio.plugin']+sys.argv[1:]))
  cmd=['/usr/bin/bwrap','--unshare-all','--die-with-parent','--new-session','--cap-drop','ALL','--ro-bind','/usr','/usr','--symlink','usr/bin','/bin','--ro-bind','/lib','/lib','--ro-bind','/lib64','/lib64','--proc','/proc','--dev','/dev','--size','536870912','--tmpfs','/scratch','--ro-bind',str(src),'/source','--ro-bind',str(repo/'.venv/lib/python3.14/site-packages'),'/deps','--ro-bind',str(repo/'.venv/lib/python3.14/site-packages'),'/usr/lib/python3.14/site-packages','--size','134217728','--tmpfs','/tmp','--ro-bind',str(supervisor),'/supervisor.py','--ro-bind',str(hosts),'/etc/hosts','--clearenv','--setenv','PATH','/usr/bin','--setenv','HOME','/scratch/home','--setenv','TMPDIR','/tmp','--setenv','XDG_CACHE_HOME','/scratch/home','--setenv','PYTHONDONTWRITEBYTECODE','1','--setenv','PYTHONHASHSEED','0','--setenv','PYTEST_DISABLE_PLUGIN_AUTOLOAD','1','--remount-ro','/','--remount-ro','/proc','--remount-ro','/dev','/usr/bin/python3','-I','-B','/supervisor.py']+sys.argv[1:]
  if with_frontend:
   cmd[1:1]=['--ro-bind',str(repo/'frontend/node_modules'),'/node_modules']
- if '--e2e' in sys.argv:
+ if '--e2e' in sys.argv or '--gate-e2e' in sys.argv:
   browser=pathlib.Path('/home/hixam/.cache/ms-playwright/chromium_headless_shell-1234')
   cmd[1:1]=['--ro-bind',str(browser),'/browsers/chromium_headless_shell-1234']
  cgroup=None
- if '--e2e' in sys.argv:
+ if '--e2e' in sys.argv or '--gate-e2e' in sys.argv:
   # Trusted parent provisions a new private delegated cgroup. No target sees
   # cgroupfs or host control sockets. Refuse if this isolation is unavailable.
   membership=pathlib.Path('/proc/self/cgroup').read_text().strip().split('::',1)[1]
