@@ -770,3 +770,17 @@ docker compose logs --since 1h live | awk '/SIM_CONSENSUS_ATTEMPT side=buy phase
 
 These are refusal events per attempted buy; multiple RPC comparisons can emit
 multiple events for one attempt. Real refusal rates require VM burn-in.
+
+
+## §94: read-only state preflight
+
+Before upgrading, stop the old signer, copy its state to a private scratch
+directory, and run `python scripts/validate_state.py --state-dir <copy>`. Keep
+that copy and the old image for rollback. The validator reads recognized
+authority files only, never creates locks or import caches, and prints counts
+and invalid row indices/field names/reasons without values. Exit codes are
+valid, invalid and unreadable as described in `docs/11_DEPLOYMENT.md`. The same
+validators run as deployment preflight's `state validation` check for existing
+configured state directories; invalid/unreadable state fails preflight.
+Historical writer fixtures pass without loosening the runtime validators.
+Real VM state acceptance remains unverified until that copied-state check runs.

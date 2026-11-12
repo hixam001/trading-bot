@@ -516,3 +516,91 @@ skip relative to the auditor's stated measurement; no build-dependent skip is
 accepted as final verification. Final runs build the existing frontend inside
 the sandbox. Early interrupted plain runs and contaminated scratch snapshots
 were discarded and are not represented as baseline passes.
+
+
+### S5 — M2, read-only state and migration preflight
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| M2 state validation | Medium | `scripts/validate_state.py:235` | 44 failed before implementation → final affected suites 194 passed | Read-only known-file dispatch; pure runtime validators; per-row errors with safe field labels; duplicate identity detection; exit codes for invalid/unreadable | `test_section94_state_validation.py` |
+| M2 precise error labels | Medium | `scripts/validate_state.py:_validator_issue` | Review reproduction 9 failed → same final affected suites pass | Decode grouped runtime validator messages into specific attempt/mint field labels without values | `test_invalid_sell_attempt_reports_precise_field`; `test_invalid_signed_sell_mint_reports_precise_field` |
+| M2 deployment preflight | Medium | `scripts/preflight_deploy.py:844`; `docs/11_DEPLOYMENT.md:208` | Missing check failed in initial suite → valid/invalid/unreadable tests pass | Existing state directories validated before upgrade; copied-state and rollback runbook; legacy sell review | `test_preflight_runs_same_validators`; `test_preflight_unreadable_state_is_a_failure` |
+
+```sh
+python docs/security-remediation/sandbox_runner.py backend/tests/test_section94_state_validation.py -q
+# 44 failed in 0.27s (S5-before.log)
+python docs/security-remediation/sandbox_runner.py backend/tests/test_section94_state_validation.py -q -k 'invalid_sell_attempt or invalid_signed_sell_mint'
+# 9 failed, 61 deselected in 0.12s (S5-review-before.log)
+python docs/security-remediation/sandbox_runner.py backend/tests/test_section94_state_validation.py backend/tests/test_preflight_deploy.py backend/tests/test_audit_93_r1.py backend/tests/test_security_state_integrity.py backend/tests/test_remediation_wallet_snapshot.py -q
+# 194 passed in 3.97s (S5-after.log)
+```
+
+Failing-first excerpts:
+
+```text
+E ImportError: cannot import name 'validate_state' from 'scripts'
+FAILED backend/tests/test_section94_state_validation.py::test_preflight_runs_same_validators[False]
+FAILED backend/tests/test_section94_state_validation.py::test_invalid_signed_sell_mint_reports_precise_field
+E AssertionError: assert 'index=0 field=payload.mint reason=' in 'commits.json records=1 INVALID\n  index=0 field=record reason=invalid type, shape, or numeric value\n'
+```
+
+Read-only evidence: `test_reads_all_sidecars_without_locks_creation_or_writes`
+uses read-only file/directory modes, snapshots names/bytes, forbids store save
+methods, process locks and Path writes/mkdir, then verifies identical contents.
+`test_cli_does_not_create_python_import_caches` removes the bytecode environment
+flag in a subprocess and verifies no cache files appear. Unknown/secret
+sidecars are not opened; recognized symlinks refuse as unreadable. The tool
+never invokes a serialized write or a network API.
+
+Historical shapes found through source history:
+
+| Revision | Written shape / compatibility fixture |
+|---|---|
+| `fc5505d` | Ledger records envelope; kinds buy/close; required kind/key/mint/usd_size; optional token amount, price, signature, timestamp, PnL; default recorded, buy confirmed, closed buy closed; open set also includes sent |
+| `8204741` | Bare commit list; kind/nonce/payload/hash/sealed_at/signature/status; sealed/bound |
+| `16c9f73` | Nullable memo fields; published/failed and fail_reason |
+| `4c6788e` | Partial/full sell close defaults to recorded with empty signature |
+| `3828ec0` | OOB close: closed, empty signature, summed tokens, zero price; unknown proceeds zero usd_size and None PnL; optional note |
+| `dc52b35` | Move into backend/live_execution; same persisted schema |
+| `2f5e040` | Optional rule_id, including outofband |
+| `218e270` | Wallet snapshot ts/usdc/sol plus sol_price_usd/total_usd |
+| `13b226a` | Snapshot ts/usdc/sol; acknowledgment metadata reason/acknowledged_by in same file |
+| `92397cf` | Commit notes with text/at |
+| `4c29aa0` | Pending-buy blockhash/commit/memo/reason metadata; pending/failed/expired/confirmed settlement |
+| `fd7641a` | Confirmed replacement preserves pending timestamp/metadata |
+| `7e6e6c3` | Confirmed replacement clears reason; proven adoption may bind failed commit |
+| `04e1feb` | Sell attempt terms/signature/blockhash/status and append-only history, without signed_at; signature-keyed sell close records |
+
+Investigation commands actually run:
+
+```sh
+git log --all -p -- backend/live_execution/models.py
+git log --all -p -- backend/live_execution/commit_log.py backend/live_execution/reconcile.py
+git log --follow --format='%h %s' -- backend/live_execution/models.py
+git log --follow --format='%h %s' -- backend/live_execution/commit_log.py
+git log --all -S 'ExecutionRecord' --format='%h %s' -- backend/live_execution/models.py
+git log --all -S 'wallet_snapshot' --format='%h %s' -- backend/live_execution/reconcile.py
+git log --all -S 'rec["status"]' --format='%h %s' -- backend/live_execution/commit_log.py
+git log --all -S 'kind=' --format='%h %s' -- backend/live_execution/models.py
+git log --all -S 'status=' --format='%h %s' -- backend/live_execution/models.py
+git log --all -p -- scripts/restore_state.py scripts/backup_state.py
+git show fc5505d:live_execution/models.py
+git show 8204741:live_execution/commit_log.py
+git show 16c9f73:live_execution/commit_log.py
+git show 218e270:backend/live_execution/reconcile.py
+git show 13b226a:backend/live_execution/reconcile.py
+```
+
+No runtime validator loosening was necessary. Missing optional price/timestamp/
+token fields, missing/empty signature, memo-less commits, old snapshot extras,
+OOB unknown PnL and unsigned-time legacy attempts already load; tests now prove
+it. Present malformed types and nonfinite required numeric fields still refuse.
+Dataclass writers always serialize status, including its default, so no
+historical writer lacking status was found. Restore-only operator aliases
+OPEN/PARTIAL/open/partial are not an observed repository execution-writer
+schema and remain refused: accepting them without normalization would silently
+omit exposure, while normalization would exceed the permitted behavior scope.
+
+The real VM's state was not read. Its acceptance is **UNVERIFIED**; the operator
+must validate a retained scratch copy before recreating containers. Container
+source paths were checked in compose source, without running Docker.

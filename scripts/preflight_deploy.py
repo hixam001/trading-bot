@@ -69,7 +69,7 @@ ENV_OVERRIDE_KEYS = (
     "RESEARCH_PER_TICK", "LLM_BRAIN", "SOCIAL_LLM_API_KEY",
     "BRAVE_SEARCH_API_KEY", "SEARXNG_URL", "FIRECRAWL_API_KEY",
     "LLM_DAILY_CALL_CAP", "LLM_DAILY_TOKEN_CAP", "LLM_DAILY_COST_CAP_USD",
-    "SEARCH_DAILY_CALL_CAP",
+    "SEARCH_DAILY_CALL_CAP", "LIVE_EXECUTION_STATE_DIR", "LIVE_STATE_DIR",
 )
 
 # The two wallet secret channels are mutually exclusive (see wallet.py):
@@ -841,6 +841,45 @@ def check_spend_projection(env: dict[str, str]) -> Check:
         "configured caps cover projected typical and worst-case workloads")
 
 
+def check_state_validation(env: dict[str, str], root: Path) -> Check:
+    """Inspect existing authority with the same read-only upgrade validators."""
+    try:
+        from scripts.validate_state import validate_directory, result_code
+    except ModuleNotFoundError:
+        # Direct execution from outside the repository puts scripts/ itself
+        # on sys.path rather than its parent.
+        from validate_state import validate_directory, result_code
+
+    default = root / "backend" / "live_execution" / "state"
+    configured = (env.get("LIVE_EXECUTION_STATE_DIR") or str(default),
+                  env.get("LIVE_STATE_DIR") or str(default))
+    paths = []
+    for value in configured:
+        path = Path(value)
+        if not path.is_absolute():
+            path = root / path
+        if path not in paths:
+            paths.append(path)
+    reports = []
+    for path in paths:
+        try:
+            path.stat()
+        except FileNotFoundError:
+            continue
+        except OSError:
+            # Do not let a permissions error masquerade as absent state.
+            pass
+        reports.extend(validate_directory(path))
+    if result_code(reports):
+        issues = [f"{report.name} index={issue.index} field={issue.field}: {issue.reason}"
+                  for report in reports for issue in report.issues]
+        return _check("state validation", FAIL, "; ".join(issues))
+    if not reports:
+        return _check("state validation", PASS, "no existing known state files; nothing created")
+    return _check("state validation", PASS,
+                  f"{len(reports)} state files validated read-only")
+
+
 def run_preflight(env: dict[str, str], root: Path,
                   compose_config: dict | None = None,
                   compose_error: str = "",
@@ -865,6 +904,7 @@ def run_preflight(env: dict[str, str], root: Path,
     ])
     checks.append(check_body_buffering(env))
     checks.append(check_spend_projection(env))
+    checks.append(check_state_validation(env, root))
     checks.extend(check_wallet_file(env, root, uid_reader=uid_reader,
                                     euid_reader=euid_reader))
     if include_compose:

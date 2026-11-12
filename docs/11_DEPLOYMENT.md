@@ -205,6 +205,45 @@ wallet configured) the live cycle, and exits non-zero if EITHER dies, so the
 platform's restart policy recovers the whole engine. An armed deployment must
 never keep serving a green dashboard while the decision cycle is dead.
 
+**§94 pre-upgrade state validation.** Before recreating an existing live
+container, stop its signer and copy its complete state into a private scratch
+directory outside the build checkout. Keep this copy and the previous image
+revision for rollback. Stop this procedure if any command fails:
+
+```bash
+docker compose stop live
+state_copy="$(mktemp -d /var/tmp/trading-bot-state-preupgrade.XXXXXX)"
+live_container="$(docker compose ps -a -q live)"
+docker cp "$live_container:/app/backend/live_execution/state/." "$state_copy/"
+.venv/bin/python scripts/validate_state.py --state-dir "$state_copy"
+```
+
+The source path above is the live service's `engine_state` mount in
+`docker-compose.yml`; use the old deployment's actual state path if it was
+relocated. Recreate containers only after validation exits successfully. Exit `1` means
+invalid state; exit `2` means unreadable state. The validator prints file and
+record counts, and invalid record indices, fields and reasons, without values.
+It never writes, takes a process lock, opens a secret sidecar, or calls an RPC;
+the copied directory may be mounted read-only. It checks the ledger, commits,
+wallet baseline (including operator acknowledgment metadata), confirmations,
+blocklist, kill switch, break state and safety counters when present. A missing
+state file is not invented. The deployment preflight also runs these validators
+against existing configured `LIVE_EXECUTION_STATE_DIR` and `LIVE_STATE_DIR`;
+an invalid or unreadable record produces a `state validation` FAIL.
+
+The development checks use historical fixtures. Acceptance of the real VM
+state remains unverified until the operator runs this command on its copy.
+If validation fails, preserve the original files and investigate the reported
+fields before deploying; do not delete history to make the check pass. For
+rollback, stop the live process before restoring the retained copy with the
+prior image; keep both until restart and reconciliation are verified.
+
+Pre-fix pending sell attempts have no `signed_at` and are never automatically
+released. After deployment, inspect them with
+`scripts/resolve_pending_sell.py list` (add `--state-dir <directory>` before
+`list` when inspecting a relocated copy). Follow the explicit operator
+verification and typed-confirmation runbook in `docs/18_SECURITY.md`.
+
 **§93 R1 migration — writable homes for runtime state.** The containers run
 with a read-only root, so before `docker compose up -d` with the current
 compose, copy any existing state files out of the old container and into the
