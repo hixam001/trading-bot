@@ -50,7 +50,7 @@ from live_execution.jupiter_executor import (
     preflight,
     sign_after_checks,
 )
-from live_execution.models import ExecutionLedger
+from live_execution.models import ExecutionLedger, NoOpenPosition
 from live_execution.commit_log import CommitLog
 from live_execution.quote_params import build_quote_params
 from live_execution.venue import token_deltas_from_tx
@@ -667,6 +667,40 @@ def _notify_unresolved_sell(mint: str, reason: str) -> None:
         pass
 
 
+def _account_confirmed_sell(rec: dict, ledger: ExecutionLedger, logc: CommitLog,
+                            proceeds: float, fields: dict) -> OrderResult | None:
+    """Settle once, or retain the durable pending marker for repair."""
+    attempt = rec["sell_attempt"]
+    signature = attempt["signature"]
+    mint = rec["payload"]["mint"]
+    try:
+        already_closed = False
+        try:
+            ledger.reduce_position(mint, attempt["fraction"], proceeds,
+                                   full_close=attempt["full_close"],
+                                   rule_id=attempt.get("rule_id"), signature=signature)
+        except NoOpenPosition:
+            already_closed = True
+        logc.bind(rec["hash"], signature, allow_failed=True)
+        if already_closed:
+            logc.note(rec["hash"], "ledger_already_closed: " + signature)
+        logc.settle_sell_attempt(rec["hash"], signature, "confirmed")
+        if already_closed:
+            from alerts import alert_nowait, AlertEvent
+            alert_nowait(AlertEvent.INFO, f"Sell confirmed; ledger already closed: {signature}",
+                         key=f"ledger_already_closed:{signature}")
+            return OrderResult(status="blocked",
+                               reason="sell confirmed on-chain; position already closed in ledger",
+                               **fields)
+        return None
+    except Exception as exc:
+        reason = (f"exit_unresolved: sell confirmed on-chain; ledger accounting failed "
+                  f"({type(exc).__name__}); retry recovery after repairing accounting; "
+                  "operator: python scripts/resolve_pending_sell.py list")
+        _notify_unresolved_sell(mint, reason)
+        return OrderResult(status="failed", unresolved=True, reason=reason, **fields)
+
+
 async def _recover_sell(rec: dict, ledger: ExecutionLedger, logc: CommitLog,
                         resolution: tuple[str, object] | None = None) -> OrderResult:
     attempt = rec["sell_attempt"]
@@ -684,11 +718,9 @@ async def _recover_sell(rec: dict, ledger: ExecutionLedger, logc: CommitLog,
         proceeds = actuals["usdc_delta"]
         if proceeds is None:
             proceeds = attempt["proceeds_usd"]
-        ledger.reduce_position(mint, attempt["fraction"], proceeds,
-                               full_close=attempt["full_close"],
-                               rule_id=attempt.get("rule_id"), signature=signature)
-        logc.bind(rec["hash"], signature, allow_failed=True)
-        logc.settle_sell_attempt(rec["hash"], signature, "confirmed")
+        accounting = _account_confirmed_sell(rec, ledger, logc, proceeds, fields)
+        if accounting is not None:
+            return accounting
         tokens = actuals["tokens_delta"]
         return OrderResult(status="filled", usd_value=proceeds,
                            tokens=attempt["tokens"] if tokens is None else tokens,
@@ -1012,14 +1044,13 @@ async def place_sell(
                     "fill actuals unreadable for %s — journaling the quote "
                     "snapshot (proceeds=%.2f)",
                     outcome.signature[:16], proceeds_usd)
-            try:
-                ledger.reduce_position(mint, frac, proceeds_actual, full_close=full_close,
-                                       rule_id=rule_id, signature=outcome.signature)
-            except ValueError:
-                # Keep the durable attempt pending for repair; reporting filled
-                # here would hide that authoritative accounting did not happen.
-                raise
-            logc.settle_sell_attempt(sealed["hash"], outcome.signature, "confirmed")
+            rec = next(r for r in logc.pending_sells(mint) if r["hash"] == sealed["hash"])
+            accounting = _account_confirmed_sell(
+                rec, ledger, logc, proceeds_actual,
+                dict(side="sell", mint=mint, symbol=symbol, signature=outcome.signature,
+                     **commit_fields))
+            if accounting is not None:
+                return accounting
             outcome.usd_value = proceeds_actual
             outcome.tokens = tokens_sold_actual
             outcome.price_impact_pct = impact

@@ -19,7 +19,7 @@ if str(_BACKEND) not in sys.path:
 
 from live_execution import config
 from live_execution.commit_log import CommitLog
-from live_execution.executor import _resolve_sell_signature
+from live_execution.executor import _resolve_sell_signature, _account_confirmed_sell
 from live_execution.models import ExecutionLedger
 
 
@@ -91,11 +91,11 @@ async def resolve(args, *, input_fn=None, stdin=None):
         log.note(rec['hash'], note + ': ' + args.signature)
     else:
         ledger = ExecutionLedger(directory / 'executions.json')
-        ledger.reduce_position(args.mint, attempt['fraction'], args.proceeds_usd,
-                               full_close=attempt['full_close'], rule_id=attempt.get('rule_id'),
-                               signature=args.signature)
-        log.bind(rec['hash'], args.signature, allow_failed=True)
-        log.settle_sell_attempt(rec['hash'], args.signature, 'confirmed')
+        accounting = _account_confirmed_sell(
+            rec, ledger, log, args.proceeds_usd,
+            dict(side="sell", mint=args.mint, signature=args.signature))
+        if accounting is not None and accounting.unresolved:
+            return _refuse("confirmed sell accounting needs repair")
         log.note(rec['hash'], 'operator confirmed: ' + args.signature)
     print(f'{args.command}: {args.signature}')
     return 0

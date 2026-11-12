@@ -367,3 +367,38 @@ PYTHONPATH=/tmp/trading-bot-section94/offline-bootstrap env -u ADMIN_TOKEN .venv
 
 Final regression, mutation, frontend, deployment and live validation: not yet run
 by author at this phase. No CI status is claimed.
+
+
+### S2 — H2, already-closed confirmed sell
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| H2 | High | `backend/live_execution/executor.py:_account_confirmed_sell`; `models.py:NoOpenPosition` | 9 failing reproductions → affected suite 131 passed; final affected suite 102 passed | Catch only the typed missing-position error as already booked; bind and settle without another close or filled result; other accounting exceptions remain unresolved and converge after repair | `test_section94_sell_settlement.py` |
+| H2 operator confirm | High | `scripts/resolve_pending_sell.py:resolve` | 1 failed → included in final affected suite | CLI uses the same confirmed-sell settlement helper | `test_cli_confirm_already_closed_settles_without_second_close` |
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_settlement.py
+# 9 failed in 0.49s (S2-before.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_settlement.py backend/tests/test_section94_sell_release.py backend/tests/test_section94_sell_cli.py backend/tests/test_security_sell_recovery.py backend/live_execution/tests/test_reconcile.py backend/tests/test_audit_81_a.py
+# 131 passed in 0.82s (S2-after.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_cli.py::test_cli_confirm_already_closed_settles_without_second_close
+# 1 failed in 0.11s (S2-cli-before.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_settlement.py backend/tests/test_section94_sell_cli.py backend/tests/test_security_sell_recovery.py backend/live_execution/tests/test_reconcile.py backend/tests/test_audit_81_a.py
+# 102 passed in 0.45s (S2-final.log)
+```
+
+Failing-first excerpts:
+
+```text
+FAILED backend/tests/test_section94_sell_settlement.py::test_confirmed_sell_after_oob_close_settles_once_without_pnl_duplication
+E ValueError: no open position for So11111111111111111111111111111111111111112
+FAILED backend/tests/test_section94_sell_settlement.py::test_accounting_failure_is_unresolved_then_converges[error1-True]
+E OSError: fixture write failure
+FAILED backend/tests/test_section94_sell_cli.py::test_cli_confirm_already_closed_settles_without_second_close
+backend/live_execution/models.py:498: NoOpenPosition
+```
+
+`close_out_of_band` still closes independently, now warning and appending the
+pending signature to the existing note. The regression checks three recovery
+calls, one close record and unchanged realized PnL. Both immediate and recovered
+confirmed accounting failures return unresolved and succeed after repair.

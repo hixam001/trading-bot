@@ -25,6 +25,10 @@ from pathlib import Path
 from typing import Callable, Optional
 
 
+class NoOpenPosition(ValueError):
+    """The position was already closed; other accounting errors stay distinct."""
+
+
 def new_id() -> str:
     """Short opaque id for confirmations / records."""
     return uuid.uuid4().hex[:12]
@@ -325,7 +329,7 @@ class ExecutionLedger:
                      and r["mint"] == mint
                      and r["status"] in self._OPEN]
         if not open_buys:
-            raise ValueError(f"no open position for {mint}")
+            raise NoOpenPosition(f"no open position for {mint}")
         cost = open_buys[0]["usd_size"]
         rec = ExecutionRecord(
             kind="close",
@@ -491,7 +495,7 @@ class ExecutionLedger:
                     return ExecutionRecord.from_json(row)
         open_buys = [r for r in records if r["kind"] == "buy" and r["mint"] == mint and r["status"] in self._OPEN]
         if not open_buys:
-            raise ValueError(f"no open position for {mint}")
+            raise NoOpenPosition(f"no open position for {mint}")
         target_key = open_buys[0]["idempotency_key"]
         frac = min(max(fraction, 0.01), 1.0)
         rec = ExecutionRecord(
@@ -570,7 +574,21 @@ class ExecutionLedger:
                      if r["kind"] == "buy" and r["mint"] == mint
                      and r["status"] in self._OPEN]
         if not open_buys:
-            raise ValueError(f"no open position for {mint}")
+            raise NoOpenPosition(f"no open position for {mint}")
+        # The independent close remains allowed, but preserve the pending
+        # chain identity so recovery/operators can see why it was already booked.
+        from live_execution.commit_log import CommitLog
+        import logging
+        try:
+            pending = CommitLog(self.path.parent / "commits.json").pending_sells(mint)
+        except RuntimeError:
+            logging.getLogger(__name__).warning("out-of-band close: pending sell log unreadable")
+            pending = []
+        if pending:
+            signatures = ", ".join(r["sell_attempt"]["signature"] for r in pending)
+            logging.getLogger(__name__).warning(
+                "out-of-band close %s while pending sell signature=%s", mint, signatures)
+            note = (note + "; " if note else "") + "pending sell signature=" + signatures
         total_cost = sum(float(r.get("usd_size") or 0.0) for r in open_buys)
         total_tokens = sum(float(r.get("tokens_out") or 0.0) for r in open_buys)
         for r in open_buys:

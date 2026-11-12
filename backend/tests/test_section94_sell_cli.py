@@ -68,3 +68,13 @@ async def test_cli_refuses_without_mutation(cli_state, variant):
     result = await cli.resolve(cli.parse_args(argv), input_fn=lambda _: 'bad' if variant == 'wrong_typed' else action, stdin=SimpleNamespace(isatty=lambda: variant != 'non_tty'))
     assert result == 1
     assert before == {p.name: p.read_bytes() for p in directory.iterdir()}
+
+
+async def test_cli_confirm_already_closed_settles_without_second_close(cli_state):
+    from scripts import resolve_pending_sell as cli
+    directory, log, ledger = cli_state
+    ledger.close_out_of_band(MINT, proceeds_usd=12, note='operator fixture')
+    args = cli.parse_args(['--state-dir', str(directory), 'confirm', '--mint', MINT, '--signature', 'known-signature', '--proceeds-usd', '12'])
+    assert await cli.resolve(args, input_fn=lambda _: 'confirm', stdin=SimpleNamespace(isatty=lambda: True)) == 0
+    assert not log.pending_sells(MINT)
+    assert len([r for r in ledger._load() if r['kind'] == 'close']) == 1

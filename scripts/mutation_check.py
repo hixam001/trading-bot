@@ -1575,6 +1575,16 @@ MUTATIONS: list[Mutation] = [
         exact_old_text='if not all(value is False for value in validities):', new_text='if not all(not value for value in validities):',
         test_selector="backend/tests/test_section94_sell_release.py",
         description='Treat unknown or zero blockhash answers as explicit False'),
+    Mutation(phase="§94-S2", mutation_id='94S2_NO_OPEN_HANDLER',
+        file_path="backend/live_execution/executor.py",
+        exact_old_text='except NoOpenPosition:\n            already_closed = True', new_text='except KeyError:\n            already_closed = True',
+        test_selector="backend/tests/test_section94_sell_settlement.py",
+        description='Remove already-closed confirmed-sell settlement'),
+    Mutation(phase="§94-S2", mutation_id='94S2_DUPLICATE_CLOSE',
+        file_path="backend/live_execution/executor.py",
+        exact_old_text='except NoOpenPosition:\n            already_closed = True', new_text='except NoOpenPosition:\n            already_closed = True\n            from live_execution.models import ExecutionRecord\n            ledger.append(ExecutionRecord(kind="close", idempotency_key="duplicate-close", mint=mint, usd_size=proceeds, pnl_usd=proceeds))',
+        test_selector="backend/tests/test_section94_sell_settlement.py",
+        description='Book a second close after independent closure'),
 ]
 
 
