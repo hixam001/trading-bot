@@ -317,8 +317,8 @@ Neither absence nor expiry alone suffices. See the §94 runbook in
 
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
-| H1 | High | `backend/live_execution/executor.py:_resolve_sell_signature`; `commit_log.py:record_sell_attempt` | Before command below: 28 failed, 1 passed; after core/CLI command: 39 passed | One shared resolver; signing time; all-endpoint explicit finalized expiry; persisted reobservation; append-only release history; no authority in recovery call | `test_section94_sell_release.py` |
-| H1 operator hold | High | `scripts/resolve_pending_sell.py:resolve` | Before CLI command: 10 failed; same command after: included in 39 passed | Read-only list; typed release attestation; chain-confirmed signature-idempotent adoption; unknown-signature refusal | `test_section94_sell_cli.py` |
+| H1 | High | `backend/live_execution/executor.py:563`; `commit_log.py:160` | Before command below: 28 failed, 1 passed; after core/CLI command: 39 passed | One shared resolver; signing time; all-endpoint explicit finalized expiry; persisted reobservation; append-only release history; no authority in recovery call | `test_section94_sell_release.py` |
+| H1 operator hold | High | `scripts/resolve_pending_sell.py:47` | Before CLI command: 10 failed; same command after: included in 39 passed | Read-only list; typed release attestation; chain-confirmed signature-idempotent adoption; unknown-signature refusal | `test_section94_sell_cli.py` |
 
 Commands run (scratch output under `/tmp/trading-bot-section94`):
 
@@ -373,8 +373,8 @@ by author at this phase. No CI status is claimed.
 
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
-| H2 | High | `backend/live_execution/executor.py:_account_confirmed_sell`; `models.py:NoOpenPosition` | 9 failing reproductions → affected suite 131 passed; final affected suite 102 passed | Catch only the typed missing-position error as already booked; bind and settle without another close or filled result; other accounting exceptions remain unresolved and converge after repair | `test_section94_sell_settlement.py` |
-| H2 operator confirm | High | `scripts/resolve_pending_sell.py:resolve` | 1 failed → included in final affected suite | CLI uses the same confirmed-sell settlement helper | `test_cli_confirm_already_closed_settles_without_second_close` |
+| H2 | High | `backend/live_execution/executor.py:691`; `models.py:28` | 9 failing reproductions → affected suite 131 passed; final affected suite 102 passed | Catch only the typed missing-position error as already booked; bind and settle without another close or filled result; other accounting exceptions remain unresolved and converge after repair | `test_section94_sell_settlement.py` |
+| H2 operator confirm | High | `scripts/resolve_pending_sell.py:47` | 1 failed → included in final affected suite | CLI uses the same confirmed-sell settlement helper | `test_cli_confirm_already_closed_settles_without_second_close` |
 
 ```sh
 python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_settlement.py
@@ -408,8 +408,8 @@ confirmed accounting failures return unresolved and succeed after repair.
 
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
-| H3 | High availability, unmeasured | `backend/live_execution/solana.py:responses_agree`; `sim_guard.py:simulate_and_assert` | 6 failed, 27 passed → affected suite 84 passed | Structural checks everywhere; exact token controls; ownership discovery using agreed token owner; wallet tolerances; opaque pool bytes/lamports excluded; compare guard F verdict when it consumes vault amounts | `test_section94_consensus.py` |
-| H3 observability | High availability, unmeasured | `solana.py:_consensus_refused`; `backend/api/main.py:health_check` | Same failing/passing commands | Structured refusals; fixed category/side counters with saturated integers; process-local health surface; pre-state attempt log | `test_consensus_refusals_are_structured_and_bounded` |
+| H3 | High availability, unmeasured | `backend/live_execution/solana.py:218`; `sim_guard.py:226` | 6 failed, 27 passed → affected suite 84 passed | Structural checks everywhere; exact token controls; ownership discovery using agreed token owner; wallet tolerances; opaque pool bytes/lamports excluded; compare guard F verdict when it consumes vault amounts | `test_section94_consensus.py` |
+| H3 observability | High availability, unmeasured | `solana.py:145`; `backend/api/main.py:389` | Same failing/passing commands | Structured refusals; fixed category/side counters with saturated integers; process-local health surface; pre-state attempt log | `test_consensus_refusals_are_structured_and_bounded` |
 
 ```sh
 python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_consensus.py
@@ -422,9 +422,9 @@ Failing-first excerpts:
 
 ```text
 FAILED backend/tests/test_section94_consensus.py::test_hot_pool_one_slot_apart_agrees_despite_market_data_and_vault_move
-E assert False
+E AssertionError: assert False
 FAILED backend/tests/test_section94_consensus.py::test_transfer_fee_withheld_amount_is_the_only_exempt_extension_payload
-E assert False
+E AssertionError: assert False
 FAILED backend/tests/test_section94_consensus.py::test_real_quorum_accepts_hot_pool_snapshots
 E TypeError: simulate_transaction() got an unexpected keyword argument 'wallet_address'
 ```
@@ -470,8 +470,8 @@ The log query and process-local counter limitation are in `docs/18_SECURITY.md`.
 
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
-| M1 close authority | Medium | `solana.py:responses_agree`; `mutation_check.py:81C_SOLANA_AGREE_CLOSE_AUTH` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact close-authority base-layout range | `test_named_control_field_mutation_is_caught_by_existing_regression` |
-| M1 delegated amount | Medium | `solana.py:responses_agree`; `mutation_check.py:81C_SOLANA_AGREE_DELEGATED_AMT` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact delegated-amount base-layout range | Same parametrized executable mutation test |
+| M1 close authority | Medium | `solana.py:218`; `mutation_check.py:81C_SOLANA_AGREE_CLOSE_AUTH` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact close-authority base-layout range | `test_named_control_field_mutation_is_caught_by_existing_regression` |
+| M1 delegated amount | Medium | `solana.py:218`; `mutation_check.py:81C_SOLANA_AGREE_DELEGATED_AMT` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact delegated-amount base-layout range | Same parametrized executable mutation test |
 | M1 historical claims | Medium | `handoff.md`; `memory-bank/*`; `docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md` | Fresh baseline run 135/137; S4 full run 149/149 | Append dated corrections without rewriting records; enumerate actual money-path and operational changes | Full no-flags mutation checker and generated log |
 
 Commands/results:
@@ -523,7 +523,7 @@ were discarded and are not represented as baseline passes.
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
 | M2 state validation | Medium | `scripts/validate_state.py:235` | 44 failed before implementation → final affected suites 194 passed | Read-only known-file dispatch; pure runtime validators; per-row errors with safe field labels; duplicate identity detection; exit codes for invalid/unreadable | `test_section94_state_validation.py` |
-| M2 precise error labels | Medium | `scripts/validate_state.py:_validator_issue` | Review reproduction 9 failed → same final affected suites pass | Decode grouped runtime validator messages into specific attempt/mint field labels without values | `test_invalid_sell_attempt_reports_precise_field`; `test_invalid_signed_sell_mint_reports_precise_field` |
+| M2 precise error labels | Medium | `scripts/validate_state.py:71` | Review reproduction 9 failed → same final affected suites pass | Decode grouped runtime validator messages into specific attempt/mint field labels without values | `test_invalid_sell_attempt_reports_precise_field`; `test_invalid_signed_sell_mint_reports_precise_field` |
 | M2 deployment preflight | Medium | `scripts/preflight_deploy.py:844`; `docs/11_DEPLOYMENT.md:208` | Missing check failed in initial suite → valid/invalid/unreadable tests pass | Existing state directories validated before upgrade; copied-state and rollback runbook; legacy sell review | `test_preflight_runs_same_validators`; `test_preflight_unreadable_state_is_a_failure` |
 
 ```sh
@@ -612,7 +612,7 @@ source paths were checked in compose source, without running Docker.
 |---|---|---|---|---|---|
 | M3 | Low | `backend/bounded_http.py:22`, `:56` | 8 failing HTTP/CWD reproductions → 47 affected tests pass, then integrated 68 pass | Refuse explicit redirects/incompatible explicit encoding; case-insensitive identity header; warning once per host/hour with bounded memory and no URL secrets | `test_section94_http_policy.py`; streamed body/timeout neighbors |
 | M4 docker context | Low | `backend/tests/test_remediation_hardening.py:327` | FileNotFoundError after CWD change → passing regression from root and backend | Locate .dockerignore via Path(__file__) | `test_dockerignore_regression_is_independent_of_working_directory` |
-| M4 subprocess source scan | Low | `backend/tests/test_audit_77_a.py:test_repo_has_no_test_captcha_pass_in_backend_code` | 3 failing real grep regressions → root/backend affected suites 55 pass each | Absolute source path; grep errors fail instead of passing without a scan | `test_captcha_source_scan_executes_from_backend_cwd` clean/hostile/missing variants |
+| M4 subprocess source scan | Low | `backend/tests/test_audit_77_a.py:70` | 3 failing real grep regressions → root/backend affected suites 55 pass each | Absolute source path; grep errors fail instead of passing without a scan | `test_captcha_source_scan_executes_from_backend_cwd` clean/hostile/missing variants |
 | Hold test consistency | Low | `backend/tests/test_audit_79_b.py` | First full root integration: 2 failed, 2411 passed → final root/backend each 2425 pass | Assert actionable missing-blockhash/age reasons and unresolved state; strengthen unchanged-accounting and no-blockhash-RPC assertions; preserve all hold cases | Existing double-fill tests and new S1 release dimensions |
 
 Commands and results:
@@ -675,7 +675,152 @@ the four trading/preflight behavior items listed in S7. No production caller
 explicitly requested those options in the source audit.
 
 **UNVERIFIED providers:** documented SearXNG bases `http://searxng:8080` and
-`http://127.0.0.1:8888` in `.env.example:272`–`273` (compose uses the service
+`http://127.0.0.1:8888` in `.env.example:277`–`278` (compose uses the service
 URL). No source-known redirect was identified; actual custom RPC, LLM, Jupiter,
 alert, scrape/research proxy and SearXNG URLs were neither read from secrets nor
 contacted. Their redirect behavior remains operator validation.
+
+
+### S7 — operational record and final review
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| H1 operator evidence detail | High finding, observability follow-up | `scripts/resolve_pending_sell.py:47`; `backend/live_execution/executor.py:563` | Final review: 1 failed → 88 affected checks pass | List every release condition as met, unmet or explicitly unverified; no extra RPC, write or release decision | `test_list_is_read_only_and_has_operator_evidence` |
+| M1 final record | Medium | `docs/17_MUTATION_LOG.md`; handoff/memory addenda | Full final no-flags run 149 caught, zero survivors; final root/backend suites each 2425 passed | Generated log copied as data out of disposable sandbox; command-backed counts only; dated historical corrections retained | Full mutation checker, canonical gate stage and backend-CWD suite |
+| M2 upgrade documentation | Medium | `docs/11_DEPLOYMENT.md`; `docs/18_SECURITY.md`; `.env.example` | Historical fixtures and read-only tests pass; actual VM not run by author | Preserve upgrade copy; review old unsigned-time sells; conservative environment example; mark external validation limits | State validation suite and final source review |
+
+Final review caught a reporting omission in CLI list: terminal rows previously
+printed `conditions=None`, without enumerating met/unmet facts. The read-only
+listing now includes distinct hosts, all-ABSENT, finalized expiry, signing age
+and delayed reobservation; a skipped RPC check is labeled unverified. This
+changes operator diagnostics only and adds no release decision or network call.
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_cli.py::test_list_is_read_only_and_has_operator_evidence
+# 1 failed in 0.09s (S7-list-before.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_release.py backend/tests/test_section94_sell_settlement.py backend/tests/test_section94_sell_cli.py backend/tests/test_security_sell_recovery.py backend/tests/test_audit_82_e.py
+# 88 passed in 0.47s (S7-list-after.log)
+```
+
+```text
+E           AssertionError: assert 'distinct_hosts=' in 'mint=So11111111111111111111111111111111111111112 signature=known-signature age=1794453629s status=confirmed conditions=None\nhttps://solscan.io/tx/known-signature\n'
+FAILED backend/tests/test_section94_sell_cli.py::test_list_is_read_only_and_has_operator_evidence
+1 failed in 0.09s
+```
+
+Final commands after that source change:
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash scripts/prepush_check.sh --stage 1
+# 2425 passed, 102 warnings in 34.84s; PRE-PUSH STAGE 1 PASSED
+# gate-stage1-final.log; root invocation; no failures or skips
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'cd backend && /usr/bin/python3 -m pytest -q -rs'
+# 2425 passed, 102 warnings in 34.70s; no failures or skips
+# backend-cwd-last.log
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+# All restorations verified clean. Mutations: 149, Caught: 149, Survivors: 0
+# S7-mutation-final.log; checker receives NO flags
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/audit_runtime_writes.py --check
+# exit 0; inventory clean (runtime-writes.log)
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /usr/bin/python3 -c 'import subprocess,sys; stages=[2,4,5,6,9]; results=[(stage,subprocess.run(["/bin/bash","scripts/prepush_check.sh","--stage",str(stage)]).returncode) for stage in stages]; print("SECTION94_GATE_RESULTS",results); sys.exit(any(code for stage,code in results))'
+# SECTION94_GATE_RESULTS [(2, 0), (4, 0), (5, 0), (6, 0), (9, 0)]
+# gate-local-stages.log
+python3 docs/security-remediation/sandbox_runner.py --gate-e2e
+# 41 passed (14.9s); PRE-PUSH STAGE 8 PASSED (gate-stage8.log)
+git diff --check
+# exit 0
+```
+
+These are the actual required pre-push stage dispositions:
+
+| Stage | Result from author execution |
+|---|---|
+| Backend | PASS, final root suite above; separate backend-CWD suite also passes |
+| Python dependency consistency | PASS: No broken requirements found |
+| Python advisories | **UNAVAILABLE / RED**: initial missing console script; scratch wrapper for installed module then failed resolving PyPI; no clean advisory status |
+| API keypair AST isolation | PASS |
+| TypeScript | PASS: actual `npx tsc --noEmit` stage |
+| Production build | PASS: actual npm build and setup bundle secret scanner |
+| npm advisories | **UNAVAILABLE / RED**: npm registry DNS/network unavailable; no clean advisory status |
+| Playwright | PASS against isolated mock backend and existing Chromium |
+| Secret scan dispatch | Stage exits successfully under its existing missing-gitleaks policy; **local secret scan not run by author** |
+
+Advisory attempts, all with networking disabled:
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py --command /bin/bash scripts/prepush_check.sh --stage 3
+# exit 127: pip-audit: command not found (gate-stage3.log)
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'from pathlib import Path; import subprocess,sys; bin=Path(".venv/bin"); bin.mkdir(parents=True); (bin/"python").symlink_to("/usr/bin/python3"); tool=bin/"pip-audit"; tool.write_text("#!/bin/sh\nexec /usr/bin/python3 -m pip_audit \"$@\"\n"); tool.chmod(0o755); sys.exit(subprocess.run(["/bin/bash","scripts/prepush_check.sh","--stage","3"]).returncode)'
+# exit 1: requests.exceptions.ConnectionError / NameResolutionError: pypi.org
+# gate-stage3-adapted.log
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash scripts/prepush_check.sh --stage 7
+# exit 1: getaddrinfo EAI_AGAIN registry.npmjs.org (gate-stage7.log)
+```
+
+**The complete pre-push gate is RED. No push was performed.** The user's
+no-network rule prevents completing the registry advisory lookups. The author
+requested a specific exception for the existing manifest-only advisory runner;
+without approval, leave commits local. No new hosted CI status is claimed.
+
+Independent S1/S2 source review and regression command:
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_release.py backend/tests/test_section94_sell_settlement.py backend/tests/test_section94_sell_cli.py backend/tests/test_security_sell_recovery.py
+# 86 passed in 0.46s (review-S1-S2-targeted.log); no concrete correctness blocker found
+```
+
+The final source diff was re-read for release evidence, double accounting,
+signature identity, policy changes and information disclosure. Existing tests
+`test_unresolved_negative_or_ambiguous_send_never_releases_intent`,
+`test_receipt_signature_mismatch_resolves_only_locally_signed_identity`,
+`test_enabled_executor_approval_mismatch_before_memo`,
+`test_output_minimum_is_net_wallet_gain`,
+`test_overlapping_process_writes_preserve_every_record` and
+`test_process_crash_releases_lock_and_nested_same_file_is_reentrant` are in the
+passing full suite. The diff of existing sizing/signing/exit/cap/container
+configuration files showed only the new release-age configuration in live
+config; the existing risk constants and core decision modules were not edited.
+Native approved-DEX exploitability remains unproven; source invariants and
+dummy-layout fixtures do not establish a native-program exploit or its absence.
+
+Evidence-scope correction: early plain pytest attempts were interrupted after
+unmocked read-only transport waits and do not prove OS isolation or external
+delivery. They are not full-suite passes. All retained complete regression,
+mutation, build, browser and gate results use the existing trusted source-copy
+runner with external networking disabled and real state/environment files
+excluded. The discarded contaminated scratch baselines were rebuilt from the
+requested revision before measurement. No historical result is reused as a
+current verification claim.
+
+**UNVERIFIED / not run by author:**
+
+- Actual VM state acceptance and restart/reconciliation after deployment; run the copied-state pre-upgrade procedure.
+- Docker image/runtime behavior on the VM; source compose controls and isolated mocks were checked only.
+- Supabase connectivity, certificate/pin setup and deployed permissions.
+- Real RPC buy refusal rate and correlated dishonest/lagging endpoint risk; use the burn-in log query.
+- Provider redirects/custom URLs, including documented HTTP SearXNG local-service examples.
+- Current upstream Token-2022 extension specification/version alignment; public spec was not fetched under the no-network rule.
+- Python/npm advisory status and a local gitleaks scan; dependency consistency and tests do not prove CVE cleanliness.
+- Current hosted CI, production wallet/fill behavior, native approved-DEX exploitability.
+
+Behaviour changes:
+
+- (a) expired sell attempts are released on all-endpoint positive evidence
+- (b) a confirmed sell on an already-closed position settles instead of looping
+- (c) simulation consensus no longer requires byte-equal pool state
+- (d) preflight now validates state files
+
+**Additional requested HTTP policy clarification:** explicit redirect following
+and incompatible explicit Accept-Encoding now raise ValueError; returned
+redirects are observable. This ancillary API policy change is disclosed in S6
+and the behavior map; the source audit found no production caller requesting
+those options. Operator tooling and list diagnostics implement the requested
+recovery runbook without changing trade sizing, gates, the exit ladder, caps,
+kill switch, arming or signing authorization.
+
+Source history: `ea0a899` → S1 `5177a77` → S2 `17a26ca` → S3 `a77a8af` →
+S4 `abfe549` → S5 `2db2070` → S6 `4edcb7f` → S7 this commit. Original audit
+findings remain above. Overall release/push completion remains blocked by the
+red advisory stages; implementation/test evidence does not waive that gate.
+
+VERDICT: FAIL -- complete pre-push gate unavailable under the no-network constraint.

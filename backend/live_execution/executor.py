@@ -561,7 +561,8 @@ async def _resolve_signature_outcome(signature: str) -> tuple[str, object, int |
 
 
 async def _resolve_sell_signature(signature: str, rec: dict, logc: CommitLog,
-                                  *, persist_candidate: bool = True) -> tuple[str, object]:
+                                  *, persist_candidate: bool = True,
+                                  diagnostics: dict | None = None) -> tuple[str, object]:
     """One resolution rule for recovery, ladder checks and post-send ambiguity.
 
     Release requires two complete positive observations. Unknown facts reset
@@ -573,6 +574,22 @@ async def _resolve_sell_signature(signature: str, rec: dict, logc: CommitLog,
     except Exception:
         observations = []
     state, error = resolve_signature_observations(observations)
+    if diagnostics is not None:
+        # Operator-only explanation; it neither makes a decision nor performs
+        # extra RPCs. Checks skipped by the resolver are explicitly unverified.
+        from urllib.parse import urlparse
+        attempt_info = rec["sell_attempt"]
+        signed = attempt_info.get("signed_at")
+        hostnames = {urlparse(ep).hostname for ep in endpoints}
+        diagnostics.update(
+            distinct_hosts="met" if None not in hostnames and len(hostnames) >= 2 else "unmet",
+            all_absent="met" if isinstance(observations, list) and observations
+                and len(observations) == len(endpoints)
+                and all(s is solana.ABSENT for s in observations) else "unmet",
+            finalized_expired="unverified(prerequisites/terminal-outcome)",
+            minimum_signing_age="met" if signed is not None
+                and logc.now_fn() - signed >= config.SELL_ATTEMPT_RELEASE_MIN_AGE_SECONDS else "unmet",
+            two_observations="unmet")
     if state != "pending":
         return state, error
     attempt = rec["sell_attempt"]
@@ -604,10 +621,14 @@ async def _resolve_sell_signature(signature: str, rec: dict, logc: CommitLog,
                 return None
 
         validities = await asyncio.gather(*(expired(ep) for ep in endpoints))
+        if diagnostics is not None:
+            diagnostics["finalized_expired"] = "met" if all(value is False for value in validities) else "unmet"
         if not all(value is False for value in validities):
             unmet.append("need explicit finalized-expired blockhash from every endpoint")
     since = (logc.observe_sell_release(rec["hash"], signature, not unmet)
              if persist_candidate else attempt.get("release_candidate_since"))
+    if diagnostics is not None and not unmet and since is not None and now - since >= 60:
+        diagnostics["two_observations"] = "met"
     if not unmet and since is not None and now - since >= 60:
         return "released", f"released: all endpoints absent + blockhash finalized-expired (age {age:.0f}s)"
     if not unmet:

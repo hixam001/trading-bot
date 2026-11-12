@@ -32,6 +32,10 @@ async def test_list_is_read_only_and_has_operator_evidence(cli_state, capsys):
     assert MINT in output and 'known-signature' in output and 'age' in output
     assert 'https://solscan.io/tx/known-signature' in output
     assert 'confirmed' in output
+    for condition in ('distinct_hosts=', 'all_absent=', 'finalized_expired=',
+                      'minimum_signing_age=', 'two_observations='):
+        assert condition in output
+    assert 'all_absent=unmet' in output
 
 
 @pytest.mark.parametrize('action', ['release', 'confirm'])

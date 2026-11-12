@@ -53,10 +53,13 @@ async def resolve(args, *, input_fn=None, stdin=None):
             attempt = rec.get('sell_attempt', {})
             if attempt.get('status') != 'pending':
                 continue
-            state, reason = await _resolve_sell_signature(attempt['signature'], rec, log, persist_candidate=False)
+            diagnostics = {}
+            state, reason = await _resolve_sell_signature(
+                attempt['signature'], rec, log, persist_candidate=False, diagnostics=diagnostics)
             signed = attempt.get('signed_at')
             age = 'unknown (legacy)' if signed is None else f'{max(0, time.time() - signed):.0f}s'
             print(f"mint={rec['payload']['mint']} signature={attempt['signature']} age={age} status={state} conditions={reason}")
+            print("release_conditions " + " ".join(f"{key}={value}" for key, value in diagnostics.items()))
             print(f"https://solscan.io/tx/{attempt['signature']}")
         return 0
     rec = next((r for r in records if r.get('kind') == 'sell'

@@ -1326,3 +1326,41 @@ Current VM, Docker, Supabase, actual RPC refusal rates, provider redirects and
 hosted CI have not been verified by this author. Final §94 regression/gate
 results are recorded separately after execution; no old green status is
 reused as current evidence.
+
+
+## §94 S7 — local verification and publication hold (2026-11-12)
+
+S1–S6 are committed forward from `ea0a899`; S7 adds the final operational
+record, generated mutation log, conservative release-age example and complete
+read-only operator condition listing. Sell recovery/release, already-closed
+settlement, consumed-field consensus and state preflight are implemented. The
+existing sizing, ladder, caps, arming and signing rules remain in place.
+Legacy sell attempts without signed_at require operator review; validate an
+old state's scratch copy before upgrade and retain it for rollback.
+
+Fresh final commands and observed results:
+
+- `python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash scripts/prepush_check.sh --stage 1`: **2425 passed**, no failures/skips, 102 existing warnings.
+- `python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'cd backend && /usr/bin/python3 -m pytest -q -rs'`: **2425 passed**, no failures/skips, 102 existing warnings.
+- No-flags `scripts/mutation_check.py` inside the scratch sandbox: **149/149 caught, zero survivors**, restoration verified; exact export command in `docs/SECURITY_REMEDIATION.md` S7.
+- `python3 docs/security-remediation/sandbox_runner.py --gate-e2e`: **41 passed**, actual isolated mock API/browser. Types, production build/bundle scanner, pip consistency, API isolation and runtime-write inventory also passed; exact stage commands/results are in the report.
+
+**Not published: complete pre-push gate is red.** Python/npm advisory stages
+were attempted in the no-network sandbox and could not reach their registries.
+The missing Python console script was addressed by a scratch wrapper around
+the installed module, then the actual lookup failed resolving PyPI. npm failed
+resolving its registry. No dependencies were installed, no advisory cleanliness
+is claimed, and no check was bypassed. The existing manifest-only advisory
+exception was requested from the user; absent approval, keep commits local.
+Stage secret-scan dispatch follows the existing missing-local-gitleaks policy;
+a local secret scan was **not run by author**. No current hosted CI is claimed.
+
+Real VM state/restart, Docker deployment, Supabase, actual RPC refusal rate,
+provider redirects, current upstream Token-2022 spec alignment and native
+approved-DEX exploitability remain **UNVERIFIED / not run by author**. Read-only
+fixtures and source invariants do not establish those deployment facts. The
+requested explicit HTTP redirect/encoding ValueError policy is disclosed as
+an ancillary API change; the production callsite audit found no explicit
+redirect request. Full phase tables, failing-first excerpts, consumed fields,
+historical state shapes and remaining validation facts are in
+`docs/SECURITY_REMEDIATION.md`. Prior audit findings and records remain intact.

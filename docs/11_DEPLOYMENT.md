@@ -240,7 +240,7 @@ prior image; keep both until restart and reconciliation are verified.
 
 Pre-fix pending sell attempts have no `signed_at` and are never automatically
 released. After deployment, inspect them with
-`scripts/resolve_pending_sell.py list` (add `--state-dir <directory>` before
+`python scripts/resolve_pending_sell.py list` (add `--state-dir <directory>` before
 `list` when inspecting a relocated copy). Follow the explicit operator
 verification and typed-confirmation runbook in `docs/18_SECURITY.md`.
 

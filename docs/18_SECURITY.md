@@ -799,4 +799,4 @@ a bounded host cache. Configure final provider URLs; no redirect is followed.
 The offline source audit found no production caller explicitly asking for
 redirect following. HTTP SearXNG examples are local-service URLs, not evidence
 that the VM endpoints work. Custom provider URLs and redirects need operator
-verification; no provider was contacted during §94.
+verification; retained verification ran with external networking disabled.
