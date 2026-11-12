@@ -68,7 +68,8 @@ async def test_partial_sell_absence_then_success_authorizes_once(sell_env, monke
     [{"confirmationStatus": "confirmed", "err": {"InstructionError": []}, "slot": 5}] * 2,
     [{"confirmationStatus": "confirmed", "err": None, "slot": 5, "status": {"Err": "AccountNotFound"}}] * 2,
 ])
-async def test_unknown_or_conflicting_exit_survives_restart(sell_env, monkeypatch, observations):
+@pytest.mark.parametrize("legacy_attempt", [False, True])
+async def test_unknown_or_conflicting_exit_survives_restart(sell_env, monkeypatch, observations, legacy_attempt):
     ledger, commits = sell_env
     boundary = AsyncMock(return_value=ex.OrderResult(status="failed", signature="pending",
                                                     reason="not confirmed before timeout", unresolved=True))
@@ -77,6 +78,10 @@ async def test_unknown_or_conflicting_exit_survives_restart(sell_env, monkeypatc
     first = await ex.place_sell(MINT, "DUMMY", 1 / 3, ledger=ledger)
     assert first.unresolved
     assert len(commits.pending_sells(MINT)) == 1
+    if legacy_attempt:
+        rows = commits.all()
+        rows[0]["sell_attempt"].pop("signed_at", None)
+        commits._save(rows)
     # Fresh ledger/log instances model process restart. No new memo/quote/send.
     restarted = ExecutionLedger(ledger.path)
     for _ in range(2):

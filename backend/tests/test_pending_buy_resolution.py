@@ -560,3 +560,18 @@ async def test_single_rpc_hint_never_releases_pending_exposure_on_unknown_or_con
     assert ledger.get_by_idempotency_key('k1').status == 'pending'
     assert ledger.total_open_exposure() == 2.5
     assert not _FakeCommitLog.instances
+
+
+async def test_section94_dropped_buy_does_not_wedge_exposure(env, monkeypatch):
+    from unittest.mock import AsyncMock
+    ledger = ExecutionLedger(env.dir / "dropped.json", now_fn=lambda: rlc.time.time() - 1000)
+    _pending(ledger)
+    assert ledger.total_open_exposure() == 2.5
+    monkeypatch.setattr(solana, "get_signature_status", AsyncMock(return_value=None))
+    monkeypatch.setattr(solana, "get_signature_status_all_strict", AsyncMock(return_value=[solana.ABSENT, solana.ABSENT]))
+    monkeypatch.setattr(solana, "is_blockhash_valid", AsyncMock(return_value=False))
+    result = await rlc.resolve_pending_buys(ledger)
+    assert result == {"adopted": 0, "failed": 0, "expired": 1, "pending": 0}
+    assert ledger.total_open_exposure() == 0
+    assert not ledger.pending_buys()
+    assert (await rlc.resolve_pending_buys(ExecutionLedger(ledger.path)))["pending"] == 0

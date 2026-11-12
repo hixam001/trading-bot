@@ -177,23 +177,54 @@ class CommitLog:
                     # replaces the active marker; audit history is append-only.
                     rec.setdefault("sell_attempt_history", []).append(previous)
                 rec["sell_attempt"] = dict(terms, signature=signature,
-                                            blockhash=blockhash, status="pending")
+                                            blockhash=blockhash, status="pending",
+                                            signed_at=self.now_fn())
                 self._save(commits)
                 return
         raise RuntimeError("sell commit missing before broadcast")
 
     @serialized_write
-    def settle_sell_attempt(self, digest: str, signature: str, status: str) -> None:
+    def settle_sell_attempt(self, digest: str, signature: str, status: str,
+                            *, note: str | None = None, archive: bool = False) -> None:
         if status not in ("confirmed", "failed"):
             raise ValueError("invalid sell settlement")
         commits = self._load()
         for rec in commits:
             attempt = rec.get("sell_attempt")
             if rec.get("hash") == digest and attempt and attempt.get("signature") == signature:
+                if attempt["status"] != "pending" and attempt["status"] != status:
+                    raise RuntimeError("sell settlement conflicts with existing outcome")
                 attempt["status"] = status
+                if note is not None:
+                    attempt["note"] = note
+                if archive:
+                    rec.setdefault("sell_attempt_history", []).append(attempt)
+                    rec.pop("sell_attempt")
                 self._save(commits)
                 return
+            if rec.get("hash") == digest and any(
+                    a.get("signature") == signature and a.get("status") == status
+                    for a in rec.get("sell_attempt_history", [])):
+                return  # Operator retries after an archived release are idempotent.
         raise RuntimeError("sell attempt missing at settlement")
+
+    @serialized_write
+    def observe_sell_release(self, digest: str, signature: str,
+                             eligible: bool) -> float | None:
+        """Persist a first positive observation; reset after any unmet fact."""
+        commits = self._load()
+        for rec in commits:
+            attempt = rec.get("sell_attempt", {})
+            if (rec.get("hash") == digest and attempt.get("signature") == signature
+                    and attempt.get("status") == "pending"):
+                if eligible:
+                    since = attempt.setdefault("release_candidate_since", self.now_fn())
+                else:
+                    since = None
+                    attempt.pop("release_candidate_since", None)
+                self._save(commits)
+                return since
+        return None
 
     def pending_sells(self, mint: str) -> list[dict]:
         return [rec for rec in self._load()
@@ -260,6 +291,9 @@ def validate_commits(commits):
                 raise RuntimeError(bad + ": sell_attempt")
             if not isinstance(attempt.get("blockhash"), str):
                 raise RuntimeError(bad + ": sell blockhash")
+            for field in ("signed_at", "release_candidate_since"):
+                if field in attempt and (not finite_number(attempt[field]) or attempt[field] < 0):
+                    raise RuntimeError(bad + ": sell_attempt." + field)
             for field in ("fraction", "tokens", "proceeds_usd"):
                 value = attempt.get(field)
                 if not finite_number(value) or value < 0:

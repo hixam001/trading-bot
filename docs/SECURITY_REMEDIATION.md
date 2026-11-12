@@ -302,3 +302,68 @@ backend/tests/test_s8_supply_chain.py backend/tests/test_audit_81_f.py
 backend/tests/test_prepush_stage_selection.py` — **32 passed**, no failures.
 The failed old run is [43050187110](https://github.com/hixam001/trading-bot/actions/runs/43050187110);
 its Docker/ROFS job passed. New hosted setup/E2E verification remains necessary.
+
+
+## §94 addendum — source baseline `ea0a899` (2026-11-12)
+
+Original audit findings and earlier measurements above are preserved. This
+addendum supersedes the earlier assertion that expired attempts must remain
+pending indefinitely: all-endpoint historical absence **combined with**
+finalized expiry, signing age and delayed reobservation can release a sell.
+Neither absence nor expiry alone suffices. See the §94 runbook in
+`docs/18_SECURITY.md`; correlated dishonest/lagging RPC views remain a risk.
+
+### S1 — H1, expired sell recovery
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| H1 | High | `backend/live_execution/executor.py:_resolve_sell_signature`; `commit_log.py:record_sell_attempt` | Before command below: 28 failed, 1 passed; after core/CLI command: 39 passed | One shared resolver; signing time; all-endpoint explicit finalized expiry; persisted reobservation; append-only release history; no authority in recovery call | `test_section94_sell_release.py` |
+| H1 operator hold | High | `scripts/resolve_pending_sell.py:resolve` | Before CLI command: 10 failed; same command after: included in 39 passed | Read-only list; typed release attestation; chain-confirmed signature-idempotent adoption; unknown-signature refusal | `test_section94_sell_cli.py` |
+
+Commands run (scratch output under `/tmp/trading-bot-section94`):
+
+```sh
+env -u ADMIN_TOKEN .venv/bin/python -m pytest -q backend/tests/test_section94_sell_release.py
+# 28 failed, 1 passed in 0.23s (S1-before.log)
+env -u ADMIN_TOKEN .venv/bin/python -m pytest -q backend/tests/test_section94_sell_cli.py
+# 10 failed in 0.09s (S1-cli-before.log)
+env -u ADMIN_TOKEN .venv/bin/python -m pytest -q backend/tests/test_section94_sell_release.py backend/tests/test_section94_sell_cli.py -o faulthandler_timeout=15
+# 39 passed in 0.20s (S1-after.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_sell_release.py backend/tests/test_section94_sell_cli.py backend/tests/test_security_sell_recovery.py
+# 76 passed in 0.43s (S1-sandbox.log)
+```
+
+Failing-first excerpts:
+
+```text
+FAILED backend/tests/test_section94_sell_release.py::test_dropped_exit_releases_after_two_observations_and_next_call_sells
+E KeyError: 'release_candidate_since'
+FAILED backend/tests/test_section94_sell_release.py::test_blockhash_commitment_is_explicit_and_default_unchanged
+E TypeError: is_blockhash_valid() got an unexpected keyword argument 'commitment'
+FAILED backend/tests/test_section94_sell_cli.py::test_list_is_read_only_and_has_operator_evidence
+E ImportError: cannot import name 'resolve_pending_sell' from 'scripts'
+```
+
+Pending-buy reproduction: **no wedge reproduced**. The dropped-buy fixture
+returns `expired`, clears `pending_buys()` and frees its reserved exposure;
+a restarted resolver remains empty. No buy-recovery behavior was changed.
+
+```sh
+env -u ADMIN_TOKEN .venv/bin/python -m pytest -q backend/tests/test_pending_buy_resolution.py::test_section94_dropped_buy_does_not_wedge_exposure
+# 1 passed in 0.08s (S1-buy-probe.log)
+```
+
+The outer sandbox denied nested bubblewrap's NETLINK_ROUTE setup. The trusted
+existing runner was then run with elevated launch permissions; target execution
+remained inside its network-disabled, secret-excluding scratch sandbox. Earlier
+plain pytest attempts were interrupted after transport waits; they are not
+full-suite passes. A scratch-only external-HTTP guard produced this additional
+affected-suite result:
+
+```sh
+PYTHONPATH=/tmp/trading-bot-section94/offline-bootstrap env -u ADMIN_TOKEN .venv/bin/python -m pytest -q backend/tests/test_section94_sell_release.py backend/tests/test_section94_sell_cli.py backend/tests/test_security_sell_recovery.py backend/tests/test_pending_buy_resolution.py backend/tests/test_audit_81_a.py
+# 134 passed in 0.50s (S1-final.log)
+```
+
+Final regression, mutation, frontend, deployment and live validation: not yet run
+by author at this phase. No CI status is claimed.

@@ -108,6 +108,19 @@ CONFIRM_TIMEOUT_SECONDS: float = 60.0
 PENDING_EXPIRY_MIN_AGE_SECONDS: float = 90.0
 
 
+def _sell_attempt_release_min_age(value: str) -> float:
+    import math
+    try:
+        age = float(value)
+    except (TypeError, ValueError):
+        return 600.0
+    return max(300.0, age) if math.isfinite(age) and age > 0 else 600.0
+
+
+SELL_ATTEMPT_RELEASE_MIN_AGE_SECONDS = _sell_attempt_release_min_age(
+    os.getenv("SELL_ATTEMPT_RELEASE_MIN_AGE_SECONDS", "600"))
+
+
 
 # Whitelist of approved Solana programs that may be invoked by Jupiter swap transactions.
 # Transactions invoking unapproved or arbitrary third-party program IDs fail closed

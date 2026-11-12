@@ -707,3 +707,30 @@ including ARM64/native builds and real-container ROFS smoke for both roles.
 The exact synthetic redaction-fixture exclusions passed [gitleaks
 42666899068](https://github.com/hixam001/trading-bot/actions/runs/42666899068).
 Docker is unavailable locally; its runtime verification was observed in CI.
+
+
+## §94: recovering an unresolved exit
+
+Absence alone and blockhash expiry alone never release a signed sell. Automatic
+release requires explicit historical ABSENT from every configured endpoint,
+explicit `isBlockhashValid(..., commitment="finalized") == False` from each,
+at least two distinct hosts, a known signing timestamp and minimum signing age.
+`SELL_ATTEMPT_RELEASE_MIN_AGE_SECONDS` defaults to 600 seconds; positive values
+clamp to at least 300, and invalid/zero/negative values use the default. Two
+complete observations at least 60 seconds apart are required; the first persists
+in `release_candidate_since`, and an unmet fact resets it. A release archives
+the attempt as failed and returns without authorizing another order.
+
+All configured RPCs could be lying or behind. The combined evidence and delayed
+reobservation reduce that residual risk; they cannot eliminate it. Legacy
+attempts without `signed_at` require operator resolution. A held attempt logs
+an ERROR each cycle and uses the existing per-mint alert cooldown.
+
+Run `python scripts/resolve_pending_sell.py --state-dir <state-copy> list` to
+inspect signatures, age, evidence and explorer links without changing files.
+After independently verifying that the signature never landed, use
+`release --mint M --signature S --i-verified-signature-never-landed` and type
+`release` at the prompt. For a chain-confirmed sell use
+`confirm --mint M --signature S --proceeds-usd X` and type `confirm`. All writes
+use the locked ledger/commit APIs; unknown signatures refuse. Do not release on
+silence, a missing field, a timeout, unknown blockhash validity or age alone.

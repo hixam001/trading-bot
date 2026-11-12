@@ -560,16 +560,62 @@ async def _resolve_signature_outcome(signature: str) -> tuple[str, object, int |
     return state, error, slot
 
 
-async def _resolve_sell_signature(signature: str) -> tuple[str, object]:
-    """Historical absence/unknown never proves non-execution.
+async def _resolve_sell_signature(signature: str, rec: dict, logc: CommitLog,
+                                  *, persist_candidate: bool = True) -> tuple[str, object]:
+    """One resolution rule for recovery, ladder checks and post-send ambiguity.
 
-    Shared immediate and pending recovery uses native terminal statuses.
-    Confirmed success prevents replay; conflicting outcomes remain pending.
-    Failure authorizes a retry only when every endpoint reports the same
-    terminal failure.
+    Release requires two complete positive observations. Unknown facts reset
+    the candidate; terminal chain evidence always takes precedence.
     """
-    state, error, _slot = await _resolve_signature_outcome(signature)
-    return state, error
+    endpoints = solana._dedup_endpoints_by_host(config.RPC_URLS)
+    try:
+        observations = await solana.get_signature_status_all_strict(signature, endpoints=endpoints)
+    except Exception:
+        observations = []
+    state, error = resolve_signature_observations(observations)
+    if state != "pending":
+        return state, error
+    attempt = rec["sell_attempt"]
+    now = logc.now_fn()
+    signed_at = attempt.get("signed_at")
+    age = max(0.0, now - signed_at) if signed_at is not None else None
+    unmet = []
+    from urllib.parse import urlparse
+    hosts = {urlparse(ep).hostname for ep in endpoints}
+    if None in hosts or len(hosts) < 2:
+        unmet.append("need at least two distinct RPC hosts")
+    if (not isinstance(observations, list) or len(observations) != len(endpoints)
+            or not observations or not all(s is solana.ABSENT for s in observations)):
+        unmet.append("need explicit ABSENT from every endpoint")
+    if not attempt.get("blockhash"):
+        unmet.append("missing signed blockhash")
+    if signed_at is None:
+        unmet.append("legacy attempt without signed_at requires operator resolution")
+    elif age < config.SELL_ATTEMPT_RELEASE_MIN_AGE_SECONDS:
+        unmet.append("minimum signing age not reached")
+    if not unmet:
+        import asyncio
+
+        async def expired(endpoint):
+            try:
+                return await solana.is_blockhash_valid(
+                    attempt["blockhash"], endpoints=[endpoint], commitment="finalized")
+            except Exception:
+                return None
+
+        validities = await asyncio.gather(*(expired(ep) for ep in endpoints))
+        if not all(value is False for value in validities):
+            unmet.append("need explicit finalized-expired blockhash from every endpoint")
+    since = (logc.observe_sell_release(rec["hash"], signature, not unmet)
+             if persist_candidate else attempt.get("release_candidate_since"))
+    if not unmet and since is not None and now - since >= 60:
+        return "released", f"released: all endpoints absent + blockhash finalized-expired (age {age:.0f}s)"
+    if not unmet:
+        unmet.append("need second complete observation at least 60s later")
+    age_text = "unknown" if age is None else f"{age:.0f}s"
+    return "pending", (f"exit_unresolved: signature {signature}; age {age_text}; "
+                       + "; ".join(unmet) + "; operator: python scripts/resolve_pending_sell.py "
+                       f"list (then release/confirm --mint {rec['payload']['mint']} --signature {signature})")
 
 
 def _valid_terminal_status(status) -> bool:
@@ -626,7 +672,7 @@ async def _recover_sell(rec: dict, ledger: ExecutionLedger, logc: CommitLog,
     attempt = rec["sell_attempt"]
     signature = attempt["signature"]
     mint = rec["payload"]["mint"]
-    state, error = resolution or await _resolve_sell_signature(signature)
+    state, error = resolution or await _resolve_sell_signature(signature, rec, logc)
     fields = dict(side="sell", mint=mint, symbol=rec["payload"].get("symbol", ""),
                   signature=signature, commit_hash=rec["hash"],
                   commit_nonce=rec["nonce"], commit_payload=rec["payload"],
@@ -651,8 +697,16 @@ async def _recover_sell(rec: dict, ledger: ExecutionLedger, logc: CommitLog,
         logc.settle_sell_attempt(rec["hash"], signature, "failed")
         return OrderResult(status="failed", reason=f"landed-failed (fee paid): {error}",
                            error=error, **fields)
-    reason = (f"exit_unresolved: signature {signature} is pending and blockhash "
-              "expiry cannot establish historical non-execution")
+    if state == "released":
+        logc.settle_sell_attempt(rec["hash"], signature, "failed", note=str(error), archive=True)
+        logc.note(rec["hash"], str(error))
+        from alerts import alert_nowait, AlertEvent
+        from urllib.parse import urlparse
+        hosts = [urlparse(ep).hostname for ep in solana._dedup_endpoints_by_host(config.RPC_URLS)]
+        alert_nowait(AlertEvent.INFO, f"{error}; signature={signature}; endpoints={hosts}",
+                     key=f"sell_released:{signature}")
+        return OrderResult(status="failed", reason=str(error), **fields)
+    reason = str(error)
     logc.note(rec["hash"], reason)
     _notify_unresolved_sell(mint, reason)
     return OrderResult(status="failed", reason=reason, unresolved=True,
@@ -793,7 +847,10 @@ async def place_sell(
     for attempt_idx, slippage_rung in enumerate(ladder, start=1):
         if attempt_idx > 1 and last_sig:
             logc.note(sealed["hash"], f"attempt {attempt_idx}: resolving previous signature {last_sig}")
-            state, sig_err = await _resolve_sell_signature(last_sig)
+            rec = next(r for r in logc.pending_sells(mint) if r["hash"] == sealed["hash"])
+            state, sig_err = await _resolve_sell_signature(last_sig, rec, logc)
+            if state == "released":
+                return await _recover_sell(rec, ledger, logc, (state, sig_err))
             if state == "confirmed":
                 rec = next(r for r in logc.pending_sells(mint)
                            if r["hash"] == sealed["hash"])
@@ -811,8 +868,7 @@ async def place_sell(
                 rung_notes.append(f"{ladder[attempt_idx - 2]}bps=landed-failed({code or 'retryable'})")
                 last_sig = None
             else:
-                reason = (f"exit_unresolved: signature {last_sig} is pending and blockhash "
-                          "expiry cannot establish historical non-execution")
+                reason = str(sig_err)
                 logc.note(sealed["hash"], reason)
                 _notify_unresolved_sell(mint, reason)
                 return OrderResult(**{**base.to_json(), "status": "failed", "reason": reason,
@@ -980,7 +1036,10 @@ async def place_sell(
             err_target = getattr(outcome, "error", None) or reason
             if not is_retryable_exit_error(err_target) or attempt_idx >= len(ladder):
                 if last_sig:
-                    state, err = await _resolve_sell_signature(last_sig)
+                    rec = next(r for r in logc.pending_sells(mint) if r["hash"] == sealed["hash"])
+                    state, err = await _resolve_sell_signature(last_sig, rec, logc)
+                    if state == "released":
+                        return await _recover_sell(rec, ledger, logc, (state, err))
                     if state == "confirmed":
                         rec = next(r for r in logc.pending_sells(mint)
                                    if r["hash"] == sealed["hash"])
@@ -989,7 +1048,7 @@ async def place_sell(
                         logc.settle_sell_attempt(sealed["hash"], last_sig, "failed")
                     else:
                         outcome.unresolved = True
-                        outcome.reason = f"exit_unresolved: {reason}"
+                        outcome.reason = str(err)
                         _notify_unresolved_sell(mint, outcome.reason)
                 logc.fail(sealed["hash"], reason)
                 outcome.commit_hash = sealed["hash"]

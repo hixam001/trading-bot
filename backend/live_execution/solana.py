@@ -779,11 +779,12 @@ async def get_token_balances(address: str) -> Optional[dict[str, float]]:
     return balances if programs_ok == 2 else None
 
 
-async def is_blockhash_valid(blockhash: str, endpoints: Optional[list[str]] = None) -> bool | None:
+async def is_blockhash_valid(blockhash: str, endpoints: Optional[list[str]] = None,
+                            commitment: str = "confirmed") -> bool | None:
     """Check whether a blockhash is still valid on-chain (SEC-01 / §79 Phase B double-fill safety).
     Returns True if valid, False if expired, None on RPC failure.
     """
-    res = await rpc("isBlockhashValid", [blockhash, {"commitment": "confirmed"}], endpoints=endpoints)
+    res = await rpc("isBlockhashValid", [blockhash, {"commitment": commitment}], endpoints=endpoints)
     if isinstance(res, dict):
         value = res.get("value")
         if isinstance(value, bool):
@@ -874,8 +875,9 @@ async def get_signature_status_all_strict(
 
     One entry per host-deduped endpoint, same order, queried concurrently.
     `ABSENT` means that endpoint answered 200 with `value == [null]`;
-    `UNREACHABLE` covers every failure or unexpected shape. Only an all-ABSENT
-    list is proof that the signature did not land.
+    `UNREACHABLE` covers every failure or unexpected shape. All-ABSENT is a
+    necessary observation, not sufficient proof of historical non-execution;
+    automatic sell release also requires finalized expiry, age and reobservation.
     """
     if endpoints is not None and not endpoints:
         return []
