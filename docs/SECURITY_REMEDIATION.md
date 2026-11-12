@@ -892,3 +892,122 @@ python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_docker
 was empty, confirming this follow-up changes documentation only.
 
 VERDICT: PASS
+
+
+## §94 S9 — hosted gitleaks and test-runner follow-up (2026-11-12)
+
+The user reported failures after publication of `38683c6`. Actual GitHub
+results were inspected, rather than inferring CI status from local checks:
+
+- [gitleaks run 43218098584](https://github.com/hixam001/trading-bot/actions/runs/43218098584) failed on the public mutation-test identifier at the exact fingerprint below.
+- [Tests & Security Audit run 43155049403](https://github.com/hixam001/trading-bot/actions/runs/43155049403) failed in the hermetic pytest step. Its two failed cases were the mutation evidence tests; the Docker build/compose/ROFS job passed.
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| Hosted plugin discovery | Test infrastructure | `scripts/mutation_check.py:1646`; `backend/tests/test_section94_mutation_evidence.py:8` | CI: 2 failed; local reproduction: 2 failed, 2 passed → 6 affected checks passed; complete suites 2427 passed each | Explicitly disable plugin auto-discovery only in mutation subprocesses while retaining the explicit required asyncio plugin; parent/CI test collection is unchanged | Both incoming auto-discovery modes execute real mutants and require the exact control-field assertion to fail |
+| Hosted secret-scan false positive | Scanner finding, public identifier | `.gitleaksignore`; historical `backend/tests/test_section94_mutation_evidence.py:7` | CI-pinned full-history scan: one finding before, zero after; unrelated synthetic-secret control still exits with a finding | Add only the exact historical commit/file/rule/line fingerprint; no rule, path or broad pattern exclusion | Actual checksum-verified gitleaks history scans and canonical stage, not source-search assertions |
+
+The historical finding is:
+
+```text
+abfe549b416c7ea29b9d322c1f2ac1d895f0e0b7:backend/tests/test_section94_mutation_evidence.py:generic-api-key:7
+```
+
+That line contains public names of mutation cases used by the executable
+regression; it does not contain a credential. Existing scanner rules are
+unchanged. The added exclusion is intentionally limited to that fingerprint.
+An unrelated synthetic credential was committed only to a disposable Git
+clone and remained detectable after the exclusion. No probe value is included
+in the project history or this report.
+
+Root cause of the test failure: CI normally discovers pytest plugins through
+entry points. The mutation helper also explicitly requested pytest-asyncio,
+registering the same plugin again under another name. Earlier local scratch
+runs disabled auto-discovery and missed this combination. The new regression
+exercises both incoming environments. It still demands the existing named
+control-field test, so a startup error cannot satisfy the expected catch.
+The direct startup reproduction reported:
+
+```text
+ValueError: Plugin already registered under a different name: pytest_asyncio.plugin=<module 'pytest_asyncio.plugin' from '/usr/lib/python3.14/site-packages/pytest_asyncio/plugin.py'>
+```
+
+Observed commands/results (logs in `/tmp/trading-bot-section94-ci`):
+
+```sh
+env -u GH_DEBUG gh run view 43218098584 --repo hixam001/trading-bot --json headSha,status,conclusion,url,jobs
+env -u GH_DEBUG gh run view 43155049403 --repo hixam001/trading-bot --json headSha,status,conclusion,url,jobs
+# Both inspected runs concluded failure on head 38683c6; specific failed steps above.
+# Failed logs retrieved with gh run view <id> --log-failed, stored privately; only
+# fingerprint metadata/test errors were printed, not potential secret matches.
+
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_mutation_evidence.py
+# Before helper fix: 2 failed, 2 passed in 1.54s (plugin-before.log).
+python3 docs/security-remediation/sandbox_runner.py --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD; /usr/bin/python3 -m pytest --collect-only -q backend/tests/test_audit_81_c.py'
+# Direct bad-environment reproduction: duplicate-plugin ValueError, exit 1.
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_mutation_evidence.py backend/tests/test_audit_82_e.py
+# After fix: 6 passed in 2.34s (plugin-after.log).
+
+# Exact scanner version from the failed CI log: 8.24.3.
+gh release download v8.24.3 --repo gitleaks/gitleaks --pattern gitleaks_8.24.3_linux_x64.tar.gz --pattern gitleaks_8.24.3_checksums.txt --dir /tmp/trading-bot-section94-ci/scanner
+# Archive SHA256 verified against the official checksums file before extraction.
+python3 /tmp/trading-bot-section94-ci/scan_history.py --label gitleaks-before
+# exit 1, one finding: the exact historical fingerprint above.
+python3 /tmp/trading-bot-section94-ci/scan_history.py --label gitleaks-after
+# exit 0, no findings after the narrow exclusion.
+python3 /tmp/trading-bot-section94-ci/scan_history.py --label gitleaks-unrelated-secret --probe
+# EXPECTED exit 1, exactly one finding in scanner_probe.py (synthetic control).
+python3 /tmp/trading-bot-section94-ci/scan_history.py --label gate-stage9 --gate
+# Actual canonical scripts/prepush_check.sh --stage 9 exits 0 with the pinned scanner.
+```
+
+The trusted scratch scanner helper clones Git history locally without a
+checkout, copies only the current scanner config/ignore file and canonical
+gate, and invokes the checksum-verified binary inside a network-unshared,
+read-only OS sandbox. Output is redacted and summaries include fingerprint
+metadata only. Its ordinary scan command is:
+
+```sh
+gitleaks git . --config=.gitleaks.toml --gitleaks-ignore-path=.gitleaksignore --redact=100 --no-banner --log-opts=--all --report-format=json --report-path=/scratch/report.json
+```
+
+The actual gate uses an output-redaction wrapper around the same pinned
+binary; all finding/error exit codes remain authoritative. No repository
+security rule or pre-push gate was disabled.
+
+Final fresh verification, with ordinary CI plugin discovery enabled for the
+complete root/backend suites:
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD PYTEST_PLUGINS; /bin/bash scripts/prepush_check.sh --stage 1'
+# 2427 passed, 102 warnings in 42.13s; no failures/skips; stage passed.
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD PYTEST_PLUGINS; cd backend && /usr/bin/python3 -m pytest -q -rs'
+# 2427 passed, 102 warnings in 42.23s; no failures/skips.
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_CI_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+# No-flags checker: 149 caught out of 149, zero survivors; restoration verified.
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /usr/bin/python3 -c 'import subprocess,sys; stages=[2,4,5,6]; results=[(stage,subprocess.run(["/bin/bash","scripts/prepush_check.sh","--stage",str(stage)]).returncode) for stage in stages]; print("SECTION94_CI_GATE_RESULTS",results); sys.exit(any(code for stage,code in results))'
+# SECTION94_CI_GATE_RESULTS [(2, 0), (4, 0), (5, 0), (6, 0)].
+python3 docs/security-remediation/advisory_stage.py 3
+# exit 0; no known vulnerabilities found; existing hash warnings retained.
+python3 docs/security-remediation/advisory_stage.py 7
+# exit 0; found 0 production vulnerabilities.
+python3 docs/security-remediation/sandbox_runner.py --gate-e2e
+# 41 passed (17.2s); actual canonical browser stage passed.
+git diff --check
+# exit 0.
+```
+
+Only development verification infrastructure, the exact scanner fingerprint
+exclusion and evidence records change. Trading/signing/runtime modules,
+dependency manifests, workflow requirements and original audit findings are
+preserved. All target tests and scanner execution use disposable state/source
+with external networking disabled; only authorized GitHub inspection/tool
+retrieval, manifest advisory queries and publication require external access.
+
+The reported hosted failures are confirmed. Fresh local checks pass. The new
+commit's hosted outcomes must be read after publication and will be reported
+by the delivery message; they are not inferred here. Real VM state, real-money
+execution and the previously listed native-exploitability limits remain
+unverified by these CI repairs.
+
+VERDICT: PASS

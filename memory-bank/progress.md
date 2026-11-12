@@ -1187,3 +1187,25 @@ hosted CI or clean local gitleaks scan is claimed. VM/state/restart, Docker,
 Supabase, RPC availability/refusal rate, provider redirects, upstream extension
 spec alignment and native exploitability remain unverified. Exact commands,
 outputs and the final disposition are in `docs/SECURITY_REMEDIATION.md` S8.
+
+
+## §94 S9 — repair observed hosted checks (2026-11-12)
+
+Actual GitHub logs for `38683c6` showed a gitleaks false positive on a public
+mutation-case identifier and duplicate pytest-asyncio registration in mutation
+subprocesses when CI plugin discovery was enabled. The helper now explicitly
+controls discovery in its child process only; the regression exercises both
+incoming modes and still requires the named control-field assertion to fail.
+The scanner exclusion is one exact historical fingerprint, with no broader
+rule/path change. The pinned, checksum-verified scanner clears full history
+and still rejects an unrelated synthetic-secret control in a disposable clone.
+
+Fresh full root/backend runs with CI plugin discovery: 2427 passed each, no
+failures/skips; the regenerated no-flags mutation log records 149/149 caught
+with no survivors. Browser stage: 41 passed. Actual types/build, pip consistency,
+API isolation, both approved advisory stages and the pinned full-history secret
+scan passed. Exact failing-first/passing commands and outputs are in
+`docs/SECURITY_REMEDIATION.md` S9. No trading behavior or dependency changed.
+Earlier local checks missed the CI auto-discovery combination; this follow-up
+records that limitation and fixes it. New hosted results are reported only
+after inspection following publication; the old failed runs are not relabeled.

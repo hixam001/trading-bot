@@ -1643,9 +1643,10 @@ def run_mutation(m: Mutation, py_exec: str) -> tuple[bool, str, str]:
         ]
         sub_env = dict(os.environ)
         sub_env["PYTHONDONTWRITEBYTECODE"] = "1"
-        # Scratch runners disable automatic plugin loading. Mutant subprocesses
-        # must still execute async tests, rather than count missing-plugin
-        # infrastructure errors as caught mutants.
+        # Use the same explicit plugin set in CI and isolated scratch runs.
+        # Auto-discovery plus PYTEST_PLUGINS can register asyncio twice and
+        # make a startup error look like a caught mutation.
+        sub_env["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] = "1"
         plugins = [p for p in sub_env.get("PYTEST_PLUGINS", "").split(",") if p]
         if "pytest_asyncio.plugin" not in plugins:
             plugins.append("pytest_asyncio.plugin")
