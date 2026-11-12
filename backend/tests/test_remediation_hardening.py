@@ -324,7 +324,7 @@ def test_nested_context_exclusions_with_synthetic_markers(tmp_path):
     This is an ignore-rule regression, not a Docker daemon/build claim.
     """
     import subprocess
-    rules=Path('.dockerignore').read_text()
+    rules=(Path(__file__).resolve().parents[2] / '.dockerignore').read_text()
     (tmp_path/'.gitignore').write_text(rules)
     subprocess.run(['git','init','-q',str(tmp_path)],check=True)
     blocked=['nested/.env','nested/.env.production','nested/secrets/credential.txt','nested/wallet_keypair_dummy.json','nested/credentials.json','nested/secret.pem','nested/state/executions.json','nested/backups/archive.enc','nested/book.db','nested/.fomo_privy.json']

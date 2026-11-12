@@ -7,10 +7,34 @@ exact configured destinations. Callers retain their existing request timeouts.
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 import zlib
 import httpx
 
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+log = logging.getLogger(__name__)
+_REDIRECT_WARNING_INTERVAL = 3600.0
+_REDIRECT_WARNING_HOST_LIMIT = 256
+_redirect_warning_times: dict[str, float] = {}
+
+
+def _warn_redirect(response: httpx.Response) -> None:
+    if not 300 <= response.status_code < 400:
+        return
+    now = time.monotonic()
+    for host, warned_at in list(_redirect_warning_times.items()):
+        if now - warned_at >= _REDIRECT_WARNING_INTERVAL:
+            del _redirect_warning_times[host]
+    host = response.request.url.host
+    if host in _redirect_warning_times:
+        return
+    # Preserve recent hosts rather than evicting them and warning repeatedly.
+    # Saturation suppresses new hosts until a slot expires; memory stays bounded.
+    if len(_redirect_warning_times) >= _REDIRECT_WARNING_HOST_LIMIT:
+        return
+    _redirect_warning_times[host] = now
+    log.warning("redirect not followed host=%s status=%d", host, response.status_code)
 
 
 class ResponseLimitError(httpx.TransportError):
@@ -30,11 +54,16 @@ async def bounded_request(client, method: str, url: str, *, max_bytes: int = MAX
 async def _bounded_request(client, method: str, url: str, *, max_bytes: int, **kwargs):
     if max_bytes <= 0:
         raise ValueError('response limit must be positive')
-    headers = dict(kwargs.pop('headers', None) or {})
+    if kwargs.get('follow_redirects', False):
+        raise ValueError('bounded_request requires follow_redirects=False')
+    headers = httpx.Headers(kwargs.pop('headers', None) or {})
+    if any(value.strip().lower() != 'identity' for value in headers.get_list('accept-encoding')):
+        raise ValueError('bounded_request requires Accept-Encoding: identity')
     # Ask for uncompressed data; nevertheless safely handle servers ignoring it.
     headers['Accept-Encoding'] = 'identity'
     kwargs['follow_redirects'] = False
     async with client.stream(method, url, headers=headers, **kwargs) as response:
+        _warn_redirect(response)
         declared = response.headers.get('content-length')
         if declared is not None:
             try:

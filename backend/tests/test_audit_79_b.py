@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import struct
+from unittest.mock import AsyncMock
 
 import pytest
 from solders.hash import Hash
@@ -412,7 +413,10 @@ async def test_double_fill_safety_refuses_when_previous_signature_pending_and_bl
 
     assert result.status == "failed"
     assert "exit_unresolved" in result.reason
-    assert "pending and blockhash" in result.reason
+    assert result.unresolved
+    assert "minimum signing age not reached" in result.reason
+    assert "resolve_pending_sell.py" in result.reason
+    assert ledger.open_token_amounts()[TOKEN_MINT] == 10.0
     # Only 1 quote was fetched; attempt 2 was blocked at the start of loop iteration 2!
     assert attempt_count == 1
 
@@ -450,8 +454,8 @@ async def test_double_fill_safety_unparseable_blockhash_is_unresolved(arm_enviro
     async def fake_get_sig_status(sig):
         return None
 
-    async def must_not_be_called(bh):
-        raise AssertionError("validity checked for an unknown blockhash")
+    must_not_be_called = AsyncMock(side_effect=AssertionError(
+        "validity checked for an unknown blockhash"))
 
     monkeypatch.setattr(executor, "_get_json", fake_get_json)
     monkeypatch.setattr(executor, "_build_swap_transaction", fake_build)
@@ -470,7 +474,11 @@ async def test_double_fill_safety_unparseable_blockhash_is_unresolved(arm_enviro
 
     assert result.status == "failed"
     assert "exit_unresolved" in result.reason
-    assert "expiry cannot establish historical non-execution" in result.reason
+    assert result.unresolved
+    assert "missing signed blockhash" in result.reason
+    assert "resolve_pending_sell.py" in result.reason
+    assert ledger.open_token_amounts()[TOKEN_MINT] == 10.0
+    must_not_be_called.assert_not_awaited()
     assert attempt_count == 1
 
 

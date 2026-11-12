@@ -4,6 +4,7 @@ backend/tests/test_audit_77_a.py — Phase A Security Audit Tests (§77 A2–A5)
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -69,11 +70,14 @@ async def test_captcha_bypass_removed(monkeypatch):
 def test_repo_has_no_test_captcha_pass_in_backend_code():
     """Grep backend/ excluding tests/ for 'test-captcha-pass'."""
     res = subprocess.run(
-        ["grep", "-rn", "--exclude-dir=tests", "--exclude-dir=__pycache__", "test-captcha-pass", "backend"],
+        ["grep", "-rn", "--exclude-dir=tests", "--exclude-dir=__pycache__", "test-captcha-pass", str(Path(__file__).resolve().parents[1])],
         capture_output=True,
         text=True,
     )
-    assert res.returncode != 0, f"Found 'test-captcha-pass' in backend production code:\n{res.stdout}"
+    assert res.returncode == 1, (
+        "Backend CAPTCHA bypass scan must complete with no matches: "
+        f"exit={res.returncode}\n{res.stdout}\n{res.stderr}"
+    )
 
 
 # ---------------------------------------------------------------------------

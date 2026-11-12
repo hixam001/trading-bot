@@ -604,3 +604,78 @@ omit exposure, while normalization would exceed the permitted behavior scope.
 The real VM's state was not read. Its acceptance is **UNVERIFIED**; the operator
 must validate a retained scratch copy before recreating containers. Container
 source paths were checked in compose source, without running Docker.
+
+
+### S6 — M3/M4, explicit HTTP policy and CWD consistency
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| M3 | Low | `backend/bounded_http.py:22`, `:56` | 8 failing HTTP/CWD reproductions → 47 affected tests pass, then integrated 68 pass | Refuse explicit redirects/incompatible explicit encoding; case-insensitive identity header; warning once per host/hour with bounded memory and no URL secrets | `test_section94_http_policy.py`; streamed body/timeout neighbors |
+| M4 docker context | Low | `backend/tests/test_remediation_hardening.py:327` | FileNotFoundError after CWD change → passing regression from root and backend | Locate .dockerignore via Path(__file__) | `test_dockerignore_regression_is_independent_of_working_directory` |
+| M4 subprocess source scan | Low | `backend/tests/test_audit_77_a.py:test_repo_has_no_test_captcha_pass_in_backend_code` | 3 failing real grep regressions → root/backend affected suites 55 pass each | Absolute source path; grep errors fail instead of passing without a scan | `test_captcha_source_scan_executes_from_backend_cwd` clean/hostile/missing variants |
+| Hold test consistency | Low | `backend/tests/test_audit_79_b.py` | First full root integration: 2 failed, 2411 passed → final root/backend each 2425 pass | Assert actionable missing-blockhash/age reasons and unresolved state; strengthen unchanged-accounting and no-blockhash-RPC assertions; preserve all hold cases | Existing double-fill tests and new S1 release dimensions |
+
+Commands and results:
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_http_policy.py
+# 8 failed in 0.12s (S6-before.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_http_policy.py backend/tests/test_remediation_hardening.py
+# 47 passed in 0.54s (S6-after.log)
+python3 docs/security-remediation/sandbox_runner.py --command /bin/bash -c 'cd backend && /usr/bin/python3 -m pytest -q tests/test_section94_http_policy.py tests/test_remediation_hardening.py'
+# 47 passed in 0.51s (S6-backend-cwd.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_http_policy.py -k captcha_source_scan
+# 3 failed, 8 deselected, 1 warning in 0.19s (S6-scan-before.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_http_policy.py backend/tests/test_remediation_hardening.py backend/tests/test_audit_77_a.py
+# 55 passed, 1 warning in 0.57s (S6-final-after.log)
+python3 docs/security-remediation/sandbox_runner.py --command /bin/bash -c 'cd backend && /usr/bin/python3 -m pytest -q tests/test_section94_http_policy.py tests/test_remediation_hardening.py tests/test_audit_77_a.py'
+# 55 passed, 1 warning in 0.57s (S6-final-backend-cwd.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_http_policy.py backend/tests/test_remediation_hardening.py backend/tests/test_audit_77_a.py backend/tests/test_audit_79_b.py
+# 68 passed, 1 warning in 0.66s (S6-integrated.log)
+python3 docs/security-remediation/sandbox_runner.py --with-frontend -q -rs
+# 2425 passed, 102 warnings in 35.56s (full-root-final.log); no failures/skips
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'cd backend && /usr/bin/python3 -m pytest -q -rs'
+# 2425 passed, 102 warnings in 35.23s (full-backend-cwd-final.log); no failures/skips
+```
+
+Failing-first excerpts:
+
+```text
+FAILED backend/tests/test_section94_http_policy.py::test_explicit_follow_redirects_true_is_refused_before_request
+E Failed: DID NOT RAISE <class 'ValueError'>
+FAILED backend/tests/test_section94_http_policy.py::test_dockerignore_regression_is_independent_of_working_directory
+E FileNotFoundError: [Errno 2] No such file or directory: '.dockerignore'
+FAILED backend/tests/test_section94_http_policy.py::test_captcha_source_scan_executes_from_backend_cwd[marker]
+```
+
+Whole-tree read/subprocess audits used:
+
+```sh
+rg -n 'Path\(["\x27]|open\(["\x27]|os\.(getcwd|chdir)|cwd=' backend/tests backend/live_execution/tests -g '*.py'
+rg -n '(read_text|read_bytes|open)\(' backend/tests backend/live_execution/tests -g '*.py'
+rg -n 'subprocess\.(run|check_output|check_call|Popen)' backend/tests backend/live_execution/tests -g '*.py'
+rg -n -i 'accept.encoding|follow_redirects' backend scripts -g '*.py' -g '!test_*.py'
+rg -n 'http://' .env.example docker-compose.yml backend/config.py backend/live_execution/config.py backend/llm backend/data_providers
+```
+
+The production-call AST audit recorded **30 calls, zero explicit
+follow_redirects keywords** (`S6-callsite-audit.log`). The command parsed each
+backend/scripts production Python AST, selected bounded_request call nodes and
+printed location plus explicit keyword names; tests were excluded. No affected
+production caller was found. Other test-relative literals are synthetic
+fixtures or use an explicit repository CWD; subprocess scans now check real
+source from either invocation directory. Early full runs copied in-progress
+state-label code and obsolete reason assertions, so their failures are retained
+as diagnostic evidence and superseded by the final complete runs above.
+
+**Ancillary HTTP API-policy behavior change:** explicitly requesting redirects
+or non-identity encoding now raises ValueError; mixed-case identity is
+canonicalized. This is the requested S6 policy clarification, in addition to
+the four trading/preflight behavior items listed in S7. No production caller
+explicitly requested those options in the source audit.
+
+**UNVERIFIED providers:** documented SearXNG bases `http://searxng:8080` and
+`http://127.0.0.1:8888` in `.env.example:272`–`273` (compose uses the service
+URL). No source-known redirect was identified; actual custom RPC, LLM, Jupiter,
+alert, scrape/research proxy and SearXNG URLs were neither read from secrets nor
+contacted. Their redirect behavior remains operator validation.

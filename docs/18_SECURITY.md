@@ -784,3 +784,19 @@ validators run as deployment preflight's `state validation` check for existing
 configured state directories; invalid/unreadable state fails preflight.
 Historical writer fixtures pass without loosening the runtime validators.
 Real VM state acceptance remains unverified until that copied-state check runs.
+
+
+## §94: explicit external HTTP policy
+
+`bounded_request` continues to cap wire/decoded bodies, total time and redirect
+following. A caller explicitly requesting redirects now receives ValueError
+before a request; an incompatible explicit Accept-Encoding also refuses rather
+than being silently replaced. Identity headers are case-insensitive and sent
+once. Client-default compression headers are still replaced with identity.
+Returned redirects log only host and status on a per-host hourly cadence, with
+a bounded host cache. Configure final provider URLs; no redirect is followed.
+
+The offline source audit found no production caller explicitly asking for
+redirect following. HTTP SearXNG examples are local-service URLs, not evidence
+that the VM endpoints work. Custom provider URLs and redirects need operator
+verification; no provider was contacted during §94.
