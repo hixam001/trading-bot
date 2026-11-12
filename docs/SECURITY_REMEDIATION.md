@@ -824,3 +824,71 @@ findings remain above. Overall release/push completion remains blocked by the
 red advisory stages; implementation/test evidence does not waive that gate.
 
 VERDICT: FAIL -- complete pre-push gate unavailable under the no-network constraint.
+
+
+## §94 S8 — approved advisory verification and publication follow-up (2026-11-12)
+
+The user explicitly authorized the existing manifest-only Python/npm advisory
+runner and publication if the gate is green. This supersedes the earlier
+publication hold and unavailable-advisory dispositions; their historical
+outputs remain intact above. This forward-only documentation follow-up
+preserves the seven S1–S7 phase commits without amending existing history.
+No runtime source or dependency was changed for this follow-up.
+
+| ID | severity | file:line | evidence | disposition | verification |
+|---|---|---|---|---|---|
+| Advisory gate, Python | Operational verification | `docs/security-remediation/advisory_stage.py:1` | Approved stage exits successfully; `No known vulnerabilities found` | PASS for the pinned requirements at lookup time | Actual canonical pre-push stage through manifest-only scratch runner |
+| Advisory gate, npm | Operational verification | `docs/security-remediation/advisory_stage.py:1` | Approved stage exits successfully; `found 0 vulnerabilities` | PASS for production dependency advisories at lookup time | Actual canonical pre-push stage through manifest-only scratch runner |
+
+Exact commands and observed output:
+
+```sh
+python3 docs/security-remediation/advisory_stage.py 3
+# gate-stage3-approved.log; exit 0
+=== [3/9] Auditing Python dependencies for vulnerabilities (pip-audit) ===
+=== PRE-PUSH STAGE 3 PASSED ===
+WARNING:pip_audit._cli:--no-deps is supported, but users are encouraged to fully hash their pinned dependencies
+WARNING:pip_audit._cli:Consider using a tool like `pip-compile`: https://pip-tools.readthedocs.io/en/latest/#using-hashes
+No known vulnerabilities found
+
+python3 docs/security-remediation/advisory_stage.py 7
+# gate-stage7-approved.log; exit 0
+=== [7/9] Auditing frontend production dependencies (npm audit --omit=dev) ===
+found 0 vulnerabilities
+=== PRE-PUSH STAGE 7 PASSED ===
+```
+
+The runner copies only the canonical gate and dependency manifests into a
+disposable directory, supplies an empty allowlisted environment and scratch
+HOME/cache/config paths, invokes installed trusted tools, and disables npm
+scripts. It installs no dependencies and exposes no live state, wallet, keys
+or real environment file. Only these approved registry lookups used external
+network access; test/build/browser execution remains in the network-disabled
+scratch sandbox. The hash warnings above are retained, not suppressed.
+
+All required local stages now have observed successful exits. The earlier
+root/backend runs remain 2425 passed each with no failures/skips, the no-flags
+mutation run remains 149 caught out of 149 with no survivors, and Playwright
+remains 41 passed. Their exact commands and outputs are in S7; no runtime code
+changed afterward. The existing secret-scan stage still follows its documented
+missing-local-gitleaks policy: **no clean local secret-scan claim**. Dependency
+advisories are a separate executed check, not an inference from unit tests.
+
+Publication is now authorized by the green local staged gate. Git and the
+final delivery message record whether the push succeeds; no current hosted CI
+status is claimed. Actual VM state/restart, Docker deployment, Supabase, real
+RPC refusal rate, provider redirects, upstream Token-2022 spec alignment and
+native approved-DEX exploitability remain unverified as described above.
+
+
+Documentation-dependent verification after this addendum:
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_docker_entrypoint.py backend/tests/test_audit_82_e.py
+# 29 passed in 6.26s; publication-doc-checks.log
+```
+
+`git diff --check` passed. `git diff 00f9397 -- backend scripts frontend .env.example`
+was empty, confirming this follow-up changes documentation only.
+
+VERDICT: PASS

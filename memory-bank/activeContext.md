@@ -1798,3 +1798,25 @@ an ancillary API change; the production callsite audit found no explicit
 redirect request. Full phase tables, failing-first excerpts, consumed fields,
 historical state shapes and remaining validation facts are in
 `docs/SECURITY_REMEDIATION.md`. Prior audit findings and records remain intact.
+
+
+## §94 S8 — advisory exception verified (2026-11-12)
+
+The user approved manifest-only registry checks and push if green. Actual
+commands `python3 docs/security-remediation/advisory_stage.py 3` and
+`python3 docs/security-remediation/advisory_stage.py 7` both exited successfully:
+Python reported no known vulnerabilities; npm reported zero production
+vulnerabilities. Only the gate/manifests, installed trusted tools and scratch
+HOME/cache paths were exposed; no dependencies were installed and no live
+state/keys/environment file was accessed. The Python hash warnings are retained
+in the full report.
+
+This supersedes the earlier advisory/publication hold. Every required local
+stage now has an observed passing result; runtime source is unchanged since
+the recorded full root/backend suites, mutation check and browser run. The
+S1–S7 commits are preserved, with this separate forward-only evidence update.
+Publication is authorized; Git/delivery records actual push success. No current
+hosted CI or clean local gitleaks scan is claimed. VM/state/restart, Docker,
+Supabase, RPC availability/refusal rate, provider redirects, upstream extension
+spec alignment and native exploitability remain unverified. Exact commands,
+outputs and the final disposition are in `docs/SECURITY_REMEDIATION.md` S8.
