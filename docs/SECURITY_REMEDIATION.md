@@ -464,3 +464,55 @@ foreign move that flips F refuses even though a magnitude tolerance could have
 accepted it. No raw opaque market-state bytes influence a guard decision.
 This repairs the design; actual buy refusal rate is **UNVERIFIED on the VM**.
 The log query and process-local counter limitation are in `docs/18_SECURITY.md`.
+
+
+### S4 — M1, verification honesty
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| M1 close authority | Medium | `solana.py:responses_agree`; `mutation_check.py:81C_SOLANA_AGREE_CLOSE_AUTH` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact close-authority base-layout range | `test_named_control_field_mutation_is_caught_by_existing_regression` |
+| M1 delegated amount | Medium | `solana.py:responses_agree`; `mutation_check.py:81C_SOLANA_AGREE_DELEGATED_AMT` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact delegated-amount base-layout range | Same parametrized executable mutation test |
+| M1 historical claims | Medium | `handoff.md`; `memory-bank/*`; `docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md` | Fresh baseline run 135/137; S4 full run 149/149 | Append dated corrections without rewriting records; enumerate actual money-path and operational changes | Full no-flags mutation checker and generated log |
+
+Commands/results:
+
+```sh
+# Fresh ea0a899 source copy, no .env, keys or real state:
+python3 docs/security-remediation/sandbox_runner.py -q
+# 2240 passed, 3 skipped, 102 warnings in 37.27s (baseline-sandbox-clean.log)
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/mutation_check.py
+# All restorations verified clean. Mutations: 137, Caught: 135, Survivors: 2
+# (baseline-mutation-sandbox-clean.log; exit 2)
+# Fresh a77a8af source copy + new mutation regression test:
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_mutation_evidence.py
+# 2 failed in 1.33s (S4-before.log)
+# Fixed working source:
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_mutation_evidence.py backend/tests/test_section94_consensus.py backend/tests/test_audit_82_e.py
+# 37 passed in 1.42s (S4-after.log)
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+# All restorations verified clean. Mutations: 149, Caught: 149, Survivors: 0
+# (S4-mutation.log; exit 0)
+```
+
+Failing-first excerpts:
+
+```text
+E AssertionError: 81C_SOLANA_AGREE_CLOSE_AUTH SURVIVED: it must target the active enforcement
+E AssertionError: 81C_SOLANA_AGREE_DELEGATED_AMT SURVIVED: it must target the active enforcement
+2 failed in 1.33s
+```
+
+The first draft of this new executable test omitted the async plugin in its
+child pytest process and failed for infrastructure reasons; that draft is
+**not** evidence of caught mutants (`S4-before-invalid-env.log`). The corrected
+failing-first run above explicitly enabled the plugin and reproduced both real
+survivors. The harness now ensures the async plugin remains available when a
+scratch runner disables plugin autoload. Passing mutation regressions require
+the existing `test_c2_responses_agree_control_fields_differ` to be the failure,
+so missing-plugin errors cannot satisfy them.
+
+The author baseline without frontend produced an additional build-dependent
+skip relative to the auditor's stated measurement; no build-dependent skip is
+accepted as final verification. Final runs build the existing frontend inside
+the sandbox. Early interrupted plain runs and contaminated scratch snapshots
+were discarded and are not represented as baseline passes.

@@ -271,12 +271,15 @@ def responses_agree(a: dict, b: dict, wallet_owned_addrs: list[str],
                 extensions_b = _extension_control_bytes(raw_b, owner_b)
             except Exception:
                 return refuse("malformed", addr)
-            if raw_a[:64] != raw_b[:64] or raw_a[72:165] != raw_b[72:165] or extensions_a != extensions_b:
+            if raw_a[:64] != raw_b[:64] or raw_a[72:121] != raw_b[72:121] or extensions_a != extensions_b:
                 return refuse("control", addr)
-            if dec_a.get("close_authority") != dec_b.get("close_authority"):
+            if raw_a[129:165] != raw_b[129:165]:
                 return refuse("control", addr)
-            if dec_a.get("delegated_amount") != dec_b.get("delegated_amount"):
+            if raw_a[121:129] != raw_b[121:129]:
                 return refuse("control", addr)
+            # close_authority and delegated_amount are enforced by the two
+            # exact base-layout ranges immediately above. Decoded comparisons
+            # would be redundant and create equivalent (surviving) mutants.
             # Raw owner equality above makes discovery independent of which
             # endpoint appears first, including accounts outside derived ATAs.
             wallet_owned = wallet_owned or dec_a["owner"] == wallet_address

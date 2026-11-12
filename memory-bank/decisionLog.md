@@ -147,3 +147,35 @@ Pin only the browser-test job to supported Ubuntu24.04, bound install to10min,
 retain native dependency installation and all E2E tests.32 affected local checks
 passed under OS isolation. No local installs, resolver overrides or relaxed TLS.
 Fresh hosted runner execution, not the pin itself, must confirm recovery.
+
+
+## §94 S4 dated correction — 2026-11-12
+
+Historical entries above remain unchanged. Their claim of mutation 137/137
+caught with no survivors does **not** describe the tree after `04e1feb`. During
+this task the author rebuilt `ea0a899` into a disposable source copy and ran
+`python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/mutation_check.py`:
+**135/137 caught, 2 survivors**; both were equivalent control-field mutants
+masked by an earlier raw-byte comparison. See the full command/output record
+in `docs/SECURITY_REMEDIATION.md`.
+
+After retargeting those mutations and adding sell-release, settlement and
+consensus regressions, the author ran the checker with **no flags** through the
+same scratch sandbox and exported its generated Markdown as data:
+**149/149 caught, 0 survivors; restorations verified clean**. The generated
+log is `docs/17_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
+production, native-exploitability or CI evidence.
+
+The prior broad "no money-path/signing change" description must not be extended
+past `028d4e0`: `04e1feb` changed sell-retry authorization, operation-bound
+approvals, buy-decimals refusal, simulation consensus, ledger/commit validation,
+process locking, HTTP byte/time caps (8 MiB/60 seconds, no redirects), restore
+dispatch and launcher/CI behavior. `f4868ac` added staged isolated gate checks;
+`ea0a899` pinned browser CI setup. The operator-visible effects and mitigations
+for §93 R1–R8 and these commits are catalogued in
+`docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
+
+Current VM, Docker, Supabase, actual RPC refusal rates, provider redirects and
+hosted CI have not been verified by this author. Final §94 regression/gate
+results are recorded separately after execution; no old green status is
+reused as current evidence.
