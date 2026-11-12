@@ -304,8 +304,8 @@ async def simulate_and_assert(
     all_addresses = list(dict.fromkeys(
         [payer_pubkey, payer_in_ata_spl, payer_in_ata_2022, payer_out_ata_spl, payer_out_ata_2022] + writable_accounts
     ))
-    # Ownership discovery itself depends on agreement. Include every monitored
-    # writable account before trusting either pre-state or simulation output.
+    # Monitor every writable account; the explicit payer identity lets quorum
+    # discover wallet-owned accounts from exact owner facts on both endpoints.
     wallet_owned_set = all_addresses
 
     # 1. Fetch pre-state with getMultipleAccounts across quorum
@@ -316,6 +316,7 @@ async def simulate_and_assert(
             endpoints=endpoints,
             side=intent.side,
             wallet_owned_addresses=wallet_owned_set,
+            wallet_address=payer_pubkey,
         )
     except Exception as exc:
         cat = "quorum_failed" if any(w in str(exc).lower() for w in ("diverge", "quorum", "rpc", "consensus")) else "sim_refused"
@@ -358,6 +359,9 @@ async def simulate_and_assert(
             endpoints=endpoints,
             side=intent.side,
             wallet_owned_addresses=wallet_owned_set,
+            wallet_address=payer_pubkey,
+            pre_state=pre_state,
+            intent=intent,
         )
     except Exception as exc:
         cat = "quorum_failed" if any(w in str(exc).lower() for w in ("diverge", "quorum", "rpc", "consensus")) else "sim_refused"

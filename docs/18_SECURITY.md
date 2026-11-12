@@ -734,3 +734,39 @@ After independently verifying that the signature never landed, use
 `confirm --mint M --signature S --proceeds-usd X` and type `confirm`. All writes
 use the locked ledger/commit APIs; unknown signatures refuse. Do not release on
 silence, a missing field, a timeout, unknown blockhash validity or age alone.
+
+
+## §94: simulation consensus scope
+
+Consensus requires account presence, program owner, executable flag, data length
+and simulation error to agree. SPL/Token-2022 control bytes (mint, token owner,
+delegate, state, native reserve, delegated amount, close authority, extensions)
+remain exact on wallet accounts and foreign vaults. Only the u64 payload of the
+Token-2022 TransferFeeAmount extension (type 2, length 8) is market state; its TLV
+header, account discriminator and all other extension bytes remain exact.
+
+Wallet ownership is discovered from exact token owner facts on both responses,
+including accounts outside the derived ATA list. Wallet amounts and lamports
+keep their existing tolerances. Opaque pool/curve/oracle bytes and lamports
+are not used by a guard and no longer need equality across slots. Foreign vault
+amounts are used only by guard F; consensus compares F's actual boolean verdict
+against the guard's chosen pre-state, rather than imposing a vault amount
+tolerance. If either response would make F disagree with the other, consensus
+refuses. The guard still executes F on the chosen response. Signed aggregate
+wallet output accounting and the single-RPC sell fallback remain in force.
+
+Refusals log `SIM_CONSENSUS_REFUSED side=... category=... addr=...`; no new
+per-refusal alert is added. Fixed-size, saturating counters are exposed under
+`/api/health` → `simulation_consensus` with `scope="process"`. API and live
+runner processes have independent memory: the live runner's logs, rather than
+the API process's local counters, measure live trading refusals.
+
+For burn-in, count log events over the same window (one attempted buy is a
+pre-state fetch):
+
+```sh
+docker compose logs --since 1h live | awk '/SIM_CONSENSUS_ATTEMPT side=buy phase=pre/{attempts++} /SIM_CONSENSUS_REFUSED side=buy/{refusals++} END{printf "buy attempts=%d consensus refusals=%d\n",attempts,refusals}'
+```
+
+These are refusal events per attempted buy; multiple RPC comparisons can emit
+multiple events for one attempt. Real refusal rates require VM burn-in.

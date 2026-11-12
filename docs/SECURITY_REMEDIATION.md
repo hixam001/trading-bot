@@ -402,3 +402,65 @@ backend/live_execution/models.py:498: NoOpenPosition
 pending signature to the existing note. The regression checks three recovery
 calls, one close record and unchanged realized PnL. Both immediate and recovered
 confirmed accounting failures return unresolved and succeed after repair.
+
+
+### S3 — H3, consumed-field simulation consensus
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| H3 | High availability, unmeasured | `backend/live_execution/solana.py:responses_agree`; `sim_guard.py:simulate_and_assert` | 6 failed, 27 passed → affected suite 84 passed | Structural checks everywhere; exact token controls; ownership discovery using agreed token owner; wallet tolerances; opaque pool bytes/lamports excluded; compare guard F verdict when it consumes vault amounts | `test_section94_consensus.py` |
+| H3 observability | High availability, unmeasured | `solana.py:_consensus_refused`; `backend/api/main.py:health_check` | Same failing/passing commands | Structured refusals; fixed category/side counters with saturated integers; process-local health surface; pre-state attempt log | `test_consensus_refusals_are_structured_and_bounded` |
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_consensus.py
+# 6 failed, 27 passed in 0.12s (S3-before.log)
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_consensus.py backend/tests/test_security_signing_policy.py backend/tests/test_audit_81_c.py backend/tests/test_audit_78_b.py
+# 84 passed in 0.49s (S3-after.log)
+```
+
+Failing-first excerpts:
+
+```text
+FAILED backend/tests/test_section94_consensus.py::test_hot_pool_one_slot_apart_agrees_despite_market_data_and_vault_move
+E assert False
+FAILED backend/tests/test_section94_consensus.py::test_transfer_fee_withheld_amount_is_the_only_exempt_extension_payload
+E assert False
+FAILED backend/tests/test_section94_consensus.py::test_real_quorum_accepts_hot_pool_snapshots
+E TypeError: simulate_transaction() got an unexpected keyword argument 'wallet_address'
+```
+
+Consumed-field evidence (baseline `ea0a899` line references, retained so these
+remain stable through later edits):
+
+| Account/field | Consumer at baseline | Consensus rule |
+|---|---|---|
+| Payer existence/lamports | `sim_guard.py:329`, `377`, `522` | Presence exact; lamports existing tolerance |
+| Token program owner | `sim_guard.py:339`, `388`, `430` | Exact all accounts |
+| Token mint/token owner | `sim_guard.py:91`, `349`, `402`, `428`, `482`, `499`, `535` | Exact all token accounts; discover wallet ownership only after agreement |
+| Wallet token amount | `sim_guard.py:470`, `481`, `499` | Existing amount tolerance, floor one raw unit; aggregate output rule untouched |
+| Wallet token lamports | `sim_guard.py:347`, `396`, `513` | Existing lamport tolerance |
+| Delegate | `sim_guard.py:403`, `433` | Exact, including foreign token accounts |
+| Close authority | `sim_guard.py:408`, `440` | Exact, including foreign token accounts |
+| Delegated amount | `sim_guard.py:413`, `447` | Exact, including foreign token accounts |
+| Token state | `sim_guard.py:418`, `454` | Exact, including foreign token accounts |
+| Account/ATA existence | `sim_guard.py:292`, `369`, `456` | Exact presence and account list shape |
+| Foreign token amount | `sim_guard.py:531`–`539` | Check F compares positive foreign increase only when wallet input exceeds intent; comparator checks that predicate on both post snapshots using the guard's chosen pre-state |
+| Executable/data length | `solana.py:196` structural consensus | Exact |
+| is_native/extension bytes | `solana.py:229`; not individually decoded by guard | Preserve exact control bytes; exempt only TransferFeeAmount u64 payload |
+| Raw non-token/non-wallet data and lamports | No guard decision consumes them | Structural facts only |
+
+Protocol layout reference: Token-2022 interface `extension/mod.rs` and
+`extension/transfer_fee/mod.rs`: base account length 165, account discriminator
+2, TransferFeeAmount TLV type 2, payload length 8. The task forbids network
+access: the current upstream spec was **not fetched by author**. Tests use real
+base decoding and explicit TLV layouts; unknown extensions stay byte-exact and
+malformed TLVs refuse. Upstream-version confirmation remains an offline
+validation limit, alongside native approved-DEX exploitability.
+
+The hot-pool fixture has identical wallet facts, different pool bytes/lamports
+and a foreign vault amount move; it agrees. Wallet amount, any token control,
+pool owner/executable/length and missing-account variants refuse. A one-unit
+foreign move that flips F refuses even though a magnitude tolerance could have
+accepted it. No raw opaque market-state bytes influence a guard decision.
+This repairs the design; actual buy refusal rate is **UNVERIFIED on the VM**.
+The log query and process-local counter limitation are in `docs/18_SECURITY.md`.

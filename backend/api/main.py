@@ -388,7 +388,8 @@ app.include_router(live_book_router)
 @app.get("/api/health")
 async def health_check():
     """Lightweight health check endpoint for container orchestrators (§77 B2)."""
-    return {"status": "ok"}
+    from live_execution.solana import get_consensus_status
+    return {"status": "ok", "simulation_consensus": get_consensus_status()}
 
 
 @app.websocket("/ws/feed")

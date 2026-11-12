@@ -130,127 +130,171 @@ def check_rpc_diversity(endpoints: Optional[list[str]] = None) -> tuple[int, boo
     return distinct_count, is_diverse
 
 
-def responses_agree(
-    a: dict,
-    b: dict,
-    wallet_owned_addrs: list[str],
-    all_addresses: Optional[list[str]] = None,
-) -> bool:
-    """
-    Pure agreement rule comparing two simulation responses a and b (§81 Phase C-2):
-    - Both err equal (both None or equal JSON/dict)
-    - Same account count
-    - For every monitored address (ownership must not be inferred from one RPC):
-      - decoded token amount within SIM_AMOUNT_TOLERANCE_BPS (absolute floor 1 unit)
-      - same owner
-      - exact delegate pubkey match
-      - exact close_authority pubkey match
-      - exact delegated_amount match
-      - exact state match
-      - payer lamports within SIM_LAMPORT_TOLERANCE
-    """
-    if not isinstance(a, dict) or not isinstance(b, dict) or a.get("err") != b.get("err"):
-        return False
+_CONSENSUS_CATEGORIES = ("structural", "control", "wallet_amount", "wallet_lamports", "vault_amount", "malformed")
+_CONSENSUS_REFUSED = {side: {category: 0 for category in _CONSENSUS_CATEGORIES} for side in ("buy", "sell")}
+_CONSENSUS_ATTEMPTS = {"buy": 0, "sell": 0}
+_COUNTER_MAX = (1 << 63) - 1
 
-    accs_a = a.get("post_accounts", [])
-    accs_b = b.get("post_accounts", [])
-    if not isinstance(accs_a, list) or not isinstance(accs_b, list) or len(accs_a) != len(accs_b):
-        return False
-    if all_addresses is not None and (len(all_addresses) != len(accs_a) or len(set(all_addresses)) != len(all_addresses)):
-        return False
 
-    from live_execution.jupiter_executor import (
-        _SPL_TOKEN_PROGRAM_ID,
-        _TOKEN_2022_PROGRAM_ID,
-    )
+def get_consensus_status() -> dict:
+    """Fixed-size process-local counters; logs cover separate live processes."""
+    return {"scope": "process", "refused": {s: dict(v) for s, v in _CONSENSUS_REFUSED.items()},
+            "attempts": dict(_CONSENSUS_ATTEMPTS)}
+
+
+def _consensus_refused(side: str, category: str, addr: str = "unknown") -> bool:
+    side = "sell" if side == "sell" else "buy"
+    counts = _CONSENSUS_REFUSED[side]
+    counts[category] = min(_COUNTER_MAX, counts[category] + 1)
+    log.warning("SIM_CONSENSUS_REFUSED side=%s category=%s addr=%s", side, category, addr[:8])
+    return False
+
+
+def _account_data(account: dict) -> bytes:
+    data = account.get("data")
+    if isinstance(data, list) and len(data) == 2 and data[1] == "base64":
+        data = data[0]
+    if not isinstance(data, str):
+        raise ValueError("malformed base64 account data")
+    return base64.b64decode(data, validate=True)
+
+
+def _extension_control_bytes(raw: bytes, program: str) -> bytes:
+    """Mask only Token-2022 TransferFeeAmount.withheld_amount (TLV 2, u64).
+
+    Layout: spl-token-2022 interface extension/mod.rs (AccountType::Account=2,
+    ExtensionType::TransferFeeAmount=2), extension/transfer_fee/mod.rs.
+    Headers, account type, all other TLVs and unknown bytes stay exact.
+    """
+    tail = bytearray(raw[165:])
+    if program != _TOKEN_2022_PROGRAM_ID or not tail:
+        return bytes(tail)
+    if tail[0] != 2:
+        raise ValueError("invalid Token-2022 account type")
+    offset = 1
+    seen = set()
+    while offset < len(tail):
+        # Unused allocation is zero padding; it is still compared exactly.
+        if not any(tail[offset:]):
+            break
+        if offset + 4 > len(tail):
+            raise ValueError("truncated Token-2022 TLV header")
+        kind = int.from_bytes(tail[offset:offset + 2], "little")
+        length = int.from_bytes(tail[offset + 2:offset + 4], "little")
+        start, end = offset + 4, offset + 4 + length
+        if kind in seen or end > len(tail):
+            raise ValueError("malformed Token-2022 TLV")
+        seen.add(kind)
+        if kind == 2:
+            if length != 8:
+                raise ValueError("malformed TransferFeeAmount")
+            tail[start:end] = bytes(8)
+        offset = end
+    return bytes(tail)
+
+
+def _redirection_verdict(response: dict, addresses: list[str], pre_state: dict,
+                         intent) -> bool:
+    """Exactly check F's predicate against the guard's chosen pre-state.
+
+    Comparing magnitudes would reject active pools yet still permit a tiny
+    cross-slot difference to flip F at zero. Predicate agreement protects the
+    decision itself, including that boundary, without requiring vault equality.
+    """
     from live_execution.sim_guard import decode_token_account_data
+    from live_execution.jupiter_executor import _SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID
+    programs = (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID)
+    before = {a: decode_token_account_data(_account_data(v))
+              for a, v in pre_state.items() if v and v.get("owner") in programs}
+    after = {a: decode_token_account_data(_account_data(v))
+             for a, v in zip(addresses, response["post_accounts"]) if v and v.get("owner") in programs}
+    debit = sum(max(0, t["amount"] - (after[a]["amount"] if a in after and after[a]["owner"] == intent.wallet else 0))
+                for a, t in before.items() if t["owner"] == intent.wallet and t["mint"] == intent.input_mint)
+    return debit > intent.in_amount_raw and any(
+        t["owner"] != intent.wallet and t["amount"] > before.get(a, {}).get("amount", 0)
+        for a, t in after.items())
 
-    # Map addresses to accounts if all_addresses is provided, else match by index
-    addr_to_a: dict[str, dict | None] = {}
-    addr_to_b: dict[str, dict | None] = {}
-    if all_addresses is not None:
-        addr_to_a = dict(zip(all_addresses, accs_a))
-        addr_to_b = dict(zip(all_addresses, accs_b))
-    else:
-        # Compare index by index for all available accounts
-        for i in range(len(accs_a)):
-            addr_to_a[str(i)] = accs_a[i]
-            addr_to_b[str(i)] = accs_b[i]
 
-    # The caller's derived ATA list is not an independent ownership oracle.
-    # Compare the complete monitored set before any returned account is trusted.
-    check_addrs = list(addr_to_a)
-    for addr in check_addrs:
-        acc_a = addr_to_a.get(addr)
-        acc_b = addr_to_b.get(addr)
+def responses_agree(a: dict, b: dict, wallet_owned_addrs: list[str],
+                    all_addresses: Optional[list[str]] = None, *,
+                    wallet_address: str | None = None, side: str = "buy",
+                    pre_state: dict | None = None, intent=None) -> bool:
+    """Structural facts everywhere, exact token controls, wallet tolerances.
+
+    Explicit payer identity enables ownership discovery from BOTH responses.
+    Callers without it retain the conservative all-token amount comparison.
+    No guard decision consumes opaque market-state data or lamports.
+    """
+    refuse = lambda category, addr="unknown": _consensus_refused(side, category, addr)
+    if not isinstance(a, dict) or not isinstance(b, dict) or "err" not in a or "err" not in b:
+        return refuse("malformed")
+    if a["err"] != b["err"]:
+        return refuse("structural")
+    accs_a, accs_b = a.get("post_accounts"), b.get("post_accounts")
+    if not isinstance(accs_a, list) or not isinstance(accs_b, list) or len(accs_a) != len(accs_b):
+        return refuse("malformed")
+    if all_addresses is not None and (len(all_addresses) != len(accs_a) or len(set(all_addresses)) != len(all_addresses)):
+        return refuse("malformed")
+    addresses = all_addresses if all_addresses is not None else [str(i) for i in range(len(accs_a))]
+    from live_execution.jupiter_executor import _SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID
+    from live_execution.sim_guard import decode_token_account_data
+    for addr, acc_a, acc_b in zip(addresses, accs_a, accs_b):
         if acc_a is None and acc_b is None:
             continue
         if (acc_a is None) != (acc_b is None):
-            return False
+            return refuse("structural", addr)
         if not isinstance(acc_a, dict) or not isinstance(acc_b, dict):
-            return False
-
-        owner_a = acc_a.get("owner")
-        owner_b = acc_b.get("owner")
-        if not isinstance(owner_a, str) or not owner_a or owner_a != owner_b:
-            return False
+            return refuse("malformed", addr)
+        owner_a, owner_b = acc_a.get("owner"), acc_b.get("owner")
+        if not isinstance(owner_a, str) or not owner_a or not isinstance(owner_b, str) or not owner_b:
+            return refuse("malformed", addr)
+        if owner_a != owner_b:
+            return refuse("structural", addr)
+        if any(type(acc.get("executable", False)) is not bool for acc in (acc_a, acc_b)):
+            return refuse("malformed", addr)
         if acc_a.get("executable", False) != acc_b.get("executable", False):
-            return False
-
-        lamp_a = acc_a.get("lamports")
-        lamp_b = acc_b.get("lamports")
-        if any(type(value) is not int or value < 0 for value in (lamp_a, lamp_b)):
-            return False
-        if abs(lamp_a - lamp_b) > config.SIM_LAMPORT_TOLERANCE:
-            return False
-
-        # Token account comparisons
+            return refuse("structural", addr)
+        lamp_a, lamp_b = acc_a.get("lamports"), acc_b.get("lamports")
+        if any(type(v) is not int or v < 0 for v in (lamp_a, lamp_b)):
+            return refuse("malformed", addr)
+        try:
+            raw_a, raw_b = _account_data(acc_a), _account_data(acc_b)
+        except (ValueError, TypeError):
+            return refuse("malformed", addr)
+        if len(raw_a) != len(raw_b):
+            return refuse("structural", addr)
+        wallet_owned = wallet_address is None or addr == wallet_address
         if owner_a in (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID):
-            data_a = acc_a.get("data")
-            data_b = acc_b.get("data")
-            raw_a = b""
-            raw_b = b""
             try:
-                if isinstance(data_a, list) and len(data_a) == 2 and data_a[1] == "base64":
-                    raw_a = base64.b64decode(data_a[0], validate=True)
-                elif isinstance(data_a, str):
-                    raw_a = base64.b64decode(data_a, validate=True)
-                if isinstance(data_b, list) and len(data_b) == 2 and data_b[1] == "base64":
-                    raw_b = base64.b64decode(data_b[0], validate=True)
-                elif isinstance(data_b, str):
-                    raw_b = base64.b64decode(data_b, validate=True)
-                dec_a = decode_token_account_data(raw_a)
-                dec_b = decode_token_account_data(raw_b)
+                dec_a, dec_b = decode_token_account_data(raw_a), decode_token_account_data(raw_b)
+                extensions_a = _extension_control_bytes(raw_a, owner_a)
+                extensions_b = _extension_control_bytes(raw_b, owner_b)
             except Exception:
-                return False
-
-            # Mint, control fields, native reserve and Token-2022 extension
-            # bytes are identity/policy facts, never amount-tolerant.
-            if raw_a[:64] != raw_b[:64] or raw_a[72:] != raw_b[72:]:
-                return False
-
-            if dec_a["owner"] != dec_b["owner"]:
-                return False
-            if dec_a.get("delegate") != dec_b.get("delegate"):
-                return False
+                return refuse("malformed", addr)
+            if raw_a[:64] != raw_b[:64] or raw_a[72:165] != raw_b[72:165] or extensions_a != extensions_b:
+                return refuse("control", addr)
             if dec_a.get("close_authority") != dec_b.get("close_authority"):
-                return False
+                return refuse("control", addr)
             if dec_a.get("delegated_amount") != dec_b.get("delegated_amount"):
-                return False
-            if dec_a.get("state") != dec_b.get("state"):
-                return False
-
-            amt_a = dec_a["amount"]
-            amt_b = dec_b["amount"]
-            diff = abs(amt_a - amt_b)
-            max_allowed = max(1, int(max(amt_a, amt_b) * config.SIM_AMOUNT_TOLERANCE_BPS / 10000))
-            if diff > max_allowed:
-                return False
-        elif acc_a.get("data") != acc_b.get("data"):
-            # Conservative for opaque pool/program state: do not adopt a
-            # first-endpoint snapshot that was never agreed by the quorum.
-            return False
-
+                return refuse("control", addr)
+            # Raw owner equality above makes discovery independent of which
+            # endpoint appears first, including accounts outside derived ATAs.
+            wallet_owned = wallet_owned or dec_a["owner"] == wallet_address
+            if wallet_owned:
+                amt_a, amt_b = dec_a["amount"], dec_b["amount"]
+                max_allowed = max(1, int(max(amt_a, amt_b) * config.SIM_AMOUNT_TOLERANCE_BPS / 10000))
+                if abs(amt_a - amt_b) > max_allowed:
+                    return refuse("wallet_amount", addr)
+        if wallet_owned and abs(lamp_a - lamp_b) > config.SIM_LAMPORT_TOLERANCE:
+            return refuse("wallet_lamports", addr)
+        # Opaque program data and foreign-vault magnitudes are market state.
+        # Their structural facts and token controls above remain mandatory.
+    if pre_state is not None and intent is not None:
+        try:
+            if _redirection_verdict(a, addresses, pre_state, intent) != _redirection_verdict(b, addresses, pre_state, intent):
+                return refuse("vault_amount")
+        except Exception:
+            return refuse("malformed")
     return True
 
 
@@ -259,10 +303,14 @@ async def get_multiple_accounts(
     endpoints: Optional[list[str]] = None,
     side: str = "buy",
     wallet_owned_addresses: Optional[list[str]] = None,
+    wallet_address: str | None = None,
 ) -> list[dict | None]:
     """Fetch multiple accounts across distinct RPC endpoints with quorum agreement."""
     if not addresses:
         return []
+    counter_side = "sell" if side == "sell" else "buy"
+    _CONSENSUS_ATTEMPTS[counter_side] = min(_COUNTER_MAX, _CONSENSUS_ATTEMPTS[counter_side] + 1)
+    log.info("SIM_CONSENSUS_ATTEMPT side=%s phase=pre", counter_side)
 
     target_endpoints = _dedup_endpoints_by_host(endpoints or config.RPC_URLS)[:3]
     if not target_endpoints:
@@ -288,7 +336,7 @@ async def get_multiple_accounts(
             if not isinstance(val, list):
                 raise SimulationError(f"{ep}: malformed getMultipleAccounts response")
             response = {"endpoint": ep, "err": None, "post_accounts": val}
-            if not responses_agree(response, response, addresses, all_addresses=addresses):
+            if not responses_agree(response, response, addresses, all_addresses=addresses, wallet_address=wallet_address, side=side):
                 raise SimulationError("malformed getMultipleAccounts account state")
             return response
 
@@ -302,7 +350,7 @@ async def get_multiple_accounts(
     if valid_results:
         agreeing = 1
         for other in valid_results[1:]:
-            if responses_agree(valid_results[0], other, wallet_owned_addresses or addresses, all_addresses=addresses):
+            if responses_agree(valid_results[0], other, wallet_owned_addresses or addresses, all_addresses=addresses, wallet_address=wallet_address, side=side):
                 agreeing += 1
 
     is_sell = (side == "sell")
@@ -333,6 +381,9 @@ async def simulate_transaction(
     side: str = "buy",
     wallet_owned_addresses: Optional[list[str]] = None,
     require_dual_rpc: bool = True,
+    wallet_address: str | None = None,
+    pre_state: dict | None = None,
+    intent=None,
 ) -> dict:
     """Simulate a transaction against Solana RPC with account state inspection and dual-RPC consensus."""
     params = [
@@ -377,7 +428,7 @@ async def simulate_transaction(
                 "units": value.get("unitsConsumed", 0),
                 "post_accounts": value.get("accounts", []),
             }
-            if not responses_agree(response, response, accounts, all_addresses=accounts):
+            if not responses_agree(response, response, accounts, all_addresses=accounts, wallet_address=wallet_address, side=side):
                 raise SimulationError("malformed simulateTransaction account state")
             return response
 
@@ -392,7 +443,7 @@ async def simulate_transaction(
     if valid_results:
         agreeing = 1
         for other in valid_results[1:]:
-            if responses_agree(valid_results[0], other, wallet_owned_addresses or accounts, all_addresses=accounts):
+            if responses_agree(valid_results[0], other, wallet_owned_addresses or accounts, all_addresses=accounts, wallet_address=wallet_address, side=side, pre_state=pre_state, intent=intent):
                 agreeing += 1
 
     valid_results[0]["agreeing_count"] = agreeing
