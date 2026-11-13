@@ -1408,3 +1408,40 @@ scan passed. Exact failing-first/passing commands and outputs are in
 Earlier local checks missed the CI auto-discovery combination; this follow-up
 records that limitation and fixes it. New hosted results are reported only
 after inspection following publication; the old failed runs are not relabeled.
+
+
+## §95 — private live counters and explicit payer (2026-11-13)
+
+S1 restores `/api/health` to exactly `{"status":"ok"}` and writes a best-effort
+atomic `consensus_counters.json` from the live heartbeat hook. The allowlisted
+snapshot includes `written_at`, `since_boot_at`, `scope="live-process"`, fixed
+buy/sell attempts and category counts. Counters reset on process restart;
+logs remain the cross-restart source of truth. Read privately with
+`python3 scripts/consensus_status.py --state-dir /path/to/copied/state` and
+cross-check `docker compose logs --since 1h live | rg 'SIM_CONSENSUS_REFUSED|SIM_CONSENSUS_ATTEMPT'`.
+The script reports age and STALE/missing/corrupt status without writing files,
+reading secret sidecars, locking, repair or networking. Missing means no data
+yet, never healthy zeros. Only live writes; API's engine-state mount remains
+read-only and compose hardening is unchanged. No new HTTP route is added.
+
+S2 binds check F consensus to the explicit payer and refuses mismatched
+`intent.wallet` before RPC with `guard_refused`. Missing consensus payer with
+intent/pre-state refuses as malformed. The §94 trading rules, tolerances,
+sell release, settlement, signing and arming settings are unchanged.
+
+Failing-first and measured passing evidence is recorded in
+`docs/SECURITY_REMEDIATION.md` §95. The binding gate remains
+`./scripts/prepush_check.sh` and its stages are checked locally.
+UNVERIFIED: real buy-refusal rate, VM/Docker runtime and Supabase; no local
+unit test or mutation result establishes those operational outcomes.
+
+
+§95 measured local verification: full root and backend suites each **2461
+passed**, no skips/failures, 102 existing warnings. No-flags mutation checker:
+**153 caught / 153, zero survivors**, target restoration verified; generated
+mutation log imported unchanged. All nine local canonical pre-push stages
+passed; browser stage **41 passed**. Runtime-write inventory passes and compose
+is unchanged. Failing-first evidence: S1 21 failed → 83 affected checks passed;
+S2 3 failed → 54 affected checks passed; S3 9 failed → 9 passed. Commands and
+scope are in `docs/SECURITY_REMEDIATION.md` §95. UNVERIFIED remains real
+buy-refusal rate, VM/Docker runtime and Supabase.

@@ -69,6 +69,47 @@ If running a single container without `ROLE`, both run in the same container, em
 
 The entrypoint starts the API always (under `ROLE=api`), and the live cycle **only if** `ROLE=live` (or single-container fallback), the hardcoded `LIVE_TRADING_ENABLED` in `backend/live_execution/config.py` is True, AND a wallet secret is configured — the same double-gate as `start.sh`.
 
+#### §95: read live consensus counters
+
+`/api/health` returns exactly `{"status":"ok"}`. Counters, categories and side
+breakdowns are absent from all unauthenticated routes. The live process's
+existing heartbeat hook writes `STATE_DIR/consensus_counters.json` atomically
+using a temporary sibling and rename. Writes are best-effort: failures log a
+warning and never interrupt the heartbeat or trade cycle. Only live needs
+write access; API keeps its read-only `engine_state:ro` mount. Compose
+`read_only` and `cap_drop: ALL` remain unchanged.
+
+```sh
+# Read through API's existing read-only engine_state mount:
+docker compose exec -T api python scripts/consensus_status.py
+# Or inspect a copied directory; match the deployed TICK_INTERVAL_SECONDS:
+python3 scripts/consensus_status.py --state-dir /path/to/copied/state --cycle-interval-seconds 60
+# Cross-check events over a window (logs are the source of truth across restarts):
+docker compose logs --since 1h live | rg 'SIM_CONSENSUS_REFUSED|SIM_CONSENSUS_ATTEMPT'
+```
+
+The snapshot contains only `written_at` (epoch seconds), `since_boot_at`,
+`scope="live-process"`, and fixed buy/sell attempt/category integer counts.
+No addresses, mints or signatures are stored. Counters reset on every live
+process restart; `since_boot_at` identifies the new counter window. An old file
+can remain after shutdown and must be checked for freshness; counts are never
+restored from it.
+
+The read-only script opens only the snapshot, rejects symlinks, prints age,
+and marks data older than 2× the cycle interval `STALE`. Missing data prints
+`STALE: no data yet`, never zero refusals; corrupt/unreadable files are also
+`STALE`. Exit codes match validator conventions: 0 fresh, 1 invalid/stale,
+2 missing/unreadable. It creates no files or locks and makes no network calls.
+Defaults: `LIVE_EXECUTION_STATE_DIR`, then `LIVE_STATE_DIR`, then the repository's
+`backend/live_execution/state`; `TICK_INTERVAL_SECONDS` or 60 seconds. It does
+not load `.env`; specify the interval for copied state. No additional admin
+route is shipped; this script is sufficient.
+
+Check F's consensus predicate now uses the explicit payer; intent/pre-state
+without that payer fails closed. A mismatch between `intent.wallet` and the
+payer refuses as `guard_refused` before simulation or any RPC. Real buy-refusal
+rate, VM/Docker runtime and Supabase remain **UNVERIFIED** by this local work.
+
 #### Reverse Proxy & Trusted Subnets (`TRUSTED_PROXY_CIDRS`) (§78 F4)
 When running behind a reverse proxy (e.g. Caddy, Traefik, Nginx) on a Docker bridge network, configure `TRUSTED_PROXY_CIDRS` (default: `127.0.0.1,172.16.0.0/12,::1/128`; `FORWARDED_ALLOW_IPS` is accepted as a legacy fallback).
 - The API only trusts `X-Forwarded-For` when the direct socket peer is inside these trusted CIDRs. Direct untrusted connections ignore XFF to defeat header spoofing.

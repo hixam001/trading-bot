@@ -1091,3 +1091,96 @@ assertion placed in quote validation; it was moved into `simulate_and_assert`
 and the same checks passed.
 
 S2 verification: VERDICT: PASS
+
+### §95 S3 — runbooks and final local evidence
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| F1/F2 operational evidence / S3 | Documentation | `docs/18_SECURITY.md`; `docs/11_DEPLOYMENT.md`; handoff and memory records | 9 failed → 9 passed; full root and backend suites each 2461 passed, no skips or failures | Document private snapshot/reader, restart boundary, exact public health response and payer assertion; append dated records; regenerate mutation log from no-flags execution | `test_operator_runbooks_describe_private_restart_scoped_counters`, `test_section95_handoffs_record_restart_scope_and_unverified_limits`, `test_behavior_record_lists_section95_changes`, `test_generated_mutation_log_names_all_four_section95_catches` |
+
+Actual no-flags mutation result: **153 mutations, 153 caught, 0 survivors**.
+All 153 report a named failing test; original target bytes were restored.
+The four additions caught public health counters, missing-as-healthy-zero
+reporting, snapshot failure propagation, and check F reverting to intent wallet.
+`docs/17_MUTATION_LOG.md` is the exact generated artifact exported from the
+isolated run; it was not edited by hand. The generator includes §95 in its
+heading. The baseline's 3 conditional skips are exercised with a frontend
+production bundle in the final root/backend runs. Those runs report 102
+warnings (existing multipart and Starlette deprecations).
+
+Observed commands/results (all logs in `/tmp/trading-bot-section95/`):
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section95_evidence.py
+# Before docs/artifact updates: 9 failed in 0.05s (s3-before.log).
+# After: 9 passed in 0.04s (s3-after.log).
+
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION95_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+# scripts/mutation_check.py receives NO flags.
+# All restorations verified clean. Mutations: 153, Caught: 153, Survivors: 0.
+# The artifact is decoded directly to docs/17_MUTATION_LOG.md (mutations.log).
+
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD PYTEST_PLUGINS; /bin/bash scripts/prepush_check.sh --stage 1'
+# 2461 passed, 102 warnings in 38.84s; stage 1 passed (full-root.log).
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD PYTEST_PLUGINS; cd backend && /usr/bin/python3 -m pytest -q -rs'
+# 2461 passed, 102 warnings in 38.86s; no skips/failures (full-backend.log).
+
+python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /usr/bin/python3 -c 'import subprocess,sys; stages=[2,4,5,6]; results=[(stage,subprocess.run(["/bin/bash","scripts/prepush_check.sh","--stage",str(stage)]).returncode) for stage in stages]; print("SECTION95_GATE_RESULTS",results); sys.exit(any(code for stage,code in results))'
+# SECTION95_GATE_RESULTS [(2, 0), (4, 0), (5, 0), (6, 0)].
+# pip check, API keypair isolation, TypeScript and production build pass.
+python3 docs/security-remediation/advisory_stage.py 3
+# exit 0; no known vulnerabilities found. Existing --no-deps/hash warnings retained.
+python3 docs/security-remediation/advisory_stage.py 7
+# exit 0; found 0 vulnerabilities (production npm dependencies).
+python3 docs/security-remediation/sandbox_runner.py --gate-e2e
+# 41 passed (18.0s); canonical stage 8 passed (gate-8.log).
+python3 /tmp/trading-bot-section94-ci/scan_history.py --label section95-gate-stage9 --gate
+# exit 0; canonical stage 9 passed using the previously downloaded pinned scanner.
+# Scanner archive SHA256 rechecked against its checksums file:
+# 9991e0b2903da4c8f6122b5c3186448b927a5da4deef1fe45271c3793f4ee29c.
+# This initial scan covers committed S1/S2; staged S3 is checked before commit.
+
+git diff --exit-code d74be0a -- docker-compose.yml
+# exit 0: compose unchanged, including read_only, cap_drop ALL and API engine_state:ro.
+git diff --check
+# exit 0.
+```
+
+All nine **local** stages of the unchanged canonical pre-push gate have
+observed passing results. Staged execution uses the gate's existing `--stage`
+interface: tests/build/browser checks run without external networking, while
+advisory tools see only pinned manifests with a clean environment. The scanner
+runs against disposable local history with redacted output. No live keys,
+state or service is used to establish these results.
+
+Allowed behavior changes remain exactly: (a) health omits counters, (b) live
+writes best-effort private snapshot telemetry consumed by a new read-only
+script, (c) intent/payer mismatch refuses before simulation. Payer plumbing
+makes check F mirror the guard without changing tolerances or tier rules.
+The optional authenticated route was omitted; no new authentication is needed.
+The behavior-change table appends only S1/S2, and the dated handoff/four memory
+entries append to existing history.
+
+**UNVERIFIED:** real buy-refusal rate, VM/Docker runtime and Supabase. Snapshot
+freshness and synthetic cycles do not measure production refusal rates or
+prove deployment behavior. Logs remain the cross-restart source of truth.
+
+S3 verification: VERDICT: PASS
+
+Final content checks observed before the S3 commit:
+
+```sh
+python3 /tmp/trading-bot-section95/scan_staged.py --label gate-9-staged --gate
+# exit 0; canonical stage 9 passes with S3 staged content included.
+# Trusted helper copies the earlier local scanner runner, applies git diff
+# --cached --binary to a disposable clone's index, and commits only there.
+# Same pinned scanner, isolated execution, redaction and gate command.
+python3 .agents/skills/gravitas/scripts/verify.py --cmd 'python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section95_counters.py backend/tests/test_section95_payer.py backend/tests/test_section95_evidence.py && python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/audit_runtime_writes.py --check && git diff --check'
+# 34 passed in 0.55s; audit and diff check exit 0; VERDICT: PASS.
+```
+
+Byte-prefix checks against `d74be0a` confirm append-only edits in `handoff.md`
+and the four memory files. Byte equality confirms compose unchanged and the
+mutation log identical to the generated export. AST inspection confirms
+`_redirection_verdict` does not read `intent.wallet`. This supplements the
+executable identity, schema, reader file-set and failure-isolation tests.

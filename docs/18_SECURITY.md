@@ -153,6 +153,7 @@ fails when a new write path resolves to the read-only root.
 | `<backend>/knowledge_base/ingested/` | `KB_INGESTED_DIR` | api | engine_data:/app/data |
 | `<LIVE_STATE_DIR>/spend_guard.json` | `SPEND_GUARD_FILE` | api, live | api engine_data:/app/data/spend_guard_api.json; live engine_state |
 | `<LIVE_STATE_DIR>/{break_state,kill_switch,heartbeat,commits,executions,confirmations,safety_counters,crowd_chain_status,wallet_pubkey}.*` | `LIVE_STATE_DIR` | live | engine_state:/app/backend/live_execution/state |
+| `<LIVE_STATE_DIR>/consensus_counters.json (atomic .tmp sibling)` | `LIVE_STATE_DIR` | live | engine_state:/app/backend/live_execution/state (api read-only) |
 | `<DB_PATH>/trading_bot.db` | `DB_PATH` | api, live | engine_data:/app/data |
 | `<LOG_DIR>/{app,error,security}.log` | `LOG_DIR` | api, live | engine_logs:/app/logs |
 | `<BACKUP_DIR>/state-*.tar.gz.enc` | `BACKUP_DIR (CLI/env)` | operator | engine_backups:/app/backups |
@@ -756,10 +757,42 @@ refuses. The guard still executes F on the chosen response. Signed aggregate
 wallet output accounting and the single-RPC sell fallback remain in force.
 
 Refusals log `SIM_CONSENSUS_REFUSED side=... category=... addr=...`; no new
-per-refusal alert is added. Fixed-size, saturating counters are exposed under
-`/api/health` → `simulation_consensus` with `scope="process"`. API and live
-runner processes have independent memory: the live runner's logs, rather than
-the API process's local counters, measure live trading refusals.
+per-refusal alert is added. **§95:** `/api/health` returns exactly `{"status":"ok"}`.
+No unauthenticated route exposes counters, categories or side breakdowns.
+API and live have independent process memory. The live heartbeat hook now
+atomically writes `STATE_DIR/consensus_counters.json` (a temporary sibling plus
+rename); failure logs a warning without interrupting heartbeat or execution.
+Only live writes this file; API retains `engine_state:ro`. No new HTTP route
+is needed; the operator script is sufficient.
+
+The fixed schema is `written_at` (epoch seconds), `since_boot_at`,
+`scope="live-process"`, buy/sell `attempts`, and buy/sell `refused` counts for
+`structural`, `control`, `wallet_amount`, `wallet_lamports`, `vault_amount` and
+`malformed`. Counts are integers, with no addresses, mints or signatures.
+They reset on process restart; the old file is never loaded into the counters.
+`since_boot_at` marks that boundary. Logs remain the source of truth across
+restarts and the cross-check during burn-in.
+
+```sh
+python3 scripts/consensus_status.py --state-dir /path/to/copied/state --cycle-interval-seconds 60
+docker compose exec -T api python scripts/consensus_status.py
+docker compose logs --since 1h live | rg 'SIM_CONSENSUS_REFUSED|SIM_CONSENSUS_ATTEMPT'
+```
+
+The script opens only `consensus_counters.json`, read-only, refuses symlinks,
+and performs no locking, repair, network calls or secret-sidecar reads.
+It prints counts and file age; older than twice the cycle interval is `STALE`.
+Missing data says `STALE: no data yet`, never healthy zeros; corrupt and
+unreadable data are also `STALE`. Exit codes: 0 fresh, 1 invalid/stale,
+2 missing/unreadable. State-dir defaults to `LIVE_EXECUTION_STATE_DIR`, then
+`LIVE_STATE_DIR`, then `backend/live_execution/state`; cycle interval defaults
+to `TICK_INTERVAL_SECONDS` (60 seconds if unset). The script does not load
+`.env`; pass the deployed interval explicitly when reading a copied directory.
+
+**§95 payer identity:** check F's consensus predicate receives the explicit
+payer supplied to the guard. Intent/pre-state without a payer is malformed;
+`intent.wallet != payer_pubkey` refuses as `guard_refused` before any RPC.
+Intent still supplies the input mint and raw amount; tolerances are unchanged.
 
 For burn-in, count log events over the same window (one attempted buy is a
 pre-state fetch):
