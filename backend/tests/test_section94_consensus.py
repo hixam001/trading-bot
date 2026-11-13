@@ -132,7 +132,7 @@ async def test_consensus_refusals_are_structured_and_bounded(caplog):
     assert 'SIM_CONSENSUS_REFUSED side=buy category=wallet_amount addr=wallet-t' in caplog.text
     assert solana.get_consensus_status()['refused']['buy']['wallet_amount'] == before + 1
     from api.main import health_check
-    assert 'simulation_consensus' in await health_check()
+    assert await health_check() == {'status': 'ok'}
 
 
 async def test_real_quorum_accepts_hot_pool_snapshots(monkeypatch):

@@ -114,6 +114,12 @@ INVENTORY: tuple[InventoryRow, ...] = (
          "backend/run_live_cycle.py:123"),
     ),
     InventoryRow(
+        "<LIVE_STATE_DIR>/consensus_counters.json (atomic .tmp sibling)",
+        "LIVE_STATE_DIR", ("live",),
+        "engine_state:/app/backend/live_execution/state (api read-only)",
+        ("backend/run_live_cycle.py#write_text", "backend/run_live_cycle.py#replace"),
+    ),
+    InventoryRow(
         "<DB_PATH>/trading_bot.db", "DB_PATH", ("api", "live"),
         "engine_data:/app/data",
         ("backend/api/db.py:250",),
@@ -341,6 +347,8 @@ APPROVED_WRITES: dict[str, str] = {
     'backend/rule_engine/liveness.py#_write#replace#path': 'LIVE_STATE_DIR',
     'backend/run_live_cycle.py#_beat#write_text#tmp_hb': 'LIVE_STATE_DIR',
     'backend/run_live_cycle.py#_beat#replace#hb_file': 'LIVE_STATE_DIR',
+    'backend/run_live_cycle.py#_write_consensus_snapshot#write_text#tmp': 'LIVE_STATE_DIR',
+    'backend/run_live_cycle.py#_write_consensus_snapshot#replace#target': 'LIVE_STATE_DIR',
     "backend/run_live_cycle.py#_snapshot_funnel#replace#'Z'": 'non-filesystem string/datetime/URL replacement',
     'backend/run_live_cycle.py#main#mkdir#live_config.STATE_DIR': 'LIVE_STATE_DIR',
     'backend/run_live_cycle.py#main#write_text#tmp_pubkey_file': 'LIVE_STATE_DIR',

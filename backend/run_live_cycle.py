@@ -126,6 +126,26 @@ def _beat() -> None:
         tmp_hb.replace(hb_file)
     except Exception:
         pass
+    _write_consensus_snapshot()
+
+
+def _write_consensus_snapshot() -> None:
+    """Best-effort telemetry only; never interrupt heartbeat or execution."""
+    try:
+        status = solana.get_consensus_status()
+        snapshot = {
+            "written_at": time.time(), "since_boot_at": status["since_boot_at"],
+            "scope": "live-process",
+            "attempts": {s: int(status["attempts"][s]) for s in ("buy", "sell")},
+            "refused": {s: {c: int(status["refused"][s][c])
+                            for c in solana._CONSENSUS_CATEGORIES} for s in ("buy", "sell")},
+        }
+        target = live_config.STATE_DIR / "consensus_counters.json"
+        tmp = live_config.STATE_DIR / "consensus_counters.json.tmp"
+        tmp.write_text(json.dumps(snapshot, allow_nan=False) + "\n", encoding="utf-8")
+        tmp.replace(target)
+    except Exception:
+        log.warning("consensus snapshot write failed")
 
 
 async def _cached_decimals(mint: str) -> int | None:

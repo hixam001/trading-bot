@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import logging
+import time
 
 import httpx
 from bounded_http import bounded_request
@@ -133,12 +134,14 @@ def check_rpc_diversity(endpoints: Optional[list[str]] = None) -> tuple[int, boo
 _CONSENSUS_CATEGORIES = ("structural", "control", "wallet_amount", "wallet_lamports", "vault_amount", "malformed")
 _CONSENSUS_REFUSED = {side: {category: 0 for category in _CONSENSUS_CATEGORIES} for side in ("buy", "sell")}
 _CONSENSUS_ATTEMPTS = {"buy": 0, "sell": 0}
+_CONSENSUS_SINCE_BOOT_AT = time.time()
 _COUNTER_MAX = (1 << 63) - 1
 
 
 def get_consensus_status() -> dict:
-    """Fixed-size process-local counters; logs cover separate live processes."""
-    return {"scope": "process", "refused": {s: dict(v) for s, v in _CONSENSUS_REFUSED.items()},
+    """Fixed-size process-local counters reset at boot; logs span restarts."""
+    return {"scope": "process", "since_boot_at": _CONSENSUS_SINCE_BOOT_AT,
+            "refused": {s: dict(v) for s, v in _CONSENSUS_REFUSED.items()},
             "attempts": dict(_CONSENSUS_ATTEMPTS)}
 
 

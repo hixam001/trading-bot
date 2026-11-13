@@ -1011,3 +1011,54 @@ execution and the previously listed native-exploitability limits remain
 unverified by these CI repairs.
 
 VERDICT: PASS
+
+## §95 — live consensus telemetry and payer identity (2026-11-13)
+
+Base: `d74be0a`. Work is confined to F1/F2; the §94 trading rules, sell
+recovery, settlement, signing and consensus tolerances remain unchanged.
+`./scripts/prepush_check.sh` is the binding local gate.
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| F1 / S1 | Low–Medium | `backend/api/main.py:389`; `backend/run_live_cycle.py:_beat`; `scripts/consensus_status.py` | New S1 tests: 21 failed → affected checks: 83 passed; three S1 mutants caught by their named tests | Health is exactly `{"status":"ok"}`. The live heartbeat atomically writes an allowlisted snapshot; failures warn and are swallowed. The read-only consumer marks stale/missing/corrupt data explicitly | `test_public_health_is_exactly_status_ok`, `test_live_heartbeat_writes_atomic_fixed_schema_snapshot`, `test_snapshot_write_failure_never_stops_heartbeat`, `test_status_missing_is_no_data_never_healthy_zeros`, `test_status_opens_only_snapshot_read_only`, `test_simulated_live_loop_publishes_snapshot_for_reader` |
+
+S1 writes only `STATE_DIR/consensus_counters.json` and its atomic `.tmp`
+sibling. The schema is `written_at`, `since_boot_at`, `scope="live-process"`,
+`attempts` and `refused`, with fixed buy/sell and category keys. Counters reset
+on live-process restart; no previous snapshot is loaded. The logs remain the
+source of truth across restarts. The script uses standard-library imports,
+opens only that snapshot read-only, refuses symlinks, and performs no network,
+locking or repair. Fresh data exits 0; invalid/stale data exits 1;
+missing/unreadable data exits 2. Missing means `STALE: no data yet`, never
+healthy zeros. The optional HTTP route is omitted to keep this round limited
+to the sufficient operator script and avoid extending the HTTP surface.
+The inventory assigns this write to live only. Compose is unchanged; API
+retains its read-only engine-state mount.
+
+Observed commands and output (logs: `/tmp/trading-bot-section95/`):
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q
+# Baseline before edits: 2424 passed, 3 skipped, 102 warnings in 38.01s.
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section95_counters.py
+# Before implementation: 21 failed in 0.38s (s1-before.log).
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section95_counters.py backend/tests/test_section94_consensus.py backend/tests/test_audit_93_r1.py backend/tests/test_graceful_shutdown.py
+# After implementation: 83 passed in 4.49s (s1-after.log).
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import sys; from scripts.mutation_check import MUTATIONS,run_mutation; results=[(m.mutation_id,run_mutation(m,sys.executable)) for m in MUTATIONS if m.phase == "§95-S1"]; print(results); assert all(caught and name.startswith("test_") for _,(caught,name,_) in results)'
+# All three caught: test_public_health_is_exactly_status_ok,
+# test_status_missing_is_no_data_never_healthy_zeros,
+# test_snapshot_write_failure_never_stops_heartbeat[write].
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/audit_runtime_writes.py --check
+# exit 0 (s1-writes.log).
+git diff --check
+# exit 0.
+```
+
+The existing source-only sandbox runs tests in a disposable checkout with no
+network or live state/secrets. Its first invocation under the default tool
+sandbox could not create a network namespace socket; the same isolated runner
+then succeeded with the approved execution permission. This is local test
+evidence, not Docker or VM runtime evidence. The baseline's conditional checks
+need a built frontend bundle; final verification will supply that bundle.
+
+S1 verification: VERDICT: PASS
