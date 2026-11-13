@@ -1062,3 +1062,32 @@ evidence, not Docker or VM runtime evidence. The baseline's conditional checks
 need a built frontend bundle; final verification will supply that bundle.
 
 S1 verification: VERDICT: PASS
+
+### §95 S2 — explicit payer identity
+
+| ID | severity | file:line | evidence (failing → passing) | fix | test |
+|---|---|---|---|---|---|
+| F2 / S2 | Low | `backend/live_execution/solana.py:_redirection_verdict`; `backend/live_execution/sim_guard.py:simulate_and_assert` | 3 failed → 54 passed across new payer, unchanged §94 consensus and §81 guard fixtures; payer-owner mutant caught by the named F test | Check F receives the explicit payer; missing payer with intent/pre-state is malformed. A wallet/payer mismatch refuses once as `guard_refused` before quote processing or RPC | `test_intent_payer_mismatch_refuses_before_any_rpc`, `test_consensus_with_intent_and_pre_state_requires_explicit_payer`, `test_check_f_consensus_uses_explicit_payer_even_when_intent_wallet_differs` |
+
+```sh
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section95_payer.py
+# Before implementation: 3 failed in 0.13s (s2-before.log).
+python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section95_payer.py backend/tests/test_section94_consensus.py backend/tests/test_audit_81_c.py
+# After implementation: 54 passed (s2-after.log).
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import sys; from scripts.mutation_check import MUTATIONS,run_mutation; results=[(m.mutation_id,run_mutation(m,sys.executable)) for m in MUTATIONS if m.phase == "§95-S2"]; print(results); assert all(caught and name == "test_check_f_consensus_uses_explicit_payer_even_when_intent_wallet_differs" for _,(caught,name,_) in results)'
+# 95S2_CONSENSUS_INTENT_OWNER caught by
+# test_check_f_consensus_uses_explicit_payer_even_when_intent_wallet_differs.
+git diff --check
+# exit 0.
+```
+
+The existing §94 check-F mutant now passes the extra payer argument to its
+active enforcement target. Its predicate and expected catch are unchanged.
+The new consensus fixture deliberately separates intent wallet from payer to
+prove the comparator uses its explicit owner; live simulation rejects that
+mismatch before any RPC. Existing hot-pool, hostile and F-flip fixtures are
+unchanged from S1. During implementation, the affected checks caught a payer
+assertion placed in quote validation; it was moved into `simulate_and_assert`
+and the same checks passed.
+
+S2 verification: VERDICT: PASS

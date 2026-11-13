@@ -197,7 +197,7 @@ def _extension_control_bytes(raw: bytes, program: str) -> bytes:
 
 
 def _redirection_verdict(response: dict, addresses: list[str], pre_state: dict,
-                         intent) -> bool:
+                         intent, wallet_address: str) -> bool:
     """Exactly check F's predicate against the guard's chosen pre-state.
 
     Comparing magnitudes would reject active pools yet still permit a tiny
@@ -206,15 +206,16 @@ def _redirection_verdict(response: dict, addresses: list[str], pre_state: dict,
     """
     from live_execution.sim_guard import decode_token_account_data
     from live_execution.jupiter_executor import _SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID
+    owner = wallet_address
     programs = (_SPL_TOKEN_PROGRAM_ID, _TOKEN_2022_PROGRAM_ID)
     before = {a: decode_token_account_data(_account_data(v))
               for a, v in pre_state.items() if v and v.get("owner") in programs}
     after = {a: decode_token_account_data(_account_data(v))
              for a, v in zip(addresses, response["post_accounts"]) if v and v.get("owner") in programs}
-    debit = sum(max(0, t["amount"] - (after[a]["amount"] if a in after and after[a]["owner"] == intent.wallet else 0))
-                for a, t in before.items() if t["owner"] == intent.wallet and t["mint"] == intent.input_mint)
+    debit = sum(max(0, t["amount"] - (after[a]["amount"] if a in after and after[a]["owner"] == owner else 0))
+                for a, t in before.items() if t["owner"] == owner and t["mint"] == intent.input_mint)
     return debit > intent.in_amount_raw and any(
-        t["owner"] != intent.wallet and t["amount"] > before.get(a, {}).get("amount", 0)
+        t["owner"] != owner and t["amount"] > before.get(a, {}).get("amount", 0)
         for a, t in after.items())
 
 
@@ -229,6 +230,8 @@ def responses_agree(a: dict, b: dict, wallet_owned_addrs: list[str],
     No guard decision consumes opaque market-state data or lamports.
     """
     refuse = lambda category, addr="unknown": _consensus_refused(side, category, addr)
+    if pre_state is not None and intent is not None and wallet_address is None:
+        return refuse("malformed")
     if not isinstance(a, dict) or not isinstance(b, dict) or "err" not in a or "err" not in b:
         return refuse("malformed")
     if a["err"] != b["err"]:
@@ -297,7 +300,7 @@ def responses_agree(a: dict, b: dict, wallet_owned_addrs: list[str],
         # Their structural facts and token controls above remain mandatory.
     if pre_state is not None and intent is not None:
         try:
-            if _redirection_verdict(a, addresses, pre_state, intent) != _redirection_verdict(b, addresses, pre_state, intent):
+            if _redirection_verdict(a, addresses, pre_state, intent, wallet_address) != _redirection_verdict(b, addresses, pre_state, intent, wallet_address):
                 return refuse("vault_amount")
         except Exception:
             return refuse("malformed")

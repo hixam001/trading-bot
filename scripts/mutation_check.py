@@ -1607,7 +1607,7 @@ MUTATIONS: list[Mutation] = [
         description='Reintroduce byte-identical pool-data consensus'),
     Mutation(phase="§94-S3", mutation_id='94S3_F_VERDICT',
         file_path="backend/live_execution/solana.py",
-        exact_old_text='if _redirection_verdict(a, addresses, pre_state, intent) != _redirection_verdict(b, addresses, pre_state, intent):', new_text='if False:',
+        exact_old_text='if _redirection_verdict(a, addresses, pre_state, intent, wallet_address) != _redirection_verdict(b, addresses, pre_state, intent, wallet_address):', new_text='if False:',
         test_selector="backend/tests/test_section94_consensus.py",
         description='Ignore cross-endpoint disagreement on check F decision'),
     Mutation(phase="§95-S1", mutation_id="95S1_PUBLIC_HEALTH_COUNTERS",
@@ -1628,6 +1628,12 @@ MUTATIONS: list[Mutation] = [
         new_text='        log.warning("consensus snapshot write failed")\n        raise',
         test_selector="backend/tests/test_section95_counters.py::test_snapshot_write_failure_never_stops_heartbeat",
         description="Propagate snapshot I/O failure into the trade cycle heartbeat hook"),
+    Mutation(phase="§95-S2", mutation_id="95S2_CONSENSUS_INTENT_OWNER",
+        file_path="backend/live_execution/solana.py",
+        exact_old_text="    owner = wallet_address",
+        new_text="    owner = intent.wallet",
+        test_selector="backend/tests/test_section95_payer.py::test_check_f_consensus_uses_explicit_payer_even_when_intent_wallet_differs",
+        description="Check F consensus uses intent.wallet instead of the explicit payer"),
 ]
 
 

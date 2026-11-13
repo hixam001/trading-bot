@@ -251,6 +251,9 @@ async def simulate_and_assert(
             pass
         raise SimulationRefused(f"simulation refused: {reason}", category=category, onchain_err=onchain_err)
 
+    if intent.wallet != payer_pubkey:
+        _refuse("intent.wallet does not match payer_pubkey", category="guard_refused")
+
     if not quote or not isinstance(quote, dict):
         _refuse("quote is missing or invalid")
 
