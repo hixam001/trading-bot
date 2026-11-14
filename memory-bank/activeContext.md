@@ -69,7 +69,7 @@ cap and bounded UTF-8/escaped-JSON ingest override; offline spend projection;
 shared pytest-only host trust, pre-validation signup concealment and real route
 auth probes. Container controls, spend-cap defaults, gates, sizing and exits
 remain unchanged. Separate API/live counters and restored persisted loss memory
-are documented. Full report: docs/19_ROOTFS_AUDIT.md.
+are documented. Full report: docs/11_ROOTFS_AUDIT.md.
 
 Observed verification: backend 1934 passed, 0 failed, 0 skipped (102 existing
 deprecation warnings); mutation 137/137 caught, 0 survivors, restorations clean,
@@ -94,8 +94,8 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **S7 — response hardening**: shared headers on 404/405/413/429/500/static/SPA; CSP `base-uri 'none'`; pytest-only synthetic-host trust; DEBUG cannot bypass auth/CSRF/rate limits; debug text redacted.
 - **S8 — supply chain/deploy**: Actions pinned by full SHA; images/SearXNG pinned by digest; read-only/cap-drop/no-new-privileges/resource-limited compose; preflight runtime+compose checks; JSON wallet-channel warning.
 - **S9 — detection/recovery**: bounded 10 s event dedupe with true `occurrences`/`last_seen` (2,000-key LRU); one burst alert per IP/10 min (2,000-key bound); schema-rejected uploads emit `SUSPICIOUS_UPLOAD`; restore drill verifies rows, denies the keypair, and forces the kill-switch latch.
-- **Known limits**: heuristic redaction; per-host revocation/limiter/spend state; prompt-injection containment is structural; RPC/Birdeye are outside the LLM guard because exits use them; monitoring is in-memory (log survives rotation); no SIEM/tamper-evident log; restore drill is synthetic; infrastructure items remain in `docs/18_SECURITY.md` §8.
-- **Verification**: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT**; Playwright **41/41** against a local mock API (`:8000`; limiter raised only for the harness run); tsc/build + frontend scanner clean; prepush **9/9**; gitleaks clean under the CI version (v8.24.3) and v8.30.1 (one documentation false positive reworded + fingerprinted in `16bd30c`); docs/18 contains threat model, S1–S9 map, residuals, checklist, runbooks, findings F1–F10, verified-safe/rotate-now/operator-must-do/UNVERIFIED lists. GitHub Actions on `16bd30c` green: Tests & Security Audit (incl. Docker ARM64 build), gitleaks, and CodeQL.
+- **Known limits**: heuristic redaction; per-host revocation/limiter/spend state; prompt-injection containment is structural; RPC/Birdeye are outside the LLM guard because exits use them; monitoring is in-memory (log survives rotation); no SIEM/tamper-evident log; restore drill is synthetic; infrastructure items remain in `docs/10_SECURITY.md` §8.
+- **Verification**: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT**; Playwright **41/41** against a local mock API (`:8000`; limiter raised only for the harness run); tsc/build + frontend scanner clean; prepush **9/9**; gitleaks clean under the CI version (v8.24.3) and v8.30.1 (one documentation false positive reworded + fingerprinted in `16bd30c`); docs/10_SECURITY.md contains threat model, S1–S9 map, residuals, checklist, runbooks, findings F1–F10, verified-safe/rotate-now/operator-must-do/UNVERIFIED lists. GitHub Actions on `16bd30c` green: Tests & Security Audit (incl. Docker ARM64 build), gitleaks, and CodeQL.
 
 **Prior — 2026-11-03 (§91 Prove Absence Before Expiring a Pending Buy — complete, phases A1–C):** strict `ABSENT` vs `UNREACHABLE` classification; operator `--expire`/`--force-expire` require ≥ 2 endpoints and every one `ABSENT`; the live cycle leaves any non-`ABSENT` row pending; preflight accepts `/dev/null` for the JSON channel only. Backend **1535 passed**, mutation **54/54**, Playwright **40/40**.
 
@@ -105,8 +105,8 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **§90-C1 — settled reason**: `ExecutionLedger.record_buy` writes `reason=""` when replacing a pending row, so a confirmed fill never carries "send outcome not yet known".
 - **§90-C2 — pre-send ordering**: `test_execute_orders_sign_then_journal_then_send` pins `[sign, record_pending_buy, send_checked_swap]`; mutation `90C2_JOURNAL_AFTER_SEND` moves the journal after the send and is caught.
 - **§90-C3 — adoption rebind**: `CommitLog.bind(..., allow_failed=True)` is opt-in for the automatic resolver and operator `--adopt-from-sig`; it clears the stale `fail_reason`. The default still refuses a failed row.
-- **§90-D — ARM browser escape + burn-in**: both compose build stanzas pass `SKIP_BROWSER: "${SKIP_BROWSER:-0}"` (source contract test); docs/13 documents `SKIP_BROWSER=1 docker compose up -d --build` and a supervised first-48-hours checklist starting from the armed state.
-- **§90 follow-up — literal spec audit**: the preflight FAIL now says the target is the in-container path and names `WALLET_KEYPAIR_HOST_PATH` for the host side; the JSON missing-source WARN includes the `install -m 600 -o 10001 /dev/null <path>` placeholder and `/dev/null` alternative. `--expire` now refuses a landed signature with `the transaction landed (status ...): use --adopt-from-sig`; `90B_EXPIRY_FOUND_STATUS` was updated to the new guard. Docs/13 adds the placeholder, the crowd-feed/browser fallback truth, and the funding/live-log/heartbeat/alert/no-cap-increase first-48-hours rules; docs/13 §10.6 and docs/15 name the landed refusal.
+- **§90-D — ARM browser escape + burn-in**: both compose build stanzas pass `SKIP_BROWSER: "${SKIP_BROWSER:-0}"` (source contract test); docs/05_ORACLE_DEPLOY_GUIDE.md documents `SKIP_BROWSER=1 docker compose up -d --build` and a supervised first-48-hours checklist starting from the armed state.
+- **§90 follow-up — literal spec audit**: the preflight FAIL now says the target is the in-container path and names `WALLET_KEYPAIR_HOST_PATH` for the host side; the JSON missing-source WARN includes the `install -m 600 -o 10001 /dev/null <path>` placeholder and `/dev/null` alternative. `--expire` now refuses a landed signature with `the transaction landed (status ...): use --adopt-from-sig`; `90B_EXPIRY_FOUND_STATUS` was updated to the new guard. docs/05_ORACLE_DEPLOY_GUIDE.md adds the placeholder, the crowd-feed/browser fallback truth, and the funding/live-log/heartbeat/alert/no-cap-increase first-48-hours rules; docs/05_ORACLE_DEPLOY_GUIDE.md §10.6 and docs/07_BACKUP_RESTORE.md name the landed refusal.
 - **Verification**: backend **1496 passed**, 0 failed (102 warnings in 33.32s; +24 over the 1472/2-skipped baseline); mutation **50/50 CAUGHT** (6 new §90 rows); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. Pushed `dde40e8` (phases) and `0044a0c` (follow-up); `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green. Operator-only VM preflight, reboot, graceful-stop, backup/restore and the supervised real buy + sell on scratch state remain outstanding.
 - **Push gate (binding)**: no `git push` on any branch — including docs-only changes — until `./scripts/prepush_check.sh` passes locally and GitHub Actions is green. A red check blocks the push and is fixed, never bypassed.
 
@@ -121,12 +121,12 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 
 **Prior — 2026-11-01 (§88 Pending-Buy Gate Hole, Entrypoint Passthrough, Preflight Truth, Expiry Race, Pre-Send Journal & Operator Resolver — complete, phases A–G):**
 - **§88-A — pending buys block a second buy**: `preflight` refuses a mint with an unresolved pending row; `executor.place_buy` repeats the guard before idempotency replay. The live gate sees pending cost as a `quantity=0.0` held position (so `already_held` fails), while pending mints never enter `meta`, `_manage`, exit pricing, or the trades mirror.
-- **§88-B — entrypoint passthrough**: a non-empty argv is `exec "$@"` before any `ROLE` logic, so an explicit `docker compose run live python …` can never start a second wallet signer. Docs use `--entrypoint python`; docs/13 §5.5 uses `/app/scripts/preflight_deploy.py`.
+- **§88-B — entrypoint passthrough**: a non-empty argv is `exec "$@"` before any `ROLE` logic, so an explicit `docker compose run live python …` can never start a second wallet signer. Docs use `--entrypoint python`; docs/05_ORACLE_DEPLOY_GUIDE.md §5.5 uses `/app/scripts/preflight_deploy.py`.
 - **§88-C — preflight truth**: `.env` must select exactly one wallet channel; the JSON channel skips the host-file check. A `PermissionError` reports "directory not traversable". Host readability is tested only as uid 10001/root; injected uid/euid readers keep the tests hermetic.
 - **§88-D — expiry race**: `get_signature_status_all()` queries every deduped endpoint; expiry requires a successful re-query, all endpoints still unknown, and age ≥ 90 s. A found status is processed through the normal adopt/fail path; a young row or failed re-query stays pending.
 - **§88-E — pre-send journal**: both buy paths write the pending row after signing and before the first send (`on_signed`); a journal failure blocks the send. Definitive send rejection/landed error settles `failed`; ambiguous stays pending. `record_buy` replaces the same-key pending row, preserving `ts`/blockhash/commit/memo fields (one key → one row).
 - **§88-F — stop + resolver**: SIGTERM/SIGINT set `_STOP_EVENT`; the entry boundary checks it immediately before `place_order`, logs `entry skipped: shutting down`, and skips the buy while exits finish. New `scripts/resolve_pending_buy.py <key> --expire|--adopt-from-sig [SIG]` requires a pending row, prompts unless `--yes`, refuses non-TTY without `--yes`, and appends a JSON audit line; adopt requires actual fill deltas and refuses to invent a basis.
-- **§88-G — docs/memory/mutation**: docs 01/13/15, handoff §88, memory-bank, and `docs/17_MUTATION_LOG.md` regenerated for §81–§88.
+- **§88-G — docs/memory/mutation**: docs 01/13/15, handoff §88, memory-bank, and `docs/09_MUTATION_LOG.md` regenerated for §81–§88.
 - **Verification**: backend **1460 passed**, 0 failed (102 warnings in 20.48s; +41 over the 1419 baseline); mutation **44/44 CAUGHT** (14 new §88 rows); local prepush gate **9/9 clean** (gitleaks absent locally; CI runs it). Pushed `0beb964`; GitHub Actions tests + Docker ARM64 build/compose, gitleaks, and CodeQL are green. Operator-only VM drills remain outstanding.
 - **Push gate (binding)**: no `git push` on any branch — including docs-only changes — until `./scripts/prepush_check.sh` passes locally and GitHub Actions is green. A red check blocks the push and is fixed, never bypassed.
 
@@ -261,7 +261,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
   2. Evaluates verbatim `feed_events` (`rule_breakdown`, `failed_rule_ids`) and `trades`.
   3. Computes: daily candidate funnel (seen, gate-passed, think-passed, entered), per-rule fail rate & sole-blocker count, counterfactual analysis ("if rule X were removed, N candidates would have passed"), top-3 blocking rules failing metric distribution (min, median, p90 vs threshold), and LLM refusal rate among gate-passers with feed verdict mix.
   4. Supports both SQLite (`--db` or default) and Postgres/Supabase (`api.db_pg.get_db()`). Fails soft to SQLite fallback when offline.
-  5. Added `backend/tests/test_audit_79_g.py` (4 tests) and documented in `docs/11_DEPLOYMENT.md`.
+  5. Added `backend/tests/test_audit_79_g.py` (4 tests) and documented in `docs/03_DEPLOYMENT.md`.
 
 - **Phase F (Honest Observability & Config Consistency)**:
   1. Refusal counter persistence: `backend/live_execution/safety_counters.py` tracks rolling 24h refusals (`quote_mismatch`, `sim_refused`, `guard_refused`, `quorum_failed`), atomically stored to `STATE_DIR/safety_counters.json`, exposed via `GET /api/safety`. Displays `null` (unavailable) when uninitialized.
@@ -274,7 +274,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **Phase E (Backups and Restore)**:
   1. Created `scripts/backup_state.py`: packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.json`, `break_state.json` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
   2. Created `scripts/restore_state.py`: pre-restore safety checks (refuses if engine running without `--force`), creates automatic `.pre_restore_<ts>` rollback backup, verifies manifest hashes and SQLite integrity.
-  3. Added `deploy/backup.sh` executable wrapper, `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/15_BACKUP_RESTORE.md`.
+  3. Added `deploy/backup.sh` executable wrapper, `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/07_BACKUP_RESTORE.md`.
   4. Added `backend/tests/test_audit_79_e.py` (8 tests).
 
 - **Phase D (Outbound Alerting)**:
@@ -282,7 +282,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
   2. Automatic secret registration for channel tokens and deep message sanitization (runtime secrets, config secrets, Solana keypairs, Bearer tokens, basic auth credentials).
   3. Deduplication and flood control: per-key cooldown (5m CRITICAL, 15m default), global flood cap (20/hr) with suppression tracking, and refusal aggregation (first immediately, then 30m aggregate digest).
   4. Wired comprehensive hooks: `KILL_SWITCH_ENGAGED`, `DAILY_LOSS_BREAKER`, `SIM_REFUSAL`, `GUARD_REFUSAL`, `EXIT_UNRESOLVED`, `SELL_NO_REF_PRICE`, `RPC_NOT_DIVERSE`, `SIM_SINGLE_RPC_SELL`, `LIVE_BOOT`, `LOW_SOL`, `LOW_USDC`, `WALLET_DROP`, `LOGIN_FAILURE_BURST`, `HEARTBEAT_STALE`/`RECOVERED`.
-  5. Added `scripts/send_test_alert.py`, documented setup in `docs/11_DEPLOYMENT.md`, and surfaced `outbound_alerts` on `GET /api/safety`.
+  5. Added `scripts/send_test_alert.py`, documented setup in `docs/03_DEPLOYMENT.md`, and surfaced `outbound_alerts` on `GET /api/safety`.
   6. Added `backend/tests/test_audit_79_d.py` (16 tests).
 
 - **Phase C (Token-safety gate improvements)**:
@@ -310,9 +310,9 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 **PREVIOUS — 2026-10-12 (§78):** Post-Audit Hardening (Phases A–F):
 - **Phase A (Signing Guard Bypass Remediation)**: Closed reproduced drain/sink/owner bypasses (A1, A2, A3) in `jupiter_executor.py`. Enforced owner checks for Token/Token-2022 tags 1, 16, 18 against payer; proved wallet ownership in execution order; restricted CreateAccount owner to Token/Token-2022, space <= 165 bytes, and lamports <= 2_500_000; enforced 10_000_000 lamports (0.01 SOL) aggregate top-level SOL outflow cap (`MAX_SYSTEM_OUTFLOW_LAMPORTS`). Created no-key diagnostic tool `scripts/inspect_live_quote.py`. Added 24 tests in `test_audit_78_a.py`. Full suite: **958 passed**, 0 failed.
 - **Phase B (Pre-Sign Simulation Layer)**: Added `solana.simulate_transaction` and `solana.get_multiple_accounts` with dual-RPC consensus. Created `live_execution/sim_guard.py` asserting post-simulation invariants: `err is None`, SOL decrease <= 0.01 SOL, input token decrease within 1% tolerance, output token increase >= otherAmountThreshold landing in wallet ATA (or native SOL on unwrap), third token accounts untouched, and zero owner changes or unexpected closures. Hardcoded `SIMULATION_REQUIRED: bool = True` and wired into `_sign_transaction` as single signing choke point. Extended `drill.py` with simulation step. Added 12 tests in `test_audit_78_b.py`. Full suite: **970 passed**, 0 failed.
-- **Phase C (Truthful Docs & Comments)**: Rewrote `docs/14_SIGNING_GUARD.md` detailing 3-layer architecture, removing false claims regarding preflight balance verification, documenting residual risks, converting absolute links to relative paths, and documenting `inspect_live_quote.py`. Corrected inverted `skipPreflight` comments in `jupiter_executor.py` and `solana.py`. Cleaned unverified gitleaks claims in memory-bank. Added tests in `test_docs_security.py`. Full suite: **972 passed**, 0 failed.
-- **Phase D (Broken Pin & Dependency Hygiene)**: Pinned SearXNG image to verified `2026.10.9-f4822b3fc`, documented manifest digest inspection in `docs/11_DEPLOYMENT.md`, aligned native `SEARXNG_SECRET` environment passing, bumped `urllib3>=2.8.0` in `requirements.txt` and `requirements.lock` (resolving PYSEC-2026-4175/4176/4177 with 0 pip-audit vulnerabilities), updated `Dockerfile` to install from lockfile with `--no-deps`, aligned CI/Dockerfile to Python 3.14, added scheduled weekly CI audit cron, created `.github/dependabot.yml`, and switched Dockerfile healthcheck to lightweight `/api/health`. Added 8 tests in `test_audit_78_d.py`. Full suite: **980 passed**, 0 failed.
-- **Phase E (Session Revocation Memory Growth Remediation)**: Validated session cookies against HMAC signature and max-age before storing in revocation registry, discarding unauthenticated/forged/expired spam without memory allocation. Bounded revocation registry to `MAX_REVOKED_SESSIONS = 10_000` entries using `OrderedDict` with $O(1)$ LRU eviction and timestamp-based pruning. Documented in-memory durability limitation in docstring and `docs/11_DEPLOYMENT.md`. Added 6 tests in `test_audit_78_e.py`. Full suite: **986 passed**, 0 failed.
+- **Phase C (Truthful Docs & Comments)**: Rewrote `docs/06_SIGNING_GUARD.md` detailing 3-layer architecture, removing false claims regarding preflight balance verification, documenting residual risks, converting absolute links to relative paths, and documenting `inspect_live_quote.py`. Corrected inverted `skipPreflight` comments in `jupiter_executor.py` and `solana.py`. Cleaned unverified gitleaks claims in memory-bank. Added tests in `test_docs_security.py`. Full suite: **972 passed**, 0 failed.
+- **Phase D (Broken Pin & Dependency Hygiene)**: Pinned SearXNG image to verified `2026.10.9-f4822b3fc`, documented manifest digest inspection in `docs/03_DEPLOYMENT.md`, aligned native `SEARXNG_SECRET` environment passing, bumped `urllib3>=2.8.0` in `requirements.txt` and `requirements.lock` (resolving PYSEC-2026-4175/4176/4177 with 0 pip-audit vulnerabilities), updated `Dockerfile` to install from lockfile with `--no-deps`, aligned CI/Dockerfile to Python 3.14, added scheduled weekly CI audit cron, created `.github/dependabot.yml`, and switched Dockerfile healthcheck to lightweight `/api/health`. Added 8 tests in `test_audit_78_d.py`. Full suite: **980 passed**, 0 failed.
+- **Phase E (Session Revocation Memory Growth Remediation)**: Validated session cookies against HMAC signature and max-age before storing in revocation registry, discarding unauthenticated/forged/expired spam without memory allocation. Bounded revocation registry to `MAX_REVOKED_SESSIONS = 10_000` entries using `OrderedDict` with $O(1)$ LRU eviction and timestamp-based pruning. Documented in-memory durability limitation in docstring and `docs/03_DEPLOYMENT.md`. Added 6 tests in `test_audit_78_e.py`. Full suite: **986 passed**, 0 failed.
 - **Phase F (Minor Hardening Leftovers Remediation)**: Changed live service restart policy to `restart: on-failure` in `docker-compose.yml` with clean `exit 0` entrypoint shutdown when disarmed/unconfigured. Decoupled runtime secret registration into `backend/secret_registry.py`, registered keypair forms (JSON, base58, hex) on load, and extended logging redactor regex to mask single-quoted Python dict representations. Merged duplicate cash queries into fail-closed `get_wallet_cash_usd()` returning None (never 0.0) when unreadable, updated stats/holdings API responses with `cash_status`, and updated frontend to render "unavailable". Added `TRUSTED_PROXY_CIDRS` with rightmost untrusted IP extraction in `get_client_ip()`. Enforced entropy checks on `ADMIN_TOKEN` (>= 32 chars and >= 12 distinct chars via `config_helpers.py`). Resolved linter warnings (`LLMVerdict`/`LLMBrainResult` in `run_live_cycle.py` and empty f-string in `db_pg.py`). Added 7 tests in `test_audit_78_f.py`. Full suite: **993 passed**, 0 failed.
 
 **PREVIOUS:**
@@ -320,7 +320,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 **As of 2026-10-11 (§77):** Security Audit Remediation (Phases A–E):
 1. **Phase A (Edge Exposure & Auth)**: Removed admin-token proxy injection from Caddy deploy docs (`test_docs_security.py`); bound uvicorn/compose to loopback and trusted bridge CIDRs (`FORWARDED_ALLOW_IPS`); unified client IP resolution across auth and bot protection to `get_client_ip()`; enforced 32+ character minimum entropy on `ADMIN_TOKEN`; purged `test-captcha-pass` bypass; inverted login lockout order to authenticate before rate-limiting failed attempts.
 2. **Phase B (Wallet Secret Isolation)**: Isolated wallet secret by introducing `wallet.public_address()`; removed all `load_keypair()` calls from `backend/api/` (enforced via AST test); split `docker-compose.yml` into distinct `api` and `live` services with read-only keypair mount on `live` only; enforced `0o600`/`0o400` POSIX permissions on keypair file.
-3. **Phase C (Signing Guard & Deny-By-Default)**: Added `inspect_swap_transaction(tx, payer_pubkey)` inspecting instructions in both versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture and balance safety in `docs/14_SIGNING_GUARD.md`.
+3. **Phase C (Signing Guard & Deny-By-Default)**: Added `inspect_swap_transaction(tx, payer_pubkey)` inspecting instructions in both versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture and balance safety in `docs/06_SIGNING_GUARD.md`.
 4. **Phase D (Hermetic Tests & CI Infrastructure)**: Hardened test fixtures to pass hermetically with zero network, no `.env`, and unbuilt frontend; created GitHub Actions CI pipeline (`.github/workflows/tests.yml`); generated `backend/requirements.lock`; pinned SearXNG container image to `searxng/searxng:2024.12.30-d3e758a` with mandatory `SEARXNG_SECRET`.
 5. **Phase E (Defense-in-Depth Hardening)**: Added `register_secret()` for dynamic runtime secret redaction (Privy OAuth tokens) and JSON-quoted sensitive field masking; wrapped Postgres `reset_book` in atomic transaction; capped WebSocket connections per IP (`MAX_WS_PER_IP = 4`) with 30s timeout liveness harvest; guarded against CORS wildcard with credentials; implemented session revocation on logout; corrected LiveFeed accessibility divider role; configured `.gitleaksignore` and `.gitleaks.toml` for test dummy credential false-positives.
 6. **Verification & Status**: Full test suite passes hermetically: **934 passed** (0 failures). Frontend builds cleanly. Gitleaks allowlist configured for test fixtures.
@@ -364,7 +364,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 **As of 2026-10-11 (§72):** Production Deployment Hardening (Debug Mode, Sourcemaps, Dotfiles):
 1. **Debug Mode & Stack Traces**: Added `ENVIRONMENT=production` and `DEBUG=false` in `config.py`. FastAPI initialized with `debug=config.DEBUG`, disabling tracebacks in error responses. Interactive Swagger UI (`/docs`), ReDoc (`/redoc`), and `/openapi.json` are completely disabled in production.
 2. **Sourcemaps Disablement**: Configured `build: { sourcemap: false }` in `frontend/vite.config.ts`. Verified 0 `.map` files exist in `frontend/dist`. Added application-level rejection in `spa_fallback` returning 404 for any `.map` request.
-3. **.git Folder and Dotfiles Protection**: Confirmed `.dockerignore` excludes `.git` and `.env*`. Added `_is_blocked_static_path` in `backend/api/main.py` rejecting dotfiles (`/.git`, `/.env`) with HTTP 404. Added reverse proxy edge blocking in `docs/13_ORACLE_DEPLOY_GUIDE.md` for Caddy and Nginx.
+3. **.git Folder and Dotfiles Protection**: Confirmed `.dockerignore` excludes `.git` and `.env*`. Added `_is_blocked_static_path` in `backend/api/main.py` rejecting dotfiles (`/.git`, `/.env`) with HTTP 404. Added reverse proxy edge blocking in `docs/05_ORACLE_DEPLOY_GUIDE.md` for Caddy and Nginx.
 4. **Test Suite**: Dedicated tests in `backend/tests/test_production_hardening.py` (9 tests passing). Full test suite: **891 passed** (0 failed).
 
 **PREVIOUS:**
@@ -375,7 +375,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 3. **Security Headers**: Emits `Strict-Transport-Security: max-age=63072000; includeSubDomains; preload` and CSP `upgrade-insecure-requests` on TLS responses.
 4. **Cookie Security Alignment**: `_is_request_https` sets `Secure=True` on session login and logout cookies on TLS while keeping dev loopback accessible.
 5. **Reverse Proxy Support**: Uvicorn entrypoint equipped with `--proxy-headers --forwarded-allow-ips='*'`. `docker-compose.yml` updated with loopback binding guidance (`127.0.0.1:${API_PORT:-8000}:8000`).
-6. **Hosting Configuration**: `docs/13_ORACLE_DEPLOY_GUIDE.md` updated with TCP port 80/443 firewall ingress rules, Caddy automated TLS, and Nginx reverse-proxy configuration.
+6. **Hosting Configuration**: `docs/05_ORACLE_DEPLOY_GUIDE.md` updated with TCP port 80/443 firewall ingress rules, Caddy automated TLS, and Nginx reverse-proxy configuration.
 7. **Insecure Content Audit**: Verified 0 unencrypted assets in frontend (all fonts and scripts self-hosted), WebSockets automatically upgrade to `wss://`, and all external backend APIs use HTTPS.
 8. **Test Suite**: Dedicated tests in `backend/tests/test_https_enforcement.py` (12 tests passing). Full pytest test suite: **882 passed** (0 failed).
 
@@ -667,7 +667,7 @@ queue into llm_call_usage (paper: after the gate loop; live: post-cycle
 fail-soft). `enrich_candidates` returns [] (signature kept). Infra: searxng
 compose service + settings.yml (json on, limiter off, private network),
 `.env` knobs BRAVE_SEARCH_API_KEY/SEARXNG_URL/SEARCH_BENCH_SECONDS/
-SEARCH_THROTTLE_BACKOFF_SECONDS, `docs/12_FREE_SEARCH_STACK.md` runbook,
+SEARCH_THROTTLE_BACKOFF_SECONDS, `docs/04_FREE_SEARCH_STACK.md` runbook,
 README env-table + troubleshooting rows, handoff §51. Tests +16 net:
 `test_social_staging.py` (9: staging, evidence-only, stage ordering,
 reuse, mock hermeticity, disabled-key, fail-soft ×2, exactly-once usage
@@ -691,7 +691,7 @@ no cooldown, no daily ceiling) — now the reference sell gate with the clip
 floored at `min_live_ticket_usd(equity)` (§45) instead of paper's $25;
 paper stays bit-identical via the None default. `scripts/perf_report.py`
 is the ongoing scorecard (omo disclosure format, works on sqlite AND the
-active Supabase journal). docs/09 §F records their live numbers + our
+active Supabase journal). the historical reference audit §F records their live numbers + our
 baseline + the honest reading; §B.2 "paper + disarmed" superseded. No omo
 clone/cache existed anywhere. +12 tests, **660 passing**.
 ### §49 Anti-churn v2 — PnL-based auto-block + re-entry cooldown on BOTH books (2026-08-30)
@@ -915,7 +915,7 @@ path → `BASE_DIR/live_execution/state/...`; conftest.py rewritten
 root Dockerfile (SPA baked in for single-origin), backend/docker-entrypoint.sh
 (API always; live cycle ONLY if armed AND wallet configured — same double-gate
 as start.sh), docker-compose.yml (persistent volumes for live state + book),
-.dockerignore (image contains zero secrets), docs/11_DEPLOYMENT.md runbook.
+.dockerignore (image contains zero secrets), docs/03_DEPLOYMENT.md runbook.
 Secrets: `WALLET_KEYPAIR_JSON` env channel (resolution: path file preferred →
 env JSON in-memory → fail-closed), keypair log redactor (`_KeypairRedactor`),
 identity pin enforced on both channels; arming stays human-edit-only — never
@@ -1009,7 +1009,7 @@ and `not_on_break`) — one edit, both books (LIVE_ACTIVE_RULES derives from
 ACTIVE_RULES). KNOWN-bad-only semantics: fails on live mint authority or a
 honeypot flag; None/unknown always passes (B10) — missing data can never
 block a trade. Reference parity knowingly broken by this single deliberate
-addition (documented in rules.py + docs/06/07/09). Live-verified:
+addition (documented in rules.py + the historical reference comparison, project report and reference audit). Live-verified:
 `/api/feed` breakdowns now carry 10 rules with `security_clear` present.
 
 **#3 crowd author-P&L attribution** (omo exit-liquidity-dump parity):
@@ -1160,7 +1160,7 @@ write) — plus a one-off cash repair. Live parity: identical jump guard in
 chain-truth cash — but a phantom-spike early exit is real harm). Live cash is
 accurate by construction: re-read from the wallet's on-chain USDC balance
 every cycle (`getTokenAccountBalance`), never accumulated; fail-closed to 0
-when unreadable. Final omo audit (docs/09 §F): `exit.server.ts` exists but is
+when unreadable. Final omo audit (the historical reference audit §F): `exit.server.ts` exists but is
 unpublished (their own test imports it — published repo can't run its own
 tests; contract matches our public engine); their calibration factor still
 unwired (final grep proof); wash-trade filter parity confirmed. Remaining
@@ -1483,7 +1483,7 @@ execute.server.ts, blocklist.ts, PROCESS.md.
 
 ## Completed phase: LLM API migration continuation (2026-08-26)
 
-See `docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md` and handoff section 14.
+See handoff section 14 for historical migration context and `docs/CONFIGURATION.md` for current provider settings.
 Groq direct API is configured for the thinker in strict non-thinking JSON mode; Groq is also configured for evidence-only Twitter/social reads. (Superseded 2026-08-27: main path now DeepSeek V4 Flash via MAIN_LLM_PROVIDER — see top DONE block; social reads remain Groq.)
 Instrumentation of tokens, cache hits, cost, latency, model/prompt versions, and delayed outcomes have been implemented. Provider failure must return thinker `pass` for entry; a template may explain but cannot approve an entry.
 
@@ -1744,7 +1744,7 @@ After retargeting those mutations and adding sell-release, settlement and
 consensus regressions, the author ran the checker with **no flags** through the
 same scratch sandbox and exported its generated Markdown as data:
 **149/149 caught, 0 survivors; restorations verified clean**. The generated
-log is `docs/17_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
+log is `docs/09_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
 production, native-exploitability or CI evidence.
 
 The prior broad "no money-path/signing change" description must not be extended
@@ -1754,7 +1754,7 @@ process locking, HTTP byte/time caps (8 MiB/60 seconds, no redirects), restore
 dispatch and launcher/CI behavior. `f4868ac` added staged isolated gate checks;
 `ea0a899` pinned browser CI setup. The operator-visible effects and mitigations
 for §93 R1–R8 and these commits are catalogued in
-`docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
+`docs/12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
 
 Current VM, Docker, Supabase, actual RPC refusal rates, provider redirects and
 hosted CI have not been verified by this author. Final §94 regression/gate

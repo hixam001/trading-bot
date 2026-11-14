@@ -16,7 +16,7 @@ backend/ (all Python; THE deployable module — run_live_cycle.py is the live
 runner + live_execution/ subpackage; run commands from inside it) · frontend/
 (deployable to Vercel/CF Pages) · Dockerfile + docker-compose.yml +
 .dockerignore (root) · backend/docker-entrypoint.sh · docs/ (…,
-11_DEPLOYMENT.md) · memory-bank/ · handoff.md · start.sh / stop.sh ·
+03_DEPLOYMENT.md) · memory-bank/ · handoff.md · start.sh / stop.sh ·
 .env (root, GITIGNORED — real API keys live here only)
 
 ## Commands
@@ -29,7 +29,7 @@ runner + live_execution/ subpackage; run commands from inside it) · frontend/
 - Playwright E2E: cd frontend && npm run test:e2e
 - Secret check: gitleaks git --verbose
 - Frontend dev: cd frontend && npm run dev (:5173 proxies /api,/ws)
-- Deploy (Docker/VM): docker build -t trading-bot . && see docs/11_DEPLOYMENT.md
+- Deploy (Docker/VM): docker build -t trading-bot . && see docs/03_DEPLOYMENT.md
 
 ## Pre-Commit and Pre-Push Verification Pipeline
 MANDATORY: every commit and push requires all check suites below to pass cleanly:

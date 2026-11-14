@@ -221,7 +221,7 @@ async def generate_reflection(trade, rule_summary: str) -> str:
         pnl_pct=trade.realized_pnl_pct or 0.0,
     )
     if config.DATA_BACKEND == "live":
-        # Reflections are never time-critical (docs/08 §5): when the main
+        # Reflections are never time-critical (docs/CONFIGURATION.md): when the main
         # provider is DeepSeek, skip non-urgent reflections during peak
         # windows instead of paying 2x rates. Logged, never silent.
         if config.MAIN_LLM_PROVIDER == "deepseek" and _is_peak_window():

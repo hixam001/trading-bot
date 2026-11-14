@@ -58,7 +58,7 @@ The default JSON request-body cap is **1 MiB**. Ingestion uses a separate
 derived cap, `MAX_INGEST_CHARS * 12 + 65536` bytes (2,465,536 bytes at defaults),
 to allow UTF-8/JSON escaping. Body overflows return 413. Schema limits remain
 independently enforced; request timing also depends on the deployment proxy.
-See [security route matrix](18_SECURITY.md#1-route-matrix) for the security
+See [security route matrix](10_SECURITY.md#1-route-matrix) for the security
 inventory and [configuration](CONFIGURATION.md) for the knobs.
 
 ## Read endpoints

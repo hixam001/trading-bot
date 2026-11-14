@@ -2,7 +2,7 @@
 test_audit_82_e.py — Phase E tests for verifiable, reproducible mutation testing.
 
 Verifies:
-1. docs/17_MUTATION_LOG.md contains only references to real tests that actually exist
+1. docs/09_MUTATION_LOG.md contains only references to real tests that actually exist
    in backend/tests/ (def test_...).
 2. scripts/mutation_check.py declarative table is non-empty and every mutation's
    target file and old text exists.
@@ -17,18 +17,18 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 def test_mutation_log_references_real_tests():
     """
     §82 Phase E:
-    Parses docs/17_MUTATION_LOG.md, extracts every backticked `test_...` name,
+    Parses docs/09_MUTATION_LOG.md, extracts every backticked `test_...` name,
     and asserts each one exists in backend/tests/ (def <name>).
     Stops fabricated test names from ever landing in documentation again.
     """
-    doc_path = REPO_ROOT / "docs" / "17_MUTATION_LOG.md"
+    doc_path = REPO_ROOT / "docs" / "09_MUTATION_LOG.md"
     assert doc_path.exists(), f"Mutation log not found: {doc_path}"
 
     content = doc_path.read_text(encoding="utf-8")
 
     # Extract all backticked test names matching `test_...`
     referenced_tests = set(re.findall(r"`(test_\w+)`", content))
-    assert len(referenced_tests) > 0, "No tests found in docs/17_MUTATION_LOG.md"
+    assert len(referenced_tests) > 0, "No tests found in docs/09_MUTATION_LOG.md"
 
     # Find all test definitions across backend/ (mutation selectors may live
     # in nested suites such as backend/live_execution/tests/).
@@ -42,7 +42,7 @@ def test_mutation_log_references_real_tests():
 
     # Assert every referenced test exists
     missing = referenced_tests - defined_tests
-    assert not missing, f"docs/17_MUTATION_LOG.md references non-existent tests: {sorted(missing)}"
+    assert not missing, f"docs/09_MUTATION_LOG.md references non-existent tests: {sorted(missing)}"
 
 
 def test_mutation_harness_declarations_valid():

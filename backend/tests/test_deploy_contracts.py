@@ -104,7 +104,7 @@ def test_backup_wrapper_is_cwd_independent_and_fails_loudly():
     assert 'cd "$(dirname "$0")/.."' in script
     assert "if ! docker compose exec -T live python /app/scripts/backup_state.py" in script
     assert "exit 1" in script
-    guide = (ROOT / "docs" / "15_BACKUP_RESTORE.md").read_text()
+    guide = (ROOT / "docs" / "07_BACKUP_RESTORE.md").read_text()
     assert "cd /opt/trading-bot/app && ./deploy/backup.sh" in guide
     assert "cd /opt/trading-bot && ./deploy/backup.sh" not in guide
 

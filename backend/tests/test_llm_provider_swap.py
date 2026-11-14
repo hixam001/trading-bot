@@ -6,12 +6,12 @@ Covers the provider-neutral main path without touching any real API:
   * build_main_client() factory selection incl. fail-closed on unknown value
   * main_max_tokens() budget follows the selected provider
   * _estimate_cost(): groq unchanged; deepseek off-peak / peak (2x) /
-    cache-hit branches against hand-computed values (docs/08 §3 anchor)
+    cache-hit branches against hand-computed historical pricing fixtures
   * complete_json() against mocked DeepSeek responses: usage parsing incl.
     prompt_cache_hit_tokens, degradation reasons, missing-key fail-closed
   * Thinker + Narrator source labels and fail-closed degradation
     (a provider failure yields a template PASS, never a buy)
-  * Reflection peak-window skip (docs/08 §5)
+  * Reflection peak-window skip (docs/CONFIGURATION.md)
   * /api/system-status narration_mode reports the active main provider
 
 HTTP is mocked with httpx.MockTransport (built into httpx — no new deps).
@@ -149,7 +149,7 @@ def test_estimate_cost_groq_unchanged():
 
 
 def test_estimate_cost_deepseek_offpeak_docs_anchor():
-    # docs/08 §3 planning example: 500 input / 100 output -> $0.000176
+    # Historical pricing fixture: 500 input / 100 output -> $0.000176
     assert _estimate_cost("deepseek", 500, 100, 0, False) == pytest.approx(0.000176)
 
 
@@ -288,7 +288,7 @@ async def test_thinker_deepseek_source_label(monkeypatch):
 
 async def test_thinker_provider_failure_degrades_to_pass_never_buy(monkeypatch):
     """make_candidate() is a template BUY (buys>sells, +5% 1h) — a provider
-    failure must still force the verdict to pass (fail-closed, docs/08 §2)."""
+    failure must still force the verdict to pass (fail-closed, docs/CONFIGURATION.md)."""
     monkeypatch.setattr(config, "DATA_BACKEND", "live")
     monkeypatch.setattr(config, "MAIN_LLM_PROVIDER", "deepseek")
     t = Thinker()

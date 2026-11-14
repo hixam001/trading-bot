@@ -29,6 +29,7 @@ scanner), and log everything for auditable track records.
   idempotent ledger
 
 ## Authoritative docs
-docs/00_BLUEPRINT → 01_ARCHITECTURE → 02_FEATURE_LIST(status) →
-03_GANTT → 05_VERIFICATION_APPENDIX → 06_REFERENCE_COMPARISON(the reference bot) →
-07_PROJECT_REPORT. Living state: handoff.md (root) + memory-bank/.
+Start with [the documentation index](../docs/README.md), then the software
+requirements, architecture, application flow, API contract and data model.
+Numbered guides cover deployment, integrations, security and audit evidence.
+Living state: handoff.md (root) + memory-bank/.

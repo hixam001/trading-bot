@@ -219,7 +219,7 @@ on-chain commit memo published BEFORE every fill (commit–reveal proof).
 
 | What | Where | Notes |
 |---|---|---|
-| Wallet keypair | a JSON file OUTSIDE the repo (e.g. `~/.config/solana/trading-keypair.json`), path in `.env` `WALLET_KEYPAIR_PATH` — or, on file-less hosts, `WALLET_KEYPAIR_JSON` in the env (in-memory only; see `docs/11_DEPLOYMENT.md`) | 64-byte JSON array (solana-cli format) or base58. **Never commit it.** Fund it with a small SOL fee reserve (~0.03 SOL) + separate USDC capital ($3–5 to start) |
+| Wallet keypair | a JSON file OUTSIDE the repo (e.g. `~/.config/solana/trading-keypair.json`), path in `.env` `WALLET_KEYPAIR_PATH` — or, on file-less hosts, `WALLET_KEYPAIR_JSON` in the env (in-memory only; see `docs/03_DEPLOYMENT.md`) | 64-byte JSON array (solana-cli format) or base58. **Never commit it.** Fund it with a small SOL fee reserve (~0.03 SOL) + separate USDC capital ($3–5 to start) |
 | Wallet identity pin | `.env` `EXPECTED_WALLET_ADDRESS` | the loaded keypair MUST derive this exact pubkey or loading refuses loudly |
 | RPC | `.env` `SOLANA_RPC_URL` | public endpoint rate-limits hard; use a paid RPC for real use |
 
@@ -265,7 +265,7 @@ frontend/                React + Vite + Tailwind dashboard (deployable to Vercel
 Dockerfile               single-module engine image (frontend baked in for same-origin)
 docker-compose.yml       local parity / VM run (persistent volumes for state + book)
 migrations/supabase/     one-time SQL for the optional Postgres book
-docs/                    00 blueprint → 11 DEPLOYMENT runbook
+docs/                    software references + numbered guides 01–12 (see docs/README.md)
 memory-bank/             structured context for future sessions
 handoff.md               complete state/decisions/invariants — READ FIRST
 logs/                    app.log, error.log, security.log, live_cycle.log, backend.log
@@ -314,10 +314,8 @@ cd frontend && npm install && npm run dev      # http://localhost:5173
   invariants, next steps. Read this first.
 - **`memory-bank/`** — structured session context (activeContext, progress,
   decisionLog, session-log).
-- **`docs/`** — `00_BLUEPRINT`, `01_ARCHITECTURE`, `02_FEATURE_LIST`,
-  `05_VERIFICATION_APPENDIX`, `06_REFERENCE_COMPARISON`,
-  `07_PROJECT_REPORT`, `08_LLM_API_MIGRATION`,
-  `11_DEPLOYMENT` (runbook), `13_ORACLE_DEPLOY_GUIDE` (step-by-step free-tier deploy).
+- **`docs/`** — current software references and numbered architecture,
+  deployment, integration, security, and evidence guides; see the index above.
 
 ## Troubleshooting
 

@@ -194,7 +194,7 @@ def compute_market_regime(candidates: list[Candidate]) -> MarketRegime:
 `REGIME_MIN_PCT_GREEN`, `REGIME_MAX_PCT_GREEN`, and
 `REGIME_MIN_MEDIAN_VOLUME_USD` start as placeholder values (documented in
 `config.py` as explicitly needing calibration) and are tuned from realized
-trading data — see `03_GANTT_CHART.md`. A
+trading data; validation requirements are in [TEST_PLAN.md](TEST_PLAN.md). A
 reasonable starting intuition: reject the regime if an unusually high
 fraction of the entire candidate universe is simultaneously green (more
 consistent with a broad, possibly manipulated pump than organic
@@ -353,9 +353,9 @@ sophistication appropriate for a system running significant real capital
 at meaningful frequency — it is **not appropriate or necessary for this
 project's current scope** (periodic polling of free-tier REST APIs at a tick
 measured in tens of seconds to minutes). Documented here as a known future
-scaling path, in the same category as `05_VERIFICATION_APPENDIX.md`'s
-commit-reveal mechanism: relevant once real capital and real latency
-sensitivity are in play, not before.
+scaling path to revisit when measured polling latency becomes a constraint.
+The implemented commit/memo proof lifecycle is documented separately in
+[DATA_MODEL.md](DATA_MODEL.md#live-intent-lifecycle-and-uncertain-outcomes).
 
 ## 6. Data provider abstraction
 

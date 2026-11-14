@@ -69,7 +69,7 @@ cap and bounded UTF-8/escaped-JSON ingest override; offline spend projection;
 shared pytest-only host trust, pre-validation signup concealment and real route
 auth probes. Container controls, spend-cap defaults, gates, sizing and exits
 remain unchanged. Separate API/live counters and restored persisted loss memory
-are documented. Full report: docs/19_ROOTFS_AUDIT.md.
+are documented. Full report: docs/11_ROOTFS_AUDIT.md.
 
 Observed verification: backend 1934 passed, 0 failed, 0 skipped (102 existing
 deprecation warnings); mutation 137/137 caught, 0 survivors, restorations clean,
@@ -96,7 +96,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **S7**: shared header helper on 404/405/413/429/500/static/SPA; CSP `base-uri 'none'`; pytest-only synthetic hosts; debug cannot bypass auth/CSRF/rate limits; debug text redacted.
 - **S8**: full-SHA Actions; digest-pinned images/SearXNG; read-only/cap-drop/no-new-privileges/resource-limited compose; preflight runtime+compose checks; JSON wallet-channel warning.
 - **S9**: bounded 10 s event dedupe with true `occurrences`/`last_seen`; one burst alert per IP/10 min; schema-rejected uploads emit `SUSPICIOUS_UPLOAD`; restore drill verifies rows, denies keypair, forces kill-switch latch. Tests 9; failing-first proven by stashing S9 code (4 failed → 9 passed).
-- **Docs**: `docs/18_SECURITY.md` now has the threat model, route matrix, S1–S9 control↔test map, residual risks, operator checklist, rotation/incident runbooks, findings F1–F10 (severity/evidence/fix/test), verified-safe, rotate-now, operator-must-do, and UNVERIFIED lists; handoff §92; memory-bank updated; mutation log regenerated.
+- **Docs**: `docs/10_SECURITY.md` now has the threat model, route matrix, S1–S9 control↔test map, residual risks, operator checklist, rotation/incident runbooks, findings F1–F10 (severity/evidence/fix/test), verified-safe, rotate-now, operator-must-do, and UNVERIFIED lists; handoff §92; memory-bank updated; mutation log regenerated.
 - **Verification**: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT**; Playwright **41/41** against a local mock API on `:8000` (limiter raised only for the harness run); tsc/build + frontend scanner clean; prepush **9/9**; gitleaks clean under v8.24.3 (CI) and v8.30.1 after rewording/fingerprinting one documentation false positive; GitHub Actions green on `16bd30c` (Tests & Security Audit incl. ARM64 Docker build, gitleaks, CodeQL). No arming/gate/sizing/signing/exit/Jupiter/Privy changes.
 
 ## Memory-bank update — 2026-11-03 (§91 prove absence before expiring a pending buy)
@@ -115,7 +115,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **Task**: re-read §90 against the shipped commits and close literal spec gaps without changing money semantics.
 - **Preflight (A)**: the FAIL detail now names `/run/secrets/wallet_keypair` as "the in-container path" and `WALLET_KEYPAIR_HOST_PATH` as the host side; the JSON-channel missing-source WARN includes the exact `install -m 600 -o 10001 /dev/null <path>` placeholder and `WALLET_KEYPAIR_HOST_PATH=/dev/null`.
 - **Operator expiry (B)**: a signature found on any endpoint now refuses with `the transaction landed (status ...): use --adopt-from-sig`; the mutation row targets the new `if landed is not None:` guard. `--force-expire` still skips only blockhash/age.
-- **Docs (D/E)**: docs/13 Step 5.5 documents the placeholder; the Chromium row states the browser is only a crowd-feed fallback and the bot is fully functional without it; the first-48-hours section adds loss-only funding, `docker compose logs -f live`, first-heartbeat confirmation, phone-confirmed test alert, and no cap increases until 48 h clean. docs/13 §10.6 and docs/15 name the landed refusal.
+- **Docs (D/E)**: docs/05_ORACLE_DEPLOY_GUIDE.md Step 5.5 documents the placeholder; the Chromium row states the browser is only a crowd-feed fallback and the bot is fully functional without it; the first-48-hours section adds loss-only funding, `docker compose logs -f live`, first-heartbeat confirmation, phone-confirmed test alert, and no cap increases until 48 h clean. docs/05_ORACLE_DEPLOY_GUIDE.md §10.6 and docs/07_BACKUP_RESTORE.md name the landed refusal.
 - **Verification**: backend **1496 passed**, 0 failed; mutation **50/50 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; no new test functions (existing tests made stricter first); no money-path semantics changed. Pushed `0044a0c`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green.
 
 ## Memory-bank update — 2026-11-02 (§90 pre-deploy hardening)
@@ -124,7 +124,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **Wallet mount (A)**: `WALLET_KEYPAIR_PATH` must equal `/run/secrets/wallet_keypair` for the file/`both` channels; the host path belongs in `WALLET_KEYPAIR_HOST_PATH`. The JSON channel WARNs when that bind source is missing/not a regular file because Docker would silently create a directory, and PASSes for a real file.
 - **Operator expiry (B)**: `--expire` requires age ≥ 90 s, a provably invalid blockhash, every deduped endpoint reporting the signature absent, and no failed/empty read. `--force-expire` skips only blockhash/age, never the all-endpoint-absent check, and audits `forced: true`. `PENDING_EXPIRY_MIN_AGE_SECONDS = 90.0` lives in `live_execution.config` and is shared with the automatic resolver; `--expire` + `--force-expire` exits 2.
 - **Pending-buy audit (C)**: a confirmed replacement row clears the pending `reason`; the Jupiter path has an explicit sign → journal → send ordering test with mutation `90C2_JOURNAL_AFTER_SEND`; chain-proven adoption may re-bind a commit marked failed via opt-in `bind(allow_failed=True)`, which clears `fail_reason` while the default still refuses failed rows.
-- **ARM/burn-in (D)**: both compose build stanzas pass `SKIP_BROWSER` (default 0), pinned by a source contract test; docs/13 has the Chromium build-failure fix and a supervised first-48-hours checklist that starts from the armed state and forbids raising caps during the burn-in.
+- **ARM/burn-in (D)**: both compose build stanzas pass `SKIP_BROWSER` (default 0), pinned by a source contract test; docs/05_ORACLE_DEPLOY_GUIDE.md has the Chromium build-failure fix and a supervised first-48-hours checklist that starts from the armed state and forbids raising caps during the burn-in.
 - **Docs/memory (E)**: handoff §90, progress/activeContext/session-log/decisionLog, and the §81–§90 mutation log (50 rows).
 - **Verification**: backend **1496 passed**, 0 failed (+24 over 1472/2 skipped); mutation **50/50 CAUGHT** (6 new §90 rows); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. Pushed `dde40e8`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
@@ -146,7 +146,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **Pending buys (A/D/E)**: a pending mint now fails the gate's `already_held`, is refused by `preflight` and again by `place_buy` before replay, but never enters `meta`/exit pricing/the mirror. Both buy paths journal the pending row after signing and before send; a fill replaces that same key (original `ts`, blockhash, commit/memo preserved). Expiry re-queries every deduped endpoint and requires age ≥ 90 s; one lagging node or a failed re-query stays pending.
 - **Deploy truth (B/C)**: the entrypoint executes explicit argv before role logic, so a compose `run` command can no longer start a second engine. The preflight requires exactly one wallet channel (JSON skips the host file), reports an untraversable directory honestly, and only tests `os.access` as uid 10001/root.
 - **Shutdown + operator tool (F)**: SIGTERM/SIGINT set `_STOP_EVENT`; the entry boundary logs `entry skipped: shutting down` and skips the new buy while exits finish. New `scripts/resolve_pending_buy.py <key> --expire|--adopt-from-sig [SIG]` prompts unless `--yes`, refuses a non-TTY without it, requires actual fill deltas for adoption, and writes a JSON audit line.
-- **Docs (G)**: docs/01, docs/13 (§10.6 manual resolution), docs/15, handoff §88, memory-bank, and the §81–§88 mutation log.
+- **Docs (G)**: docs/01, docs/05_ORACLE_DEPLOY_GUIDE.md (§10.6 manual resolution), docs/07_BACKUP_RESTORE.md, handoff §88, memory-bank, and the §81–§88 mutation log.
 - **Verification**: backend **1460 passed**, 0 failed (+41 over 1419); mutation **44/44 CAUGHT** (14 new §88 rows); local prepush **9/9 clean** (gitleaks absent locally; CI runs it). Pushed `0beb964`; GitHub Actions tests + Docker ARM64 build/compose, gitleaks, and CodeQL are green. Operator-only VM drills remain outstanding.
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
 
@@ -157,7 +157,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 - **Tests**: all five risk-off rule IDs fill at 10% impact; 14.9% fills and 15.1% blocks; a 10% take-profit trim and a 10% sell with no rule ID still block at 2.5%; the blocked trims leave the position intact.
 - **Mutation**: `87D2_RISK_OFF_IMPACT_CEILING` disables the risk-off branch; the new tests fail for it, so the harness reports **30/30 CAUGHT**.
 - **Tests**: backend **1421 passed**, 0 failed (+9 D2 tests over the §87 baseline); mutation **30/30**; prepush gate re-run before push.
-- **Docs**: `docs/14_SIGNING_GUARD.md`, `docs/01_ARCHITECTURE.md`, `docs/13_ORACLE_DEPLOY_GUIDE.md` (first-24h watch list), `handoff.md`, and the memory bank record the approved behavior and boundaries.
+- **Docs**: `docs/06_SIGNING_GUARD.md`, `docs/01_ARCHITECTURE.md`, `docs/05_ORACLE_DEPLOY_GUIDE.md` (first-24h watch list), `handoff.md`, and the memory bank record the approved behavior and boundaries.
 - **Invariant (binding)**: every push — docs included — requires `./scripts/prepush_check.sh` to pass and GitHub Actions to be green. A failing check blocks the push and is fixed, never bypassed.
 
 ## Memory-bank update — 2026-10-31 (§87 Oracle deploy blockers, unresolved-buy safety, graceful stop & exit resilience)
@@ -256,7 +256,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
   - **§83-F (`adbfd4a`)**: `ShortcutOverlay` declared `aria-modal` but never took focus; the panel now focuses on mount (`tabIndex={-1}`) and a document keydown handler traps Tab inside while open.
 - **Tests**:
   - Full suite: **1209 passed**, 0 failed (102 warnings in 17.55s; +10 over the §82 baseline of 1199; hermetic network socket guard active).
-- **Documentation**: handoff §83; `docs/15_BACKUP_RESTORE.md` (config-resolved DB path, DB-less refusal, SQLite-consistent pre-restore snapshot, sidecar cleanup); `docs/11_DEPLOYMENT.md` (empty env means unset); `frontend/DESIGN.md` §7 (reconnect re-hydration, overlay Tab trap); memory-bank `activeContext`/`progress`/`decisionLog` #89/`systemPatterns`.
+- **Documentation**: handoff §83; `docs/07_BACKUP_RESTORE.md` (config-resolved DB path, DB-less refusal, SQLite-consistent pre-restore snapshot, sidecar cleanup); `docs/03_DEPLOYMENT.md` (empty env means unset); `frontend/DESIGN.md` §7 (reconnect re-hydration, overlay Tab trap); memory-bank `activeContext`/`progress`/`decisionLog` #89/`systemPatterns`.
 - **Constraints & Invariants Preserved**:
   - No signing, execution, sizing, rule-threshold, or risk-flag changes; §83-C restores data INTO the existing detectors without moving any threshold.
   - `LIVE_TRADING_ENABLED` / `REQUIRE_MANUAL_CONFIRMATION` untouched.
@@ -265,7 +265,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 
 - **Task**: Address and close all findings of an independent security audit across commits §70–§76 across 5 phases:
   - **Phase A (Edge Exposure & Auth)**:
-    - A1: Deleted `header_up X-Admin-Token` proxy injection from `docs/13_ORACLE_DEPLOY_GUIDE.md` and added `backend/tests/test_docs_security.py`.
+    - A1: Deleted `header_up X-Admin-Token` proxy injection from `docs/05_ORACLE_DEPLOY_GUIDE.md` and added `backend/tests/test_docs_security.py`.
     - A2: Restricted default Docker Compose port to `127.0.0.1:${API_PORT:-8000}:8000`, changed Uvicorn `--forwarded-allow-ips` to `${FORWARDED_ALLOW_IPS:-127.0.0.1,172.16.0.0/12}`, added `--proxy-headers --forwarded-allow-ips=127.0.0.1` to `start.sh`, unified `get_client_ip()` calls.
     - A3: Enforced fail-closed behavior when `ADMIN_TOKEN` is < 32 characters, disabling operator endpoints with a CRITICAL log.
     - A4: Deleted backdoor `test-captcha-pass` token from `backend/api/bot_protection.py`.
@@ -277,7 +277,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
   - **Phase C (Signing Guard & Deny-by-Default)**:
     - C1: Implemented `_verify_transaction_safety(tx)` in `backend/live_execution/jupiter_executor.py` verifying all instructions in versioned and legacy transactions against strict allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`).
     - C2: Validated all allowlist pubkeys and removed unverified Moonshot ID.
-    - C3: Authored architectural specification `docs/14_SIGNING_GUARD.md`.
+    - C3: Authored architectural specification `docs/06_SIGNING_GUARD.md`.
   - **Phase D (Hermetic Tests & CI Infrastructure)**:
     - D1: Fixed unhermetic test fixtures in `test_error_handling_security.py` and `test_logging_and_monitoring.py`, and made `spa_fallback` in `api/main.py` unconditionally active.
     - D2: Created GitHub Actions CI pipeline `.github/workflows/tests.yml` (Python 3.13, Node 20, lockfile/requirements, hermetic pytest without `.env`, `npm run build`, `pip-audit`, `npm audit --omit=dev`).
@@ -454,7 +454,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
   `SystemStatusResponse` fixed to the real contract + 6 dead types
   deleted; `.env.example` rebuilt (Supabase/DB/wallet-pin/provider keys
   added, Ollama-era keys removed, duplicate wallet block consolidated);
-  `MAIN_LLM_PROVIDER` default = deepseek everywhere; `13_ORACLE_DEPLOY_GUIDE`
+  `MAIN_LLM_PROVIDER` default = deepseek everywhere; `05_ORACLE_DEPLOY_GUIDE`
   rename; stray root `trading_bot.db` removed; `X-XSS-Protection` dropped.
 - **Verification**: 695 backend tests (+1 new regression), frontend build
   clean, Playwright 8/8 green, live curl checks confirm 404/200 behavior
@@ -485,7 +485,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
 - **Task**: operator directive — implement omo-audit gaps 1.3 (skin-in-the-game
   crowd intel) and 1.8 (chain-first book), then "remove paper trade completely,
   but make sure live execution retains all features". Preceded by a fresh
-  from-scratch omo re-audit delivered in chat (docs/09 + docs/10 deleted at
+  from-scratch omo re-audit delivered in chat (the historical reference audit + docs/10 deleted at
   operator direction; the new audit lives in the conversation + decisionLog 60-62).
 - **Phase A — sizing extraction**: new `backend/sizing.py` holding the pure
   money math VERBATIM (risk budget, tickets, P&L, RiskBudget, fail-closed
@@ -660,7 +660,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
   fallback, fail-closed) + `_KeypairRedactor` + identity pin on both
   channels; FRONTEND_ORIGIN comma-list; solders pinned; frontend
   VITE_API_BASE_URL (`src/lib/api.ts`) + vite-env.d.ts + .env.example;
-  docs/11_DEPLOYMENT.md (Oracle Always-Free VM + Vercel + Supabase runbook).
+  docs/03_DEPLOYMENT.md (Oracle Always-Free VM + Vercel + Supabase runbook).
 - **Incident**: mid-move the RUNNING live cycle recreated the old
   `live_execution/state/` (old in-memory STATE_DIR) — kill-switch split-brain
   risk. Cycle stopped, newest break_state.json carried across, stale dir
@@ -778,7 +778,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
 - **Verification**: **550 passing** (backend 418 + live 132), Playwright
   8/8, live cycle restarted and verified on the new code — clean cycle,
   `security_clear` present in every `/api/feed` rule breakdown (10 rules),
-  0 tracebacks. Docs aligned: handoff §39, docs/06/07/09,
+  0 tracebacks. Docs aligned: handoff §39, the historical reference comparison, project report and reference audit,
   FOMO_INTEGRATION.md §2, rules.py header, decisionLog #52, activeContext,
   progress Status.
 
@@ -989,7 +989,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
   cash 0, no entries, executor refuses). It is never accumulated, so the
   paper failure mode cannot occur; A2 reconciles token quantities vs chain.
   Dashboard cash = the PAPER book; live truth = on-chain balance.
-- **Final omo audit** (docs/09 §F, full-coverage re-read, repo unchanged at
+- **Final omo audit** (the historical reference audit §F, full-coverage re-read, repo unchanged at
   48a86f9): (1) `exit.server.ts` EXISTS but is unpublished — proven by their
   own `exit-rules.test.ts` importing it; a fresh clone cannot run their
   tests; the pinned exit contract matches our public engine. (2) calibration
@@ -1004,7 +1004,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
   disarmed); `test_safety_flags_are_hardcoded_safe_defaults` is the canary —
   expected red while armed. **486 tests; 485 pass while armed.** Rollback:
   one line.
-- **Docs**: handoff §32; docs/09 §F; project report updated.
+- **Docs**: handoff §32; the historical reference audit §F; project report updated.
 
 ## Memory-bank update - 2026-08-28 (§33 armed state committed session)
 
@@ -1113,7 +1113,7 @@ dependencies. Mobile remains partial. Deployment and limitations: handoff §64.
   skipped; system-status/theses/disclosure/proof/verify/binding all 200;
   `armed=false`, `paper_only=true`; 0 tracebacks.
 - **Docs**: handoff §30 (implementation record) + §28 queue/header/test
-  counts; docs/09 gains row A11 + resolved caveats; project report updated.
+  counts; the historical reference audit gains row A11 + resolved caveats; project report updated.
 - **Still DISARMED**: `LIVE_TRADING_ENABLED=False` untouched. §27 (enable live
   execution) remains the operator's FINAL task — no session may arm.
 
@@ -1310,7 +1310,7 @@ After retargeting those mutations and adding sell-release, settlement and
 consensus regressions, the author ran the checker with **no flags** through the
 same scratch sandbox and exported its generated Markdown as data:
 **149/149 caught, 0 survivors; restorations verified clean**. The generated
-log is `docs/17_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
+log is `docs/09_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
 production, native-exploitability or CI evidence.
 
 The prior broad "no money-path/signing change" description must not be extended
@@ -1320,7 +1320,7 @@ process locking, HTTP byte/time caps (8 MiB/60 seconds, no redirects), restore
 dispatch and launcher/CI behavior. `f4868ac` added staged isolated gate checks;
 `ea0a899` pinned browser CI setup. The operator-visible effects and mitigations
 for §93 R1–R8 and these commits are catalogued in
-`docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
+`docs/12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
 
 Current VM, Docker, Supabase, actual RPC refusal rates, provider redirects and
 hosted CI have not been verified by this author. Final §94 regression/gate

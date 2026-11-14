@@ -151,7 +151,7 @@ approval cannot authorize a different side, mint or size.
 
 Path defaults differ between local runs and containers. See
 [CONFIGURATION.md](CONFIGURATION.md) and the
-[runtime write-path inventory](18_SECURITY.md#1b-runtime-write-paths).
+[runtime write-path inventory](10_SECURITY.md#1b-runtime-write-paths).
 
 ## Database evolution and retention
 

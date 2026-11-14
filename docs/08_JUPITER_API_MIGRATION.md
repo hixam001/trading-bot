@@ -1,4 +1,4 @@
-# 16. Jupiter API Migration & V2 Evaluation
+# 08 — Jupiter API Migration & V2 Evaluation
 
 > **Spike Result — No Production Switch.**
 > Status: Evaluated, not adopted. Bot remains on `lite-api.jup.ag/swap/v1` with fail-closed safeguards.

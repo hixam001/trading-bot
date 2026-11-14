@@ -45,7 +45,7 @@ import live execution. Local API-only development does not require a runner.
 
 `start.sh` can start the live process. For development commands that start only
 the API, use [DEVELOPMENT.md](DEVELOPMENT.md). Production startup and volumes
-are covered in [11_DEPLOYMENT.md](11_DEPLOYMENT.md).
+are covered in [03_DEPLOYMENT.md](03_DEPLOYMENT.md).
 
 ## Candidate-to-decision flow
 
@@ -123,8 +123,8 @@ exact ordering and durable fields. Before any signing, transaction inspection
 enforces allowed operations/programs/accounts and simulation checks the bound
 payer and consumed account fields across configured independent RPC results.
 Consensus is not blanket equality of every pool byte at different slots.
-See [14_SIGNING_GUARD.md](14_SIGNING_GUARD.md) and the
-[current consensus scope](18_SECURITY.md#94-simulation-consensus-scope).
+See [06_SIGNING_GUARD.md](06_SIGNING_GUARD.md) and the
+[current consensus scope](10_SECURITY.md#94-simulation-consensus-scope).
 
 ## Position management and exit recovery
 

@@ -16,7 +16,7 @@ The guard is deliberately boring and fail-closed:
 
 Scope: LLM calls and entry-side web search. RPC/Birdeye calls are not capped
 here because they are also used by exit paths; capping them could disable a
-stop-loss. Their provider-side quotas are an operator control (docs/18).
+stop-loss. Their provider-side quotas are an operator control (docs/10_SECURITY.md).
 """
 from __future__ import annotations
 

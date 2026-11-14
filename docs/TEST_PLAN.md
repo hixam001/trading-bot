@@ -160,4 +160,4 @@ Record: commit under test, command, environment, pass/fail/skip counts, failure
 reason and remaining checks. Preserve logs without credentials. A local pytest
 pass does not establish CI success, a native ARM64 build, migrated Supabase,
 mainnet safety or production recovery. Mutation evidence in
-[17_MUTATION_LOG.md](17_MUTATION_LOG.md) is dated and scoped to its recorded run.
+[09_MUTATION_LOG.md](09_MUTATION_LOG.md) is dated and scoped to its recorded run.

@@ -393,7 +393,7 @@ def _cookie_samesite(request: Request | None) -> str:
     """SameSite=None for an HTTPS cross-origin dashboard, Lax otherwise.
 
     Split deployments (dashboard on Vercel, API on another host) are documented
-    in docs/13 and use credentialed CORS. A Lax cookie is never attached to
+    in docs/05_ORACLE_DEPLOY_GUIDE.md and use credentialed CORS. A Lax cookie is never attached to
     those cross-site requests, so login appeared to succeed and the next poll
     still returned 403. SameSite=None requires Secure, so it is only selected
     when the request is HTTPS.
@@ -594,7 +594,7 @@ def require_admin_token(request: Request) -> None:
 # ---------------------------------------------------------------------------
 # §55 authz audit — proxy-aware loopback trust.
 #
-# "Local" must mean DIRECTLY local. The deploy guide (docs/12 Step 7) fronts
+# "Local" must mean DIRECTLY local. The deploy guide (docs/05_ORACLE_DEPLOY_GUIDE.md Step 7) fronts
 # the engine with `caddy reverse_proxy 127.0.0.1:8000`, and uvicorn runs
 # without --proxy-headers — so EVERY internet visitor arrives at FastAPI
 # with request.client.host == 127.0.0.1. Trusting that address would

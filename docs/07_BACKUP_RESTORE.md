@@ -1,4 +1,4 @@
-# 15. Backup and Restore Guide (§79 Phase E)
+# 07 — Backup and Restore Guide (§79 Phase E)
 
 > [!CAUTION]
 > **OPERATOR NOTICE:** This backup and restore mechanism was developed and verified in test environments;
@@ -216,7 +216,7 @@ Operators should periodically practice a restore drill in a scratch directory to
      masquerade as a state discrepancy. Resolve any `MISMATCH` lines before clearing the kill switch.
    - A restored ledger can contain `pending` buys (unresolved on-chain commitments). Leave them in place:
      with the engine stopped, resolve each one with `scripts/resolve_pending_buy.py` as documented in
-     `docs/13_ORACLE_DEPLOY_GUIDE.md` §10.6. The tool re-verifies the blockhash, every-endpoint absence and
+     `docs/05_ORACLE_DEPLOY_GUIDE.md` §10.6. The tool re-verifies the blockhash, every-endpoint absence and
      the 90 s age gate before expiring; use `--force-expire` only when the blockhash/age reads are
      unavailable but at least two RPCs still answer (it still requires every endpoint to answer "not
      found", and audits `forced: true`). With RPC fully down there is no unproven expiry: restore RPC, or

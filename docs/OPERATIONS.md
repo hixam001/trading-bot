@@ -1,9 +1,9 @@
 # Operations and recovery
 
 Reviewed **2026-11-14**. This is the routine diagnosis/recovery entry point.
-Use [11_DEPLOYMENT.md](11_DEPLOYMENT.md) for host/container setup,
-[13_ORACLE_DEPLOY_GUIDE.md](13_ORACLE_DEPLOY_GUIDE.md) for the Oracle path, and
-[18_SECURITY.md](18_SECURITY.md) for incidents and credential rotation.
+Use [03_DEPLOYMENT.md](03_DEPLOYMENT.md) for host/container setup,
+[05_ORACLE_DEPLOY_GUIDE.md](05_ORACLE_DEPLOY_GUIDE.md) for the Oracle path, and
+[10_SECURITY.md](10_SECURITY.md) for incidents and credential rotation.
 Commands below are examples to run in the appropriate environment, not
 evidence that production was checked.
 
@@ -81,7 +81,7 @@ exits. Entry breaks and spent research/model budgets are separate controls.
 The dashboard reports these states; it does not clear or set them.
 
 Use [kill_switch.py](../backend/live_execution/kill_switch.py) and the
-[security incident runbook](18_SECURITY.md#6-incident-runbook-suspected-compromise)
+[security incident runbook](10_SECURITY.md#6-incident-runbook-suspected-compromise)
 for the intended operator action. Before clearing a latch, reconcile pending
 operations and confirm the reason is resolved. Do not edit hardcoded flags as
 part of routine automated recovery. For process stops, preserve the live
@@ -114,8 +114,8 @@ evidence and confirmation rules; do not transfer sell flags to the buy tool.
 Already-accounted closes settle without duplicating proceeds. Refused or
 repairable accounting keeps history/pending state intact. Detailed behavior
 and operator constraints are in the
-[unresolved-exit runbook](18_SECURITY.md#94-recovering-an-unresolved-exit) and
-[behavior-change map](20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md).
+[unresolved-exit runbook](10_SECURITY.md#94-recovering-an-unresolved-exit) and
+[behavior-change map](12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md).
 
 ## Upgrade and rollback
 
@@ -145,9 +145,9 @@ and retain schema/state compatibility evidence before resuming operation.
 
 Current [backup_crypto.py](../scripts/backup_crypto.py) writes a **v2 scrypt +
 AES-256-GCM** authenticated envelope. Restore also accepts legacy Fernet
-archives. Early sections of [15_BACKUP_RESTORE.md](15_BACKUP_RESTORE.md) retain
+archives. Early sections of [07_BACKUP_RESTORE.md](07_BACKUP_RESTORE.md) retain
 historical Fernet terminology; consult the current crypto implementation and
-the [security backup notes](18_SECURITY.md#7-backup-encryption).
+the [security backup notes](10_SECURITY.md#7-backup-encryption).
 Keep backup encryption material distinct from secret-store material and off
 the repository. Normal archives exclude wallet/secret-key/sidecar material;
 they are not wallet-key recovery backups.

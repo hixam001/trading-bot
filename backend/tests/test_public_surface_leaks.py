@@ -37,7 +37,7 @@ from api.routes.disclosure import _break_state, _kill_switch_state
 from api.routes.proof import _verify_binding_checks, _verify_memo
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DOC = REPO_ROOT / "docs" / "18_SECURITY.md"
+DOC = REPO_ROOT / "docs" / "10_SECURITY.md"
 
 # A valid-length Base58-looking mint so the documented history route reaches
 # its handler instead of failing path validation.

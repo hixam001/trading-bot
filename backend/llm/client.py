@@ -3,7 +3,7 @@
 Main-path adapters (thinker / narrator / reflections) are selected by
 `config.MAIN_LLM_PROVIDER` via `build_main_client()`:
   - `MainGroqClient`   — Groq direct API (warm rollback path)
-  - `DeepSeekClient`   — DeepSeek direct API, non-thinking mode (docs/08 §1)
+  - `DeepSeekClient`   — DeepSeek direct API, non-thinking mode (docs/CONFIGURATION.md)
 The social evidence read keeps its own adapter (`GroqClient` via
 `SOCIAL_LLM_*`) and is never affected by the main-provider flip.
 """
@@ -187,7 +187,7 @@ class LLMClient:
         if json_mode:
             payload["response_format"] = {"type": "json_object"}
         if self.provider == "deepseek":
-            # NON-THINKING MODE ONLY (docs/08 §1, handoff §18): V4 Flash
+            # NON-THINKING MODE ONLY (docs/CONFIGURATION.md, handoff §18): V4 Flash
             # defaults to thinking mode, which burns the small output budget
             # on reasoning_content and returns an empty `content` — forcing
             # a fail-closed template pass on every call.
@@ -293,10 +293,10 @@ class MainGroqClient(LLMClient):
 
 
 class DeepSeekClient(LLMClient):
-    """DeepSeek direct API main adapter (docs/08 §6): OpenAI-compatible
+    """DeepSeek direct API main adapter (docs/CONFIGURATION.md): OpenAI-compatible
     /chat/completions, JSON output, NON-thinking mode only. Reasoning mode
     stays out of the hot path until an offline benchmark proves a measurable
-    gain (docs/08 §1)."""
+    gain (docs/CONFIGURATION.md)."""
 
     def __init__(self, client: Optional[httpx.AsyncClient] = None):
         super().__init__(

@@ -35,7 +35,7 @@ These values describe committed source; effective orders must satisfy all
 applicable controls. Shared sizing constants are not substitutes for live
 executor limits. The retired shared `PAPER_TRADING_ONLY` constant is not a
 live disarm switch. Setting `DATA_BACKEND=mock` does not change live arming.
-Human-only arming procedures remain in the [deployment guide](11_DEPLOYMENT.md)
+Human-only arming procedures remain in the [deployment guide](03_DEPLOYMENT.md)
 and [README live-trading section](../README.md#live-trading-operator-armed).
 
 ## Environment groups
@@ -61,7 +61,7 @@ and [README live-trading section](../README.md#live-trading-operator-armed).
 | Encrypted persistence | `SECRET_STORE_KEY` / `SECRET_STORE_KEY_FILE`, `FOMO_PRIVY_STATE_FILE`, `BACKUP_ENCRYPTION_KEY` | Secret-sidecar encryption and separate backup encryption; never use the same secret for both. |
 
 Jupiter URL/key settings are read by the current client helpers; use the
-catalog and [Jupiter migration guide](16_JUPITER_API_MIGRATION.md), rather than
+catalog and [Jupiter migration guide](08_JUPITER_API_MIGRATION.md), rather than
 assuming older keyless endpoints still apply. Outbound HTTP callers use bounded
 responses (default 8 MiB, total 60 seconds), identity encoding and no redirect
 following; these constraints are implemented in code, not an arbitrary proxy
@@ -103,7 +103,7 @@ some legacy local defaults live outside the authority directory. Empty-path
 handling differs across settings; do not assume an empty string always means
 disabled. Container roots are read-only; writable files must map to persistent
 volumes or permitted temporary storage. See
-[runtime write inventory](18_SECURITY.md#1b-runtime-write-paths).
+[runtime write inventory](10_SECURITY.md#1b-runtime-write-paths).
 
 ## Frontend origin
 

@@ -1,4 +1,4 @@
-# §93 root filesystem audit — 2026-11-09
+# 11 — §93 root filesystem audit — 2026-11-09
 
 Recovered task: OpenCode session `ses_e4103b0c7ffeztj1LVbtumgb3N`.
 R1 was committed (`7c6f904`); R2 was interrupted. This continuation preserved
@@ -140,7 +140,7 @@ Larger batches must be split to fit the aggregate request limit.
 | F7 | Low | `backend/config.py`, `backend/api/auth.py`, `backend/api/main.py`, `backend/api/rate_limiter.py` | Synthetic production trust failed → pass | One pytest-only helper in all four consumers, including forwarded synthetic peers | `test_synthetic_hosts_are_never_trusted_outside_tests` |
 | F8 | Low | `backend/api/routes/auth.py:193` | Empty/malformed/wrong-type signup returned 422 → 404 | Conceal before validation; opted-in validation preserved | `test_signup_is_concealed_before_body_validation`, `test_input_validation.py` |
 | F9 | Low | `backend/tests/test_route_matrix.py:113` | 48 matrix tests pass; removed live-book auth mutation is caught | Probe real documented postures with no credentials and fresh limiter/auth state; explicit no-cookie logout exemption | `test_matrix_auth_matches_the_real_app` |
-| F10 | Low | `docs/18_SECURITY.md` | Backup contents and actual write-failure semantics compared with docs | Correct revocation backup exclusion and silent-write residual | `test_audit_93_r1.py`, documentation review |
+| F10 | Low | `docs/10_SECURITY.md` | Backup contents and actual write-failure semantics compared with docs | Correct revocation backup exclusion and silent-write residual | `test_audit_93_r1.py`, documentation review |
 
 Observed output:
 
@@ -158,8 +158,8 @@ including websocket/mount behavior and the idempotent logout exemption.
 
 | ID | Severity | File:line | Evidence (failing → passing) | Fix | Test |
 |---|---|---|---|---|---|
-| F1–F10 | Follow-through | `docs/18_SECURITY.md`, `docs/11_DEPLOYMENT.md`, `handoff.md`, `memory-bank/` | Missing/stale records → generated inventory, findings, migration, controls, residuals and observed evidence | Record limitations explicitly | Full suite, route-matrix docs checks, inventory check |
-| Critical fixes | Verification | `scripts/mutation_check.py`, `docs/17_MUTATION_LOG.md` | First run 135/136 → final **137/137 caught**, zero survivors | New mutations and refreshed old anchors; no-flags command regenerates the log only on success | Full mutation harness; declaration integrity test |
+| F1–F10 | Follow-through | `docs/10_SECURITY.md`, `docs/03_DEPLOYMENT.md`, `handoff.md`, `memory-bank/` | Missing/stale records → generated inventory, findings, migration, controls, residuals and observed evidence | Record limitations explicitly | Full suite, route-matrix docs checks, inventory check |
+| Critical fixes | Verification | `scripts/mutation_check.py`, `docs/09_MUTATION_LOG.md` | First run 135/136 → final **137/137 caught**, zero survivors | New mutations and refreshed old anchors; no-flags command regenerates the log only on success | Full mutation harness; declaration integrity test |
 
 ## Spend projection and recommendation
 

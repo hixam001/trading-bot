@@ -22,39 +22,33 @@ Suggested reading: requirements → application flow → API/data contracts →
 development/test plan. Operators can start with configuration → deployment →
 operations → security.
 
-## Design and product context
+## Numbered guides
+
+The remaining numbered guides use a continuous `01`–`12` sequence.
 
 | Document | Purpose |
 |---|---|
-| [00_BLUEPRINT.md](00_BLUEPRINT.md) | Original system blueprint and design intent. |
-| [01_ARCHITECTURE.md](01_ARCHITECTURE.md) | Detailed rule, provider, model and execution architecture. |
+| [01_ARCHITECTURE.md](01_ARCHITECTURE.md) | Rule, provider, model and execution architecture. |
 | [02_FEATURE_LIST.md](02_FEATURE_LIST.md) | Feature inventory. |
-| [03_GANTT_CHART.md](03_GANTT_CHART.md) | Historical implementation schedule. |
-| [05_VERIFICATION_APPENDIX.md](05_VERIFICATION_APPENDIX.md) | Recorded verification background. |
-| [06_REFERENCE_COMPARISON.md](06_REFERENCE_COMPARISON.md) | Reference-system comparison. |
-| [07_PROJECT_REPORT.md](07_PROJECT_REPORT.md) | Project report and historical results. |
-| [Frontend design](../frontend/DESIGN.md) | Dashboard design and interaction states. |
+| [03_DEPLOYMENT.md](03_DEPLOYMENT.md) | Deployment roles, volumes, shutdown, preflight and alerts. |
+| [04_FREE_SEARCH_STACK.md](04_FREE_SEARCH_STACK.md) | Search transport chain. |
+| [05_ORACLE_DEPLOY_GUIDE.md](05_ORACLE_DEPLOY_GUIDE.md) | Oracle VM setup and deployment. |
+| [06_SIGNING_GUARD.md](06_SIGNING_GUARD.md) | Transaction inspection/simulation and diagnostics. |
+| [07_BACKUP_RESTORE.md](07_BACKUP_RESTORE.md) | Backup/restore runbooks and format evolution. |
+| [08_JUPITER_API_MIGRATION.md](08_JUPITER_API_MIGRATION.md) | Jupiter endpoint/client migration. |
+| [09_MUTATION_LOG.md](09_MUTATION_LOG.md) | Recorded mutation verification evidence. |
+| [10_SECURITY.md](10_SECURITY.md) | Route matrix, controls, incidents, rotation and residual risks. |
+| [11_ROOTFS_AUDIT.md](11_ROOTFS_AUDIT.md) | Runtime write inventory and audit evidence. |
+| [12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md](12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md) | Operator compatibility and behavior-change map. |
 
-## Deployment, integrations and security
-
-| Document | Purpose |
-|---|---|
-| [11_DEPLOYMENT.md](11_DEPLOYMENT.md) | Deployment roles, volumes, shutdown, preflight and alerts. |
-| [13_ORACLE_DEPLOY_GUIDE.md](13_ORACLE_DEPLOY_GUIDE.md) | Oracle VM setup and deployment. |
-| [14_SIGNING_GUARD.md](14_SIGNING_GUARD.md) | Transaction inspection/simulation design and diagnostics. |
-| [15_BACKUP_RESTORE.md](15_BACKUP_RESTORE.md) | Backup/restore runbooks and format evolution. |
-| [18_SECURITY.md](18_SECURITY.md) | Canonical security route matrix, controls, incidents, rotation and residual risks. |
-| [19_ROOTFS_AUDIT.md](19_ROOTFS_AUDIT.md) | Read-only-root runtime write inventory and evidence. |
-| [08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md](08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md) | LLM migration and feedback context. |
-| [12_FREE_SEARCH_STACK.md](12_FREE_SEARCH_STACK.md) | Search transport chain. |
-| [FOMO_INTEGRATION.md](FOMO_INTEGRATION.md) | Crowd-feed integration. |
-| [16_JUPITER_API_MIGRATION.md](16_JUPITER_API_MIGRATION.md) | Jupiter endpoint/client migration. |
+Related references: [frontend design](../frontend/DESIGN.md) and
+[FOMO integration](FOMO_INTEGRATION.md).
 
 ## Change history and evidence
 
 Read the latest relevant [handoff](../handoff.md) sections together with the
-[behavior-change map](20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md),
-[mutation evidence](17_MUTATION_LOG.md),
+[behavior-change map](12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md),
+[mutation evidence](09_MUTATION_LOG.md),
 [security remediation](SECURITY_REMEDIATION.md),
 [signing-policy remediation](SIGNING_POLICY_REMEDIATION.md), and
 [provider-number remediation](PROVIDER_NUMBER_REMEDIATION.md).

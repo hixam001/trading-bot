@@ -1,4 +1,4 @@
-# 11 — DEPLOYMENT RUNBOOK
+# 03 — DEPLOYMENT RUNBOOK
 
 **Target architecture (all free-tier viable):**
 
@@ -49,7 +49,7 @@ or `docker compose up -d --build` (compose file wires the volumes + env_file
 the compose network. The sidecar is NOT published to the host; the
 standalone `docker run` above simply leaves the SearXNG hop unconfigured
 and the chain degrades to Brave → Firecrawl — fail-soft either way. See
-`docs/12_FREE_SEARCH_STACK.md`).
+`docs/04_FREE_SEARCH_STACK.md`).
 
 #### SearXNG Image Tag Pinning & Secret Wiring (§78 D1–D2)
 - **Tag Pinning**: The sidecar is pinned in `docker-compose.yml` to verified release `searxng/searxng:2026.10.9-f4822b3fc`. To pin to the immutable sha256 manifest digest for absolute reproducibility, inspect the manifest:
@@ -283,7 +283,7 @@ Pre-fix pending sell attempts have no `signed_at` and are never automatically
 released. After deployment, inspect them with
 `python scripts/resolve_pending_sell.py list` (add `--state-dir <directory>` before
 `list` when inspecting a relocated copy). Follow the explicit operator
-verification and typed-confirmation runbook in `docs/18_SECURITY.md`.
+verification and typed-confirmation runbook in `docs/10_SECURITY.md`.
 
 **§93 R1 migration — writable homes for runtime state.** The containers run
 with a read-only root, so before `docker compose up -d` with the current

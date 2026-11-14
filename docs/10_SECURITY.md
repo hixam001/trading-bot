@@ -1,4 +1,4 @@
-# Security Controls and Route Matrix (§92)
+# 10 — Security Controls and Route Matrix (§92)
 
 This is the operator-facing security record for the production trading bot.
 Every control below is enforced in code, exercised by a named test, and
@@ -222,7 +222,7 @@ closed when unwritable.
 | S8 | Docker base images and the SearXNG sidecar are pinned by registry digest | `Dockerfile`, `docker-compose.yml` | `test_s8_supply_chain.py` |
 | S8 | App containers use a read-only root, `cap_drop: ALL`, `no-new-privileges`, pid/memory/CPU limits; API binds loopback and SearXNG publishes no host port | `docker-compose.yml` | `test_s8_supply_chain.py` |
 | S8 | Deploy preflight rejects DEBUG, disabled rate limits/HTTPS, wildcard proxy trust, a zero body cap, and unhardened compose services | `scripts/preflight_deploy.py` | `test_s8_supply_chain.py`, `test_preflight_deploy.py` |
-| S8 | Selecting the JSON wallet channel logs a warning that env secrets are visible to `docker inspect`; the mounted file channel remains preferred | `live_execution/wallet.py`, `docs/11_DEPLOYMENT.md` | `test_s8_supply_chain.py` |
+| S8 | Selecting the JSON wallet channel logs a warning that env secrets are visible to `docker inspect`; the mounted file channel remains preferred | `live_execution/wallet.py`, `docs/03_DEPLOYMENT.md` | `test_s8_supply_chain.py` |
 | S9 | Every `SecurityEventType` has a production emitter; a new enum member without one fails the test | `backend/api/*` + monitoring schema | `test_s9_monitoring_and_restore.py::test_every_security_event_type_has_a_production_emitter` |
 | S9 | Schema-rejected knowledge-base uploads still produce `SUSPICIOUS_UPLOAD` evidence | `backend/api/error_handler.py` validation handler | `test_s9_monitoring_and_restore.py::test_schema_rejected_upload_records_suspicious_upload` |
 | S9 | Repeated identical events collapse into one bounded event with `occurrences` and `last_seen`; the dedupe map has a hard LRU cap | `SecurityMonitor.record_event`, `MAX_DEDUPE_KEYS` | `test_s9_monitoring_and_restore.py::test_repeated_events_collapse_but_keep_the_true_count`, `test_dedupe_map_is_hard_bounded` |
@@ -603,7 +603,7 @@ availability, or defense-in-depth weakness; **Low** = evidence/recovery gap.
 | F7 | Medium | Limiter state was unbounded, `X-Forwarded-For` trust was too broad, multiple workers could each grant a full quota, 429s did not prove `Retry-After`, public DB scans were open-ended, and server body/header/keep-alive/concurrency limits were implicit. | Ordered LRU limiter with expiry sweep, trusted-proxy CIDR check, `--workers 1` + bounded uvicorn flags at every launch site, finite query ceilings. | `test_s6_rate_limit_buckets.py`, `test_s6_deploy_limits.py` |
 | F8 | Medium | Security headers were only reliably present on 200s; CSP lacked `base-uri`; debug/test paths could weaken auth/CSRF/rate limits; debug exception text was not redacted. | Shared `security_headers.py` used by middleware and error handlers, `base-uri 'none'`, pytest-only test-host trust, debug bypass tests, redacted debug text. | `test_s7_response_hardening.py` |
 | F9 | Medium | Actions/images used movable tags, compose services had writable roots/capabilities/no resource caps, preflight did not reject lost runtime controls, and the JSON wallet channel was silent about `docker inspect` exposure. | Full SHA/digest pinning, read-only/cap-drop/no-new-privileges/resource limits, SearXNG internal-only, preflight runtime+compose checks, wallet-channel warning. | `test_s8_supply_chain.py`, `test_preflight_deploy.py` |
-| F10 | Low | Schema-rejected uploads produced no security event; identical event floods could evict evidence; login-burst alerts fired per request; no automated restore drill proved the kill-switch latch. | Bounded dedupe with true counts, schema-rejection event, once-per-IP/window burst alert, restore drill test. | `test_s9_monitoring_and_restore.py`, `docs/17_MUTATION_LOG.md` |
+| F10 | Low | Schema-rejected uploads produced no security event; identical event floods could evict evidence; login-burst alerts fired per request; no automated restore drill proved the kill-switch latch. | Bounded dedupe with true counts, schema-rejection event, once-per-IP/window burst alert, restore drill test. | `test_s9_monitoring_and_restore.py`, `docs/09_MUTATION_LOG.md` |
 
 ### Verified safe (evidence-backed)
 
@@ -687,7 +687,7 @@ approved custody boundary.
 
 These IDs refer to the follow-up root-filesystem audit, separately from §92
 section 9. Full failing/passing evidence, projection assumptions and operational
-limitations are in [the §93 report](19_ROOTFS_AUDIT.md).
+limitations are in [the §93 report](11_ROOTFS_AUDIT.md).
 
 | ID | Severity | Evidence | Fix | Test |
 |---|---|---|---|---|
@@ -812,7 +812,7 @@ directory, and run `python scripts/validate_state.py --state-dir <copy>`. Keep
 that copy and the old image for rollback. The validator reads recognized
 authority files only, never creates locks or import caches, and prints counts
 and invalid row indices/field names/reasons without values. Exit codes are
-valid, invalid and unreadable as described in `docs/11_DEPLOYMENT.md`. The same
+valid, invalid and unreadable as described in `docs/03_DEPLOYMENT.md`. The same
 validators run as deployment preflight's `state validation` check for existing
 configured state directories; invalid/unreadable state fails preflight.
 Historical writer fixtures pass without loosening the runtime validators.

@@ -308,7 +308,7 @@ LLM_DAILY_COST_CAP_USD: float = float(
 SEARCH_DAILY_CALL_CAP: int = int(os.getenv("SEARCH_DAILY_CALL_CAP", "500"))
 
 # ---------------------------------------------------------------------------
-# DeepSeek direct API (main-provider candidate per docs/08 §1). Non-thinking
+# DeepSeek direct API (main provider; docs/CONFIGURATION.md). Non-thinking
 # mode only in the hot path. Model id + prices verified against
 # api-docs.deepseek.com on 2026-08-27 (pricing snapshot id in llm/client.py).
 #   deepseek-v4-flash (DeepSeek-V4-Flash-0731), 1M context, JSON output:
@@ -539,8 +539,8 @@ STEALTH_THROTTLE_BACKOFF_SECONDS: float = float(
 
 # ---------------------------------------------------------------------------
 # Market regime thresholds (§3.3) — EXPLICIT PLACEHOLDERS needing calibration.
-# To be tuned from real paper-trading data during the 10-day window
-# (03_GANTT_CHART.md calibration section). Do not treat these as validated.
+# To be tuned from observed trading data with the validation discipline in
+# docs/TEST_PLAN.md. Do not treat these as validated.
 # Intuition per spec: reject regime if an unusually high fraction of the whole
 # candidate universe is simultaneously green (broad-pump smell) or if median
 # volume across the universe is suspiciously thin (dead tape).

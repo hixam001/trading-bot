@@ -65,13 +65,13 @@ def test_docs_do_not_contain_file_scheme_links():
 
 
 def test_signing_guard_doc_truthful_balance_claims():
-    """Verify docs/14_SIGNING_GUARD.md does not claim RPC preflight verifies balances without sim_guard."""
-    guard_doc = REPO_ROOT / "docs" / "14_SIGNING_GUARD.md"
-    assert guard_doc.exists(), "docs/14_SIGNING_GUARD.md must exist"
+    """Verify docs/06_SIGNING_GUARD.md does not claim RPC preflight verifies balances without sim_guard."""
+    guard_doc = REPO_ROOT / "docs" / "06_SIGNING_GUARD.md"
+    assert guard_doc.exists(), "docs/06_SIGNING_GUARD.md must exist"
     content = guard_doc.read_text(encoding="utf-8")
     if re.search(r"verif(ies|y)\s+balances", content, re.IGNORECASE):
         assert "live_execution/sim_guard.py" in content or "backend/live_execution/sim_guard.py" in content, (
-            "docs/14_SIGNING_GUARD.md mentions 'verifies balances' without referencing live_execution/sim_guard.py"
+            "docs/06_SIGNING_GUARD.md mentions 'verifies balances' without referencing live_execution/sim_guard.py"
         )
 
 

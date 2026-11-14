@@ -90,7 +90,7 @@ disarm execution. Funded drills and flag changes follow the operator guide.
    paths; keep credentials, generated bundles and runtime files untracked.
 
 See [TEST_PLAN.md](TEST_PLAN.md) for exact test commands and
-[18_SECURITY.md](18_SECURITY.md) for credential/security changes. Existing
+[10_SECURITY.md](10_SECURITY.md) for credential/security changes. Existing
 auth, safety and accounting tests are regression boundaries; update behavior
 only with an intentional corresponding contract change.
 

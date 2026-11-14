@@ -8,7 +8,7 @@
 #
 # SECRETS: the image contains NONE. Everything arrives at runtime via env
 # (--env-file / platform secrets) or a mounted keypair file
-# (WALLET_KEYPAIR_PATH). See docker-entrypoint.sh + docs/11_DEPLOYMENT.md.
+# (WALLET_KEYPAIR_PATH). See docker-entrypoint.sh + docs/03_DEPLOYMENT.md.
 # ============================================================================
 FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS frontend-build
 WORKDIR /build

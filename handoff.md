@@ -68,7 +68,7 @@ cap and bounded UTF-8/escaped-JSON ingest override; offline spend projection;
 shared pytest-only host trust, pre-validation signup concealment and real route
 auth probes. Container controls, spend-cap defaults, gates, sizing and exits
 remain unchanged. Separate API/live counters and restored persisted loss memory
-are documented. Full report: docs/19_ROOTFS_AUDIT.md.
+are documented. Full report: docs/11_ROOTFS_AUDIT.md.
 
 Observed verification: backend 1934 passed, 0 failed, 0 skipped (102 existing
 deprecation warnings); mutation 137/137 caught, 0 survivors, restorations clean,
@@ -87,10 +87,10 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
 
 ### Baseline & Measured Suite Counts
 - Baseline before S1: **1535 passed**, 102 warnings; final suite: **1751 passed**, 0 failed, 102 warnings (+216 items). No tests were skipped in the final run because `frontend/dist` was present (the two build-conditional scanner/SPA tests ran).
-- Mutation harness: **109/109 CAUGHT** (95 prior rows + 14 new: 2 S1 backfill, 7 S2 backfill, 5 S9); restorations verified clean; `docs/17_MUTATION_LOG.md` regenerated.
+- Mutation harness: **109/109 CAUGHT** (95 prior rows + 14 new: 2 S1 backfill, 7 S2 backfill, 5 S9); restorations verified clean; `docs/09_MUTATION_LOG.md` regenerated.
 - Phase commits: S1 `a663e20`, S2 `99999df`, S3 `c16bbbf`, S4 `462e813`, S5 `fc4406c`, S6 `2d39fb4`, S7 `b374095`, S8 `5ff2657`, S9 this commit (message starts `§92 S9:`).
 - Frontend: `npm run build` + `tsc -b` clean; `scripts/scan_frontend_bundle.py` clean; Playwright **41/41** against a local mock API on `:8000` (`RATE_LIMIT_GENERAL_PER_MINUTE` raised only for the 41-test harness run; production config unchanged; rate limiting is separately proven by S6/S7).
-- Local prepush: **9/9 clean** (pytest, pip check, pip-audit, AST keypair isolation, tsc, build, npm audit, Playwright 41/41, gitleaks notice). Full history gitleaks **clean under both the CI version (v8.24.3) and v8.30.1**; CI flagged one documentation false positive on the first push (a credential-name list in `docs/18_SECURITY.md`), fixed by rewording the line and adding a precise fingerprint to `.gitleaksignore` (`16bd30c`), then re-scanning clean.
+- Local prepush: **9/9 clean** (pytest, pip check, pip-audit, AST keypair isolation, tsc, build, npm audit, Playwright 41/41, gitleaks notice). Full history gitleaks **clean under both the CI version (v8.24.3) and v8.30.1**; CI flagged one documentation false positive on the first push (a credential-name list in `docs/10_SECURITY.md`), fixed by rewording the line and adding a precise fingerprint to `.gitleaksignore` (`16bd30c`), then re-scanning clean.
 - GitHub Actions on `16bd30c` (2026-11-09): [Tests & Security Audit 42565425194](https://github.com/hixam001/trading-bot/actions/runs/42565425194) success (includes Docker ARM64 build + compose config); [gitleaks 42565425256](https://github.com/hixam001/trading-bot/actions/runs/42565425256) success; [CodeQL 42565425309](https://github.com/hixam001/trading-bot/actions/runs/42565425309) success.
 
 ### Fixed Defects by Phase
@@ -104,7 +104,7 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
    - CSRF middleware requires `X-Requested-With: XMLHttpRequest` on cookie-authenticated unsafe `/api/*` mutations (login/challenge exempt) and rejects a mismatched `Origin`/`Referer` even with the header.
    - Session revocations persist as signature+expiry in a 0600 registry, survive restart, fail closed on corruption, and are bounded. A global auth-failure window defeats IP rotation; per-IP lockout remains. PoW challenges are single-use and only consumed after a valid solution. Signup is 404 unless explicitly enabled and still never creates accounts.
    - Login/signup models use Pydantic `extra="forbid"`; weak `ADMIN_TOKEN`/`SESSION_SECRET` refuse boot; a dedicated `SESSION_SECRET` lets sessions survive operator-token rotation.
-   - `docs/18_SECURITY.md` route matrix is enforced by `test_route_matrix.py`: adding a route without an auth row fails.
+   - `docs/10_SECURITY.md` route matrix is enforced by `test_route_matrix.py`: adding a route without an auth row fails.
    - Tests: `test_s2_auth_hardening.py`, `test_mass_assignment.py`, `test_route_matrix.py`.
 
 3. **S3 — public-surface truth (`c16bbbf`)**
@@ -150,8 +150,8 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
    - Tests: `test_s9_monitoring_and_restore.py` (9). Failing-first was proven by stashing the S9 code: 4 tests failed; restored: 9 passed.
 
 ### Verification & Known Limits
-- `docs/18_SECURITY.md` now carries the threat model, route matrix, S1–S9 control↔test map, residual risks, operator checklist, rotation/incident runbooks, findings F1–F10 with severity/evidence/fix/test, verified-safe list, rotate-now list, operator-must-do list, and UNVERIFIED list.
-- Residual limits are documented rather than hidden: heuristic redaction, per-host revocation/limiter/spend state, prompt injection containment being structural, RPC/Birdeye intentionally outside the LLM guard, in-memory monitoring lost on restart, no SIEM/tamper-evident log, synthetic restore drill, and all infrastructure items in §8 of `docs/18_SECURITY.md`.
+- `docs/10_SECURITY.md` now carries the threat model, route matrix, S1–S9 control↔test map, residual risks, operator checklist, rotation/incident runbooks, findings F1–F10 with severity/evidence/fix/test, verified-safe list, rotate-now list, operator-must-do list, and UNVERIFIED list.
+- Residual limits are documented rather than hidden: heuristic redaction, per-host revocation/limiter/spend state, prompt injection containment being structural, RPC/Birdeye intentionally outside the LLM guard, in-memory monitoring lost on restart, no SIEM/tamper-evident log, synthetic restore drill, and all infrastructure items in §8 of `docs/10_SECURITY.md`.
 - No money-path behaviour changed: arming flags, the 11-rule gate, sizing/signing/thresholds, Jupiter Swap V1, the fomo/Privy path, exit scanning, and the public transparency endpoints are untouched.
 - Operator-only work remains: hosted Supabase migration 007 application, provider billing caps, real backup/restore on the host, proxy/TLS/firewall/Tailscale verification, real alert delivery, and the first supervised live buy/sell.
 
@@ -195,8 +195,8 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
    - The FILE channel is unchanged and still FAILs for `/dev/null` (it requires a regular keypair file); a regression test pins that.
    - Tests: `test_preflight_deploy.py` (+4).
 5. **Phase C — this documentation/memory/mutation-log commit**:
-   - `docs/13_ORACLE_DEPLOY_GUIDE.md` §5.5/§10.6 and `docs/15_BACKUP_RESTORE.md` state the honest `--force-expire` contract and the `/dev/null`/directory distinction.
-   - `handoff.md` §91, memory-bank `activeContext`/`progress`/`decisionLog`/`session-log`, and the regenerated `docs/17_MUTATION_LOG.md` (54 rows, all KILLED).
+   - `docs/05_ORACLE_DEPLOY_GUIDE.md` §5.5/§10.6 and `docs/07_BACKUP_RESTORE.md` state the honest `--force-expire` contract and the `/dev/null`/directory distinction.
+   - `handoff.md` §91, memory-bank `activeContext`/`progress`/`decisionLog`/`session-log`, and the regenerated `docs/09_MUTATION_LOG.md` (54 rows, all KILLED).
 
 ### Known Limits
 - **Cycle single-endpoint behaviour is unchanged.** `resolve_pending_buys` does not itself refuse when only one distinct endpoint is configured; it relies on preflight/`check_rpc_diversity` to enforce two RPCs. The operator tool does refuse a single endpoint. A deployment that bypasses preflight with one RPC could therefore still expire on one `ABSENT` answer.
@@ -237,13 +237,13 @@ Docker unavailable locally; actual VM/Supabase behavior remains unverified.
    - **C2**: the Jupiter confirmed-trade path had no explicit ordering test. `test_execute_orders_sign_then_journal_then_send` pins `[sign, record_pending_buy, send_checked_swap]`; mutation `90C2_JOURNAL_AFTER_SEND` moves the journal call inside the `try` after the send and the test fails.
    - **C3**: chain-proven adoption could not re-bind a commit that expiry/orphan healing had already marked `failed`, so a late-landing fill stayed unproven. `CommitLog.bind(..., allow_failed=True)` is opt-in, clears the stale `fail_reason`, and is used only by the automatic resolver and the operator `--adopt-from-sig` path; the default still refuses failed rows.
    - Tests: `test_commit_log.py` (+1), `test_jupiter_executor.py` (+1), `test_pending_buys_and_reconcile.py` (+1), `test_pending_buy_resolution.py` (+1), `test_resolve_pending_buy.py` (+1).
-4. **Phase D — ARM browser build escape hatch and burn-in runbook (`docker-compose.yml`, `docs/13_ORACLE_DEPLOY_GUIDE.md`)**:
+4. **Phase D — ARM browser build escape hatch and burn-in runbook (`docker-compose.yml`, `docs/05_ORACLE_DEPLOY_GUIDE.md`)**:
    - Both `api` and `live` build stanzas pass `SKIP_BROWSER: "${SKIP_BROWSER:-0}"`, so `SKIP_BROWSER=1 docker compose up -d --build` retries the image without the ARM/QEMU Chromium install. The engine never launches a browser; only browser-driven helper scripts need it. Default behavior is unchanged.
    - The troubleshooting table gains the Chromium/patchright build-failure row with that exact command.
    - New "First 48 hours — supervised burn-in" section: 0–2 h, 2–24 h, 24–48 h and 48 h checks (health/logs, test alert, pending-buy grep, backup + throwaway restore, one operator-approved buy + sell on scratch state, reboot/graceful-stop drills), an explicit stop-and-inspect list, and a rule not to raise caps during the burn-in.
    - Tests: `backend/tests/test_deploy_contracts.py` (+1) asserts both services expose the build arg.
 5. **Phase E — documentation and memory**:
-   - `handoff.md` §90, memory-bank `progress`/`activeContext`/`session-log`/`decisionLog`, and `docs/17_MUTATION_LOG.md` regenerated for §81–§90 (50 rows).
+   - `handoff.md` §90, memory-bank `progress`/`activeContext`/`session-log`/`decisionLog`, and `docs/09_MUTATION_LOG.md` regenerated for §81–§90 (50 rows).
 
 ### Constraints & Invariants Preserved
 - No changes to `LIVE_TRADING_ENABLED=True` / `REQUIRE_MANUAL_CONFIRMATION=False`, the 11-rule gate, signing, sizing, thresholds, Jupiter lite-api Swap V1, or the fomo.family Privy path.
@@ -271,13 +271,13 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
   `the transaction landed (status ...): use --adopt-from-sig`, including the first
   non-None status. Mutation `90B_EXPIRY_FOUND_STATUS` now mutates the new
   `if landed is not None:` guard.
-- `docs/13_ORACLE_DEPLOY_GUIDE.md`: Step 5.5 documents the placeholder command; the
+- `docs/05_ORACLE_DEPLOY_GUIDE.md`: Step 5.5 documents the placeholder command; the
   troubleshooting row states the browser is only a fallback transport for the crowd
   feed (`backend/config.py` documents 100% functionality without it) and that the bot
   is fully functional without it; the first-48-hours section adds the
   loss-only funding rule, `docker compose logs -f live`, first-heartbeat confirmation,
   `send_test_alert.py` reaching the phone, and the no-cap-increase-until-clean-48h rule.
-- `docs/13` §10.6 and `docs/15` name the landed-status refusal text.
+- `docs/05_ORACLE_DEPLOY_GUIDE.md` §10.6 and `docs/07_BACKUP_RESTORE.md` name the landed-status refusal text.
 
 ### Verification
 - Backend suite: **1496 passed**, 0 failed (102 warnings); no new test functions were
@@ -319,8 +319,8 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 5. **Documentation truth**:
    - `README.md`: `./stop.sh` waits up to 150 s.
    - `docs/01_ARCHITECTURE.md`: launcher/container parity (grace, scoped sweeps, second-signer refusal, unknown ROLE, private dirs).
-   - `docs/11_DEPLOYMENT.md`: standalone `docker run` gains `--init --stop-timeout 150` and is labeled the single-container fallback; the live-service bullet now distinguishes a configured-but-unreadable wallet path (exit 78) from an unset channel (stays up unhealthy), matching §87-A.
-   - `docs/13_ORACLE_DEPLOY_GUIDE.md`: `docker compose ps` no longer claims searxng is health-gated; local `./stop.sh` grace documented in Step 9 and §10.2.
+   - `docs/03_DEPLOYMENT.md`: standalone `docker run` gains `--init --stop-timeout 150` and is labeled the single-container fallback; the live-service bullet now distinguishes a configured-but-unreadable wallet path (exit 78) from an unset channel (stays up unhealthy), matching §87-A.
+   - `docs/05_ORACLE_DEPLOY_GUIDE.md`: `docker compose ps` no longer claims searxng is health-gated; local `./stop.sh` grace documented in Step 9 and §10.2.
 
 ### Tests
 - New `backend/tests/test_launchers.py` (7 tests): bash syntax for all launcher/entrypoint scripts; 150 s/30 s grace and SIGKILL-after-wait ordering; no `pkill`; cwd/executable scoping; live-before-API order; second-signer refusal; relative wallet-path resolution; live fast-fail.
@@ -349,7 +349,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Tests: `backend/tests/test_audit_88_a.py` (gate FAIL, preflight refusal, expiry releases the mint, adoption becomes managed, executor pre-replay guard).
 2. **Phase B — explicit commands never start the engine (`docker-entrypoint.sh`, docs)**:
    - After `cd "$APP_DIR"`, a non-empty argv is executed with `exec "$@"` before any `ROLE` logic. A compose `run` command against the `live` service can no longer silently start a second wallet signer.
-   - Static docs contract forbids bare `docker compose run … live python`; operator examples use `--entrypoint python` (docs/13 §5.5 now uses `/app/scripts/preflight_deploy.py`).
+   - Static docs contract forbids bare `docker compose run … live python`; operator examples use `--entrypoint python` (docs/05_ORACLE_DEPLOY_GUIDE.md §5.5 now uses `/app/scripts/preflight_deploy.py`).
    - Tests: `backend/tests/test_docker_entrypoint.py` (+3).
 3. **Phase C — preflight false FAILs (`scripts/preflight_deploy.py`)**:
    - Wallet-channel check selects exactly one of `WALLET_KEYPAIR_PATH` / `WALLET_KEYPAIR_JSON`; the JSON channel skips the host-file check and still checks identity config. A `PermissionError` while traversing reports "directory not traversable" instead of a generic missing file.
@@ -368,10 +368,10 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - `scripts/resolve_pending_buy.py <key> --expire|--adopt-from-sig [SIG]` requires a pending row, prompts unless `--yes`, refuses a non-TTY without `--yes`, and appends a JSON audit line (`resolve_pending_buy_audit.log`). Expire settles `expired` and best-effort fails the commit; adopt reads actual token/USDC deltas via `_fill_actuals(..., owner=EXPECTED_WALLET_ADDRESS)`, refuses unknown amounts (never fabricates a basis), settles `confirmed`, and best-effort binds the commit. Nonzero exit means nothing changed.
    - Tests: `backend/tests/test_audit_88_f.py` (explicit and default stop event, static ordering backstop), `backend/tests/test_resolve_pending_buy.py` (prompt/non-TTY, audit, expire, adopt, stored/override signature, unknown key, unknown actuals), updated graceful-shutdown child signature.
 7. **Phase G — documentation and memory**:
-   - `docs/13_ORACLE_DEPLOY_GUIDE.md`: stop-skips-entry behavior, 90s/all-endpoint expiry, and §10.6 manual pending-buy resolution with the engine stopped.
-   - `docs/15_BACKUP_RESTORE.md`: restored ledgers may contain pending rows; resolve them with the operator tool, never hand-edit/delete.
+   - `docs/05_ORACLE_DEPLOY_GUIDE.md`: stop-skips-entry behavior, 90s/all-endpoint expiry, and §10.6 manual pending-buy resolution with the engine stopped.
+   - `docs/07_BACKUP_RESTORE.md`: restored ledgers may contain pending rows; resolve them with the operator tool, never hand-edit/delete.
    - `docs/01_ARCHITECTURE.md`: pending gate visibility, pre-send journal/replace, multi-endpoint 90s expiry, resolver, stop behavior.
-   - `handoff.md` §88 (this section); memory-bank activeContext/progress/session-log/decisionLog/systemPatterns; `docs/17_MUTATION_LOG.md` regenerated for §81–§88.
+   - `handoff.md` §88 (this section); memory-bank activeContext/progress/session-log/decisionLog/systemPatterns; `docs/09_MUTATION_LOG.md` regenerated for §81–§88.
 
 ### Constraints & Invariants Preserved
 - No changes to the hardcoded `LIVE_TRADING_ENABLED=True` / `REQUIRE_MANUAL_CONFIRMATION=False`, PaperTradingBanner removal, fomo.family Privy, the 11-rule gate, or Jupiter lite-api Swap V1.
@@ -403,7 +403,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - `SignedSwap` exposes the transaction `recent_blockhash` (unparseable → `""`, unknown — never "expired").
    - An ambiguous buy (signature known/status `None`, or confirmation timeout) writes a `pending_buy` ledger row `{kind:"buy", status:"pending", mint, usd_size, signature, blockhash, idempotency_key, commit_hash, ts}`. Pending rows are excluded from `_OPEN`/token/exit accounting and the mirror, but included in slot/exposure/daily-deploy caps and idempotency replay.
    - `resolve_pending_buys()` runs at startup and the top of every cycle: confirmed → adopt **actual** fill deltas (quote fallback only when actuals unreadable, loud log; unknowable amounts stay pending), landed error → failed (fee paid), `is_blockhash_valid(...) is False` → expired with caps released, anything unknown/unreadable → stays pending and alerts after 5 minutes. `reconcile` raises a rate-limited per-mint `UNJOURNALED_HOLDING` for on-chain balances not explained by a pending buy, without inventing a cost basis.
-   - Both live execution paths mirror the same rules; `docs/14_SIGNING_GUARD.md` and `docs/01_ARCHITECTURE.md` document them.
+   - Both live execution paths mirror the same rules; `docs/06_SIGNING_GUARD.md` and `docs/01_ARCHITECTURE.md` document them.
 4. **Phase D1 — exit retry storm (`run_live_cycle.py`)**:
    - Per-mint exit backoff after a non-filled result: 15/30/60/120/300 s, reset on `filled` or a position-size change; risk-off rules cap at 60 s. State is an in-memory module dict accessed under `_EXIT_LOCK`; the exit lock is loop-bound so separate test loops cannot poison the singleton.
    - D2 (operator-approved 2026-11-01): risk-off exits (`rule_id in RISK_OFF_RULES`) now use the hardcoded `EXIT_MAX_PRICE_IMPACT_PCT = 15.0` ceiling; entries, take-profit trims, and unknown/`None` rule IDs keep `MAX_PRICE_IMPACT_PCT = 2.5`. Quotes above 15% still block; `min_out_raw` and the slippage ladder are unchanged. A 2.5–15% risk-off impact logs a warning with both ceilings. Tests cover all five risk-off rule IDs at 10% impact, the 14.9%/15.1% boundary, a 10% take-profit trim, and a 10% sell with no rule ID (both remain blocked at 2.5% with the position intact). Mutation `87D2_RISK_OFF_IMPACT_CEILING` is CAUGHT.
@@ -414,14 +414,14 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - The dead outer `check_wallet_drop(None, None, …)` call is removed; unreadable balances are skipped, not re-checked with fabricated zeros.
 6. **Phase F — deploy preflight + CI (`scripts/preflight_deploy.py`, docs, workflow)**:
    - New stdlib + `cryptography` CLI prints PASS/WARN/FAIL for `DATA_BACKEND=live`, selected LLM provider key, `ADMIN_TOKEN >= 32`, non-default `SEARXNG_SECRET`, valid `BACKUP_ENCRYPTION_KEY` distinct from `SECRET_STORE_KEY`, https `FRONTEND_ORIGIN` (loopback-only WARN), distinct-host `SOLANA_RPC_URL_2`, an alert channel, wallet file regular/0600-0400/uid 10001 with exact `chown` fix, `docker compose config`, API `WALLET_*` isolation, and `.env` mode (WARN). It opens no sockets, prints no secret values, and exits 1 on any FAIL.
-   - `docs/13_ORACLE_DEPLOY_GUIDE.md` step 5.5 runs it before `up`; CI gains a `docker-arm64` job that validates `docker compose config` with a dummy `.env` and cross-builds the image under QEMU. `SKIP_BROWSER=1` skips the ~1.5 GB patchright/Chromium layer to stay inside the 40-minute cap (the VM's native ARM build still installs it; the browser is a fallback transport, not on the order path).
+   - `docs/05_ORACLE_DEPLOY_GUIDE.md` step 5.5 runs it before `up`; CI gains a `docker-arm64` job that validates `docker compose config` with a dummy `.env` and cross-builds the image under QEMU. `SKIP_BROWSER=1` skips the ~1.5 GB patchright/Chromium layer to stay inside the 40-minute cap (the VM's native ARM build still installs it; the browser is a fallback transport, not on the order path).
    - 29 hermetic unit tests cover every check as good/bad/missing, including compose env list/dict forms, wallet uid/mode/directory cases, and CLI exit codes.
 
 ### Documentation & Memory
-- `docs/13_ORACLE_DEPLOY_GUIDE.md` — preflight step, uid-10001 ownership, reboot/graceful-stop/rollback/kill-switch drills, first-24h watch list.
-- `docs/15_BACKUP_RESTORE.md` — cron path, `--entrypoint python` operator commands (the service entrypoint ignores arguments), throwaway-directory restore drill, production restore/reconcile/clear sequence.
+- `docs/05_ORACLE_DEPLOY_GUIDE.md` — preflight step, uid-10001 ownership, reboot/graceful-stop/rollback/kill-switch drills, first-24h watch list.
+- `docs/07_BACKUP_RESTORE.md` — cron path, `--entrypoint python` operator commands (the service entrypoint ignores arguments), throwaway-directory restore drill, production restore/reconcile/clear sequence.
 - `handoff.md` §87 (this section); `memory-bank/activeContext.md`, `progress.md`, `decisionLog.md`, `session-log.md`, `systemPatterns.md` updated.
-- `docs/17_MUTATION_LOG.md` regenerated for §81–§87 (30 rows, including `87D2_RISK_OFF_IMPACT_CEILING`).
+- `docs/09_MUTATION_LOG.md` regenerated for §81–§87 (30 rows, including `87D2_RISK_OFF_IMPACT_CEILING`).
 
 ### Constraints & Invariants Preserved
 - No changes to wallet signing, sizing, rule thresholds, risk flags, `LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False`, PaperTradingBanner removal, fomo.family Privy integration, Jupiter lite-api Swap V1, the pluggable cloud LLM, or `WALLET_DROP_TRIPS_KILL_SWITCH` default off.
@@ -489,11 +489,11 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 - `.env.example` — common-operator-settings scope, missing operator variables, Supabase migration instruction
 - `docs/01_ARCHITECTURE.md` — active rule table (`crowd_heat`, `already_held`, `not_on_break`; `market_regime_ok` retired), post-gate LLM veto and `LLM_BRAIN`, live entry/exit/partial-trim flow, HWM restore, endpoint table, `Path=/` / 1-hour sessions / rate tiers
 - `docs/02_FEATURE_LIST.md` — B/E/D/F/H/J/L sections rewritten to the current live engine
-- `docs/06_REFERENCE_COMPARISON.md` — historical-snapshot banner; current rule/execution alignment
-- `docs/11_DEPLOYMENT.md` — loopback publish port, trusted proxy CIDRs, `SESSION_SECRET` removal
-- `docs/13_ORACLE_DEPLOY_GUIDE.md` — HTTPS origin/SSH-tunnel access, backup/log volumes
-- `docs/15_BACKUP_RESTORE.md` — restore target `/app/backend/live_execution/state`
-- `docs/14_SIGNING_GUARD.md` — relative links fixed
+- Historical reference comparison (now retired) — snapshot banner; rule/execution alignment at the time
+- `docs/03_DEPLOYMENT.md` — loopback publish port, trusted proxy CIDRs, `SESSION_SECRET` removal
+- `docs/05_ORACLE_DEPLOY_GUIDE.md` — HTTPS origin/SSH-tunnel access, backup/log volumes
+- `docs/07_BACKUP_RESTORE.md` — restore target `/app/backend/live_execution/state`
+- `docs/06_SIGNING_GUARD.md` — relative links fixed
 
 ### Constraints & Invariants Preserved
 - No changes to wallet signing, sizing, rule thresholds, risk flags, or the hardcoded arming switches (`LIVE_TRADING_ENABLED = True`, `REQUIRE_MANUAL_CONFIRMATION = False` remain committed; `test_safety_flags_match_the_committed_state` pins them).
@@ -561,9 +561,9 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 - `memory-bank/decisionLog.md` — decision #91
 - `memory-bank/session-log.md` — §85 session entry
 - `memory-bank/systemPatterns.md` — binding push-gate invariant (any branch, docs included)
-- `docs/11_DEPLOYMENT.md`, `docs/13_ORACLE_DEPLOY_GUIDE.md` — split-mode login/cookie behavior
-- `docs/15_BACKUP_RESTORE.md` — reconcile exit codes and `RECONCILE SKIPPED` semantics
-- `docs/14_SIGNING_GUARD.md` — corrupt/unwritable commit-log seals refuse before memo/sign/broadcast
+- `docs/03_DEPLOYMENT.md`, `docs/05_ORACLE_DEPLOY_GUIDE.md` — split-mode login/cookie behavior
+- `docs/07_BACKUP_RESTORE.md` — reconcile exit codes and `RECONCILE SKIPPED` semantics
+- `docs/06_SIGNING_GUARD.md` — corrupt/unwritable commit-log seals refuse before memo/sign/broadcast
 
 ### Constraints & Invariants Preserved
 - No changes to wallet signing, sizing, rule thresholds, risk flags, or hardcoded arming switches.
@@ -707,14 +707,14 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 6. **§82-F (Commit `ad701d9`) — Restore Script Reconcile-Only & Rollback**:
    - Added `--reconcile-only` flag to `scripts/restore_state.py`; `archive` is optional when `--reconcile-only` is passed.
    - If promotion fails after ≥1 files are promoted, trips kill switch with `PARTIAL RESTORE: promoted N of M files...` and attempts automatic atomic rollback from pre-restore backup.
-   - Updated post-restore banner and `docs/15_BACKUP_RESTORE.md` to print `python scripts/restore_state.py --reconcile-only --target-state-dir <dir>`.
+   - Updated post-restore banner and `docs/07_BACKUP_RESTORE.md` to print `python scripts/restore_state.py --reconcile-only --target-state-dir <dir>`.
 7. **§82-G (Commit `6049d17`) — Hermetic Test Network Socket Guard**:
    - Autouse session-scoped socket fixture in `backend/conftest.py` blocking all non-loopback network calls (`socket.connect`, `socket.connect_ex`, `socket.getaddrinfo`) unless marked with `@pytest.mark.network`.
    - Rewrote `backend/tests/test_audit_81_a.py::test_preflight_all_rpc_slippage_escalates` to mock `is_blockhash_valid`.
    - Mocked `_reconcile_with_chain` in `test_audit_82_d.py`.
    - Verified 1199 tests passing with 0 network calls.
 8. **§82-H (Current) — Documentation, System Patterns & Pre-Push Check**:
-   - Updated `handoff.md`, `memory-bank/decisionLog.md`, `memory-bank/systemPatterns.md`, and `docs/14_SIGNING_GUARD.md`.
+   - Updated `handoff.md`, `memory-bank/decisionLog.md`, `memory-bank/systemPatterns.md`, and `docs/06_SIGNING_GUARD.md`.
 
 ---
 
@@ -730,11 +730,11 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Note on baseline: At HEAD `cac8ab7`, 1164 tests passed with network access; in a sandbox with network blocked, 1163 passed and 1 failed (`test_preflight_all_rpc_slippage_escalates` reached unmocked real RPC). Fully hermetic test isolation with socket guard enforced in §82-G (1199 passed offline).
    - All GitHub Actions workflows (`Tests & Security Audit`, `gitleaks`, `CodeQL`) passing green on `main`.
 
-### Phase H: Smaller Items (`backend/alerts.py`, `backend/data_providers/onchain_security.py`, `backend/api/routes/stats.py`, `frontend/src/App.tsx`, `frontend/e2e/dashboard.spec.ts`, `backend/sizing.py`, `backend/run_live_cycle.py`, `scripts/gate_funnel_report.py`, `docs/17_MUTATION_LOG.md`, `backend/tests/test_audit_81_h.py`)
+### Phase H: Smaller Items (`backend/alerts.py`, `backend/data_providers/onchain_security.py`, `backend/api/routes/stats.py`, `frontend/src/App.tsx`, `frontend/e2e/dashboard.spec.ts`, `backend/sizing.py`, `backend/run_live_cycle.py`, `scripts/gate_funnel_report.py`, `docs/09_MUTATION_LOG.md`, `backend/tests/test_audit_81_h.py`)
 1. **Alert Channel Insecure Topic Refusal (H-1)**:
    - In `backend/alerts.py`, added `FORBIDDEN_NTFY_TOPICS` preventing broadcasts to guessable topics (`trading-bot`, `alerts`, `default`, etc.) on public unauthenticated `ntfy.sh`.
    - Sender logs a clear error, refuses broadcast, and reports `alerts: "misconfigured"` on `/api/safety` status when an insecure topic is configured.
-   - Added `openssl rand -hex 12` guidance in `.env.example` and `docs/11_DEPLOYMENT.md`.
+   - Added `openssl rand -hex 12` guidance in `.env.example` and `docs/03_DEPLOYMENT.md`.
 2. **Bounded Mint Extension Cache (H-2)**:
    - Capped `_MINT_EXTENSION_CACHE` in `backend/data_providers/onchain_security.py` to `MAX_MINT_EXTENSION_CACHE = 2048` using `OrderedDict` with LRU eviction (`_put_extension_cache` and `move_to_end`).
    - Evicts oldest entries when capacity is exceeded; tested with 3000 distinct mint insertions.
@@ -749,24 +749,24 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Updated `backend/run_live_cycle.py` to preserve and record `security_unknown_below_floor` on entry refusal.
    - Enhanced `scripts/gate_funnel_report.py` to detect and count `security_unknown_below_floor` as its own line in daily funnel, baseline summary, and text/JSON reports.
 6. **Mutation Ledger (H-6)**:
-   - Note on §81 log: The original 27-row log cited 21 fictitious test names (e.g. `test_sim_slippage_ladder_escalates_and_fills`, `test_create_account_with_delegate_refused`, `test_restore_trips_kill_switch`, `test_hermetic_state_dir`) and left a surviving mutation on SQLite integrity check. In §82 Phase E, replaced with an automated, reproducible harness (`scripts/mutation_check.py`) and verified 22/22 mutations caught by real tests in `docs/17_MUTATION_LOG.md`, guarded by `test_mutation_log_references_real_tests`.
+   - Note on §81 log: The original 27-row log cited 21 fictitious test names (e.g. `test_sim_slippage_ladder_escalates_and_fills`, `test_create_account_with_delegate_refused`, `test_restore_trips_kill_switch`, `test_hermetic_state_dir`) and left a surviving mutation on SQLite integrity check. In §82 Phase E, replaced with an automated, reproducible harness (`scripts/mutation_check.py`) and verified 22/22 mutations caught by real tests in `docs/09_MUTATION_LOG.md`, guarded by `test_mutation_log_references_real_tests`.
 7. **Tests & Suite**:
    - Added 6 tests in `backend/tests/test_audit_81_h.py`.
    - Measured baseline at §81 close: 1164 passed online (1163 passed / 1 failed offline).
 
-### Phase G: Real-World Validation and API-Risk Containment (`scripts/dry_run_guard.py`, `backend/live_execution/jupiter_client.py`, `docs/16_JUPITER_API_MIGRATION.md`, `docs/11_DEPLOYMENT.md`, `backend/tests/test_audit_81_g.py`)
+### Phase G: Real-World Validation and API-Risk Containment (`scripts/dry_run_guard.py`, `backend/live_execution/jupiter_client.py`, `docs/08_JUPITER_API_MIGRATION.md`, `docs/03_DEPLOYMENT.md`, `backend/tests/test_audit_81_g.py`)
 1. **Operator Dry-Run Verification Tool (G-1)**:
    - Implemented `scripts/dry_run_guard.py` (`chmod +x`): operator-run, read-only verification tool that exercises quote fetching, transaction assembly (`_build_swap_transaction`), static bytecode inspection (`inspect_swap_transaction`), and multi-RPC pre-sign simulation (`simulate_and_assert`) with real `TradeIntent` balance assertions without a keypair.
    - Strictly uses only `wallet.public_address()`. AST test proves zero imports or references to `load_keypair` or signing helpers.
    - Refuses execution if `LIVE_EXECUTION_STATE_DIR` is unset and default state dir exists unless `--allow-live-state` is explicitly passed (preventing live state / counter pollution).
-   - Documented in `docs/11_DEPLOYMENT.md` as mandatory pre-arm and post-upgrade check.
+   - Documented in `docs/03_DEPLOYMENT.md` as mandatory pre-arm and post-upgrade check.
 2. **Centralized Jupiter API Client (G-2)**:
    - Created `backend/live_execution/jupiter_client.py` as the single source of truth for Jupiter API base URL and request headers.
    - Supports optional `JUPITER_API_KEY` (sent via `x-api-key` header) and `JUPITER_BASE_URL` (defaulting to `https://lite-api.jup.ag/swap/v1`).
    - Wired into `_post_json` and `_get_json` in `jupiter_executor.py`, `data_providers/jupiter.py`, and `scripts/refresh_dex_labels.py`.
    - Behavior with no environment variables is byte-for-byte identical to legacy behavior.
 3. **Jupiter API Migration & V2 Evaluation (G-3)**:
-   - Created `docs/16_JUPITER_API_MIGRATION.md` detailing every Jupiter endpoint in use, citing primary documentation from `developers.jup.ag` regarding Metis deprecation, Swap V2 migration, and keyless 0.5 RPS rate limits.
+   - Created `docs/08_JUPITER_API_MIGRATION.md` detailing every Jupiter endpoint in use, citing primary documentation from `developers.jup.ag` regarding Metis deprecation, Swap V2 migration, and keyless 0.5 RPS rate limits.
    - Constructed a comprehensive analysis table of guard assumptions and failure modes under changed response structures.
    - Evaluated and rejected Swap V2 adoption at this time: V2 defaults to versioned transactions with Address Lookup Tables (which the signing guard statically rejects) and delegated execution (`/order` + `/execute`), which violates our independent multi-RPC simulation requirement.
 4. **Fail-Closed Quote Contract (G-4)**:
@@ -794,7 +794,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Added 5 tests in `backend/tests/test_audit_81_f.py`.
    - Test count: **1147 passed**, 0 failed.
 
-### Phase E: Make Restore Safe (`scripts/restore_state.py`, `docs/15_BACKUP_RESTORE.md`, `backend/tests/test_audit_81_e.py`)
+### Phase E: Make Restore Safe (`scripts/restore_state.py`, `docs/07_BACKUP_RESTORE.md`, `backend/tests/test_audit_81_e.py`)
 1. **Multi-Pass Safe Restore Architecture (E-1)**:
    - Pass 1 (In-Memory Validation): Decrypts tarball, verifies manifest map completeness, checks file sizes, SHA-256 hashes, and JSON parsing in memory. Nothing is written to the destination disk during Pass 1.
    - Pass 2 (Atomic Staging & SQLite Integrity): Stages files to `.staged.<pid>.*` in target directories. Runs `PRAGMA integrity_check;` directly on the staged SQLite copy before overwriting target DB. On any failure, all staged files are unlinked immediately and target remains untouched.
@@ -810,10 +810,10 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Added 7 tests in `backend/tests/test_audit_81_e.py`.
    - Test count: **1142 passed**, 0 failed.
 
-### Phase D: DEX Allowlist and Label Hygiene (`backend/config.py`, `live_execution/{config.py,quote_params.py}`, `scripts/refresh_dex_labels.py`, `backend/api/routes/system_status.py`, `backend/tests/test_audit_81_d.py`, `docs/14_SIGNING_GUARD.md`)
+### Phase D: DEX Allowlist and Label Hygiene (`backend/config.py`, `live_execution/{config.py,quote_params.py}`, `scripts/refresh_dex_labels.py`, `backend/api/routes/system_status.py`, `backend/tests/test_audit_81_d.py`, `docs/06_SIGNING_GUARD.md`)
 1. **Removed Unverified Lifinity IDs (D-1)**:
    - Removed two Lifinity program IDs (`EewxydAPCCVuNEyrVN68PuSYdQ7wKn27V9Gjeoi8dy3S` and `2wT8Yq49kHgDzXuPxZSaeLaH1qbmGXtEyPy64bL7aD3c`) from `APPROVED_SWAP_PROGRAM_IDS` in `live_execution/config.py`. Live check verified that neither appears in Jupiter's current label map.
-   - Updated `docs/14_SIGNING_GUARD.md` and `test_audit_79_b.py`.
+   - Updated `docs/06_SIGNING_GUARD.md` and `test_audit_79_b.py`.
 2. **Visible Inert Filter & SystemStatus Payload (D-2)**:
    - When `dex_labels.json` has empty labels, `quote_params.py` logs a WARNING at process start: `dex filter inactive: run scripts/refresh_dex_labels.py`.
    - Exposed `dex_filter: "inactive" | "active (N labels)"` in `GET /api/system-status`.
@@ -823,12 +823,12 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Atomic write via temporary file, recording `fetched_at`, `source_url`, `labels`, and `unmapped_ids`. Prints unmapped IDs. Zero references to dead `quote-api.jup.ag` in active code.
 4. **DEX Filter Restricted to Buys (D-4)**:
    - Added `side` argument to `build_quote_params`. Buys apply `dexes` filter when labels exist; sells NEVER send `dexes`, preventing exit lockups on tokens whose only liquid pool is unlabelled.
-   - Documented policy in `docs/14_SIGNING_GUARD.md`.
+   - Documented policy in `docs/06_SIGNING_GUARD.md`.
 5. **Tests & Suite**:
    - Added 7 tests in `backend/tests/test_audit_81_d.py`.
    - Test count: **1135 passed**, 0 failed.
 
-### Phase C: Close Remaining Signing-Guard Gaps (`live_execution/{sim_guard.py,solana.py,executor.py,jupiter_executor.py,trade_intent.py}`, `backend/tests/test_audit_81_c.py`, `backend/tests/_helpers.py`, `docs/14_SIGNING_GUARD.md`)
+### Phase C: Close Remaining Signing-Guard Gaps (`live_execution/{sim_guard.py,solana.py,executor.py,jupiter_executor.py,trade_intent.py}`, `backend/tests/test_audit_81_c.py`, `backend/tests/_helpers.py`, `docs/06_SIGNING_GUARD.md`)
 1. **Created Account Control-Field Protection (C-1)**:
    - Updated section E of `simulate_and_assert` in `sim_guard.py` to check all post-state wallet-owned accounts (`post_token_accounts`), not only pre-existing ones.
    - For newly created accounts (e.g. initial token buy), strictly asserts `delegate is None`, `close_authority is None`, `delegated_amount == 0`, and `state == 1` (initialized, not frozen). Refuses with clear 'created account' markers.
@@ -873,7 +873,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Added 8 tests in `backend/tests/test_audit_81_b.py`.
    - Full test suite: **1110 passed** (0 failed).
 
-### Phase A: Make the Sell Slippage Ladder Actually Escalate (`live_execution/{executor.py,solana.py,sim_guard.py,config.py,exit_errors.py}`, `backend/tests/test_audit_81_a.py`, `docs/14_SIGNING_GUARD.md`, `.env.example`)
+### Phase A: Make the Sell Slippage Ladder Actually Escalate (`live_execution/{executor.py,solana.py,sim_guard.py,config.py,exit_errors.py}`, `backend/tests/test_audit_81_a.py`, `docs/06_SIGNING_GUARD.md`, `.env.example`)
 1. **Structured Exit Failure Classification (`live_execution/exit_errors.py`)**:
    - Implemented `custom_error_code(err) -> int | None` parsing JSON form `{"InstructionError": [idx, {"Custom": N}]}`, list form `[idx, {"Custom": N}]`, and log text `custom program error: 0x1771`.
    - Added `EXIT_RETRYABLE_CUSTOM_ERRORS = (6001,)` in `config.py` (env-overridable via `EXIT_RETRYABLE_CUSTOM_ERRORS`). Jupiter error 6001 (`0x1771` `SlippageToleranceExceeded`) is **CONFIRMED** from Jupiter aggregator documentation.
@@ -921,7 +921,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 ## §79 — Hardening, Observability, and Operational Readiness (2026-10-13)
 
 
-### Phase G: Gate Funnel Diagnostic Report (`scripts/gate_funnel_report.py`, `backend/tests/test_audit_79_g.py`, `docs/11_DEPLOYMENT.md`)
+### Phase G: Gate Funnel Diagnostic Report (`scripts/gate_funnel_report.py`, `backend/tests/test_audit_79_g.py`, `docs/03_DEPLOYMENT.md`)
 1. **Diagnostic Funnel Engine (`scripts/gate_funnel_report.py`)**:
    - Read-only analysis tool diagnosing why the bot has had zero gate-passers or closed trades since §57.
    - Evaluates verbatim `feed_events` (`rule_breakdown` and `failed_rule_ids`) and `trades`.
@@ -951,7 +951,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Fixed AST test by accessing public address via `wallet.public_address()` without touching signing keypair.
 3. **Proxy CIDR Parity**:
    - Standardized `FORWARDED_ALLOW_IPS` in `backend/docker-entrypoint.sh` to `"127.0.0.1,172.16.0.0/12,::1/128"`.
-   - Removed overly broad `10.0.0.0/8` default; documented Oracle Cloud 10.x requirement in `docs/13_ORACLE_DEPLOY_GUIDE.md`.
+   - Removed overly broad `10.0.0.0/8` default; documented Oracle Cloud 10.x requirement in `docs/05_ORACLE_DEPLOY_GUIDE.md`.
 4. **SearXNG Digest Honesty**:
    - Removed unverified sha256 digest comment from `docker-compose.yml`.
 5. **Frontend Honesty & E2E Stability**:
@@ -964,7 +964,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Added 4 tests in `backend/tests/test_audit_79_f.py`.
    - Full test suite: **1062 passed** (0 failed).
 
-### Phase E: Backups and Restore (`scripts/{backup_state.py,restore_state.py}`, `deploy/backup.sh`, `docs/15_BACKUP_RESTORE.md`, compose, `.env.example`, `test_audit_79_e.py`)
+### Phase E: Backups and Restore (`scripts/{backup_state.py,restore_state.py}`, `deploy/backup.sh`, `docs/07_BACKUP_RESTORE.md`, compose, `.env.example`, `test_audit_79_e.py`)
 1. **Encrypted State Backup Script (`scripts/backup_state.py`)**:
    - Atomically packages state and journal files: `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.json`, `break_state.json`.
    - Encrypted with AES-256-GCM via `cryptography.hazmat.primitives.ciphers.aead.AESGCM` using `BACKUP_ENCRYPTION_KEY` (sha256-derived).
@@ -981,7 +981,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 4. **Volume & Documentation**:
    - Added `engine_backups` volume in `docker-compose.yml` mounted at `/app/backups`.
    - Added `BACKUP_ENCRYPTION_KEY` in `.env.example`.
-   - Created `docs/15_BACKUP_RESTORE.md` documenting backup procedures, restore instructions, disaster recovery drills, and cron configuration.
+   - Created `docs/07_BACKUP_RESTORE.md` documenting backup procedures, restore instructions, disaster recovery drills, and cron configuration.
 5. **Tests**:
    - Added 8 tests in `backend/tests/test_audit_79_e.py`.
    - Full test suite: **1058 passed** (0 failed).
@@ -1005,7 +1005,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - `HEARTBEAT_STALE` & `HEARTBEAT_RECOVERED`: watcher task in API process checking `heartbeat.txt` freshness (> 300s).
 3. **Verification Tool & Operational Docs**:
    - Added `scripts/send_test_alert.py` verifying channel connectivity, printing HTTP status codes without leaking secrets.
-   - Added Section 7 to `docs/11_DEPLOYMENT.md` detailing operator setup for ntfy and Telegram bots.
+   - Added Section 7 to `docs/03_DEPLOYMENT.md` detailing operator setup for ntfy and Telegram bots.
    - Exposed `outbound_alerts` status on `GET /api/safety` (`channels`, `last_sent_at`, `queued`, `dropped`, `suppressed`) with zero secrets.
 4. **Tests**:
    - Added 16 tests in `backend/tests/test_audit_79_d.py`.
@@ -1111,8 +1111,8 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 5. **Tests**:
    - Added 12 tests in `backend/tests/test_audit_78_b.py` covering pass case, on-chain err, SOL over cap, third token drained, output below threshold, foreign output ATA, owner change, RPC down, malformed layout, A1 attack simulation refusal, AST proof, and monkeypatch proof. Full suite: **970 passed** (0 failed).
 
-### Phase C: Truthful Docs & Comments (`docs/14_SIGNING_GUARD.md`, `jupiter_executor.py`, `solana.py`, `test_docs_security.py`)
-1. **Accurate Defense-in-Depth Architecture (`docs/14_SIGNING_GUARD.md`)**:
+### Phase C: Truthful Docs & Comments (`docs/06_SIGNING_GUARD.md`, `jupiter_executor.py`, `solana.py`, `test_docs_security.py`)
+1. **Accurate Defense-in-Depth Architecture (`docs/06_SIGNING_GUARD.md`)**:
    - Rewrote §3 to truthfully delineate Layer 1 (static inspection), Layer 2 (pre-sign simulation & balance-delta assertions in `sim_guard.py`), and Layer 3 (RPC preflight on broadcast).
    - Removed false claim that preflight simulation verifies balances (preflight only verifies program execution status; Layer 2 `sim_guard.py` enforces balance deltas).
    - Explicitly documented residual risks: mutable on-chain DEX upgrades, simulation vs. landing-time state drift, and compromised RPC endpoints (partially mitigated by dual-RPC consensus).
@@ -1123,12 +1123,12 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 3. **Memory-Bank Cleanliness**:
    - Removed unverified "gitleaks clean" claims across `session-log.md` and `decisionLog.md`, accurately describing configuration of `.gitleaks.toml` and `.gitleaksignore`.
 4. **Security Tests**:
-   - Expanded `backend/tests/test_docs_security.py` with tests asserting zero `file:///` absolute links in `docs/` and `memory-bank/`, and verifying `docs/14_SIGNING_GUARD.md` references `live_execution/sim_guard.py` whenever balance verification is discussed. All passing.
+   - Expanded `backend/tests/test_docs_security.py` with tests asserting zero `file:///` absolute links in `docs/` and `memory-bank/`, and verifying `docs/06_SIGNING_GUARD.md` references `live_execution/sim_guard.py` whenever balance verification is discussed. All passing.
 
 ### Phase D: Broken Pin & Dependency Hygiene (`docker-compose.yml`, `Dockerfile`, `tests.yml`, `dependabot.yml`, `requirements.lock`, `test_audit_78_d.py`)
-1. **SearXNG Tag & Digest Pinning (`docker-compose.yml`, `docs/11_DEPLOYMENT.md`)**:
+1. **SearXNG Tag & Digest Pinning (`docker-compose.yml`, `docs/03_DEPLOYMENT.md`)**:
    - Replaced broken tag (`searxng/searxng:2024.12.30-d3e758a`) with verified release tag `searxng/searxng:2026.10.9-f4822b3fc`.
-   - Documented `docker manifest inspect` command and immutable digest `sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272` in `docs/11_DEPLOYMENT.md`.
+   - Documented `docker manifest inspect` command and immutable digest `sha256:85492ba800a861e3e8ff6014c430e81369fe6ca766a9990595f616d1ce95b272` in `docs/03_DEPLOYMENT.md`.
 2. **SearXNG Secret Wiring (`deploy/searxng/settings.yml`, `deploy/searxng/settings.yml.example`)**:
    - Clarified and aligned SearXNG secret injection to rely on native `SEARXNG_SECRET` environment variable passing via docker-compose `environment:`.
    - Created `deploy/searxng/settings.yml.example`.
@@ -1145,7 +1145,7 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
 6. **Tests**:
    - Added 8 tests in `backend/tests/test_audit_78_d.py` verifying SearXNG tag regex format, secret wiring, urllib3 version, Python version parity, lockfile installation, scheduled CI audit, dependabot configuration, and healthcheck endpoint. Full suite: **980 passed** (0 failed).
 
-### Phase E: Session Revocation Memory Growth Remediation (`api/auth.py`, `docs/11_DEPLOYMENT.md`, `test_audit_78_e.py`)
+### Phase E: Session Revocation Memory Growth Remediation (`api/auth.py`, `docs/03_DEPLOYMENT.md`, `test_audit_78_e.py`)
 1. **Pre-Storage HMAC & Timestamp Validation (`backend/api/auth.py`)**:
    - `revoke_session_token` now validates that the token HMAC signature matches `ADMIN_TOKEN` and that the creation timestamp is strictly within `SESSION_MAX_AGE_SECONDS` before storing.
    - Forged, corrupted, or already-expired cookies sent to `POST /api/auth/logout` return HTTP 200 (avoiding oracle leaks) but add nothing to the revocation registry, defeating unauthenticated memory growth DoS.
@@ -1154,14 +1154,14 @@ did not state the funding/log/heartbeat/alert rules or the clean-reconcile cap g
    - Bounded to `MAX_REVOKED_SESSIONS = 10_000` entries.
    - On each insertion, expired entries are pruned; if still at capacity, the oldest entry is evicted ($O(1)$ LRU via `popitem(last=False)`).
 3. **Durability Limitation Documented**:
-   - Documented in `revoke_session_token` docstring and `docs/11_DEPLOYMENT.md`: revocations are in-memory and reset on restart; immediate cross-restart revocation is achieved by rotating `ADMIN_TOKEN`.
+   - Documented in `revoke_session_token` docstring and `docs/03_DEPLOYMENT.md`: revocations are in-memory and reset on restart; immediate cross-restart revocation is achieved by rotating `ADMIN_TOKEN`.
 4. **Tests**:
    - Added 6 tests in `backend/tests/test_audit_78_e.py` verifying forged cookie spam rejection, legitimate logout revocation and subsequent 401, expired cookie rejection, registry capacity cap, pruning of expired entries, and mutation checks. Full suite: **986 passed** (0 failed).
 
 ### Phase F: Minor Hardening Leftovers Remediation (`docker-compose.yml`, `docker-entrypoint.sh`, `wallet.py`, `secret_registry.py`, `error_handler.py`, `stats.py`, `holdings.py`, `rate_limiter.py`, `config.py`, `config_helpers.py`, `run_live_cycle.py`, `db_pg.py`, `Holdings.tsx`, `test_audit_78_f.py`)
 1. **Docker Compose Restart Policy & Entrypoint Shutdown (F1)**:
    - Changed `live` service restart policy to `restart: on-failure` in `docker-compose.yml`.
-   - Updated `backend/docker-entrypoint.sh` so the no-wallet case prints a clear shutdown message and exits 0 cleanly without triggering compose reboot loops. Documented in `docs/11_DEPLOYMENT.md`.
+   - Updated `backend/docker-entrypoint.sh` so the no-wallet case prints a clear shutdown message and exits 0 cleanly without triggering compose reboot loops. Documented in `docs/03_DEPLOYMENT.md`.
 2. **Secret Redaction Coverage (F2)**:
    - Created centralized `backend/secret_registry.py` to decouple runtime secret registration and prevent circular imports.
    - In `backend/live_execution/wallet.py` (`load_keypair`), registered raw keypair JSON string, base58 string, and hex forms with `register_secret()`.
@@ -1221,7 +1221,7 @@ Before deploying or arming this build on mainnet, the operator MUST complete:
 ---
 
 ### Phase A: Edge Exposure, Authentication, and Threat Containment
-1. **A1 — Removed Admin Token Injection from Deployment Guides (`docs/13_ORACLE_DEPLOY_GUIDE.md`, `backend/tests/test_docs_security.py`)**:
+1. **A1 — Removed Admin Token Injection from Deployment Guides (`docs/05_ORACLE_DEPLOY_GUIDE.md`, `backend/tests/test_docs_security.py`)**:
    - Deleted obsolete `header_up X-Admin-Token` Caddy directive and systemd environment overrides that previously compromised the proxy.
    - Added explicit documentation warnings instructing operators to authenticate solely via `POST /api/auth/login` (HttpOnly cookie).
    - Added automated doc-security scan testing all markdown docs for forbidden injection patterns or exposed `VITE_ADMIN_TOKEN` values.
@@ -1258,7 +1258,7 @@ Before deploying or arming this build on mainnet, the operator MUST complete:
 2. **C2 — Allowlist Hygiene (`backend/live_execution/config.py`)**:
    - Validated all entries in `APPROVED_SWAP_PROGRAM_IDS` as base58 Solana Pubkeys.
    - Removed unverified Moonshot program ID (`MSPC8t9vL7iQc4JzJjS9KqR7vC8bZpUuJ9G7r5vB2pD`) pending official verification.
-3. **C3 — Signing Guard Architecture Specification (`docs/14_SIGNING_GUARD.md`)**:
+3. **C3 — Signing Guard Architecture Specification (`docs/06_SIGNING_GUARD.md`)**:
    - Documented instruction allowlisting principles, Address Lookup Table (ALT) resolution mechanics, balance drain risks, pre-flight simulation vs pre-signing invariant checks, and prohibition of `skipPreflight=true`.
 
 ---
@@ -1428,10 +1428,10 @@ Comprehensive production environment hardening addressing debug exposure, source
    - Audited `frontend/dist/` confirming zero `.map` files exist.
    - Hardened `spa_fallback` in `backend/api/main.py` with `_BLOCKED_STATIC_EXTENSIONS` (`.map`), returning 404 for any sourcemap request rather than falling through to the SPA HTML shell.
 
-3. **.git Folder and Dotfiles Protection (`.dockerignore`, `backend/api/main.py`, `docs/13_ORACLE_DEPLOY_GUIDE.md`)**:
+3. **.git Folder and Dotfiles Protection (`.dockerignore`, `backend/api/main.py`, `docs/05_ORACLE_DEPLOY_GUIDE.md`)**:
    - Verified `.dockerignore` explicitly excludes `.git`, `.env`, and `.env.*`, ensuring repository files are never baked into container images.
    - Added `_is_blocked_static_path` in `backend/api/main.py` that rejects any request containing hidden segments (`/.git`, `/.env`, etc.) with HTTP 404.
-   - Hardened reverse proxy configurations in `docs/13_ORACLE_DEPLOY_GUIDE.md`:
+   - Hardened reverse proxy configurations in `docs/05_ORACLE_DEPLOY_GUIDE.md`:
      - Caddy: Added `@blocked { path */.* path *.map } respond @blocked 404`.
      - Nginx: Added `location ~ /\. { deny all; return 404; }` and `location ~* \.map$ { deny all; return 404; }`.
 
@@ -1464,7 +1464,7 @@ Comprehensive HTTPS-everywhere enforcement, transport security hardening, and ho
    - Added `--proxy-headers --forwarded-allow-ips='*'` to Uvicorn startup in `docker-entrypoint.sh` so FastAPI correctly parses `X-Forwarded-Proto`, `X-Forwarded-For`, and `X-Forwarded-Port` from upstream Caddy/Nginx reverse proxies.
    - Added production guidance to `docker-compose.yml` to bind `127.0.0.1:${API_PORT:-8000}:8000`, preventing direct unencrypted exposure to the public internet when fronted by a reverse proxy.
 
-5. **Hosting & Deployment Guide (`docs/13_ORACLE_DEPLOY_GUIDE.md`)**:
+5. **Hosting & Deployment Guide (`docs/05_ORACLE_DEPLOY_GUIDE.md`)**:
    - Step 3: Added port 80 (TCP) to Oracle Cloud VCN Ingress Rules and host iptables (`sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT`). Without port 80 open, Let's Encrypt HTTP-01 challenges fail and plain HTTP browser requests time out rather than redirecting to HTTPS.
    - Step 7: Documented automatic HTTPS configuration in Caddy, lock-down of direct port 8000 access, and added a production Nginx reverse-proxy configuration snippet with HTTP 308 redirect and TLS 1.2/1.3 hardening.
 
@@ -1831,7 +1831,7 @@ changed; no performance verdict inferred from snapshots.
 **Last updated:** 2026-10-10 · **Branch:** main · **Status:** LIVE
 (real market data, REAL funds ARMED; Supabase Postgres persistence active) ·
 **App:** http://localhost:8000 · **Deployable:** single-module `backend/`
-engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/11_DEPLOYMENT.md`
+engine (Dockerfile + entrypoint + compose) + Vercel-ready SPA — `docs/03_DEPLOYMENT.md`
 **Tests (§68):** 796 Python passing; 14 hermetic Playwright tests passing.
 **UI (§63):** operator upgrades — read-only command palette (⌘K/Ctrl-K:
 navigation, journal filtering, jump-to-position; the break-state toggle is
@@ -1878,7 +1878,7 @@ cycle retains every feature they had (brain, memories, reflections, learning,
 calibration via a ledger→trades mirror). Sizing math lives in `sizing.py`.
 **Social stack is FREE (§47+§51):** crowd feed via Scrapling, web search via
 Brave (free tier) → self-hosted SearXNG → Firecrawl last-resort, social read
-staged onto the Groq free tier — `docs/12_FREE_SEARCH_STACK.md`.
+staged onto the Groq free tier — `docs/04_FREE_SEARCH_STACK.md`.
 **Deployment (2026-08-30, §46):** moving to **Oracle Cloud Always Free** —
 VM sized **2 OCPU / 12 GB ARM Ampere A1** (the verified Always Free
 allowance of 1,500 OCPU-h + 9,000 GB-h/month; the 4/24 shape exceeds it
@@ -2405,7 +2405,7 @@ the running cycle holds the old code in memory.
 
 **46.1 — Oracle Cloud Always Free, CORRECTED sizing.** The engine moves to
 Oracle Always Free as the existing single Docker image (Dockerfile +
-docker-compose.yml, state on named volumes, per `docs/11_DEPLOYMENT.md`).
+docker-compose.yml, state on named volumes, per `docs/03_DEPLOYMENT.md`).
 Verified against Oracle's official docs (2026-08-30): Always Free provides
 **1,500 OCPU-hours + 9,000 GB-hours per month** for ARM Ampere A1 — for an
 always-on VM that is **2 OCPUs + 12 GB RAM**, not the "4 OCPU / 24 GB" this
@@ -2773,7 +2773,7 @@ candidate that already carries `social_interest` costs nothing.
 **Infra:** `deploy/searxng/settings.yml` (json format ON, limiter OFF,
 private compose network only) + docker-compose service `searxng`; `.env`
 knobs `BRAVE_SEARCH_API_KEY` / `SEARXNG_URL` / `SEARCH_BENCH_SECONDS` /
-`SEARCH_THROTTLE_BACKOFF_SECONDS`; `docs/12_FREE_SEARCH_STACK.md` is the
+`SEARCH_THROTTLE_BACKOFF_SECONDS`; `docs/04_FREE_SEARCH_STACK.md` is the
 operator runbook; README env table + troubleshooting updated.
 
 **Tests:** +16 net — `test_social_staging.py` (9: staging, evidence-only,
@@ -2798,7 +2798,7 @@ into hermetic tests. **676 passing** (660 + 16). Full suite green.
 ## 50. Exit-engine overhaul Phase 0 — forensics, live sell gate, the honest scorecard (2026-08-31)
 
 Operator context: funds withdrawn from the live book; performance is the
-focus. The omo re-audit (docs/09 §F) proved the two leaks: our **avg win
+focus. The omo re-audit (the historical reference audit §F) proved the two leaks: our **avg win
 +57.88% is already at their +59.71%** and our **hit rate 12.5% beats their
 9.4%** — the entire expectancy gap (−15.56% vs −1.11%) is the **loss shape**
 (−26.05% avg vs their −7.4%) and the **missing refusal layer** (their model
@@ -2831,7 +2831,7 @@ First run (the baseline): 24 samples, 12.5% hit, +57.88% avg win, **−26.05%
 avg loss**, −15.56% expectancy, feed fail-share 95.2% (gate), think-refusals
 ≈ 0. Every later phase is measured against this.
 
-**0d — docs truth-maintenance** (the omo re-audit): docs/09 gains §F
+**0d — docs truth-maintenance** (the omo re-audit): the historical reference audit gains §F
 (2026-08-31 live-disclosure ground truth — their numbers, our baseline, the
 honest reading of "how they are successful", the cache-cleanup verification)
 and the stale "we're paper + disarmed" §B.2 claim is superseded (26 real
@@ -3018,7 +3018,7 @@ cd backend && ../.venv/bin/python -m pytest tests/ -q   # backend-only: 448 test
 cd frontend && npm run test:e2e                          # Playwright E2E: 5 tests vs the
                                                          # running backend on :8000 (§35)
 
-# Deploy (see docs/11_DEPLOYMENT.md for the full runbook):
+# Deploy (see docs/03_DEPLOYMENT.md for the full runbook):
 docker build -t trading-bot .                            # engine + dashboard, one image
 docker compose up -d --build                             # with persistent state volumes
 ```
@@ -3047,11 +3047,11 @@ docker compose up -d --build                             # with persistent state
 | `backend/knowledge_base/loader.py` | static KB, digest-at-ingest, budgeted get_context |
 | `backend/main.py` | run_tick(): regime once/tick → per-candidate gate+narrate → exit checks |
 | `backend/promotion_gate.py` | READ-ONLY 5-criteria readiness report. Never writes. Ever. |
-| `backend/live_execution/` | REAL-MONEY execution package (moved INSIDE backend/ 2026-08-30 so the engine deploys as one module; the paper pipeline still never imports it — test-pinned). Fully wired: `backend/run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Wallet secrets: `WALLET_KEYPAIR_PATH` (file, preferred) or `WALLET_KEYPAIR_JSON` (env, in-memory) — deployment parity, still infrastructure-not-safety-flag. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI (from backend/): `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Deployment: `docs/11_DEPLOYMENT.md` + root `Dockerfile`. |
+| `backend/live_execution/` | REAL-MONEY execution package (moved INSIDE backend/ 2026-08-30 so the engine deploys as one module; the paper pipeline still never imports it — test-pinned). Fully wired: `backend/run_live_cycle.py` manages live positions, runs the shared read/think/gate stages, and routes buys/sells through `place_order`; Jupiter quote/swap, local signing, rotating RPC broadcast, confirmation, commit binding, and ledger journaling are connected. **REF-R11 (§26):** every armed order publishes its decision hash as an on-chain memo BEFORE the fill (fail-closed). Safety layers: kill switch + daily-loss breaker, fail-closed confirmation expiry, idempotency ledger, caps, wallet identity checks, decimals guards, SOL-reserve + USDC funding checks. Wallet secrets: `WALLET_KEYPAIR_PATH` (file, preferred) or `WALLET_KEYPAIR_JSON` (env, in-memory) — deployment parity, still infrastructure-not-safety-flag. **ARMED in this repo since 2026-08-28** (§33): `LIVE_TRADING_ENABLED=True`, `REQUIRE_MANUAL_CONFIRMATION=False`, committed by explicit operator direction after the §31 devnet drill. Operator CLI (from backend/): `python -m live_execution.scripts.confirm_trade list|approve|deny|kill|resume`. Deployment: `docs/03_DEPLOYMENT.md` + root `Dockerfile`. |
 | `Dockerfile` (root) | Multi-stage image for the WHOLE engine: Node stage builds the SPA → python-slim runtime, non-root user, `$PORT`/`$API_PORT`-aware healthcheck, diagnostic tools in `/app/scripts`, SPA baked at `/app/frontend/dist` (single-origin serving still works). Contains NO secrets/state (`.dockerignore`) |
 | `backend/docker-entrypoint.sh` | Container entrypoint: uvicorn ALWAYS; live cycle ONLY when the hardcoded ARM flag is True AND a wallet secret is configured (same double-gate as start.sh). Supervises both with `wait -n` and exits non-zero if either dies — an ARMED deployment must never serve a green dashboard over a dead decision cycle. Aborts if `APP_DIR` is missing. Pinned by `backend/tests/test_docker_entrypoint.py` (15 tests) |
 | `docker-compose.yml` | Local/VM parity run: named volumes for `backend/live_execution/state` (real-money state MUST persist), SQLite book, `engine_logs` (`/app/logs`), `searxng` dependency, `env_file` for secrets |
-| `docs/11_DEPLOYMENT.md` | THE deployment runbook: hosting verdict (always-on VM + persistent disk for the engine; Vercel/CF Pages for the SPA; SQLite-on-volume or Supabase Free), secret runbook for both wallet channels, persistence rules, pre-flight checklist |
+| `docs/03_DEPLOYMENT.md` | THE deployment runbook: hosting verdict (always-on VM + persistent disk for the engine; Vercel/CF Pages for the SPA; SQLite-on-volume or Supabase Free), secret runbook for both wallet channels, persistence rules, pre-flight checklist |
 | `backend/live_execution/memo.py` | REF-R11 commit–reveal: builds + publishes the on-chain precommit memo (`commit:v1:` + seal hash) via solders; `publish_commit_memo()` fails closed (`MemoPublishError`) so an unconfirmed memo blocks the fill |
 | `frontend/DESIGN.md` | the frontend design system: tokens, component anatomy, five required states, a11y criteria, anti-patterns, QA checklist. All UI work must conform |
 | `frontend/src/` | live-trading terminal (rebuilt §35): `lib/format.ts` (verbatim-value formatters, `—` for null), `components/ui.tsx` (Panel/Stat/Badge/Skeleton/Empty/ErrorState), `LiveBook` (headline real-money panel), `LiveFeed` (WS + REST-hydrated decision feed), `MarketRegimePanel`, `SystemStatus`; paper panels (stats/holdings/journal/gate) removed 2026-08-28 when the system went live |
@@ -3060,14 +3060,14 @@ docker compose up -d --build                             # with persistent state
 | `backend/api/routes/disclosure.py` | REF-R6 public machine-truth feeds: `/api/disclosure.json` (armed/break/config state + REF-R11 `commit_memo` block) + `/api/reasoning.json` (per-decision provenance) |
 | `backend/retro_matcher.py` | REF-R7 retro audit-log signature matching: attributes out-of-pipeline fills to decision commit rows using the reference's exact algorithm (symbol+side match, 12h window, earliest fill wins, taken set) |
 | `backend/thesis_restate.py` | A11 thesis re-authoring (§30): once per tick/cycle, rewrites open write-ups that are stale (>6h) or not model-authored against the position's current numbers (≤2/pass, oldest first). Narrative-only — can only ever change thesis text; reuses the tick's own price marks; fail-closed validation; never raises |
-| `docs/00..07` | blueprint, architecture, feature list (+status), gantt, verification appendix, the reference bot comparison, project report |
+| `docs/README.md` | current software references and numbered architecture, deployment, integration and security guides |
 | `.env` (root, gitignored) | operator settings ONLY: keys + DATA_BACKEND=live |
 
 
 ## 4. The ten entry rules (thresholds are placeholders until calibrated)
 
 Evaluated unconditionally on every candidate — no short-circuiting; every
-rejection logs its complete profile. Full details: `docs/07_PROJECT_REPORT.md` §3.
+rejection logs its complete profile. Current rule reference: `docs/01_ARCHITECTURE.md` §2.3; the original project report is retired.
 
 | rule_id | logic | threshold | None behavior |
 |---|---|---|---|
@@ -3124,14 +3124,14 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
    enrichment for the session after first 401 (semaphore(2) bounds burst).
    Security fields remain UNKNOWN → security_clear passes them (never
    coerced to False).
-10. **the reference bot reference check** (docs/06): their revealed payloads show
+10. **the reference bot reference check** (the retired reference comparison): their revealed payloads show
     verdict:"pass" WITH failed rules + side:null + refusal note → an agent
     layer decides between rules and action. Our architecture closes that
     gap deliberately. crowd_heat (fomo index) has no equivalent here;
     already_held is binary vs our scale-in cap (intentional). Commit-reveal
     mechanism verified byte-for-byte locally
     (scripts/verify_reference_commit.py, both hashes MATCH), documented in
-    docs/05 — deliberately NOT built.
+    the retired verification appendix — deliberately NOT built.
 11. **One-click app**: start.sh/stop.sh; backend serves
     built frontend (SPA catch-all registered AFTER api routes). Ollama was
     retired from the stack 2026-08-28 (DeepSeek is the main model) — the
@@ -3217,7 +3217,7 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
 - Regime thresholds are placeholders pending calibration data.
 - LLM thinker/narrations make ticks take ~40–90s for 20 candidates; fine at the
   60s interval, reduce MAX_CANDIDATES_PER_TICK if needed.
-- Post-calibration scope, deliberately unbuilt: Full multi-wallet management, auto-adjustment of thresholds based on LLM feedback (docs/08), durable reference memory/events roadmap (REF-R5), and the remaining approved reference roadmap items in section 13.
+- Post-calibration scope, deliberately unbuilt: Full multi-wallet management, auto-adjustment of thresholds based on LLM feedback (the retired LLM migration plan), durable reference memory/events roadmap (REF-R5), and the remaining approved reference roadmap items in section 13.
 
 ### REF-R5 implementation (2026-08-26)
 
@@ -3240,11 +3240,11 @@ take-profit ≥ +50% → stop-loss ≤ −20% → timeout ≥ 72h (net of 2% sli
    rejection-breakdown evidence (manual edits to config.py).
 2. Watch first entries/exits; verify realized P&L sanity on close.
 3. Optional upgrades: Birdeye tier with token_security; fomo-index source
-   for a crowd_heat-style rule (docs/06 §3.2).
+   for a crowd_heat-style rule (the retired reference comparison §3.2).
 4. After calibration: complete approved reference roadmap work in section 13,
   starting with REF-R5 memory/events.
 5. **LLM API migration:** implemented in section 14.
-  docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md. Target Groq for the thinker (qwen3.8-27b), Groq for evidence-only social reads, and
+  Current provider configuration: docs/CONFIGURATION.md. The historical plan targeted Groq for the thinker (qwen3.8-27b), Groq for evidence-only social reads, and
   measured usage/outcome instrumentation before switching models.
    Next stage: main/narration model → DeepSeek V4 Flash (social stays Groq)
    — full plan in section 18, gated on a funded DeepSeek key + shadow replay.
@@ -3508,7 +3508,7 @@ implementation: R5 first (marked important), then R4, R3, R2, R1, R6, R7.
 
 ## 14. LLM API migration and feedback plan (2026-08-26) — IMPLEMENTED
 
-Full plan: docs/08_LLM_API_MIGRATION_AND_FEEDBACK_PLAN.md.
+The original migration plan is retired; current provider configuration is in docs/CONFIGURATION.md.
 
 **Status update (2026-08-27):** the MAIN LLM path (Thinker, Narrator,
 post-close reflections) now runs on **DeepSeek V4 Flash** (direct API,
@@ -3621,7 +3621,7 @@ The code queue is EMPTY. What remains is operator-side deployment, not code:
 
 1. **Provision the engine host** — an always-on box with a persistent disk
    (Oracle Cloud Always Free fits the "free" requirement). Follow
-   `docs/11_DEPLOYMENT.md`: `docker build`, mount a volume at
+   `docs/03_DEPLOYMENT.md`: `docker build`, mount a volume at
    `/app/backend/live_execution/state`, pass secrets via `--env-file` or a
    mounted keypair, set `EXPECTED_WALLET_ADDRESS` and `ADMIN_TOKEN`.
 2. **Deploy the dashboard** (optional split) — Vercel/CF Pages with
@@ -3768,7 +3768,7 @@ Funded key arrived; execution record in §19. Plan kept below as built.
 **Scope (operator decision 2026-08-27):** the MAIN model path — Thinker,
 Narrator, and post-close reflections — moves to DeepSeek V4 Flash. The
 SOCIAL model stays exactly as it is (Groq via `SOCIAL_LLM_*`). This executes
-the "recommended production arrangement" of docs/08 §1 and the "Planned next
+the "recommended production arrangement" of the retired LLM migration plan §1 and the "Planned next
 step" of §14 above.
 
 ### What changes and what does not
@@ -3784,7 +3784,7 @@ step" of §14 above.
 ### Why this is a small change (§14 built for it)
 
 - `llm/client.py` is already the provider-neutral `LLMClient.complete_json()`
-  boundary (docs/08 §6); DeepSeek speaks the same OpenAI-compatible
+  boundary (the retired LLM migration plan §6); DeepSeek speaks the same OpenAI-compatible
   `/chat/completions`, including `response_format: {"type": "json_object"}`.
 - DeepSeek-specific plumbing already exists in `LLMClient`: peak-window flag
   (01:00–04:00 + 06:00–10:00 UTC weekdays), `prompt_cache_hit_tokens` cache
@@ -3801,7 +3801,7 @@ step" of §14 above.
    block removed in the 2026-08-27 bug audit: `DEEPSEEK_API_KEY`,
    `DEEPSEEK_BASE_URL` (default `https://api.deepseek.com`), `DEEPSEEK_MODEL`
    (V4 Flash id — read the exact id + current prices from DeepSeek's pricing
-   page at implementation time, per docs/08 §1), `DEEPSEEK_TIMEOUT_SECONDS`
+   page at implementation time, per the retired LLM migration plan §1), `DEEPSEEK_TIMEOUT_SECONDS`
    (12), `DEEPSEEK_MAX_TOKENS` (192). Add a `MAIN_LLM_PROVIDER` selector
    (`groq` | `deepseek`, default `groq`) so the swap is a reversible .env
    flip; keep `GROQ_*` as the warm rollback path.
@@ -3813,7 +3813,7 @@ step" of §14 above.
    the main-client timeout in `complete_json` provider-aware (today it is
    hardcoded to `GROQ_TIMEOUT_SECONDS`). Non-thinking mode only — no
    reasoning mode in the hot path until an offline benchmark proves a
-   measurable gain (docs/08 §1).
+   measurable gain (the retired LLM migration plan §1).
 3. **Thinker** (`backend/llm/thinker.py`) — `Thinker.__init__` takes
    `build_main_client()`; replace the hardcoded `groq:{GROQ_MODEL}` source
    label with `f"{provider}:{model}"`. Fail-closed fallback untouched: any
@@ -3821,7 +3821,7 @@ step" of §14 above.
    approve.
 4. **Narrator + reflections** (`backend/llm/narrator.py`) — same client swap
    for `Narrator._main_llm` and `generate_reflection()`; same source-label
-   treatment. Optional refinement per docs/08 §5: skip non-urgent reflections
+   treatment. Optional refinement per the retired LLM migration plan §5: skip non-urgent reflections
    during DeepSeek peak windows.
 5. **Dashboard** (`backend/api/routes/system_status.py`) — `narration_mode`
    reports the active main provider (`deepseek` | `groq` | `template`)
@@ -3832,7 +3832,7 @@ step" of §14 above.
    construction, the peak/off-peak + cache cost branches, factory selection,
    and the `narration_mode` label.
 
-### Gate before flipping the default (docs/08 §8–§9)
+### Gate before flipping the default (the retired LLM migration plan §8–§9)
 
 1. Run `shadow_replay.py` over sealed snapshots, DeepSeek vs Groq: ≥99%
    valid structured JSON, p95 latency inside the tick budget, verdict
@@ -3856,7 +3856,7 @@ step" of §14 above.
 ### After the swap
 
 Update §14 status, memory-bank (decisionLog / activeContext / progress),
-docs/07_PROJECT_REPORT.md LLM section, and any doc still saying Groq-is-main.
+the historical project report LLM section (now retired), and any doc still saying Groq-is-main.
 ✅ All done 2026-08-27 (§19).
 
 ## 19. DeepSeek main-provider swap — EXECUTED (2026-08-27)
@@ -3882,7 +3882,7 @@ shadow-replay-gated, flipped live, and verified on the live book.
   ids (`groq_20260826`, `deepseek_20260827`).
 - **Thinker / Narrator / reflections**: use the factory; source labels are
   now `f"{provider}:{model}"` (no hardcoded `groq:` strings); reflections
-  skip to the template during DeepSeek peak windows (docs/08 §5; logged).
+  skip to the template during DeepSeek peak windows (the retired LLM migration plan §5; logged).
 - **Dashboard**: `/api/system-status.narration_mode` reports the active
   main provider (`deepseek`|`groq`|`template`).
 - **Social**: ZERO changes (verified).
@@ -3906,7 +3906,7 @@ shadow-replay-gated, flipped live, and verified on the live book.
    `content` (HTTP 200!), degrading every thinker call to a template pass.
    First live tick showed 20/20 `degraded:empty_content`. Fixed by sending
    `"thinking": {"type": "disabled"}` on every DeepSeek request
-   (non-thinking mode per docs/08 §1). Shadow replay went 0/8 → 8/8.
+   (non-thinking mode per the retired LLM migration plan §1). Shadow replay went 0/8 → 8/8.
 3. **`shadow_replay.py` raw SQL** — SQLite `?` placeholders broke on
    Supabase (asyncpg syntax error) and it assumed a `candidate` key the
    commit payload doesn't carry. Rewritten on `get_recent_decision_commits`
@@ -3935,7 +3935,7 @@ shadow-replay-gated, flipped live, and verified on the live book.
 - **30 new tests** in `backend/tests/test_llm_provider_swap.py`
   (httpx.MockTransport; no new deps): construction + provider-aware
   timeouts, factory selection incl. fail-closed unknown value,
-  `main_max_tokens`, cost branches vs hand-computed values (docs/08 §3
+  `main_max_tokens`, cost branches vs hand-computed values (the retired LLM migration plan §3
   anchor $0.000176), peak flag + 2× peak cost, Groq-never-peak,
   thinking-disabled payload, usage/cache parsing, degradation paths,
   thinker/narrator source labels, fail-closed never-buy, reflection
@@ -4770,7 +4770,7 @@ position's CURRENT numbers. Implemented same day under the standing
   provider via `build_main_client().complete_json(json_mode=False,
   task="thesis_restate")`; every call accounted in `llm_call_usage`
   (success AND degradation); each rewrite journaled as a `did` event
-  (`action: thesis_restate`). DeepSeek peak-window skip (docs/08 §5 —
+  (`action: thesis_restate`). DeepSeek peak-window skip (the retired LLM migration plan §5 —
   non-urgent work); mock mode is a deterministic no-op.
 - DB layer (lockstep, no raw SQL outside api/db*.py): `get_open_theses()`
   + `update_thesis_text()` in BOTH `api/db.py` and `api/db_pg.py`.
@@ -4899,7 +4899,7 @@ untouched, upward-only). Tests: `live_execution/tests/test_manage_jump_guard.py`
   every cycle. The dashboard cash display is the PAPER book; the live book's
   truth is the wallet's on-chain USDC balance (any explorer).
 
-### Final omo audit (docs/09 §F)
+### Final omo audit (the historical reference audit §F)
 Full-coverage re-read of `omotrades/omo` (still commit 48a86f9 — unchanged).
 Closed all standing open questions: (1) `exit.server.ts` EXISTS but is
 unpublished — proven by their own `exit-rules.test.ts` importing it; their
@@ -5259,7 +5259,7 @@ decision, roadmap item #1). `ACTIVE_RULES` is now the reference 9 + `security_cl
 (inserted between `already_held` and `not_on_break`; order pinned by
 `test_active_rules_are_exactly_reference_nine_plus_security_clear`). Reference
 parity is knowingly broken by this one addition — documented as such in
-`rules.py`, docs/06/07/09. Safe by construction: the rule fails only on
+`rules.py`, the historical reference comparison, project report and reference audit. Safe by construction: the rule fails only on
 KNOWN-bad values (B10) — live mint authority (`mint_authority_revoked is
 False`) or a honeypot flag (`is_likely_honeypot is True`); `None`/unknown
 ALWAYS passes, so missing data can never block a trade. Because
@@ -5314,7 +5314,7 @@ cash rule).
 Playwright 8/8. Live cycle restarted on the new code: clean cycle with gate
 decisions flowing (`think=buy gate=PASS` / refused rows), `security_clear`
 in every breakdown via `/api/feed`, 0 tracebacks, process stable. Docs
-aligned: rules.py header, docs/06 §1 table, docs/07 §14.1/§14.3, docs/09 §
+aligned: rules.py header, the retired reference comparison §1 table, the retired project report §14.1/§14.3, the historical reference audit §
 "9 vs 10" + rule table, FOMO_INTEGRATION.md §2, this handoff, memory-bank.
 
 
@@ -5446,7 +5446,7 @@ bakes it at /app/frontend/dist so single-origin serving keeps working),
 hardcoded ARM flag is True AND a wallet secret is configured — same
 double-gate as start.sh), `docker-compose.yml` (persistent volumes for
 live_execution/state + SQLite), `.dockerignore` (image contains no
-.env/keypair/state). Hosting verdict (docs/11_DEPLOYMENT.md): Vercel is
+.env/keypair/state). Hosting verdict (docs/03_DEPLOYMENT.md): Vercel is
 frontend-only (serverless cannot host a 60s tick + 15s exit scan + WS feed);
 the engine needs an ALWAYS-ON host with persistent disk — recommendation:
 Oracle Cloud Always Free VM, Vercel/CF Pages for the dashboard, SQLite-
@@ -5800,7 +5800,7 @@ After retargeting those mutations and adding sell-release, settlement and
 consensus regressions, the author ran the checker with **no flags** through the
 same scratch sandbox and exported its generated Markdown as data:
 **149/149 caught, 0 survivors; restorations verified clean**. The generated
-log is `docs/17_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
+log is `docs/09_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
 production, native-exploitability or CI evidence.
 
 The prior broad "no money-path/signing change" description must not be extended
@@ -5810,7 +5810,7 @@ process locking, HTTP byte/time caps (8 MiB/60 seconds, no redirects), restore
 dispatch and launcher/CI behavior. `f4868ac` added staged isolated gate checks;
 `ea0a899` pinned browser CI setup. The operator-visible effects and mitigations
 for §93 R1–R8 and these commits are catalogued in
-`docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
+`docs/12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
 
 Current VM, Docker, Supabase, actual RPC refusal rates, provider redirects and
 hosted CI have not been verified by this author. Final §94 regression/gate

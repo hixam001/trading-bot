@@ -1,4 +1,4 @@
-# 12 — THE FREE SOCIAL STACK (§47 + §51)
+# 04 — THE FREE SOCIAL STACK (§47 + §51)
 
 **Every social-facing input now has a free transport.** No paid key is
 required anywhere in the read path; paid keys survive only as opt-in

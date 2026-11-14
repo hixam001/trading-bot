@@ -31,7 +31,7 @@ the retained sandbox for target tests/builds and the manifest-only audit helper
 for permitted network advisory checks.
 
 ## Works (all verified)
-- [x] §93 local implementation and regression checks: **1934 backend passes**, **137/137 mutations caught**. See `docs/19_ROOTFS_AUDIT.md` for failing-first phase tables, projection assumptions and remaining operational verification. Docker unavailable locally; full Tests & Security Audit CI (42665808979) and gitleaks (42666899068) are verified green, including real-container ROFS smoke.
+- [x] §93 local implementation and regression checks: **1934 backend passes**, **137/137 mutations caught**. See `docs/11_ROOTFS_AUDIT.md` for failing-first phase tables, projection assumptions and remaining operational verification. Docker unavailable locally; full Tests & Security Audit CI (42665808979) and gitleaks (42666899068) are verified green, including real-container ROFS smoke.
 - [x] §92 Security hardening before real-money launch (2026-11-08, phases S1–S9):
       1. S1: one `backend/redaction.py` contract for logs/errors/alerts/security monitor; built-frontend secret scanner; gitignore/gitleaks hardening. Tests `test_redaction_adversarial.py` (22), `test_secret_hygiene.py` (29).
       2. S2: CSRF header + Origin/Referer; persistent revocations; global + per-IP auth ceilings; single-use PoW; concealed signup; Pydantic `extra="forbid"`; boot-time `ADMIN_TOKEN`/`SESSION_SECRET` validation; dedicated `SESSION_SECRET`; route-matrix test.
@@ -42,8 +42,8 @@ for permitted network advisory checks.
       7. S7: shared security headers on 404/405/413/429/500/static/SPA; CSP `base-uri 'none'`; pytest-only synthetic hosts; DEBUG cannot bypass auth/CSRF/rate limits; debug text redacted.
       8. S8: Actions pinned by full SHA; images/SearXNG by digest; read-only/cap-drop/no-new-privileges/resource-limited compose; preflight runtime+compose checks; JSON wallet-channel warning.
       9. S9: bounded 10 s event dedupe with true counts; one burst alert per IP/10 min; schema-rejected uploads emit `SUSPICIOUS_UPLOAD`; restore drill verifies rows, excludes keypair, forces kill-switch latch. Tests 9.
-      10. Verification: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT** (14 new rows); Playwright **41/41** against a local mock API; tsc/build + bundle scanner clean; prepush **9/9**; gitleaks clean under v8.24.3 (CI) and v8.30.1 after rewording/fingerprinting one documentation false positive; docs/18 carries threat model, S1–S9 map, residuals, checklist, runbooks, findings F1–F10, and verified-safe/rotate-now/operator-must-do/UNVERIFIED lists. GitHub Actions green on `16bd30c`: Tests & Security Audit (incl. ARM64 Docker build + compose), gitleaks, CodeQL.
-      11. Known limits: heuristic redaction; per-host revocation/limiter/spend state; structural (not mathematical) prompt-injection containment; RPC/Birdeye outside the LLM guard because exits use them; monitoring in-memory; synthetic restore drill; infrastructure items in docs/18 §8. No arming/gate/sizing/signing/exit/Jupiter/Privy changes.
+      10. Verification: backend **1751 passed**, 0 failed, 102 warnings (+216 over 1535; no skips because `frontend/dist` exists); mutation **109/109 CAUGHT** (14 new rows); Playwright **41/41** against a local mock API; tsc/build + bundle scanner clean; prepush **9/9**; gitleaks clean under v8.24.3 (CI) and v8.30.1 after rewording/fingerprinting one documentation false positive; docs/10_SECURITY.md carries threat model, S1–S9 map, residuals, checklist, runbooks, findings F1–F10, and verified-safe/rotate-now/operator-must-do/UNVERIFIED lists. GitHub Actions green on `16bd30c`: Tests & Security Audit (incl. ARM64 Docker build + compose), gitleaks, CodeQL.
+      11. Known limits: heuristic redaction; per-host revocation/limiter/spend state; structural (not mathematical) prompt-injection containment; RPC/Birdeye outside the LLM guard because exits use them; monitoring in-memory; synthetic restore drill; infrastructure items in docs/10_SECURITY.md §8. No arming/gate/sizing/signing/exit/Jupiter/Privy changes.
 - [x] §91 Prove absence before expiring a pending buy (2026-11-03, phases A1–C):
       1. §91-A1: new `solana.get_signature_status_all_strict()` keeps `ABSENT` (200 + `value:[null]`) separate from `UNREACHABLE` (rpc `None`, malformed body, exception) with identity-only sentinels whose `__bool__` raises; `get_signature_status_all` is unchanged.
       2. §91-A2: operator `--expire`/`--force-expire` require at least two endpoints and every one to return `ABSENT`; any found status refuses with `the transaction landed (status ...): use --adopt-from-sig` (found outranks unreachable). `--force-expire` skips only blockhash/age. Audit lines add `endpoint_verdicts`; docs state RPC-fully-down has no unproven expiry.
@@ -58,14 +58,14 @@ for permitted network advisory checks.
       3. §90-C1: `record_buy`'s replacement branch writes `reason=""` instead of copying the pending row's unresolved note onto a confirmed fill.
       4. §90-C2: explicit Jupiter ordering test `[sign, record_pending_buy, send_checked_swap]` plus mutation `90C2_JOURNAL_AFTER_SEND`.
       5. §90-C3: `CommitLog.bind(..., allow_failed=True)` lets chain-proven automatic/operator adoption re-bind a commit previously marked failed, clearing the stale `fail_reason`; the default still refuses failed rows.
-      6. §90-D: both compose build stanzas pass `SKIP_BROWSER` (default 0) with a contract test; docs/13 gains the Chromium troubleshooting row and the supervised first-48-hours burn-in checklist.
+      6. §90-D: both compose build stanzas pass `SKIP_BROWSER` (default 0) with a contract test; docs/05_ORACLE_DEPLOY_GUIDE.md gains the Chromium troubleshooting row and the supervised first-48-hours burn-in checklist.
       7. §90-E: handoff §90, memory-bank, and the §81–§90 mutation log (50 rows).
       8. Verification: backend **1496 passed**, 0 failed (+24 over the 1472/2-skipped baseline); mutation **50/50 CAUGHT** (6 new §90 rows); prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean. Pushed `dde40e8`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green. Operator-only VM preflight, reboot, graceful-stop, backup/restore and supervised real buy + sell remain outstanding.
       9. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §90 follow-up spec audit (2026-11-02):
       1. Preflight FAIL names `/run/secrets/wallet_keypair` as the in-container path and `WALLET_KEYPAIR_HOST_PATH` as the host side; the JSON-channel missing-source WARN now includes `install -m 600 -o 10001 /dev/null <path>` and `WALLET_KEYPAIR_HOST_PATH=/dev/null`.
       2. `--expire` refuses a landed signature with `the transaction landed (status ...): use --adopt-from-sig`; mutation `90B_EXPIRY_FOUND_STATUS` targets the new guard.
-      3. docs/13 documents the placeholder, the crowd-feed/browser fallback truth, and the first-48-hours funding, live-log, heartbeat, alert, and no-cap-increase rules; docs/13 §10.6 and docs/15 name the landed refusal.
+      3. docs/05_ORACLE_DEPLOY_GUIDE.md documents the placeholder, the crowd-feed/browser fallback truth, and the first-48-hours funding, live-log, heartbeat, alert, and no-cap-increase rules; docs/05_ORACLE_DEPLOY_GUIDE.md §10.6 and docs/07_BACKUP_RESTORE.md name the landed refusal.
       4. Verification: backend **1496 passed**, 0 failed; mutation **50/50 CAUGHT**; prepush **9/9 clean** (gitleaks absent locally; CI runs it); Playwright **40/40**; tsc/build clean; no money-path semantics changed. Pushed `0044a0c`; `Tests & Security Audit`, `gitleaks`, and `CodeQL` all green.
 - [x] §89 Launcher & Docker parity with §87/§88 (2026-11-02):
       1. §89-A: `stop.sh` gives the live cycle the same 150 s graceful window as compose (API 30 s); SIGTERM → wait → SIGKILL only as a reported incident; the live cycle stops before the API.
@@ -77,7 +77,7 @@ for permitted network advisory checks.
       7. Invariant: every push requires the full pre-push gate and green CI; failures are fixed, never bypassed.
 - [x] §88 Pending-buy gate hole, entrypoint passthrough, preflight truth, expiry race, pre-send journal & operator resolver (2026-11-01, phases A–G):
       1. §88-A: `preflight` refuses a mint with an unresolved pending buy; `place_buy` repeats the guard before replay. The gate sees pending cost as a zero-quantity held position (`already_held` fails), while pending mints stay out of `meta`, exits, and the mirror.
-      2. §88-B: the container entrypoint executes explicit argv (`exec "$@"`) before any role logic; docs/13 §5.5 and docs/15 use `--entrypoint python` and absolute `/app/scripts/...` paths.
+      2. §88-B: the container entrypoint executes explicit argv (`exec "$@"`) before any role logic; docs/05_ORACLE_DEPLOY_GUIDE.md §5.5 and docs/07_BACKUP_RESTORE.md use `--entrypoint python` and absolute `/app/scripts/...` paths.
       3. §88-C: preflight requires exactly one wallet channel (JSON skips the host-file check), reports an untraversable directory honestly, and tests host readability only as uid 10001/root.
       4. §88-D: `get_signature_status_all()` queries every deduped RPC endpoint; a pending buy expires only after a successful re-query shows every endpoint still unknown AND the row is ≥ 90 s old.
       5. §88-E: both buy paths journal the pending row after signing and before send; a journal failure blocks the send; definitive failures settle `failed`; a fill replaces the same-key row (one key → one row).
@@ -154,17 +154,17 @@ for permitted network advisory checks.
       2. Ensured `backend/live_execution/state` directory is created on fresh checkouts before hermeticity snapshot.
       3. All GitHub Actions workflows (`Tests & Security Audit`, `gitleaks`, `CodeQL`) passing green on `main`. Full suite: **1164 passed**, 0 failed.
 - [x] §81 Phase H: Smaller items (2026-10-17):
-      1. Alert channel defaults (H-1): `backend/alerts.py` forbids guessable topics (`trading-bot`, `alerts`, etc.) on public `ntfy.sh` without auth; reports `alerts: "misconfigured"` on `/api/safety` status and logs clear errors; added `openssl rand -hex 12` guidance in `.env.example` and `docs/11_DEPLOYMENT.md`.
+      1. Alert channel defaults (H-1): `backend/alerts.py` forbids guessable topics (`trading-bot`, `alerts`, etc.) on public `ntfy.sh` without auth; reports `alerts: "misconfigured"` on `/api/safety` status and logs clear errors; added `openssl rand -hex 12` guidance in `.env.example` and `docs/03_DEPLOYMENT.md`.
       2. Bounded mint extension cache (H-2): `backend/data_providers/onchain_security.py` caps `_MINT_EXTENSION_CACHE` to `MAX_MINT_EXTENSION_CACHE = 2048` using `OrderedDict` with LRU eviction on insert.
       3. Merged position pricing (H-3): `backend/api/routes/stats.py` merged duplicate loops over `open_trades` into a single pass feeding both unrealized PnL marks and real equity marks (exactly N calls for N open positions).
       4. Offline banner condition documented & verified (H-4): verified per DESIGN.md §3.3 & §3.4 that secondary feeds render localized panel errors while primary feeds drive global offline banner; added route-mocked Playwright tests.
       5. Unknown-security sizing haircut below floor visibility (H-5): `backend/sizing.py` emits `reason="security_unknown_below_floor"` when 0.5x haircut drops ticket below floor; `run_live_cycle.py` records refusal reason; `scripts/gate_funnel_report.py` counts it on its own line in daily funnel, summary, and text/JSON outputs.
-      6. Mutation ledger (H-6): created `docs/17_MUTATION_LOG.md` recording all 27 mutation experiments executed across §81.
+      6. Mutation ledger (H-6): created `docs/09_MUTATION_LOG.md` recording all 27 mutation experiments executed across §81.
       7. Full test suite: **1164 passed**, 0 failed (+6 new tests in `test_audit_81_h.py`).
 - [x] §81 Phase G: Real-world validation and API-risk containment (2026-10-17):
-      1. Pre-arm & post-upgrade dry run (`scripts/dry_run_guard.py`): operator-run, read-only verification executing quote fetching, transaction assembly, bytecode inspection, and multi-RPC pre-sign simulation with real TradeIntent assertions without keypair (AST verified: zero references to `load_keypair` or signing helpers). Refuses if live state directory is unisolated unless `--allow-live-state` is provided. Documented in `docs/11_DEPLOYMENT.md`.
+      1. Pre-arm & post-upgrade dry run (`scripts/dry_run_guard.py`): operator-run, read-only verification executing quote fetching, transaction assembly, bytecode inspection, and multi-RPC pre-sign simulation with real TradeIntent assertions without keypair (AST verified: zero references to `load_keypair` or signing helpers). Refuses if live state directory is unisolated unless `--allow-live-state` is provided. Documented in `docs/03_DEPLOYMENT.md`.
       2. Centralized Jupiter API client (`backend/live_execution/jupiter_client.py`): unified source of truth for URLs and request headers with optional `JUPITER_API_KEY` (`x-api-key`) and `JUPITER_BASE_URL`. Backward-compatible fallback ensuring byte-for-byte identical default requests.
-      3. Jupiter API migration evaluation (`docs/16_JUPITER_API_MIGRATION.md`): documented endpoint usage, confirmed developers.jup.ag Metis deprecation and keyless 0.5 RPS limits, analyzed guard assumptions and failure modes under V2, evaluated and rejected Swap V2 adoption due to ALT restrictions, and specified operator verification checklist.
+      3. Jupiter API migration evaluation (`docs/08_JUPITER_API_MIGRATION.md`): documented endpoint usage, confirmed developers.jup.ag Metis deprecation and keyless 0.5 RPS limits, analyzed guard assumptions and failure modes under V2, evaluated and rejected Swap V2 adoption due to ALT restrictions, and specified operator verification checklist.
       4. Fail-closed quote contract: `validate_quote_against_intent` strictly fails closed with `QuoteMismatch` if any required quote parameter is missing or malformed.
       5. Full test suite: **1158 passed**, 0 failed (+11 new tests in `test_audit_81_g.py`).
 - [x] §81 Phase F: Make tests and CI honest (2026-10-17):
@@ -233,14 +233,14 @@ for permitted network advisory checks.
       1. Encrypted state backup script (`scripts/backup_state.py`): packages `executions.json`, `commits.json`, `trading_bot.db`, `kill_switch.json`, `break_state.json` into AES-256-GCM encrypted `.agybkp` archive using `BACKUP_ENCRYPTION_KEY` (sha256-derived). Excludes all secret material. Keeps newest 14 archives.
       2. State restore script (`scripts/restore_state.py`): pre-restore safety checks (refuses if engine running without `--force`), creates automatic `.pre_restore_<ts>` rollback backup, verifies manifest hashes and SQLite integrity.
       3. Backup shell script & cron (`deploy/backup.sh`): executable wrapper loading `.env` and executing backup.
-      4. Added `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/15_BACKUP_RESTORE.md`.
+      4. Added `engine_backups` volume in `docker-compose.yml`, `BACKUP_ENCRYPTION_KEY` in `.env.example`, and comprehensive `docs/07_BACKUP_RESTORE.md`.
       5. Full test suite: **1058 passed**, 0 failed (+8 new tests in `test_audit_79_e.py`).
 - [x] §79 Phase D: Outbound alerting (2026-10-13):
       1. Outbound push alerting subsystem (`backend/alerts.py`) supporting ntfy and Telegram channels with non-blocking, fail-safe async/sync dispatch via in-process `asyncio.Queue(maxsize=100)` drained by a background worker task with per-call 5s timeout.
       2. Automated secret registration and payload sanitization (masking registered tokens, config secrets, Solana keypairs, Bearer tokens, basic auth credentials).
       3. Deduplication and flood control: per-key cooldown (5m CRITICAL, 15m default), global cap of 20 messages/hour with suppression tracking, and refusal aggregation (first immediately, then 30m aggregate digest).
       4. Wired event hooks: `KILL_SWITCH_ENGAGED`, `DAILY_LOSS_BREAKER`, `SIM_REFUSAL`, `GUARD_REFUSAL`, `EXIT_UNRESOLVED`, `SELL_NO_REF_PRICE`, `RPC_NOT_DIVERSE`, `SIM_SINGLE_RPC_SELL`, `LIVE_BOOT`, `LOW_SOL`, `LOW_USDC`, `WALLET_DROP`, `LOGIN_FAILURE_BURST`, `HEARTBEAT_STALE`/`RECOVERED`.
-      5. Created `scripts/send_test_alert.py`, added Section 7 to `docs/11_DEPLOYMENT.md`, and surfaced `outbound_alerts` status on `GET /api/safety`.
+      5. Created `scripts/send_test_alert.py`, added Section 7 to `docs/03_DEPLOYMENT.md`, and surfaced `outbound_alerts` status on `GET /api/safety`.
       6. Full test suite: **1050 passed**, 0 failed (+16 new tests in `test_audit_79_d.py`).
 - [x] §79 Phase C: Token-safety gate improvements (2026-10-13):
       1. Freeze authority live known-bad check: `freeze_authority_revoked is False` blocks in `security_clear`; `None` still passes (preserving B10).
@@ -264,15 +264,15 @@ for permitted network advisory checks.
 - [x] §78 Post-Audit Hardening (Phases A–F) (2026-10-12):
       1. Phase A (Signing Guard Bypass Remediation): Closed reproduced drain/sink/owner bypasses (A1, A2, A3) in `jupiter_executor.py`. Enforced owner checks for Token/Token-2022 tags 1, 16, 18 against payer; proved wallet ownership in execution order; restricted CreateAccount owner to Token/Token-2022, space <= 165 bytes, and lamports <= 2_500_000; enforced 10_000_000 lamports (0.01 SOL) aggregate top-level SOL outflow cap (`MAX_SYSTEM_OUTFLOW_LAMPORTS`). Created no-key diagnostic tool `scripts/inspect_live_quote.py`. Added 24 tests in `test_audit_78_a.py`. Full suite: **958 passed**, 0 failed.
       2. Phase B (Pre-Sign Simulation Layer): Added `solana.simulate_transaction` and `solana.get_multiple_accounts` with dual-RPC consensus. Created `live_execution/sim_guard.py` asserting post-simulation invariants: `err is None`, SOL decrease <= 0.01 SOL, input token decrease within 1% tolerance, output token increase >= otherAmountThreshold landing in wallet ATA (or native SOL on unwrap), third token accounts untouched, and zero owner changes or unexpected closures. Hardcoded `SIMULATION_REQUIRED: bool = True` and wired into `_sign_transaction` as single signing choke point. Extended `drill.py` with simulation step. Added 12 tests in `test_audit_78_b.py`. Full suite: **970 passed**, 0 failed.
-      3. Phase C (Truthful Docs & Comments): Rewrote `docs/14_SIGNING_GUARD.md` detailing 3-layer architecture, removing false claims regarding preflight balance verification, documenting residual risks, converting absolute links to relative paths, and documenting `inspect_live_quote.py`. Corrected inverted `skipPreflight` comments in `jupiter_executor.py` and `solana.py`. Cleaned unverified gitleaks claims in memory-bank. Added tests in `test_docs_security.py`. Full suite: **972 passed**, 0 failed.
-      4. Phase D (Broken Pin & Dependency Hygiene): Pinned SearXNG image to verified `2026.10.9-f4822b3fc`, documented manifest digest inspection in `docs/11_DEPLOYMENT.md`, aligned native `SEARXNG_SECRET` environment passing, bumped `urllib3>=2.8.0` in `requirements.txt` and `requirements.lock` (resolving PYSEC-2026-4175/4176/4177 with 0 pip-audit vulnerabilities), updated `Dockerfile` to install from lockfile with `--no-deps`, aligned CI/Dockerfile to Python 3.14, added scheduled weekly CI audit cron, created `.github/dependabot.yml`, and switched Dockerfile healthcheck to lightweight `/api/health`. Added 8 tests in `test_audit_78_d.py`. Full suite: **980 passed**, 0 failed.
-      5. Phase E (Session Revocation Memory Growth Remediation): Validated session cookies against HMAC signature and max-age before storing in revocation registry, discarding unauthenticated/forged/expired spam without memory allocation. Bounded revocation registry to `MAX_REVOKED_SESSIONS = 10_000` entries using `OrderedDict` with $O(1)$ LRU eviction and timestamp-based pruning. Documented in-memory durability limitation in docstring and `docs/11_DEPLOYMENT.md`. Added 6 tests in `test_audit_78_e.py`. Full suite: **986 passed**, 0 failed.
+      3. Phase C (Truthful Docs & Comments): Rewrote `docs/06_SIGNING_GUARD.md` detailing 3-layer architecture, removing false claims regarding preflight balance verification, documenting residual risks, converting absolute links to relative paths, and documenting `inspect_live_quote.py`. Corrected inverted `skipPreflight` comments in `jupiter_executor.py` and `solana.py`. Cleaned unverified gitleaks claims in memory-bank. Added tests in `test_docs_security.py`. Full suite: **972 passed**, 0 failed.
+      4. Phase D (Broken Pin & Dependency Hygiene): Pinned SearXNG image to verified `2026.10.9-f4822b3fc`, documented manifest digest inspection in `docs/03_DEPLOYMENT.md`, aligned native `SEARXNG_SECRET` environment passing, bumped `urllib3>=2.8.0` in `requirements.txt` and `requirements.lock` (resolving PYSEC-2026-4175/4176/4177 with 0 pip-audit vulnerabilities), updated `Dockerfile` to install from lockfile with `--no-deps`, aligned CI/Dockerfile to Python 3.14, added scheduled weekly CI audit cron, created `.github/dependabot.yml`, and switched Dockerfile healthcheck to lightweight `/api/health`. Added 8 tests in `test_audit_78_d.py`. Full suite: **980 passed**, 0 failed.
+      5. Phase E (Session Revocation Memory Growth Remediation): Validated session cookies against HMAC signature and max-age before storing in revocation registry, discarding unauthenticated/forged/expired spam without memory allocation. Bounded revocation registry to `MAX_REVOKED_SESSIONS = 10_000` entries using `OrderedDict` with $O(1)$ LRU eviction and timestamp-based pruning. Documented in-memory durability limitation in docstring and `docs/03_DEPLOYMENT.md`. Added 6 tests in `test_audit_78_e.py`. Full suite: **986 passed**, 0 failed.
       6. Phase F (Minor Hardening Leftovers Remediation): Changed live service restart policy to `restart: on-failure` in `docker-compose.yml` with clean `exit 0` entrypoint shutdown when disarmed/unconfigured. Decoupled runtime secret registration into `backend/secret_registry.py`, registered keypair forms (JSON, base58, hex) on load, and extended logging redactor regex to mask single-quoted Python dict representations. Merged duplicate cash queries into fail-closed `get_wallet_cash_usd()` returning None (never 0.0) when unreadable, updated stats/holdings API responses with `cash_status`, and updated frontend to render "unavailable". Added `TRUSTED_PROXY_CIDRS` with rightmost untrusted IP extraction in `get_client_ip()`. Enforced entropy checks on `ADMIN_TOKEN` (>= 32 chars and >= 12 distinct chars via `config_helpers.py`). Resolved linter warnings (`LLMVerdict`/`LLMBrainResult` in `run_live_cycle.py` and empty f-string in `db_pg.py`). Added 7 tests in `test_audit_78_f.py`. Full suite: **993 passed**, 0 failed.
 
 - [x] §77 Security Audit Remediation (Phases A–E) (2026-10-11):
       1. Phase A (Edge Exposure & Auth): Removed admin-token proxy injection from deploy docs (`test_docs_security.py`); bound uvicorn/compose to loopback and trusted subnets; unified `get_client_ip()` defeating forged proxy IP rotation; enforced 32+ char `ADMIN_TOKEN` minimum entropy; eliminated `test-captcha-pass` bypass; fixed login lockout precedence to prevent operator DoS.
       2. Phase B (Wallet Secret Isolation): Added `wallet.public_address()`; removed `load_keypair()` from all `backend/api/` modules; split `docker-compose.yml` into `api` (no keypair mount) and `live` (read-only keypair mount) services with `ROLE=api|live`; enforced `0o600`/`0o400` POSIX permissions on keypair file.
-      3. Phase C (Signing Guard & Deny-By-Default): Added `inspect_swap_transaction(tx, payer_pubkey)` inspecting versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture in `docs/14_SIGNING_GUARD.md`.
+      3. Phase C (Signing Guard & Deny-By-Default): Added `inspect_swap_transaction(tx, payer_pubkey)` inspecting versioned and legacy Solana transactions prior to signing; enforces deny-by-default allowlist (System, ComputeBudget, Token, Token-2022, AssociatedToken, and `APPROVED_SWAP_PROGRAM_IDS`); pruned unverified Moonshot ID; documented architecture in `docs/06_SIGNING_GUARD.md`.
       4. Phase D (Hermetic Tests & CI): Hardened tests to pass hermetically with zero network, no `.env`, and unbuilt frontend; created GitHub Actions CI workflow (`.github/workflows/tests.yml`); generated `backend/requirements.lock`; pinned SearXNG image to `searxng/searxng:2024.12.30-d3e758a` with mandatory `SEARXNG_SECRET`.
       5. Phase E (Defense-in-Depth): Added `register_secret()` for runtime token scrubbing (Privy OAuth refresh tokens) and JSON-quoted field scrubbing; wrapped Postgres `reset_book` in atomic transaction; capped WebSocket connections per IP (`MAX_WS_PER_IP = 4`) with 30s timeout harvest; guarded against CORS wildcard with credentials; added session revocation on logout; corrected ARIA role in live feed; configured `.gitleaksignore` and `.gitleaks.toml` for test dummy credential false-positives.
       6. Verified: full test suite passes with **934/934 tests green** (0 failures); gitleaks allowlist configured for test fixtures. Full detail: handoff §77.
@@ -543,7 +543,7 @@ for permitted network advisory checks.
       + 6 dead paper-era types deleted; `.env.example` rebuilt (Supabase +
       wallet-pin + provider keys in, Ollama-era keys out);
       `MAIN_LLM_PROVIDER` default deepseek everywhere; docs renumbered
-      (`13_ORACLE_DEPLOY_GUIDE`); stray root `trading_bot.db` deleted;
+      (`05_ORACLE_DEPLOY_GUIDE`); stray root `trading_bot.db` deleted;
       deprecated X-XSS-Protection header dropped. **695 passing + 8 E2E.**
       Deferred (operator-gated): trades-mirror history backfill, the two
       chain-excluded positions, LLM health TTL, `/api/*.json` naming.
@@ -601,7 +601,7 @@ for permitted network advisory checks.
       `enrich_candidates` social-free (returns []). Config knobs
       BRAVE_SEARCH_API_KEY/SEARXNG_URL/SEARCH_BENCH_SECONDS/
       SEARCH_THROTTLE_BACKOFF_SECONDS; docker-compose searxng sidecar;
-      docs/12 runbook; README + handoff §51. +16 tests net:
+      docs/04_FREE_SEARCH_STACK.md runbook; README + handoff §51. +16 tests net:
       `test_social_staging.py` (9) + `test_search_chain.py` (6: bench
       semantics) + web-staging extended (+1; fixture now clears
       Brave/SearXNG — the operator's real .env leaks via load_dotenv).
@@ -622,7 +622,7 @@ for permitted network advisory checks.
       bit-identical via the None default; risk-off bypasses inside the
       gate); (c) `scripts/perf_report.py` — read-only scorecard in omo's
       disclosure format, backend-agnostic (sqlite + Supabase), baseline
-      recorded; (d) docs/09 §F ground truth + §B.2 superseded, no omo
+      recorded; (d) the historical reference audit §F ground truth + §B.2 superseded, no omo
       cache/clone existed to clean. +12 tests (`test_50_exit_forensics`) +
       jump-guard fixture on a real tmp ledger. **660 passing** (495 backend +
       165 live). Live cycle stays off while the wallet is empty; Phase 0
@@ -678,7 +678,7 @@ for permitted network advisory checks.
       Free allowance — **2 OCPU + 12 GB** always-on (1,500 OCPU-h +
       9,000 GB-h/month), NOT the 4/24 previously documented (oversized A1
       instances are disabled→deleted 30 days after trial end on free
-      tenancies; PAYG upgrade keeps the free allowance); docs/11 updated.
+      tenancies; PAYG upgrade keeps the free allowance); docs/03_DEPLOYMENT.md updated.
       Frontend ships single-origin (baked SPA on :8000) or Vercel Hobby
       (`VITE_API_BASE_URL` + `FRONTEND_ORIGIN`). Scrapling analysis
       complete and DEFERRED to post-deploy: `scrapling[fetchers]` pip dep;
@@ -754,7 +754,7 @@ for permitted network advisory checks.
       `WALLET_KEYPAIR_JSON` env channel + keypair log redactor + identity pin
       on both channels; `FRONTEND_ORIGIN` comma-list CORS; `solders` pinned
       in requirements; frontend `VITE_API_BASE_URL` + .env.example;
-      docs/11_DEPLOYMENT.md; §42b root-cause fix of the live-state paths:
+      docs/03_DEPLOYMENT.md; §42b root-cause fix of the live-state paths:
       `config.LIVE_STATE_DIR`/`BREAK_STATE_FILE`/`KILL_SWITCH_FILE` as the
       single source of truth, readers resolve per call, suite retargeted to a
       tmp dir (it had been reading the operator's REAL break state — 6 tests
@@ -828,7 +828,7 @@ for permitted network advisory checks.
       book cash repaired; identical jump guard in the live `_manage` loop
       (3 tests on the exact incident numbers); 9 paper-guard tests. Live cash
       verified accurate by construction (chain USDC balance re-read every
-      cycle, never accumulated). Final full-coverage omo audit (docs/09 §F):
+      cycle, never accumulated). Final full-coverage omo audit (the historical reference audit §F):
       exit module exists-but-unpublished (their tests import it), calibration
       factor still unwired in their sizing (grep proof), wash-trade parity;
       no trading-critical gap remains; remaining deltas = UX polish / scale
@@ -976,7 +976,7 @@ for permitted network advisory checks.
 - [x] Dashboard panels incl. persistent safety banner (I1–I10; build passes)
 - [x] Tests J1–J5 → **222 passing** (full suite: backend + live_execution)
 - [x] One-click launcher verified start/stop/restart
-- [x] the reference bot comparison + commit-reveal verification (docs/06)
+- [x] the reference bot comparison + commit-reveal verification (the retired reference comparison)
 - [x] Task C: live_execution/ seven-file safety model at repo root,
       offline-tested (**48 passing**; 182 combined via root pytest.ini)
 - [x] reference-mimicry rebuild in progress: exit engine + fast scan loop,
@@ -1050,7 +1050,7 @@ shebang = image could not exec, unchecked `cd`, single-process `wait`,
 hardcoded health port). **597 tests green (448 backend + 149
 live_execution)**; engine restarted and verified on the new layout, all
 endpoints 200, disclosure `armed: true` with a clear kill switch. Remaining
-work is operator-side deployment only — `docs/11_DEPLOYMENT.md`.
+work is operator-side deployment only — `docs/03_DEPLOYMENT.md`.
 Previous status (§39): roadmap items #1/#3/#6 shipped — security_clear is
 the live 10th gate rule (KNOWN-bad-only), crowd heat discounts dumped thesis
 authors (`FOMO_DUMPED_THESIS_WEIGHT`), and the paper + live pipelines run the
@@ -1111,7 +1111,7 @@ After retargeting those mutations and adding sell-release, settlement and
 consensus regressions, the author ran the checker with **no flags** through the
 same scratch sandbox and exported its generated Markdown as data:
 **149/149 caught, 0 survivors; restorations verified clean**. The generated
-log is `docs/17_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
+log is `docs/09_MUTATION_LOG.md`; this is test evidence, not dependency/advisory,
 production, native-exploitability or CI evidence.
 
 The prior broad "no money-path/signing change" description must not be extended
@@ -1121,7 +1121,7 @@ process locking, HTTP byte/time caps (8 MiB/60 seconds, no redirects), restore
 dispatch and launcher/CI behavior. `f4868ac` added staged isolated gate checks;
 `ea0a899` pinned browser CI setup. The operator-visible effects and mitigations
 for §93 R1–R8 and these commits are catalogued in
-`docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
+`docs/12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md`.
 
 Current VM, Docker, Supabase, actual RPC refusal rates, provider redirects and
 hosted CI have not been verified by this author. Final §94 regression/gate

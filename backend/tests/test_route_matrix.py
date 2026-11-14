@@ -2,7 +2,7 @@
 backend/tests/test_route_matrix.py — S2: security docs cannot drift from app.
 
 Every registered HTTP route, WebSocket, and mount must have a row in
-docs/18_SECURITY.md. Adding an endpoint without documenting its auth posture
+docs/10_SECURITY.md. Adding an endpoint without documenting its auth posture
 fails here, before it can ship.
 """
 from __future__ import annotations
@@ -22,7 +22,7 @@ from api.rate_limiter import limiter
 import config
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-DOC = REPO_ROOT / "docs" / "18_SECURITY.md"
+DOC = REPO_ROOT / "docs" / "10_SECURITY.md"
 METHODS = {"GET", "POST", "PUT", "PATCH", "DELETE", "WS", "MOUNT"}
 
 
@@ -67,7 +67,7 @@ def _documented_routes() -> set[tuple[str, str]]:
 
 
 def test_security_doc_exists() -> None:
-    assert DOC.is_file(), "docs/18_SECURITY.md is required"
+    assert DOC.is_file(), "docs/10_SECURITY.md is required"
 
 
 def test_every_registered_route_is_in_the_matrix() -> None:
@@ -75,7 +75,7 @@ def test_every_registered_route_is_in_the_matrix() -> None:
     documented = _documented_routes()
     missing = sorted(registered - documented)
     assert missing == [], (
-        "routes missing from docs/18_SECURITY.md matrix: "
+        "routes missing from docs/10_SECURITY.md matrix: "
         + ", ".join(f"{m} {p}" for m, p in missing)
     )
 

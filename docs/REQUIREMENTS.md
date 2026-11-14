@@ -52,7 +52,7 @@ unless marked Live, which resolves under
 
 | ID | Required property | Evidence / practical boundary |
 |---|---|---|
-| NFR-01 | Authentication, proxy-aware local trust, cookie lifetime/revocation and CSRF enforcement | Auth, cookie, HTTPS and route-matrix suites; documented in [18_SECURITY.md](18_SECURITY.md). |
+| NFR-01 | Authentication, proxy-aware local trust, cookie lifetime/revocation and CSRF enforcement | Auth, cookie, HTTPS and route-matrix suites; documented in [10_SECURITY.md](10_SECURITY.md). |
 | NFR-02 | Untrusted inputs, model outputs, uploaded documents and transaction bytes cannot bypass deterministic authority | Input-validation, prompt-injection, mass-assignment, XSS and signing-policy suites. |
 | NFR-03 | Bound request/response sizes, timeouts, rate buckets, client counts and paid-provider budgets | Request-limit, rate-limit, bounded-HTTP and spend-cap suites; in-process state is not a distributed limiter. |
 | NFR-04 | Execution-state validation, serialized mutation, signature idempotency and persistent volumes protect accounting | State-integrity/validation, close-settlement and read-only-root contract suites. |
@@ -79,6 +79,6 @@ For a change to one of these requirements:
    under their explicit operator workflows.
 
 Risk acceptance and unresolved security/deployment items remain in
-[18_SECURITY.md](18_SECURITY.md), [11_DEPLOYMENT.md](11_DEPLOYMENT.md) and the
+[10_SECURITY.md](10_SECURITY.md), [03_DEPLOYMENT.md](03_DEPLOYMENT.md) and the
 latest relevant [handoff](../handoff.md) sections. Existing tests do not prove
 production readiness, strategy profitability or third-party availability.

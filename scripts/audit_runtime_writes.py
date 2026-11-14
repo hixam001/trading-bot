@@ -15,7 +15,7 @@ Two layers, deliberately:
    detected sites, so a config key with no writer, or a writer with no
    classified home, is visible instead of silently omitted.
 
-The committed table in ``docs/18_SECURITY.md`` §Runtime write paths is
+The committed table in ``docs/10_SECURITY.md`` §Runtime write paths is
 generated from :data:`INVENTORY`.  Run with ``--check`` to fail (exit 1) when
 any inventory key cannot be resolved from ``config`` or any classified site
 is not backed by a detected write.

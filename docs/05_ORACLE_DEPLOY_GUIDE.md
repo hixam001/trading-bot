@@ -1,6 +1,6 @@
-# 12 — ORACLE ALWAYS FREE DEPLOY GUIDE (engine + dashboard, ~30–45 min)
+# 05 — ORACLE ALWAYS FREE DEPLOY GUIDE (engine + dashboard, ~30–45 min)
 
-**Read `docs/11_DEPLOYMENT.md` first** — it is the architecture runbook (why
+**Read `docs/03_DEPLOYMENT.md` first** — it is the architecture runbook (why
 a VM, why persistent state). This doc is the concrete, do-this-next recipe
 for the Oracle free tier, including the two Oracle-specific gotchas that
 bite everyone (iptables + security list).
@@ -418,7 +418,7 @@ docker compose ps
 
 Keep the VM's `.env` and the `secrets/` directory untouched. The state volumes
 survive the image rebuild; if the rollback crosses a state-schema change,
-restore the matching backup (docs/15) instead of guessing.
+restore the matching backup (docs/07_BACKUP_RESTORE.md) instead of guessing.
 
 ### 10.4 Kill-switch manual trip / clear
 
@@ -448,7 +448,7 @@ cleared by a human (`resume`). `LIVE_TRADING_ENABLED` is still the outer gate.
 | Pending buys | `docker compose logs live \| grep -E "pending buy\|LATE BUY ADOPTED"` | A pending row is counted against caps/slots and is never priced/exited. Confirmed late land → `LATE BUY ADOPTED`; expiry needs a provably invalid blockhash, **every** RPC endpoint still reporting the signature unknown, and an age ≥ 90 s; unknown stays pending and alerts after 5 min. Resolve manually only with the engine stopped (§10.6). |
 | Unexplained holdings | Alert channel; `UNJOURNALED_HOLDING` | On-chain tokens with no ledger row and no pending buy. Never auto-added; inspect and repair manually. |
 | Exit failures | `docker compose logs live \| grep -E "backoff\|EXIT_UNRESOLVED\|risk-off exit"` | Per-mint retry backoff is 15/30/60/120/300 s (risk-off capped at 60 s); repeated failures are expected during a collapse, not a reason to disable the stop. Risk-off exits may accept up to 15% price impact by design (`EXIT_MAX_PRICE_IMPACT_PCT`); entries and profit trims stay at 2.5%. |
-| Backup + restore | `docker compose logs live \| grep backup`; docs/15 drill | Run one manual backup and one throwaway-directory restore before trusting cron. |
+| Backup + restore | `docker compose logs live \| grep backup`; docs/07_BACKUP_RESTORE.md drill | Run one manual backup and one throwaway-directory restore before trusting cron. |
 
 ### 10.6 Manual pending-buy resolution
 
@@ -524,7 +524,7 @@ never by widening a risk limit or clearing a breaker.
 | 0–2 h | `docker compose ps` + `docker compose logs live --tail=100` | api/live healthy; ARMED banner and cycle lines; no traceback |
 | 0–2 h | `send_test_alert.py` | one test alert arrives on the configured channel |
 | 2–24 h | `docker compose logs live --tail=300 \| grep -E "PENDING BUY\|LATE BUY\|ERROR\|Traceback"` | no unexplained pending rows; any pending row has a signature + blockhash and is handled per §10.6 |
-| 2–24 h | docs/15 backup + throwaway restore | backup completes; the restored ledger reconciles with no `MISMATCH` |
+| 2–24 h | docs/07_BACKUP_RESTORE.md backup + throwaway restore | backup completes; the restored ledger reconciles with no `MISMATCH` |
 | 24–48 h | one operator-approved real buy + sell on scratch state | fill lands, ledger row is confirmed, exit closes, commit is `bound` |
 | 48 h | repeat the reboot and graceful-stop drills (§10.1–10.2) | live returns; last line is `graceful shutdown complete`; no order cancelled mid-flight |
 

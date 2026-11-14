@@ -1,4 +1,4 @@
-# Behaviour changes since `3fea445`
+# 12 — Behaviour changes since `3fea445`
 
 Added 2026-11-12 during §94. Historical records remain unchanged. This is an
 operator compatibility map, not a claim that production or CI was validated.

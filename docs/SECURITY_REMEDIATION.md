@@ -22,7 +22,7 @@ Read source, callers, tests and audit traces before each change. Preserve unrela
 | B1 | `backend/live_execution/sim_guard.py` | Output minimum uses net wallet gain | Aggregate signed output deltas and separate native/rent | 1000→0 plus 0→100 refusal; positive/control fixtures | Preventive invariant implemented; signed aggregate output with control continuity and native/rent separation. Native DEX consequence still unproven. `test_security_signing_policy.py`, `test_remediation_output_quorum.py`. |
 | B2 | `backend/live_execution/sim_guard.py; solana.py` | All safety facts participate in consensus | Conservative monitored-account agreement | Extra-account disagreement, malformed/missing, pre/post paths | Preventive invariant implemented; every monitored account participates in pre/post consensus, malformed responses refused. Strict pool-data comparison may reduce availability. Same signing suites. |
 | H01 | `backend/api/websocket.py` | Slow consumers cannot stall healthy recipients | Bound concurrent sends and cleanup | Slow and healthy clients; cancellation | Implemented; parallel bounded sends, disconnect/close deadline and cancellation cleanup. `test_remediation_hardening.py`. |
-| H02 | `docs/11_DEPLOYMENT.md; docs/18_SECURITY.md` | Auth lifecycle documentation matches authorization | Document persistent revocation and rotation distinction | Compare documented lifecycle to A1 tests | Implemented documentation correction in deployment/security docs; persistent logout and nonempty rotation/disable distinctions match A1 tests. |
+| H02 | `docs/03_DEPLOYMENT.md; docs/10_SECURITY.md` | Auth lifecycle documentation matches authorization | Document persistent revocation and rotation distinction | Compare documented lifecycle to A1 tests | Implemented documentation correction in deployment/security docs; persistent logout and nonempty rotation/disable distinctions match A1 tests. |
 | H03 | `backend/api/routes/proof.py` | Identical misses share bounded work | Single-flight with cancellation/failure cleanup | Concurrent identical misses invoke fetch once | Implemented; one bounded shared task per fixed route, shielded waiters and exception cleanup; original three-second TTL retained. `api/singleflight.py`, hardening tests. |
 | H04 | `backend/api/main.py` | Mounted and SPA assets share sensitive-file policy | Guard mounted assets and SPA paths | Allowed built assets and denied fixture files | Implemented; mounted assets and SPA use shared policy; built JS/CSS/fonts/images pass, sensitive/dotfile/map fixtures refuse. Hardening tests. |
 | H05 | `backend/live_execution/wallet.py; executor.py` | Every production signer checks expected identity | Trace legacy/manual signer and enforce identity | Wrong dummy wallet refusal; drill compatibility | Implemented; expected identity checked at production signing boundary and legacy/manual entry. Drill policy retained. `test_remediation_signing_policy.py`. |
@@ -36,7 +36,7 @@ Read source, callers, tests and audit traces before each change. Preserve unrela
 | H13 | `backend/llm/thinker.py` | Malformed model shapes fail closed | Validate collection/object shapes | List/null/scalar JSON and bounded output | Implemented; JSON object/field/nested collection checks before access; malformed verdict returns fail-closed result. Hardening and LLM suites. |
 | H14 | `backend/live_execution/executor.py; trade_intent.py` | Manual approval binds canonical operation | Bind side/wallet/mints/raw amount/decimals/expiry | Enabled fixture mismatch without consuming approval | Implemented; bound side/wallet/mints/exact raw quantity/decimals/slippage/minimum plus existing expiry/one-use, mismatch never consumes. Unbound legacy approvals must be reproposed. Policy tests. |
 | H15 | `backend/bounded_http.py; backend/data_providers; backend/llm; backend/live_execution/solana.py` | Response bytes bounded before parsing | Review shared/provider limits and compatibility | Streaming/compression/timeout boundaries | Implemented streaming wire/decoded caps and total timeout for HTTPX surfaces; stealth parser cap added. Retained browser/Scrapling internal allocation limitation, explicitly not a complete transport guarantee. Hardening tests and policy notes. |
-| H16 | `backend/llm/spend_guard.py; docs/18_SECURITY.md` | Budget guarantees reflect actual accounting | Reserve where sound or document stop thresholds | Concurrency/failure/zero cap and retained policy | Retained documented policy: per-service call reservations; token/estimated-cost stop thresholds are post-response and may overshoot/undercount. No invented price/token bound or merged API/live scope. Existing spend tests pass. |
+| H16 | `backend/llm/spend_guard.py; docs/10_SECURITY.md` | Budget guarantees reflect actual accounting | Reserve where sound or document stop thresholds | Concurrency/failure/zero cap and retained policy | Retained documented policy: per-service call reservations; token/estimated-cost stop thresholds are post-response and may overshoot/undercount. No invented price/token bound or merged API/live scope. Existing spend tests pass. |
 | H17 | `backend/run_live_cycle.py; backend/live_execution/executor.py` | Unknown settlement retains exposure and intent | Review strict outcome/finality across recovery | Conflicting/unreachable recovery remains pending | Implemented strict pending buy/sell and ambiguous/negative/malformed immediate settlement; local signature identity preserved. Only valid immediate positive single-provider trust retained. Pending/recovery tests. |
 | H18 | `backend/live_execution/models.py; commit_log.py` | No cross-process lost read-modify-write | Add locks or enforce verified single writer contract | Concurrency, crash release, lock ordering | Implemented POSIX process-safe complete RMW locks; restore acquires sorted authority locks and preserves lock inode. Single production decision-maker remains required. `test_security_state_integrity.py`. |
 | H19 | `backend/live_execution/models.py; scripts/restore_state.py` | Restored authority validates every record | Validate identities/statuses/finite record values | Malformed authenticated restored fixtures | Implemented ledger/commit/wallet-snapshot validation, runtime/ack writer guards, and canonical nonsymlinked restore dispatch before adoption; history preserved. Invalid record/overflow/duplicate/authenticated alias fixtures pass. |
@@ -311,7 +311,7 @@ addendum supersedes the earlier assertion that expired attempts must remain
 pending indefinitely: all-endpoint historical absence **combined with**
 finalized expiry, signing age and delayed reobservation can release a sell.
 Neither absence nor expiry alone suffices. See the §94 runbook in
-`docs/18_SECURITY.md`; correlated dishonest/lagging RPC views remain a risk.
+`docs/10_SECURITY.md`; correlated dishonest/lagging RPC views remain a risk.
 
 ### S1 — H1, expired sell recovery
 
@@ -463,7 +463,7 @@ pool owner/executable/length and missing-account variants refuse. A one-unit
 foreign move that flips F refuses even though a magnitude tolerance could have
 accepted it. No raw opaque market-state bytes influence a guard decision.
 This repairs the design; actual buy refusal rate is **UNVERIFIED on the VM**.
-The log query and process-local counter limitation are in `docs/18_SECURITY.md`.
+The log query and process-local counter limitation are in `docs/10_SECURITY.md`.
 
 
 ### S4 — M1, verification honesty
@@ -472,7 +472,7 @@ The log query and process-local counter limitation are in `docs/18_SECURITY.md`.
 |---|---|---|---|---|---|
 | M1 close authority | Medium | `solana.py:218`; `mutation_check.py:81C_SOLANA_AGREE_CLOSE_AUTH` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact close-authority base-layout range | `test_named_control_field_mutation_is_caught_by_existing_regression` |
 | M1 delegated amount | Medium | `solana.py:218`; `mutation_check.py:81C_SOLANA_AGREE_DELEGATED_AMT` | Named mutant SURVIVED on S3 → existing control regression fails when active range is removed | Remove redundant decoded comparison; target exact delegated-amount base-layout range | Same parametrized executable mutation test |
-| M1 historical claims | Medium | `handoff.md`; `memory-bank/*`; `docs/20_BEHAVIOUR_CHANGES_SINCE_3FEA445.md` | Fresh baseline run 135/137; S4 full run 149/149 | Append dated corrections without rewriting records; enumerate actual money-path and operational changes | Full no-flags mutation checker and generated log |
+| M1 historical claims | Medium | `handoff.md`; `memory-bank/*`; `docs/12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md` | Fresh baseline run 135/137; S4 full run 149/149 | Append dated corrections without rewriting records; enumerate actual money-path and operational changes | Full no-flags mutation checker and generated log |
 
 Commands/results:
 
@@ -489,7 +489,7 @@ python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_sectio
 # Fixed working source:
 python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_section94_mutation_evidence.py backend/tests/test_section94_consensus.py backend/tests/test_audit_82_e.py
 # 37 passed in 1.42s (S4-after.log)
-python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/09_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
 # All restorations verified clean. Mutations: 149, Caught: 149, Survivors: 0
 # (S4-mutation.log; exit 0)
 ```
@@ -524,7 +524,7 @@ were discarded and are not represented as baseline passes.
 |---|---|---|---|---|---|
 | M2 state validation | Medium | `scripts/validate_state.py:235` | 44 failed before implementation → final affected suites 194 passed | Read-only known-file dispatch; pure runtime validators; per-row errors with safe field labels; duplicate identity detection; exit codes for invalid/unreadable | `test_section94_state_validation.py` |
 | M2 precise error labels | Medium | `scripts/validate_state.py:71` | Review reproduction 9 failed → same final affected suites pass | Decode grouped runtime validator messages into specific attempt/mint field labels without values | `test_invalid_sell_attempt_reports_precise_field`; `test_invalid_signed_sell_mint_reports_precise_field` |
-| M2 deployment preflight | Medium | `scripts/preflight_deploy.py:844`; `docs/11_DEPLOYMENT.md:208` | Missing check failed in initial suite → valid/invalid/unreadable tests pass | Existing state directories validated before upgrade; copied-state and rollback runbook; legacy sell review | `test_preflight_runs_same_validators`; `test_preflight_unreadable_state_is_a_failure` |
+| M2 deployment preflight | Medium | `scripts/preflight_deploy.py:844`; `docs/03_DEPLOYMENT.md:208` | Missing check failed in initial suite → valid/invalid/unreadable tests pass | Existing state directories validated before upgrade; copied-state and rollback runbook; legacy sell review | `test_preflight_runs_same_validators`; `test_preflight_unreadable_state_is_a_failure` |
 
 ```sh
 python docs/security-remediation/sandbox_runner.py backend/tests/test_section94_state_validation.py -q
@@ -686,8 +686,8 @@ contacted. Their redirect behavior remains operator validation.
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
 | H1 operator evidence detail | High finding, observability follow-up | `scripts/resolve_pending_sell.py:47`; `backend/live_execution/executor.py:563` | Final review: 1 failed → 88 affected checks pass | List every release condition as met, unmet or explicitly unverified; no extra RPC, write or release decision | `test_list_is_read_only_and_has_operator_evidence` |
-| M1 final record | Medium | `docs/17_MUTATION_LOG.md`; handoff/memory addenda | Full final no-flags run 149 caught, zero survivors; final root/backend suites each 2425 passed | Generated log copied as data out of disposable sandbox; command-backed counts only; dated historical corrections retained | Full mutation checker, canonical gate stage and backend-CWD suite |
-| M2 upgrade documentation | Medium | `docs/11_DEPLOYMENT.md`; `docs/18_SECURITY.md`; `.env.example` | Historical fixtures and read-only tests pass; actual VM not run by author | Preserve upgrade copy; review old unsigned-time sells; conservative environment example; mark external validation limits | State validation suite and final source review |
+| M1 final record | Medium | `docs/09_MUTATION_LOG.md`; handoff/memory addenda | Full final no-flags run 149 caught, zero survivors; final root/backend suites each 2425 passed | Generated log copied as data out of disposable sandbox; command-backed counts only; dated historical corrections retained | Full mutation checker, canonical gate stage and backend-CWD suite |
+| M2 upgrade documentation | Medium | `docs/03_DEPLOYMENT.md`; `docs/10_SECURITY.md`; `.env.example` | Historical fixtures and read-only tests pass; actual VM not run by author | Preserve upgrade copy; review old unsigned-time sells; conservative environment example; mark external validation limits | State validation suite and final source review |
 
 Final review caught a reporting omission in CLI list: terminal rows previously
 printed `conditions=None`, without enumerating met/unmet facts. The read-only
@@ -717,7 +717,7 @@ python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /b
 python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'cd backend && /usr/bin/python3 -m pytest -q -rs'
 # 2425 passed, 102 warnings in 34.70s; no failures or skips
 # backend-cwd-last.log
-python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/09_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
 # All restorations verified clean. Mutations: 149, Caught: 149, Survivors: 0
 # S7-mutation-final.log; checker receives NO flags
 python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 scripts/audit_runtime_writes.py --check
@@ -983,7 +983,7 @@ python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /b
 # 2427 passed, 102 warnings in 42.13s; no failures/skips; stage passed.
 python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD PYTEST_PLUGINS; cd backend && /usr/bin/python3 -m pytest -q -rs'
 # 2427 passed, 102 warnings in 42.23s; no failures/skips.
-python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_CI_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION94_CI_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/09_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
 # No-flags checker: 149 caught out of 149, zero survivors; restoration verified.
 python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /usr/bin/python3 -c 'import subprocess,sys; stages=[2,4,5,6]; results=[(stage,subprocess.run(["/bin/bash","scripts/prepush_check.sh","--stage",str(stage)]).returncode) for stage in stages]; print("SECTION94_CI_GATE_RESULTS",results); sys.exit(any(code for stage,code in results))'
 # SECTION94_CI_GATE_RESULTS [(2, 0), (4, 0), (5, 0), (6, 0)].
@@ -1096,13 +1096,13 @@ S2 verification: VERDICT: PASS
 
 | ID | severity | file:line | evidence (failing → passing) | fix | test |
 |---|---|---|---|---|---|
-| F1/F2 operational evidence / S3 | Documentation | `docs/18_SECURITY.md`; `docs/11_DEPLOYMENT.md`; handoff and memory records | 9 failed → 9 passed; full root and backend suites each 2461 passed, no skips or failures | Document private snapshot/reader, restart boundary, exact public health response and payer assertion; append dated records; regenerate mutation log from no-flags execution | `test_operator_runbooks_describe_private_restart_scoped_counters`, `test_section95_handoffs_record_restart_scope_and_unverified_limits`, `test_behavior_record_lists_section95_changes`, `test_generated_mutation_log_names_all_four_section95_catches` |
+| F1/F2 operational evidence / S3 | Documentation | `docs/10_SECURITY.md`; `docs/03_DEPLOYMENT.md`; handoff and memory records | 9 failed → 9 passed; full root and backend suites each 2461 passed, no skips or failures | Document private snapshot/reader, restart boundary, exact public health response and payer assertion; append dated records; regenerate mutation log from no-flags execution | `test_operator_runbooks_describe_private_restart_scoped_counters`, `test_section95_handoffs_record_restart_scope_and_unverified_limits`, `test_behavior_record_lists_section95_changes`, `test_generated_mutation_log_names_all_four_section95_catches` |
 
 Actual no-flags mutation result: **153 mutations, 153 caught, 0 survivors**.
 All 153 report a named failing test; original target bytes were restored.
 The four additions caught public health counters, missing-as-healthy-zero
 reporting, snapshot failure propagation, and check F reverting to intent wallet.
-`docs/17_MUTATION_LOG.md` is the exact generated artifact exported from the
+`docs/09_MUTATION_LOG.md` is the exact generated artifact exported from the
 isolated run; it was not edited by hand. The generator includes §95 in its
 heading. The baseline's 3 conditional skips are exercised with a frontend
 production bundle in the final root/backend runs. Those runs report 102
@@ -1115,10 +1115,10 @@ python3 docs/security-remediation/sandbox_runner.py -q backend/tests/test_sectio
 # Before docs/artifact updates: 9 failed in 0.05s (s3-before.log).
 # After: 9 passed in 0.04s (s3-after.log).
 
-python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION95_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/17_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
+python3 docs/security-remediation/sandbox_runner.py --command /usr/bin/python3 -c 'import base64,pathlib,subprocess,sys; result=subprocess.run([sys.executable,"scripts/mutation_check.py"]); print("SECTION95_MUTATION_ARTIFACT="+base64.b64encode(pathlib.Path("docs/09_MUTATION_LOG.md").read_bytes()).decode()) if result.returncode == 0 else None; sys.exit(result.returncode)'
 # scripts/mutation_check.py receives NO flags.
 # All restorations verified clean. Mutations: 153, Caught: 153, Survivors: 0.
-# The artifact is decoded directly to docs/17_MUTATION_LOG.md (mutations.log).
+# The artifact is decoded directly to docs/09_MUTATION_LOG.md (mutations.log).
 
 python3 docs/security-remediation/sandbox_runner.py --with-frontend --command /bin/bash -c 'unset PYTEST_DISABLE_PLUGIN_AUTOLOAD PYTEST_PLUGINS; /bin/bash scripts/prepush_check.sh --stage 1'
 # 2461 passed, 102 warnings in 38.84s; stage 1 passed (full-root.log).

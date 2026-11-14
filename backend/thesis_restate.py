@@ -292,7 +292,7 @@ async def _restate(conn, positions: list, price_map: dict) -> list[dict]:
                      config.THESIS_RESTATE_PER_PASS)
     if not due:
         return []
-    # Non-urgent LLM work (docs/08 §5): during DeepSeek peak windows the
+    # Non-urgent LLM work (docs/CONFIGURATION.md): during DeepSeek peak windows the
     # pass is skipped entirely rather than paying 2x rates. Logged, never
     # silent; the rows stay due and the next off-peak tick picks them up.
     if config.MAIN_LLM_PROVIDER == "deepseek" and _is_peak_window():
