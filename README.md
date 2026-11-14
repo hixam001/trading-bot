@@ -123,7 +123,7 @@ arm flags) are deliberately hardcoded in `backend/config.py` /
 | `FOMO_PRIVY_REFRESH_TOKEN` | optional | REAL crowd-conviction feed (fomo.fun board). Since §47 the board is read through the FREE local Scrapling transport (curl-cffi Chrome TLS first, stealth browser fallback) — no paid key needed; `FIRECRAWL_API_KEY`/`SCRAPING*_API_KEY` are shadow-week failover only. The scrape runs only AFTER a candidate passes every other rule (quota saver); rejects journal crowd_heat as "not evaluated". The rotated-token sidecar is stored **encrypted at rest** (`SECRET_STORE_KEY`/`SECRET_STORE_KEY_FILE`, §54) |
 | `BRAVE_SEARCH_API_KEY`, `SEARXNG_URL` | optional | §51 FREE web-search evidence chain: Brave first (~1,000 free searches/month, auto credit), then your self-hosted SearXNG sidecar (keyless, unlimited), then Firecrawl last-resort. At least one configured = stage on; empty everywhere = off |
 | `SCRAPINGBEE/SCRAPINGDOG/ZENROWS/SCRAPEOPS_API_KEY` | optional | stealth-scrape failover chain for the crowd feed (auto-benching on 402/429) — shadow-week backup for the free §47 transport |
-| `USE_SUPABASE_DB`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run **all** files in `migrations/supabase/` in order, `001`–`006`, once first) |
+| `USE_SUPABASE_DB`, `SUPABASE_DB_URL` | optional | remote Postgres book instead of local SQLite (run **all** files in `migrations/supabase/` in order, `001`–`007`, once first) |
 | `TICK_INTERVAL_SECONDS`, `MAX_CANDIDATES_PER_TICK`, `INITIAL_CASH_USD` | optional | cycle cadence + the historical equity-curve anchor (defaults 60 / 20 / 1000) |
 | `WALLET_KEYPAIR_PATH`, `EXPECTED_WALLET_ADDRESS`, `SOLANA_RPC_URL` | live only | see [Live trading](#live-trading-operator-armed) |
 
@@ -301,6 +301,15 @@ cd frontend && npm install && npm run dev      # http://localhost:5173
 
 ## Documentation
 
+- **[Documentation index](docs/README.md)** — current software references and
+  links to the existing design, deployment, integration, and security guides.
+- **[Requirements](docs/REQUIREMENTS.md)** and **[application flow](docs/APPFLOW.md)** —
+  scope, acceptance requirements, process boundaries, and dashboard journeys.
+- **[API contract](docs/API_CONTRACT.md)** and **[data model](docs/DATA_MODEL.md)** —
+  endpoints, authentication, response semantics, SQL entities, and live-state authority.
+- **[Configuration](docs/CONFIGURATION.md)**, **[development](docs/DEVELOPMENT.md)**,
+  **[test plan](docs/TEST_PLAN.md)**, and **[operations](docs/OPERATIONS.md)** —
+  setup, verification, diagnostics, and recovery.
 - **`handoff.md`** — the complete handoff: state, decision log, bugs fixed,
   invariants, next steps. Read this first.
 - **`memory-bank/`** — structured session context (activeContext, progress,
