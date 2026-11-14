@@ -10,7 +10,7 @@
 # (--env-file / platform secrets) or a mounted keypair file
 # (WALLET_KEYPAIR_PATH). See docker-entrypoint.sh + docs/03_DEPLOYMENT.md.
 # ============================================================================
-FROM node:20-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0 AS frontend-build
+FROM node:26-slim@sha256:5adad64f9a1fca2d51972caa65983634c8a774eb300d72b20f7f2a0f60368072 AS frontend-build
 WORKDIR /build
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --no-fund --no-audit
