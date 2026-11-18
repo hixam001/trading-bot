@@ -1,6 +1,8 @@
 """Offline regressions for the November repository and deployment audit."""
 from __future__ import annotations
 
+from string import hexdigits
+
 import asyncio
 import json
 import time
@@ -36,7 +38,7 @@ def test_partial_sell_reduces_the_entire_mint_and_is_idempotent(tmp_path):
 def test_unicode_cookie_is_invalid_instead_of_raising(monkeypatch):
     from api import auth
     import config
-    monkeypatch.setattr(config, "SESSION_SECRET", "0123456789abcdef" * 4)
+    monkeypatch.setattr(config, "SESSION_SECRET", hexdigits[:16] * 4)
     cookie = f"{int(time.time())}.nonce.é"
     assert auth.verify_session_token(cookie) is False
     auth.revoke_session_token(cookie)
@@ -46,7 +48,7 @@ async def test_unicode_operator_token_is_rejected(monkeypatch):
     import config
     import httpx
     from api.main import app
-    monkeypatch.setattr(config, "ADMIN_TOKEN", "0123456789abcdef" * 4)
+    monkeypatch.setattr(config, "ADMIN_TOKEN", hexdigits[:16] * 4)
     monkeypatch.setattr(config, "CAPTCHA_ENABLED", False)
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="https://test") as client:
         response = await client.post("/api/auth/login", json={"token": "é" * 40})
@@ -59,7 +61,7 @@ async def test_unicode_operator_token_is_rejected(monkeypatch):
 def test_corrupt_revocation_shape_cannot_restore_a_session(tmp_path, monkeypatch, payload):
     import config
     from api import auth
-    monkeypatch.setattr(config, "SESSION_SECRET", "0123456789abcdef" * 4)
+    monkeypatch.setattr(config, "SESSION_SECRET", hexdigits[:16] * 4)
     path = tmp_path / "revocations.json"
     monkeypatch.setattr(config, "SESSION_REVOCATION_FILE", str(path))
     token = auth.create_session_token()
@@ -100,9 +102,9 @@ def test_preflight_rejects_credentials_the_api_will_reject(value):
     assert pf.check_admin_token({"ADMIN_TOKEN": value}).status == pf.FAIL
 
 
-@pytest.mark.parametrize("secret", ["weak", "x" * 64, "0123456789abcdef" * 4])
+@pytest.mark.parametrize("secret", ["weak", "x" * 64, hexdigits[:16] * 4])
 def test_preflight_validates_dedicated_session_key(secret):
-    assert pf.check_runtime_security({"ADMIN_TOKEN": "0123456789abcdef" * 4,
+    assert pf.check_runtime_security({"ADMIN_TOKEN": hexdigits[:16] * 4,
                                       "SESSION_SECRET": secret}).status == pf.FAIL
 
 
@@ -203,7 +205,7 @@ def test_preflight_dotenv_comments_match_service_values(tmp_path):
 
 
 def test_preflight_checks_rendered_credentials_over_shell_values(tmp_path):
-    env = {"ADMIN_TOKEN": "0123456789abcdef" * 4}
+    env = {"ADMIN_TOKEN": hexdigits[:16] * 4}
     config = {"services": {"api": {"environment": {"ADMIN_TOKEN": "weak"}}, "live": {}}}
     checks = pf.run_preflight(env, tmp_path, compose_config=config)
     assert next(c for c in checks if c.name == "admin token").status == pf.FAIL
@@ -386,7 +388,7 @@ def test_unreadable_revocation_store_cannot_resurrect_a_cookie(tmp_path, monkeyp
     from api import auth
     import config
     path = tmp_path / "revocations.json"
-    monkeypatch.setattr(config, "SESSION_SECRET", "0123456789abcdef" * 4)
+    monkeypatch.setattr(config, "SESSION_SECRET", hexdigits[:16] * 4)
     monkeypatch.setattr(config, "SESSION_REVOCATION_FILE", str(path))
     cookie = auth.create_session_token()
     if inaccessible == "directory":

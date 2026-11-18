@@ -19,3 +19,16 @@ f9f0469bb8276a16cc25376b27974dfbf2147b7b:backend/tests/test_audit_93_r4.py:gener
 # §94 S4: public mutation-case identifiers in the parametrized regression test.
 # This exact historical finding is not a credential; other findings still fail.
 abfe549b416c7ea29b9d322c1f2ac1d895f0e0b7:backend/tests/test_section94_mutation_evidence.py:generic-api-key:7
+
+# 2026-11-18 CI: deterministic hexadecimal test data in the audit commit.
+# Public synthetic fixture values, not service credentials. Future fixtures
+# generate this data; retain only these exact historical false positives.
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_preflight_deploy.py:generic-api-key:21
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_preflight_deploy.py:generic-api-key:164
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_s8_supply_chain.py:generic-api-key:123
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_repo_audit_regressions.py:generic-api-key:39
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_repo_audit_regressions.py:generic-api-key:49
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_repo_audit_regressions.py:generic-api-key:62
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_repo_audit_regressions.py:generic-api-key:105
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_repo_audit_regressions.py:generic-api-key:206
+70355903b8ff37ceeb429100afd8b8f3008442e6:backend/tests/test_repo_audit_regressions.py:generic-api-key:389
