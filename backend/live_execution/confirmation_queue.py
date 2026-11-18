@@ -47,10 +47,10 @@ class ConfirmationQueue:
 
     # -- storage ----------------------------------------------------------------
     def _load(self) -> dict[str, dict]:
-        if not self.path.is_file():
-            return {}
         try:
             return dict(json.loads(self.path.read_text()).get("confirmations", {}))
+        except FileNotFoundError:
+            return {}
         except (ValueError, OSError) as exc:
             raise RuntimeError(
                 f"confirmations file {self.path} corrupt ({exc}) — refusing "

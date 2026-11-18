@@ -383,6 +383,15 @@ async def get_multiple_accounts(
         )
 
 
+def is_confirmed_success(value) -> bool:
+    """A complete successful confirmation, without truthiness coercion."""
+    return (isinstance(value, dict) and value.get("confirmed") is True
+            and "err" in value and value["err"] is None
+            and isinstance(value.get("slot"), int)
+            and not isinstance(value["slot"], bool)
+            and 0 <= value["slot"] < 2**64)
+
+
 async def simulate_transaction(
     tx_b64: str,
     accounts: list[str],
@@ -457,7 +466,7 @@ async def simulate_transaction(
 
     valid_results[0]["agreeing_count"] = agreeing
     is_sell = (side == "sell")
-    if agreeing >= config.SIM_MIN_AGREEING_RPCS:
+    if not require_dual_rpc or agreeing >= config.SIM_MIN_AGREEING_RPCS:
         return valid_results[0]
     elif is_sell and config.SIM_SELL_ALLOW_SINGLE_RPC and len(valid_results) == 1:
         log.warning("SIM_SINGLE_RPC_SELL: sell proceeding with 1 RPC response (%s)", valid_results[0]["endpoint"])
@@ -620,7 +629,8 @@ async def confirm_signature(
         if status is not None:
             if status.get("err"):
                 return {"confirmed": False, "slot": status.get("slot"), "err": str(status["err"])}
-            if status.get("confirmationStatus") in ("confirmed", "finalized"):
+            if (status.get("confirmationStatus") in ("confirmed", "finalized")
+                    and is_confirmed_success(dict(status, confirmed=True))):
                 return {"confirmed": True, "slot": status.get("slot"), "err": None}
         await asyncio.sleep(2.0)
     # A7 (repo audit): some RPCs keep only a short recent-status cache;
@@ -633,8 +643,9 @@ async def confirm_signature(
         endpoints=endpoints,
     )
     status = _first_signature_status(res)
-    if (status is not None and not status.get("err")
-            and status.get("confirmationStatus") in ("confirmed", "finalized")):
+    if (status is not None
+            and status.get("confirmationStatus") in ("confirmed", "finalized")
+            and is_confirmed_success(dict(status, confirmed=True))):
         return {"confirmed": True, "slot": status.get("slot"), "err": None}
     return {"confirmed": False, "slot": None, "err": "not confirmed before timeout"}
 

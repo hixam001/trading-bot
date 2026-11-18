@@ -67,7 +67,7 @@ def ready_legacy(monkeypatch):
     monkeypatch.setattr(je, "preflight", lambda *a: 6)
     monkeypatch.setattr(live_config, "REQUIRE_MANUAL_CONFIRMATION", False)
     monkeypatch.setattr(je.wallet, "load_keypair", lambda: SimpleNamespace(pubkey=lambda: "dummy-wallet"))
-    return SimpleNamespace(get_by_idempotency_key=lambda key: None)
+    return SimpleNamespace(get_by_idempotency_key=lambda key: None, deployed_today_usd=lambda: 0.)
 
 
 async def test_legacy_wrong_wallet_refuses_before_chain_or_quote(monkeypatch):

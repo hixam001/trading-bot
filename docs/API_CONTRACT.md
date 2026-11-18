@@ -154,7 +154,7 @@ execution or guarantee third-party chain data availability.
 
 | Method | Path | Request | Successful response / failure |
 |---|---|---|---|
-| GET | `/api/auth/challenge` | None | `{nonce,timestamp,difficulty,signature}` for the internal PoW provider. |
+| GET | `/api/auth/challenge` | None | `{nonce,timestamp,difficulty,signature,enabled,provider,site_key}`; `site_key` is public widget configuration. |
 | POST | `/api/auth/login` | JSON below | `{status:"authenticated",expires_in:3600}` with Set-Cookie (TTL configurable); 400 bot rejection, 403 disabled/invalid credential, 429 lockout. |
 | GET | `/api/auth/session` | Cookie or header if available | `{authenticated,...}`; may include `auth_type`, `expires_in`, or a reason; never returns a credential. |
 | POST | `/api/auth/logout` | Cookie + CSRF header when cookie exists | Revokes the session signature and clears the cookie; no-cookie request remains idempotent. |
@@ -173,11 +173,11 @@ before credential comparison. When internal CAPTCHA is enabled, solve
 SHA-256 of `nonce:solution` with the required leading hex zeros and submit
 `nonce.timestamp.signature.solution` as `captcha_token`. Challenges expire
 after five minutes and successful solutions are single-use. External CAPTCHA
-providers instead require their own supported challenge client.
-
-**Current UI limitation:** [LoginGate.tsx](../frontend/src/components/LoginGate.tsx)
-sends only the token; it does not solve or render configured CAPTCHA challenges.
-An enabled CAPTCHA therefore needs a compatible client/UI implementation.
+providers require their own solved widget token. The dashboard login form
+loads this public configuration, solves internal PoW, or renders the configured
+Turnstile/hCaptcha widget and submits its token. External providers require
+`CAPTCHA_SITE_KEY` and server-only `CAPTCHA_SECRET_KEY`; the verification
+secret is never returned by the challenge endpoint.
 
 ## Operator mutations
 

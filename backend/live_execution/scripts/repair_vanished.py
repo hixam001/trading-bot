@@ -68,7 +68,7 @@ async def _open_with_chain() -> list[dict]:
         m["cost"] += float(r.get("usd_size") or 0.0)
     try:
         payer = wallet.load_keypair()
-        pubkey = wallet.pubkey_string(payer)
+        pubkey = wallet.verify_expected_address(payer)
     except Exception as exc:
         print(f"wallet unreadable ({exc}) — chain check unavailable")
         pubkey = None
@@ -99,6 +99,17 @@ def cmd_list(_args) -> int:
 
 
 async def _close(mint: str, proceeds_usd, note: str) -> int:
+    import math
+    if proceeds_usd is not None:
+        try:
+            valid = (not isinstance(proceeds_usd, bool)
+                     and isinstance(proceeds_usd, (int, float))
+                     and math.isfinite(proceeds_usd) and proceeds_usd >= 0)
+        except OverflowError:
+            valid = False
+        if not valid:
+            print("REFUSED: proceeds must be finite and nonnegative, or omitted when unknown")
+            return 1
     # SAFETY GATE 1: the mint must be an OPEN ledger position.
     ledger = _ledger()
     open_buys = [r for r in ledger._load()
@@ -111,7 +122,7 @@ async def _close(mint: str, proceeds_usd, note: str) -> int:
     # SAFETY GATE 2: the chain balance must be verifiably 0.
     try:
         payer = wallet.load_keypair()
-        pubkey = wallet.pubkey_string(payer)
+        pubkey = wallet.verify_expected_address(payer)
     except Exception as exc:
         print(f"REFUSED: wallet unreadable ({exc}) — cannot verify chain")
         return 1

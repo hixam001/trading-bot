@@ -45,7 +45,7 @@ async def main() -> int:
         print("  Telegram:")
         print("    export ALERT_TELEGRAM_BOT_TOKEN='...'   # from @BotFather")
         print("    export ALERT_TELEGRAM_CHAT_ID='...'     # chat/channel ID")
-        return 0
+        return 1
 
     target = args.channel
     if target and target not in active_channels:
@@ -55,7 +55,7 @@ async def main() -> int:
     print(f"\nDispatching test alert to: {target or active_channels} ...")
     results = await send_test_alert(channel=target)
 
-    all_ok = True
+    all_ok = bool(results)
     for ch, res in results.items():
         ok = res.get("ok", False)
         status_code = res.get("status_code", "N/A")

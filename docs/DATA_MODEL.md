@@ -100,7 +100,9 @@ The ledger is a validated JSON list of records, not a SQL table. Fields include:
 | `memo_signature`, `memo_slot`, `reason` | Precommit publication and diagnostic context. |
 
 Ledger methods derive open exposure, remaining tokens/cost, daily deployment,
-realized daily P&L, trim counts and close timing. Close/partial-close methods
+realized daily P&L, trim counts and close timing. A partial sell applies its
+fraction to every open buy lot of that mint, reducing quantity and cost
+proportionally; full exits close every lot. Close/partial-close methods
 must update accounting exactly once. Replacing malformed history with an
 empty list is prohibited by validation. Writes use serialized mutation and
 atomic replacement; use the owning methods rather than editing JSON.

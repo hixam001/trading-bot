@@ -66,7 +66,7 @@ INVENTORY: tuple[InventoryRow, ...] = (
     InventoryRow(
         "<backend>/blocklist_state.json", "BLOCKLIST_STATE_FILE", ("live",),
         "engine_state:/app/backend/live_execution/state",
-        ("backend/blocklist.py:134", "backend/blocklist.py:133"),
+        ("backend/blocklist.py#mkstemp", "backend/blocklist.py#replace"),
     ),
     InventoryRow(
         "<repo>/.fomo_privy.json", "FOMO_PRIVY_STATE_FILE", ("live",),
@@ -141,7 +141,7 @@ INVENTORY: tuple[InventoryRow, ...] = (
         ("scripts/resolve_pending_buy.py:135",),
     ),
     InventoryRow(
-        "<LIVE_STATE_DIR>/safety_counters.json (ack script)",
+        "<LIVE_STATE_DIR>/wallet_snapshot.json (ack script)",
         "LIVE_STATE_DIR (operator CLI)", ("operator",),
         "engine_state (or operator-specified state dir)",
         ("scripts/ack_wallet_change.py:126",),
@@ -163,9 +163,9 @@ INVENTORY: tuple[InventoryRow, ...] = (
 # Independent environment overrides also need an explicit writable home.
 INVENTORY += (
     InventoryRow("<LIVE_STATE_DIR>/break_state.json", "BREAK_STATE_FILE", ("live",),
-                 "engine_state", ("backend/rule_engine/liveness.py#write_text",)),
+                 "engine_state", ("backend/rule_engine/liveness.py#replace",)),
     InventoryRow("<LIVE_STATE_DIR>/kill_switch.json", "KILL_SWITCH_FILE", ("live",),
-                 "engine_state", ("backend/live_execution/kill_switch.py#write_text",)),
+                 "engine_state", ("backend/live_execution/kill_switch.py#replace",)),
     InventoryRow("<backend>/live_execution/state", "LIVE_EXECUTION_STATE_DIR", ("live",),
                  "engine_state", ("backend/run_live_cycle.py#mkdir",)),
     *(InventoryRow(f"<LOG_DIR>/{filename}", key, ("api", "live"), "engine_logs",
@@ -280,6 +280,15 @@ def resolved_runtime_paths(env: dict[str, str]) -> dict[str, str]:
 
 
 APPROVED_WRITES: dict[str, str] = {
+    'backend/rule_engine/liveness.py#_write#unlink#tmp': 'LIVE_STATE_DIR',
+    'backend/rule_engine/liveness.py#_write#fdopen#fd': 'LIVE_STATE_DIR',
+    'backend/rule_engine/liveness.py#_write#mkstemp#path.parent': 'LIVE_STATE_DIR',
+    'backend/live_execution/kill_switch.py#_write#unlink#tmp': 'LIVE_STATE_DIR',
+    'backend/live_execution/kill_switch.py#_write#fdopen#fd': 'LIVE_STATE_DIR',
+    'backend/live_execution/kill_switch.py#_write#mkstemp#path.parent': 'LIVE_STATE_DIR',
+    'backend/blocklist.py#_save#unlink#tmp': 'BLOCKLIST_STATE_FILE',
+    'backend/blocklist.py#_save#fdopen#fd': 'BLOCKLIST_STATE_FILE',
+    'backend/blocklist.py#_save#mkstemp#path.parent': 'BLOCKLIST_STATE_FILE',
     'scripts/restore_state.py#restore_backup#mkdir#target_state_dir': 'operator target directory',
     'backend/live_execution/state_lock.py#state_lock#remove#held': 'non-filesystem thread-local set removal',
     'backend/live_execution/state_lock.py#state_lock#mkdir#path.parent': 'LIVE_STATE_DIR',
@@ -308,7 +317,7 @@ APPROVED_WRITES: dict[str, str] = {
     "backend/api/routes/safety.py#_row_epoch#replace#'Z'": 'non-filesystem string/datetime/URL replacement',
     'backend/blocklist.py#_load#rename#quarantined': 'BLOCKLIST_STATE_FILE',
     'backend/blocklist.py#_save#mkdir#path.parent': 'BLOCKLIST_STATE_FILE',
-    'backend/blocklist.py#_save#write_text#path': 'BLOCKLIST_STATE_FILE',
+    'backend/blocklist.py#_save#replace#path': 'BLOCKLIST_STATE_FILE',
     'backend/data_providers/crowd.py#publish_chain_status#mkdir#path.parent': 'LIVE_STATE_DIR',
     'backend/data_providers/crowd.py#publish_chain_status#write_text#tmp': 'LIVE_STATE_DIR',
     'backend/data_providers/crowd.py#publish_chain_status#replace#path': 'LIVE_STATE_DIR',
@@ -328,9 +337,9 @@ APPROVED_WRITES: dict[str, str] = {
     'backend/live_execution/models.py#ExecutionLedger._save#mkdir#self.path.parent': 'LIVE_STATE_DIR',
     'backend/live_execution/models.py#ExecutionLedger._save#write_text#tmp': 'LIVE_STATE_DIR',
     'backend/live_execution/models.py#ExecutionLedger._save#replace#self.path': 'LIVE_STATE_DIR',
-    'backend/live_execution/reconcile.py#check_wallet_drop#mkdir#target_dir': 'LIVE_EXECUTION_STATE_DIR',
-    'backend/live_execution/reconcile.py#check_wallet_drop#write_text#tmp_file': 'LIVE_EXECUTION_STATE_DIR',
-    'backend/live_execution/reconcile.py#check_wallet_drop#replace#snap_file': 'LIVE_EXECUTION_STATE_DIR',
+    'backend/live_execution/reconcile.py#_check_wallet_drop_locked#mkdir#target_dir': 'LIVE_EXECUTION_STATE_DIR',
+    'backend/live_execution/reconcile.py#_check_wallet_drop_locked#write_text#tmp_file': 'LIVE_EXECUTION_STATE_DIR',
+    'backend/live_execution/reconcile.py#_check_wallet_drop_locked#replace#snap_file': 'LIVE_EXECUTION_STATE_DIR',
     'backend/live_execution/safety_counters.py#record_safety_refusal#mkdir#target_dir': 'LIVE_STATE_DIR',
     'backend/live_execution/safety_counters.py#record_safety_refusal#write_text#tmp_file': 'LIVE_STATE_DIR',
     'backend/live_execution/safety_counters.py#record_safety_refusal#replace#target_file': 'LIVE_STATE_DIR',

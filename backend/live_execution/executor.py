@@ -48,6 +48,7 @@ from live_execution.jupiter_executor import (
     get_jupiter_quote,
     has_valid_reference_price,
     preflight,
+    quote_impact_pct,
     sign_after_checks,
 )
 from live_execution.models import ExecutionLedger, NoOpenPosition
@@ -162,14 +163,6 @@ class OrderResult:
         return d
 
 
-def quote_impact_pct(quote: dict) -> float:
-    """Jupiter returns priceImpactPct as a decimal fraction."""
-    try:
-        return abs(float(quote.get("priceImpactPct") or 0)) * 100.0
-    except (TypeError, ValueError):
-        return 0.0
-
-
 async def _broadcast_and_confirm(
     swap_b64: str,
     payer,
@@ -209,6 +202,12 @@ async def _broadcast_and_confirm(
             blockhash=blockhash,
             error=exc,
         )
+    return await _confirm_sent_swap(signed_swap, sent, logc, sealed)
+
+
+async def _confirm_sent_swap(signed_swap, sent, logc=None, sealed=None) -> OrderResult:
+    """Shared post-send identity/finality policy for automatic and manual swaps."""
+    blockhash = getattr(signed_swap, "blockhash", "") or ""
     # The transaction's local signature is its identity; an RPC receipt naming
     # another transaction cannot settle the pre-send journal entry.
     needs_resolution = not sent or sent != signed_swap.signature
@@ -420,7 +419,12 @@ async def place_buy(
         return OrderResult(**{**base.to_json(), "status": "failed",
                               "reason": str(exc), **commit_fields})
 
-    impact = quote_impact_pct(q["quote"])
+    try:
+        impact = quote_impact_pct(q["quote"])
+    except ExecutionError as exc:
+        logc.fail(sealed["hash"], str(exc))
+        return OrderResult(**{**base.to_json(), "status": "blocked",
+                              "reason": str(exc), **commit_fields})
     if impact > config.MAX_PRICE_IMPACT_PCT:
         reason = f"price impact {impact:.2f}% above floor {config.MAX_PRICE_IMPACT_PCT}%"
         logc.fail(sealed["hash"], reason)
@@ -950,7 +954,12 @@ async def place_sell(
             logc.fail(sealed["hash"], "no route quoted for this mint")
             return OrderResult(**{**base.to_json(), "status": "failed", "reason": "no route quoted for this mint", **commit_fields})
 
-        impact = quote_impact_pct(quote)
+        try:
+            impact = quote_impact_pct(quote)
+        except ExecutionError as exc:
+            logc.fail(sealed["hash"], str(exc))
+            return OrderResult(**{**base.to_json(), "status": "blocked",
+                                  "reason": str(exc), **commit_fields})
         # §87 D2 (operator-approved 2026-11-01): a protective exit must not
         # be refused by the entry/trim impact ceiling while a pool collapses.
         # Only RISK_OFF_RULES get the wider hardcoded ceiling; take-profit

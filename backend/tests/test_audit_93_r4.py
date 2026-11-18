@@ -234,13 +234,18 @@ async def test_received_memo_signature_is_registered_before_confirmation(monkeyp
     from live_execution import memo
     async def blockhash(*args, **kwargs):
         return "BLOCKHASH"
+    from solders.keypair import Keypair
+    from solders.hash import Hash
+    from solders.transaction import VersionedTransaction
+    raw = memo.build_memo_transaction("commit:v1:test", Keypair.from_seed(bytes(32)), str(Hash.default()))
+    local_signature = str(VersionedTransaction.from_bytes(raw).signatures[0])
     async def send(*args, **kwargs):
-        return SIG
+        return local_signature
     async def confirm(signature, **kwargs):
         assert is_public_value(signature)
         return {"confirmed": True, "slot": 1, "err": None}
     monkeypatch.setattr(memo.solana, "latest_blockhash", blockhash)
-    monkeypatch.setattr(memo, "build_memo_transaction", lambda *args: b"mock")
+    monkeypatch.setattr(memo, "build_memo_transaction", lambda *args: raw)
     monkeypatch.setattr(memo.solana, "send_raw_transaction", send)
     monkeypatch.setattr(memo.solana, "confirm_signature", confirm)
-    assert (await memo.publish_commit_memo(object(), "hash", endpoints=["https://rpc.invalid"]))["signature"] == SIG
+    assert (await memo.publish_commit_memo(object(), "hash", endpoints=["https://rpc.invalid"]))["signature"] == local_signature

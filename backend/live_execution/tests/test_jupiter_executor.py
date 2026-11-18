@@ -33,6 +33,9 @@ def env(monkeypatch, tmp_path):
     kp = tmp_path / "kp.json"
     kp.write_text("[1,2,3]")           # content irrelevant unless signed
     monkeypatch.setattr(le_config, "WALLET_KEYPAIR_PATH", str(kp))
+    from live_execution import memo
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(memo, "publish_commit_memo", AsyncMock(return_value={"signature": "dummy-memo", "slot": 1}))
     return tmp_path
 
 
@@ -187,7 +190,7 @@ def capture_post(monkeypatch, response: dict) -> list[dict]:
 def test_quote_happy_path_six_decimals(env, monkeypatch):
     # $10 of a 6-decimal token at ~$14.47/token -> 0.691 tokens
     # -> outAmount raw = 0.691 * 1e6 = 691000
-    calls = capture_post(monkeypatch, {"outAmount": "691000"})
+    calls = capture_post(monkeypatch, {"outAmount": "691000", "priceImpactPct": "0"})
     q = asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
 
     assert q["tokens_out"] == pytest.approx(0.691)
@@ -218,17 +221,16 @@ def test_quote_impact_within_cap_passes_and_is_returned(env, monkeypatch):
     assert calls[0]["verb"] == "get"
 
 
-def test_quote_impact_missing_field_is_zero(env, monkeypatch):
-    """A quote with no priceImpactPct field must not fabricate an impact."""
+def test_quote_impact_missing_field_refuses(env, monkeypatch):
     capture_post(monkeypatch, {"outAmount": "691000"})
-    q = asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
-    assert q["price_impact_pct"] == 0.0
+    with pytest.raises(je.ExecutionError, match="price impact"):
+        asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
 
 
 def test_quote_happy_path_nine_decimals_in_cap(env, monkeypatch):
     # SOL-like: 9 decimals. $47.22 (UNDER MAX_TRADE_USD=50) at $94.44/token
     # buys exactly 0.5 tokens -> outAmount raw = 0.5 * 1e9 = 500000000.
-    capture_post(monkeypatch, {"outAmount": "500000000"})
+    capture_post(monkeypatch, {"outAmount": "500000000", "priceImpactPct": "0"})
     q = asyncio.run(je.get_jupiter_quote("MINT", 9, 47.22))
     assert q["tokens_out"] == pytest.approx(0.5)
     assert q["price_usd"] == pytest.approx(94.44)
@@ -256,7 +258,7 @@ def test_quote_uses_http_get_with_query_params(env, monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         seen["method"] = request.method
         seen["url"] = str(request.url)
-        return httpx.Response(200, json={"outAmount": "1000000"})
+        return httpx.Response(200, json={"outAmount": "1000000", "priceImpactPct": "0"})
 
     def _boom(*a, **k):
         raise AssertionError("quote must use GET (_get_json), not POST!")
@@ -354,7 +356,7 @@ def _wire_fake_network(monkeypatch, calls: list[dict]):
         calls.append({"verb": "get", "url": url, "params": params})
         if url.endswith("/quote"):
             # $10 buys 10.0 tokens of a 6-dec mint @ $1.00/token:
-            return {"outAmount": str(10 * 1_000_000)}
+            return {"outAmount": str(10 * 1_000_000), "priceImpactPct": "0"}
         raise AssertionError(f"unexpected GET {url}")
 
     async def fake_post(url, payload):
@@ -455,6 +457,10 @@ def _wire_ambiguous_send(monkeypatch, status, calls):
     _wire_fake_network(monkeypatch, calls)
     monkeypatch.setattr(le_solana, "send_checked_swap", ambiguous_send)
     monkeypatch.setattr(le_solana, "get_signature_status", fake_status)
+    async def strict_status(sig, endpoints=None):
+        value = await fake_status(sig, endpoints)
+        return [value, value]
+    monkeypatch.setattr(le_solana, "get_signature_status_all_strict", strict_status)
     monkeypatch.setattr(le_solana, "confirm_signature", no_confirm)
 
 
@@ -621,7 +627,7 @@ def test_propose_then_approve_then_execute_consumes_confirmation(
     monkeypatch.setattr(je.wallet, "pubkey_string", lambda k: "PubKey123")
     monkeypatch.setattr(le_config, "REQUIRE_MANUAL_CONFIRMATION", True)
     async def fake_sign(b64, payer, intent=None, quote=None):
-        return le_solana.SignedSwap("SIG9", b"s", _checked=True)
+        return le_solana.SignedSwap("SIG123", b"s", _checked=True)
     monkeypatch.setattr(je, "sign_after_checks", fake_sign)
     calls: list[dict] = []
     _wire_fake_network(monkeypatch, calls)

@@ -120,7 +120,7 @@ def _safe_env() -> dict[str, str]:
         "FORCE_HTTPS": "true",
         "MAX_REQUEST_BODY_BYTES": "16777216",
         "TRUSTED_PROXY_CIDRS": "127.0.0.1,172.16.0.0/12,::1/128",
-        "SESSION_SECRET": "s" * 48,
+        "SESSION_SECRET": "0123456789abcdef" * 4,
     }
 
 

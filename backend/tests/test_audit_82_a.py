@@ -124,7 +124,12 @@ async def test_publish_commit_memo_send_rejected_becomes_memo_publish_error(monk
     monkeypatch.setattr(sol_mod, "latest_blockhash", fake_blockhash)
 
     def fake_build(memo_text, payer, blockhash):
-        return b"fake_raw_tx"
+        from solders.keypair import Keypair
+        from solders.hash import Hash
+        from solders.message import Message
+        from solders.transaction import VersionedTransaction
+        key = Keypair.from_seed(bytes(32))
+        return bytes(VersionedTransaction(Message.new_with_blockhash([], key.pubkey(), Hash.default()), [key]))
 
     monkeypatch.setattr(memo_mod, "build_memo_transaction", fake_build)
 
@@ -154,7 +159,12 @@ async def test_publish_commit_memo_two_endpoints_send_rejected(monkeypatch):
     monkeypatch.setattr(sol_mod, "latest_blockhash", fake_blockhash)
 
     def fake_build(memo_text, payer, blockhash):
-        return b"fake_raw_tx"
+        from solders.keypair import Keypair
+        from solders.hash import Hash
+        from solders.message import Message
+        from solders.transaction import VersionedTransaction
+        key = Keypair.from_seed(bytes(32))
+        return bytes(VersionedTransaction(Message.new_with_blockhash([], key.pubkey(), Hash.default()), [key]))
 
     monkeypatch.setattr(memo_mod, "build_memo_transaction", fake_build)
 
@@ -342,6 +352,9 @@ async def test_execute_confirmed_trade_send_rejected_is_execution_error(monkeypa
 
     monkeypatch.setattr(jex.solana, "send_checked_swap", fake_send_checked)
 
+    from live_execution import memo
+    from unittest.mock import AsyncMock
+    monkeypatch.setattr(memo, "publish_commit_memo", AsyncMock(return_value={"signature": "dummy-memo", "slot": 1}))
     ledger = ExecutionLedger(tmp_path / "ledger.json")
 
     with pytest.raises(ExecutionError) as exc_info:

@@ -29,6 +29,11 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+# Pure validators only: importing backend.config would load runtime settings
+# and can create directories on the host running this read-only preflight.
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+from backend.config_helpers import validate_admin_token_entropy, validate_session_secret
 DEFAULT_ENV_FILE = REPO_ROOT / ".env"
 DEFAULT_WALLET_HOST_PATH = "secrets/wallet_keypair.json"
 # compose bind-mounts the host keypair at this fixed in-container path. The
@@ -61,10 +66,11 @@ ENV_OVERRIDE_KEYS = (
     "SOLANA_RPC_URL", "SOLANA_RPC_URL_2", "ALERT_NTFY_URL",
     "ALERT_NTFY_TOPIC", "ALERT_NTFY_TOKEN",
     "ALERT_TELEGRAM_BOT_TOKEN", "ALERT_TELEGRAM_CHAT_ID",
-    "WALLET_KEYPAIR_PATH", "WALLET_KEYPAIR_HOST_PATH",
+    "WALLET_KEYPAIR_PATH", "WALLET_KEYPAIR_JSON", "WALLET_KEYPAIR_HOST_PATH",
     "EXPECTED_WALLET_ADDRESS", "DEBUG", "RATE_LIMIT_ENABLED",
     "FORCE_HTTPS", "MAX_REQUEST_BODY_BYTES", "TRUSTED_PROXY_CIDRS",
     "SESSION_SECRET", "USE_SUPABASE_DB", "SUPABASE_CERT_FINGERPRINT",
+    "CAPTCHA_ENABLED", "CAPTCHA_PROVIDER", "CAPTCHA_SITE_KEY", "CAPTCHA_SECRET_KEY",
     "SUPABASE_PIN_FILE", "TICK_INTERVAL_SECONDS", "MAX_CANDIDATES_PER_TICK",
     "RESEARCH_PER_TICK", "LLM_BRAIN", "SOCIAL_LLM_API_KEY",
     "BRAVE_SEARCH_API_KEY", "SEARXNG_URL", "FIRECRAWL_API_KEY",
@@ -122,8 +128,14 @@ def load_env_file(path: Path) -> dict[str, str]:
         key, value = line.split("=", 1)
         key = key.strip()
         value = value.strip()
-        if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
-            value = value[1:-1]
+        if value.startswith(("'", '"')):
+            import re
+            match = re.fullmatch(r"(['\"])(.*?)\1\s*(?:#.*)?", value)
+            if match:
+                value = match.group(2)
+        else:
+            import re
+            value = re.split(r"\s+#", value, maxsplit=1)[0].rstrip()
         if key:
             env[key] = value
     return env
@@ -206,7 +218,10 @@ def check_admin_token(env: dict[str, str]) -> Check:
         return _check("admin token", FAIL,
                       f"ADMIN_TOKEN is {len(token)} chars; need >= 32 "
                       "(openssl rand -hex 32)")
-    return _check("admin token", PASS, "ADMIN_TOKEN >= 32 chars")
+    if not validate_admin_token_entropy(token):
+        return _check("admin token", FAIL,
+                      "ADMIN_TOKEN needs >= 12 distinct characters (openssl rand -hex 32)")
+    return _check("admin token", PASS, "ADMIN_TOKEN meets runtime credential policy")
 
 
 def check_runtime_security(env: dict[str, str]) -> Check:
@@ -214,6 +229,16 @@ def check_runtime_security(env: dict[str, str]) -> Check:
     truthy = {"1", "true", "yes", "on"}
     falsy = {"0", "false", "no", "off"}
     problems: list[str] = []
+    session_secret = _value(env, "SESSION_SECRET")
+    if session_secret and not validate_session_secret(session_secret, _value(env, "ADMIN_TOKEN")):
+        problems.append("SESSION_SECRET needs >= 32 characters, >= 12 distinct characters, and must differ from ADMIN_TOKEN")
+    if _value(env, "CAPTCHA_ENABLED").lower() == "true":
+        provider = _value(env, "CAPTCHA_PROVIDER").lower() or "turnstile"
+        if provider not in {"internal", "turnstile", "hcaptcha"}:
+            problems.append("CAPTCHA_PROVIDER must be internal, turnstile, or hcaptcha")
+        elif provider != "internal" and not (
+                _value(env, "CAPTCHA_SITE_KEY") and _value(env, "CAPTCHA_SECRET_KEY")):
+            problems.append("external CAPTCHA requires CAPTCHA_SITE_KEY and CAPTCHA_SECRET_KEY")
 
     if _value(env, "DEBUG").lower() in truthy:
         problems.append("DEBUG is enabled (must be false in deployment)")
@@ -617,8 +642,8 @@ def load_compose_config(root: Path,
     except subprocess.TimeoutExpired:
         return None, "docker compose config timed out"
     if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout).strip().splitlines()
-        return None, detail[-1] if detail else "docker compose config failed"
+        # Compose diagnostics can quote invalid env values, including secrets.
+        return None, f"docker compose config failed (exit {proc.returncode}); inspect the configuration privately"
     try:
         import json
         return json.loads(proc.stdout), ""
@@ -887,25 +912,34 @@ def run_preflight(env: dict[str, str], root: Path,
                   uid_reader=None,
                   euid_reader=None,
                   include_compose: bool = True) -> list[Check]:
+    # Compose interpolation and service env_file precedence differ from a
+    # shell override. Validate what each rendered container will receive.
+    services = (compose_config or {}).get("services") or {}
+    live_env = {**env, **_service_env(services.get("live") or {})}
+    api_env = {**env, **_service_env(services.get("api") or {})}
+    for mount in (services.get("live") or {}).get("volumes") or []:
+        if (isinstance(mount, dict) and mount.get("type") == "bind"
+                and mount.get("target") == CONTAINER_WALLET_PATH):
+            live_env["WALLET_KEYPAIR_HOST_PATH"] = str(mount["source"])
     checks: list[Check] = []
     if env_file is not None:
         checks.append(check_env_file(env_file))
     checks.extend([
-        check_data_backend(env),
-        check_llm_key(env),
-        check_admin_token(env),
-        check_runtime_security(env),
+        check_data_backend(live_env),
+        check_llm_key(live_env),
+        check_admin_token(api_env),
+        check_runtime_security(api_env),
         check_searxng_secret(env),
-        check_backup_key(env),
-        check_frontend_origin(env),
-        check_secondary_rpc(env),
-        check_alert_channel(env),
-        check_wallet_channel(env),
+        check_backup_key(live_env),
+        check_frontend_origin(api_env),
+        check_secondary_rpc(live_env),
+        check_alert_channel(live_env),
+        check_wallet_channel(live_env),
     ])
-    checks.append(check_body_buffering(env))
-    checks.append(check_spend_projection(env))
+    checks.append(check_body_buffering(api_env))
+    checks.append(check_spend_projection(live_env))
     checks.append(check_state_validation(env, root))
-    checks.extend(check_wallet_file(env, root, uid_reader=uid_reader,
+    checks.extend(check_wallet_file(live_env, root, uid_reader=uid_reader,
                                     euid_reader=euid_reader))
     if include_compose:
         checks.extend(check_compose(compose_config, compose_error))

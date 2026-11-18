@@ -114,10 +114,10 @@ class ExecutionLedger:
 
     # -- storage --------------------------------------------------------------
     def _load(self) -> list[dict]:
-        if not self.path.is_file():
-            return []
         try:
             data = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return []
         except (ValueError, OSError):
             # A corrupt ledger must NOT look like an empty one (that would
             # forget open exposure and idempotency history). Fail loudly.
@@ -471,8 +471,8 @@ class ExecutionLedger:
                         full_close: bool = False,
                         rule_id: Optional[str] = None,
                         signature: str = "") -> ExecutionRecord:
-        # Partial-or-full SELL against the OLDEST open buy (FIFO). fraction=1.0
-        # closes; smaller fractions shrink the open buy pro-rata - trims need this.
+        # The executor sells a fraction of the complete mint position. Apply
+        # that fraction to every open lot so token quantity and cost agree.
         #
         # full_close=True is the reconcile-clamped FULL exit: the exit engine
         # intended to close the whole position and the sell disposed of everything
@@ -496,7 +496,6 @@ class ExecutionLedger:
         open_buys = [r for r in records if r["kind"] == "buy" and r["mint"] == mint and r["status"] in self._OPEN]
         if not open_buys:
             raise NoOpenPosition(f"no open position for {mint}")
-        target_key = open_buys[0]["idempotency_key"]
         frac = min(max(fraction, 0.01), 1.0)
         rec = ExecutionRecord(
             kind="close",
@@ -515,7 +514,7 @@ class ExecutionLedger:
         # full exit that closed only the oldest left the rest as phantom
         # OPEN positions (polluting holdings + MAX_OPEN_POSITIONS forever)
         # — inconsistent with close_out_of_band, which closes all of them.
-        if full_close:
+        if full_close or frac >= 0.999:
             for r in records:
                 if (r["kind"] == "buy" and r["mint"] == mint
                         and r["status"] in self._OPEN):
@@ -526,18 +525,11 @@ class ExecutionLedger:
                     r["status"] = "closed"
             rec.pnl_usd = proceeds_usd + (rec.pnl_usd or 0.0)
         else:
-            for r in records:
-                if (r["kind"] == "buy" and r["mint"] == mint
-                        and r["status"] in self._OPEN
-                        and r["idempotency_key"] == target_key):
-                    cost_part = float(r["usd_size"]) * frac
-                    rec.pnl_usd = proceeds_usd - cost_part
-                    if frac >= 0.999:
-                        r["status"] = "closed"
-                    else:
-                        r["usd_size"] = float(r["usd_size"]) - cost_part
-                        r["tokens_out"] = float(r.get("tokens_out") or 0.0) * (1.0 - frac)
-                    break
+            cost_part = sum(float(r["usd_size"]) * frac for r in open_buys)
+            rec.pnl_usd = proceeds_usd - cost_part
+            for r in open_buys:
+                r["usd_size"] = float(r["usd_size"]) * (1.0 - frac)
+                r["tokens_out"] = float(r.get("tokens_out") or 0.0) * (1.0 - frac)
         records.append(rec.to_json())
         self._save(records)
         return rec

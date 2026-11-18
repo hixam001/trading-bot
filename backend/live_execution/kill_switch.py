@@ -20,10 +20,12 @@ from __future__ import annotations
 import json
 import os
 import time
+import tempfile
 from pathlib import Path
 from typing import Callable, Optional
 
 from live_execution import config
+from live_execution.state_lock import state_lock
 
 
 class KillSwitchTripped(Exception):
@@ -35,10 +37,10 @@ def _state_path(state_dir: Optional[Path] = None) -> Path:
 
 
 def _read(path: Path) -> Optional[dict]:
-    if not path.is_file():
-        return None
     try:
         state = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
     except (ValueError, OSError) as exc:
         # Corrupt switch state must never silently mean "clear".
         raise RuntimeError(
@@ -65,11 +67,17 @@ def _read(path: Path) -> Optional[dict]:
 
 def _write(tripped: bool, reason: str, state_dir: Optional[Path]) -> None:
     path = _state_path(state_dir)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(
-        {"tripped": tripped, "reason": reason, "ts": time.time()}, indent=2))
-    os.replace(tmp, path)
+    with state_lock(path):
+        fd, name = tempfile.mkstemp(prefix=".kill-switch-", dir=path.parent)
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w") as file:
+                json.dump({"tripped": tripped, "reason": reason, "ts": time.time()}, file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def is_tripped(state_dir: Optional[Path] = None) -> bool:
@@ -107,8 +115,8 @@ def assert_not_tripped(state_dir: Optional[Path] = None) -> None:
 
 
 def is_auto_tripped(state_dir: Optional[Path] = None) -> bool:
-    reason = trip_reason(state_dir)
-    return is_tripped(state_dir) and str(reason).startswith("AUTO: realized daily loss")
+    state = _read(_state_path(state_dir)) or {}
+    return bool(state.get("tripped") and str(state.get("reason", "")).startswith("AUTO: realized daily loss"))
 
 
 def assert_exit_allowed(state_dir: Optional[Path] = None) -> None:
@@ -118,9 +126,10 @@ def assert_exit_allowed(state_dir: Optional[Path] = None) -> None:
     the book exposed while the loss continues to worsen. A human-tripped panic
     still blocks all trades, including exits.
     """
-    if is_tripped(state_dir) and not is_auto_tripped(state_dir):
+    state = _read(_state_path(state_dir)) or {}
+    if state.get("tripped") and not str(state.get("reason", "")).startswith("AUTO: realized daily loss"):
         raise KillSwitchTripped(
-            f"KILL SWITCH ENGAGED (manual trip) — reason: {trip_reason(state_dir)!r}. "
+            f"KILL SWITCH ENGAGED (manual trip) — reason: {state.get('reason', '')!r}. "
             f"A human must clear it explicitly before any trade, including exits."
         )
 

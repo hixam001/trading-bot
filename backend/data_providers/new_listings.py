@@ -117,7 +117,6 @@ class NewListingFeed:
                     additional_headers=headers,
                     ping_interval=20,
                 ) as ws:
-                    attempts = 0                     # reset on successful connect
                     self._enabled = True
                     await ws.send(json.dumps({"type": "SUBSCRIBE_TOKEN_NEW_LISTING"}))
                     log.info("new_listings: subscribed (SUBSCRIBE_TOKEN_NEW_LISTING)")
@@ -129,6 +128,7 @@ class NewListingFeed:
                             continue
                         if isinstance(frame, dict) \
                                 and frame.get("type") == "TOKEN_NEW_LISTING_DATA":
+                            attempts = 0  # handshake alone does not prove feed access
                             self._buffer(frame.get("data") or {})
                         # Auth/plan rejections arrive as error frames or an
                         # immediate close; both fall through to the handlers

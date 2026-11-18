@@ -175,3 +175,30 @@ test('trend requires measured points and tape marks the stored seen boundary', a
   await page.getByTestId('tab-system').click()
   await expect(page.getByTestId('funnel-trend').locator('svg')).toBeVisible()
 })
+
+test('operator login solves the configured internal challenge before submitting', async ({ page }) => {
+  await mockApi(page)
+  await page.route('**/api/live/portfolio', route => route.fulfill({ status: 403, json: { detail: 'login required' } }))
+  await page.route('**/api/auth/challenge', route => route.fulfill({ json: {
+    enabled: true, provider: 'internal', site_key: '', nonce: 'audit-dummy-nonce',
+    timestamp: 123, signature: 'audit-dummy-signature', difficulty: 1,
+  } }))
+  let submitted: { token?: string; captcha_token?: string } | null = null
+  await page.route('**/api/auth/login', async route => {
+    submitted = route.request().postDataJSON() as typeof submitted
+    await route.fulfill({ status: 403, json: { detail: 'dummy credential refused' } })
+  })
+  await page.goto('/')
+  await page.getByLabel('admin token').fill('dummy-operator-token')
+  await page.getByRole('button', { name: 'authenticate', exact: true }).click()
+  await expect(page.getByRole('alert')).toContainText('dummy credential refused')
+  expect(submitted).toMatchObject({ token: 'dummy-operator-token' })
+  const solved = (submitted as unknown as { captcha_token: string }).captcha_token
+  expect(solved).toMatch(/^audit-dummy-nonce\.123\.audit-dummy-signature\.\d+$/)
+  const hash = await page.evaluate(async value => {
+    const solution = value.split('.').at(-1)
+    const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`audit-dummy-nonce:${solution}`)))
+    return Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('')
+  }, solved)
+  expect(hash.startsWith('0')).toBe(true)
+})

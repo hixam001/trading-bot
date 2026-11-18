@@ -55,7 +55,7 @@ def test_raw_units_zero_is_valid():
 
 def test_quote_six_decimal_token_math(env_quote):
     # BARRON-like: $10 of a 6-decimal token priced at $14.47/token.
-    env_quote.response = {"outAmount": str(int(0.691 * 1e6))}   # 691000 raw
+    env_quote.response = {"outAmount": str(int(0.691 * 1e6)), "priceImpactPct": "0"}   # 691000 raw
     q = asyncio.run(je.get_jupiter_quote("MINT", 6, 10.0))
     assert q["tokens_out"] == pytest.approx(0.691)
     assert q["price_usd"] == pytest.approx(14.4718, rel=1e-3)
@@ -63,7 +63,7 @@ def test_quote_six_decimal_token_math(env_quote):
 
 def test_quote_nine_decimal_token_math(env_quote):
     # SOL-like: $47.22 buys exactly 0.5 tokens at $94.44 -> out = 5e8 raw.
-    env_quote.response = {"outAmount": "500000000"}
+    env_quote.response = {"outAmount": "500000000", "priceImpactPct": "0"}
     q = asyncio.run(je.get_jupiter_quote("MINT", 9, 47.22))     # in-cap size
     assert q["tokens_out"] == pytest.approx(0.5)
     assert q["price_usd"] == pytest.approx(94.44)

@@ -237,9 +237,11 @@ MAX_REQUEST_BODY_BYTES: int = int(
 CAPTCHA_ENABLED: bool = os.getenv("CAPTCHA_ENABLED", "false").strip().lower() == "true"
 CAPTCHA_PROVIDER: str = os.getenv("CAPTCHA_PROVIDER", "turnstile")  # "turnstile" | "hcaptcha" | "internal"
 CAPTCHA_SECRET_KEY: str = os.getenv("CAPTCHA_SECRET_KEY", "")
+CAPTCHA_SITE_KEY: str = os.getenv("CAPTCHA_SITE_KEY", "")  # public widget identifier
 CAPTCHA_VERIFY_URL: str = os.getenv(
     "CAPTCHA_VERIFY_URL",
-    "https://challenges.cloudflare.com/turnstile/v0/siteverify",
+    "https://api.hcaptcha.com/siteverify" if CAPTCHA_PROVIDER.lower() == "hcaptcha"
+    else "https://challenges.cloudflare.com/turnstile/v0/siteverify",
 )
 # Single-operator architecture: public registration is concealed (404) unless
 # the operator explicitly opts in. Even opted in, this build has no account

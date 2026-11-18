@@ -1,552 +1,370 @@
-# 05 — ORACLE ALWAYS FREE DEPLOY GUIDE (engine + dashboard, ~30–45 min)
+# 05 — Oracle deployment guide
 
-**Read `docs/03_DEPLOYMENT.md` first** — it is the architecture runbook (why
-a VM, why persistent state). This doc is the concrete, do-this-next recipe
-for the Oracle free tier, including the two Oracle-specific gotchas that
-bite everyone (iptables + security list).
+This runbook deploys the API/dashboard, live engine and internal SearXNG
+sidecar on one Ubuntu ARM VM. Read [deployment architecture](03_DEPLOYMENT.md)
+and [security controls](10_SECURITY.md) first. Commands are for the operator;
+run them on the VM unless marked **laptop**.
 
-**Sizing (verified vs Oracle docs 2026-08-30):** create the VM as
-**VM.Standard.A1.Flex — 2 OCPUs, 12 GB RAM** (the Always Free allowance:
-1,500 OCPU-h + 9,000 GB-h/month ≈ 2 OCPU + 12 GB running 24/7). Do NOT
-create 4 OCPU / 24 GB on a free tenancy — oversized A1 instances are
-disabled, then **deleted 30 days after the trial ends**. 200 GB block
-storage and 10 TB/month egress are free; 47 GB minimum boot volume.
+The repository's trading switch is already armed. Starting `live` with its
+wallet configured starts real execution. Keep exactly one engine per wallet,
+including laptops, old VMs and maintenance containers. This guide does not
+change the human-controlled arming or confirmation flags.
 
-> ⚠️ **Before the new instance goes live: `./stop.sh` on the laptop.** Two
-> armed cycles = two books racing to place the same orders from the same
-> wallet. Exactly ONE live cycle may run anywhere.
+## 1. Provision the VM and restrict ingress
 
----
+Use Ubuntu 24.04 ARM64 on `VM.Standard.A1.Flex`, initially **2 OCPUs / 12 GB**.
+Oracle's [Always Free documentation](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm)
+currently lists 1,500 OCPU-hours and 9,000 GB-hours monthly, a 47 GB minimum
+boot disk and 200 GB total free block storage. Verify the tenancy's remaining
+allowance and Console cost estimate before provisioning; other instances and
+volumes count too. Free capacity is regional and can be unavailable.
 
-## Step 1 — Account + VM (Oracle Console)
+In the instance's VCN security list or attached NSG:
 
-1. Sign up at oracle.com/cloud/free (needs phone + credit card; card is
-   only verified, not charged on the free tier). **Pick the home region
-   carefully — Always Free resources can ONLY live there and it cannot be
-   changed later.**
-2. Compute → Instances → Create Instance:
-   - **Name:** trading-bot
-   - Image: **Canonical Ubuntu 24.04** (aarch64 — default for Ampere)
-   - Shape: **VM.Standard.A1.Flex**, **2 OCPU**, **12 GB**
-   - Boot volume: default ~47 GB is fine
-   - SSH key: generate or paste your public key (you need the private key
-     to log in)
-   - Create. Note the **Public IP** when it finishes.
-   - If you hit *"out of host capacity"*: retry later / try another AD —
-     free A1 capacity is contended in popular regions.
+- Permit TCP 22 from your administration IP/CIDR.
+- Permit TCP 80 and 443 for the HTTPS reverse proxy.
+- Keep TCP 8000, SearXNG 8080 and database ports closed externally.
+- Apply equivalent IPv6 policy if the VM has public IPv6.
 
-## Step 2 — SSH in + install Docker
+The VM firewall must allow the same intended traffic. Inspect the existing
+rules before changing them; keep the current SSH connection open and verify
+a second SSH connection before closing it. On Oracle Ubuntu images using
+iptables and `netfilter-persistent`, add the web rules before a rejecting
+INPUT rule and save them. Do not flush the ruleset or rely on a fixed rule
+number copied from another VM. Docker publishes the API on **127.0.0.1 only**;
+keep that binding even when using a host firewall.
+
+## 2. Install the supported host tools
 
 ```bash
-ssh -i <your-key> ubuntu@<PUBLIC_IP>
+ssh -i <ssh-private-key> ubuntu@<public-ip>
+sudo apt-get update
+sudo apt-get -y upgrade
+sudo apt-get install -y ca-certificates curl git python3 python3-cryptography
+```
 
-sudo apt-get update && sudo apt-get -y upgrade
-# Docker (arm64 builds come automatically)
-curl -fsSL https://get.docker.com | sudo sh
-# get.docker.com normally enables the daemon, but VERIFY: a disabled daemon
-# stays down after an Oracle maintenance reboot.
+Install Docker Engine and the Compose plugin using Docker's
+[Ubuntu apt repository procedure](https://docs.docker.com/engine/install/ubuntu/#install-using-the-apt-repository).
+Ubuntu 24.04 and ARM64 are supported. Use the signed package repository;
+the convenience installer is intended for testing/development.
+
+```bash
 sudo systemctl enable --now docker
-systemctl is-enabled docker              # must print: enabled
-sudo usermod -aG docker ubuntu && exit
-ssh -i <your-key> ubuntu@<PUBLIC_IP>   # re-login to pick up the docker group
-docker run --rm hello-world           # sanity check
+systemctl is-enabled docker
+docker compose version
 ```
 
-## Step 3 — Open the network (BOTH layers — the classic Oracle trap)
-
-Oracle VMs have TWO firewalls. Opening only one gets you timeouts.
-
-1. **Console side:** Networking → VCN → your VCN → Security Lists → Default
-   Security List → **Add Ingress Rules**:
-   - `0.0.0.0/0`, TCP **80** (HTTP — required for Caddy automatic HTTPS redirect and ACME challenges)
-   - `0.0.0.0/0`, TCP **443** (HTTPS — encrypted dashboard & API)
-   - (22 should already exist for SSH)
-   *(Note: Do NOT open port 8000 to 0.0.0.0/0. Port 8000 binds to loopback only and is reverse-proxied by Caddy/Nginx over TLS).*
-2. **VM side (Ubuntu images ship blocking iptables rules):**
+Use `sudo docker` until you deliberately grant your operator account Docker
+access. Membership in the `docker` group grants root-equivalent host access.
+If you add `ubuntu` to that group, reconnect before continuing. The commands
+below assume that account can run Docker.
 
 ```bash
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 80 -j ACCEPT
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 443 -j ACCEPT
-sudo netfilter-persistent save
+sudo usermod -aG docker ubuntu
+# Reconnect the SSH session to apply this deliberate privilege grant.
 ```
 
-> [!IMPORTANT]
-> **Reverse Proxy on Oracle VCN Subnets (10.x IPs) (§79 Phase F-3):**
-> Oracle Cloud VCNs default to `10.0.0.0/16`. To prevent IP spoofing from neighboring VMs on the VCN, `10.0.0.0/8` was removed from the default `TRUSTED_PROXY_CIDRS` (`127.0.0.1,172.16.0.0/12,::1/128`).
-> If your reverse proxy (e.g. Caddy, Traefik, or an Oracle Load Balancer) connects to the bot container from an Oracle VCN private IP (e.g. `10.0.x.x`), you must explicitly configure:
-> `TRUSTED_PROXY_CIDRS=127.0.0.1,172.16.0.0/12,::1/128,10.0.0.0/16` (or `FORWARDED_ALLOW_IPS`) in your `.env`.
-
-## Step 4 — Get the code + secrets onto the VM
+## 3. Install a reviewed release and prepare secrets
 
 ```bash
-# On the VM:
-mkdir -p /opt/trading-bot && cd /opt/trading-bot
-
-# EITHER clone (if the repo is reachable from the VM):
-git clone <your-repo-url> app && cd app
-
-# OR from the laptop (excludes venv/logs; .env handled next step):
-#   rsync -av --exclude .venv --exclude logs --exclude .run \
-#     --exclude 'trading_bot.db' ./ ubuntu@<PUBLIC_IP>:/opt/trading-bot/app/
-mkdir -p /opt/trading-bot/app/secrets
+sudo install -d -m 0750 -o ubuntu -g ubuntu /opt/trading-bot
+cd /opt/trading-bot
+git clone <repository-url> app
+cd app
+git checkout --detach <reviewed-commit-or-tag>
+git rev-parse HEAD
+umask 077
+cp .env.example .env
+mkdir -m 0700 secrets
 ```
 
-Secrets (NEVER commit these; they live only on the VM):
+Deploy a commit containing the reviewed fixes, after its CI passes. Record
+its commit and the last working image ID outside the container. If cloning
+is unavailable, transfer a **tracked-source archive** (`git archive`) of that
+release. Do not recursively copy a working directory containing wallet
+files, local `.env`, databases, state, logs or browser caches.
+
+Prepare `.env` privately on the VM. Copy the wallet over SSH into the
+`secrets` directory; do not paste it into a terminal command or repository.
+Then set its container ownership:
 
 ```bash
-# From the laptop — the .env and the wallet keypair:
-scp .env ubuntu@<PUBLIC_IP>:/opt/trading-bot/app/.env
-scp /home/hixam/.config/solana/mainnet-wallet.json \
-    ubuntu@<PUBLIC_IP>:/opt/trading-bot/app/secrets/wallet_keypair.json
-
-# On the VM — the container runs as uid 10001, and a bind mount preserves
-# the HOST file's owner/mode. wallet.py rejects group/world bits, and the
-# container user must be able to read the file at all:
-sudo chown 10001:10001 /opt/trading-bot/app/secrets/wallet_keypair.json
-sudo chmod 600 /opt/trading-bot/app/secrets/wallet_keypair.json
-sudo chown 10001 /opt/trading-bot/app/secrets
-sudo chmod 700 /opt/trading-bot/app/secrets
-sudo chmod 600 /opt/trading-bot/app/.env
+sudo chown 10001:10001 secrets/wallet_keypair.json
+sudo chmod 0600 secrets/wallet_keypair.json
+sudo chown ubuntu:ubuntu secrets
+sudo chmod 0700 secrets
+chmod 0600 .env
 ```
 
-## Step 5 — Edit the VM's `.env` for server mode
+The image runs as uid **10001**. File ownership survives bind mounting, so
+host-readable `ubuntu:ubuntu`/0600 wallet files are unreadable inside `live`.
+Keep the host directory owned by the operator so host preflight can inspect
+file metadata; Docker mounts the file itself into the container. Preflight
+does not print or read the wallet contents.
 
-Four lines differ from your laptop's `.env` (edit on the VM):
+## 4. Configure the deployed environment
+
+Use plain `KEY=value` lines and fill the values in a private editor. Do not
+put secrets in `VITE_*` variables: those become public JavaScript.
 
 ```ini
-FRONTEND_ORIGIN=https://bot.example.com          # after Step 7; before that use http://127.0.0.1:8000 via SSH tunnel
-WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair  # the container mount, not the host path
-WALLET_KEYPAIR_HOST_PATH=/opt/trading-bot/app/secrets/wallet_keypair.json  # host side of the bind mount (default matches this)
-FOMO_PRIVY_STATE_FILE=/app/data/.fomo_privy.json # rotated Privy token must survive
-DB_PATH=/app/data/trading_bot.db                 # already forced by compose, keep anyway
+DATA_BACKEND=live
+FRONTEND_ORIGIN=https://bot.example.com
+DEBUG=false
+FORCE_HTTPS=true
+RATE_LIMIT_ENABLED=true
+LIVE_BOOK_PUBLIC=false
+WALLET_KEYPAIR_PATH=/run/secrets/wallet_keypair
+WALLET_KEYPAIR_HOST_PATH=/opt/trading-bot/app/secrets/wallet_keypair.json
+WALLET_KEYPAIR_JSON=
+EXPECTED_WALLET_ADDRESS=<expected-public-wallet-address>
+SEARXNG_URL=http://searxng:8080
 ```
 
-`FOMO_PRIVY_STATE_FILE` matters: Privy **rotates** the refresh token and the
-bot persists the fresh one; on the laptop it wrote to the repo root — in a
-container that filesystem dies on every rebuild. Point it at the
-`engine_data` volume (`/app/data`) so the auth chain survives rebuilds.
+Generate **independent** random `ADMIN_TOKEN`, `SESSION_SECRET` and
+`SEARXNG_SECRET` values (`openssl rand -hex 32` generates one). Operator and
+session credentials require at least 32 characters and 12 distinct characters;
+the session secret must differ from the operator token. Generate a separate
+Fernet-format `BACKUP_ENCRYPTION_KEY`, store a recovery copy off the VM, and
+keep it distinct from `SECRET_STORE_KEY`:
 
-## Step 5.5 — Preflight (do this before the first `up`)
+```bash
+python3 -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'
+```
+
+Configure the selected main LLM key, two RPC URLs on different provider
+hosts, and an alert channel. Never use a predictable public ntfy topic.
+Different RPC hostnames are a local sanity check; independently verify that
+they actually represent separate providers. Review configured spend caps with
+`scripts/spend_projection.py`; external services and API quotas are separate
+from the VM allowance.
+
+Optional CAPTCHA: `CAPTCHA_ENABLED=true` supports `internal`, `turnstile` or
+`hcaptcha`. External widgets require public `CAPTCHA_SITE_KEY` and private
+`CAPTCHA_SECRET_KEY`; use that provider's verification URL (`https://api.hcaptcha.com/siteverify`
+for hCaptcha). Register the real dashboard hostname with the provider. The
+login form fetches its public configuration and submits the solved token;
+server verification remains mandatory. See the
+[Turnstile](https://developers.cloudflare.com/turnstile/get-started/client-side-rendering/)
+and [hCaptcha](https://docs.hcaptcha.com/) setup instructions.
+
+Compose selects persistent runtime paths explicitly:
+
+| Data | Deployed location | Storage/access |
+| --- | --- | --- |
+| Execution/commit/kill/break state | `/app/backend/live_execution/state` | `engine_state`; API read-only |
+| Rotated Privy sidecar and encryption key | `state/.fomo_privy.json`, `state/.secret_store.key` | signer-only writes; excluded from normal backups |
+| Blocklist loss memory | `state/blocklist_state.json` | signer-only writes |
+| SQLite book | `/app/data/trading_bot.db` | `engine_data` |
+| API session revocations/knowledge/spend | `/app/data` | `engine_data` |
+| Logs | `/app/logs` | `engine_logs` |
+| Encrypted backup archives | `/app/backups` | `engine_backups`; live service only |
+
+Do not move the Privy sidecar to `/app/data`: Compose deliberately keeps it
+with the signer state. Keep separate secure recovery arrangements for the
+wallet, `.env` and secret-store credentials; the normal state archive excludes
+them. For Supabase, apply **all migrations 001–007** in order before enabling
+`USE_SUPABASE_DB=1`, verify the resulting role grants, and arrange database
+backups separately. Prefer an independently obtained certificate fingerprint
+if using certificate pinning; a changed pin needs operator review.
+
+## 5. Preflight, build and start the dashboard first
 
 ```bash
 cd /opt/trading-bot/app
-sudo apt-get install -y python3-cryptography   # once, if not already present
 python3 scripts/preflight_deploy.py
+# Continue only after every FAIL is fixed and every WARN is understood.
+docker compose build
+# The committed engine is armed: intentionally leave live stopped here.
+docker compose up -d searxng api
+docker compose ps
+curl --fail http://127.0.0.1:8000/api/health
 ```
 
-The preflight is read-only, opens **no network sockets**, and never prints a
-secret. It prints a PASS/WARN/FAIL table and exits **1** if any check fails:
+Run full preflight **on the host**: it needs `.env`, Compose rendering and
+host wallet metadata. It checks rendered service environments, not an assumed
+shell override. It does not establish cloud ingress, provider availability,
+funding, applied database grants or named-volume state validity. `--skip-compose`
+is a debugging option and is not a deployment gate. Do not print unrestricted
+`docker compose config` output: the rendered environment contains secrets.
 
-- `DATA_BACKEND=live`, the selected main-LLM provider key is present.
-- `ADMIN_TOKEN` >= 32 chars, `SEARXNG_SECRET` non-empty/non-default.
-- `BACKUP_ENCRYPTION_KEY` is a valid Fernet key and differs from
-  `SECRET_STORE_KEY`.
-- `FRONTEND_ORIGIN` is `https://` for public hosts (WARN while loopback-only).
-- `SOLANA_RPC_URL_2` exists and uses a different host from `SOLANA_RPC_URL`.
-- An alert channel is configured (`send_test_alert.py` uses the same one).
-- `.env` selects exactly one wallet secret channel (`WALLET_KEYPAIR_PATH` or
-  `WALLET_KEYPAIR_JSON`); the JSON channel does not require a keypair file.
-- `WALLET_KEYPAIR_PATH` must be exactly `/run/secrets/wallet_keypair` (the
-  in-container path; the host side belongs in `WALLET_KEYPAIR_HOST_PATH`),
-  and the JSON channel WARNs if the compose bind source is missing or not a
-  regular file. Pre-create that mount source with
-  `sudo install -m 600 -o 10001 /dev/null <path>` or set
-  `WALLET_KEYPAIR_HOST_PATH=/dev/null`; `/dev/null` itself is accepted as the
-  JSON-channel placeholder, while a directory at that path means Docker
-  created the missing mount source — remove it and install the placeholder
-  with `sudo rmdir <path> && sudo install -m 600 -o 10001 /dev/null <path>`.
-- For the file channel, the host bind source exists, is a regular file, mode
-  0600/0400, owner uid **10001** — a FAIL prints the exact `chown`/`chmod`
-  commands. Readability is tested only when the preflight itself runs as uid
-  **10001** or root (another local user cannot see the container's access).
-- `docker compose config` parses and the `api` service has no non-empty
-  `WALLET_*` value.
-- `.env` is not group/world readable (WARN).
+Build natively on ARM. If the optional Chromium layer fails, use
+`SKIP_BROWSER=1 docker compose build` and record that browser fallback is
+unavailable. Do not change the pinned Python base to another ABI as an ad-hoc
+wheel workaround. CI builds ARM64 with the browser layer skipped and checks
+actual read-only-root writes; the full browser layer still needs native VM
+validation if enabled.
 
-**Do not run `docker compose up -d --build` while any line says FAIL.** WARNs
-are operator decisions; read them before arming.
-
-> In-image variant (after the image exists):
-> `docker compose run --rm --entrypoint python live /app/scripts/preflight_deploy.py`.
-> Run the host variant for the wallet ownership/mode check — the container
-> sees the bind target (`/run/secrets/wallet_keypair`), not the host file.
-
-## Step 6 — Run the engine
+Before a public hostname is ready, access the dashboard from the **laptop**
+with an SSH tunnel and a temporary loopback `FRONTEND_ORIGIN`:
 
 ```bash
-cd /opt/trading-bot/app
-docker compose up -d --build
+ssh -N -L 8000:127.0.0.1:8000 -i <ssh-private-key> ubuntu@<public-ip>
 ```
 
-- The image builds ON the VM (ARM). Expect 5–10 min the first time.
-- `docker-compose.yml` splits the system into two isolated services from the same image (§77 B2):
-  - **`api`**: Runs the dashboard and REST API. Mounts state `:ro` and has **zero wallet secrets**. The dashboard process can run on an unprivileged host with zero key material.
-  - **`live`**: Autonomous trade execution engine (`run_live_cycle.py`). Mounts state `rw` and holds the signing key. No ports exposed.
-- The keypair is bind-mounted read-only into the `live` container by default
-  (parameterised by `WALLET_KEYPAIR_HOST_PATH`, default
-  `./secrets/wallet_keypair.json`, target `/run/secrets/wallet_keypair`).
-  The image runs as **uid 10001**; a bind mount keeps the host file's uid and
-  mode. `wallet.py` refuses group/world bits, so the host file must be owned
-  by 10001 and mode 0600 (Step 4). The entrypoint tests `-f && -r` first and
-  exits **78** with a `FATAL: wallet keypair not readable by uid 10001`
-  message instead of claiming the engine is armed.
-- The entrypoint starts the API under `ROLE=api`, and the live cycle under `ROLE=live` because the repo
-  is ARMED and the wallet is configured — same double-gate as `start.sh`.
+Open `http://127.0.0.1:8000` locally through that tunnel. Operator login sends
+the token and establishes a session cookie; public plaintext HTTP exposes
+those credentials. Use HTTPS before public operator access.
 
-**Verify:**
+## 6. Configure HTTPS and verify access control
 
-```bash
-docker compose ps                    # api and live healthy; searxng running
-docker compose logs -f live --tail=50     # watch the live cycle: ARMED banner, cycle lines
-curl http://127.0.0.1:8000/api/health      # returns {"status":"ok"}
+Point the DNS record at the VM. Install Caddy from an appropriate signed
+package source and configure `/etc/caddy/Caddyfile`:
+
+```caddyfile
+bot.example.com {
+    @blocked path */.* *.map
+    respond @blocked 404
+    reverse_proxy 127.0.0.1:8000
+}
 ```
 
-`searxng` has no healthcheck (it is a fail-soft search sidecar, not on the
-order path); `docker compose ps` shows it as running. `api` and `live` are the
-health-gated services.
-
-> If pip fails compiling `uvloop`/`httptools` (cp314 aarch64 wheels can
-> lag), edit the Dockerfile base `FROM python:3.14-slim` →
-> `FROM python:3.13-slim` and rebuild. Nothing in the code needs 3.14.
-
-## Step 7 — HTTPS with Caddy (recommended before long-running real money)
-
-Plain HTTP leaks nothing secret (all keys are server-side, the dashboard is
-read-only, the admin token rides only in request headers) — but the admin
-endpoints and any future auth should go over TLS. Free + automatic:
-
 ```bash
-sudo apt-get install -y caddy
-# /etc/caddy/Caddyfile:
-#   bot.example.com {
-#       # Block dotfiles (.git, .env) and sourcemaps (.map) at the edge
-#       @blocked {
-#           path */.*
-#           path *.map
-#       }
-#       respond @blocked 404
-#
-#       reverse_proxy 127.0.0.1:8000
-#   }
-#
-# WARNING: Never configure the proxy to add X-Admin-Token. Operators sign in via POST /api/auth/login (HttpOnly cookie).
-#
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl enable --now caddy
 sudo systemctl reload caddy
 ```
 
-Point a DNS A record at the VM first. Set `FRONTEND_ORIGIN=https://bot.example.com` in `.env`, then `docker compose up -d` again.
-
-**Network port lock-down (default):**
-1. By default, keep ONLY ports 80 and 443 open in the Oracle Security List and iptables.
-   - **Port 80 (HTTP)**: Caddy automatically receives HTTP requests on port 80
-     and issues a 308 permanent redirect to HTTPS on port 443.
-   - **Port 443 (HTTPS)**: Encrypted traffic with TLS 1.3 / 1.2 and automated Let's Encrypt certificates.
-2. In `docker-compose.yml`, the port mapping binds only to loopback by default:
-   `- "127.0.0.1:${API_PORT:-8000}:8000"`
-   This prevents external clients from bypassing TLS by connecting directly to port 8000.
-
-**Nginx alternative (if using Nginx instead of Caddy):**
-```nginx
-# /etc/nginx/sites-available/bot.conf
-server {
-    listen 80;
-    server_name bot.example.com;
-    return 308 https://$host$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name bot.example.com;
-
-    ssl_certificate /etc/letsencrypt/live/bot.example.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/bot.example.com/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5;
-
-    # Deny access to .git, .env, and all hidden files/directories
-    location ~ /\. {
-        deny all;
-        return 404;
-    }
-
-    # Deny access to source maps in production
-    location ~* \.map$ {
-        deny all;
-        return 404;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Forwarded-For $remote_addr;
-        proxy_set_header X-Forwarded-Proto https;
-    }
-}
-```
-
-Do not add a `VITE_ADMIN_TOKEN` value; the dashboard is public JS and must not
-contain the operator secret. Operators sign in via the dashboard login form
-(`POST /api/auth/login`), which issues a secure HttpOnly session cookie.
-
-**§55 — what Caddy changes about authorization.** Once traffic arrives
-through the reverse proxy, every visitor's socket address is loopback
-(`127.0.0.1`), so "loopback-only" no longer means "just me". The engine
-handles this automatically: any request carrying a forwarding header
-(`X-Forwarded-*` / `Forwarded`) is treated as PROXIED, and the real-wallet
-surfaces — `/api/live/*`, `/api/holdings`, `/api/stats` — then require logging in
-via the dashboard (HttpOnly cookie) or sending the `X-Admin-Token` header (fail-closed
-if `ADMIN_TOKEN` is unset or shorter than 32 characters; the panels render empty until authenticated).
-The public research surface (feed/proof/disclosure) is unaffected. To deliberately
-serve the live book publicly instead, set `LIVE_BOOK_PUBLIC=true` in `.env`.
-
-## Step 8 — Where the FRONTEND lives
-
-**You have two options; the default needs zero extra work:**
-
-1. **Single-origin (recommended, default):** the Docker build already
-   compiles the React dashboard and bakes it into the image; Caddy serves it
-   at `https://bot.example.com/` (same origin, no CORS, WS just works).
-   Before the TLS proxy exists, reach the loopback-bound API through an SSH
-   tunnel: `ssh -L 8000:127.0.0.1:8000 ubuntu@<PUBLIC_IP>` then open
-   `http://127.0.0.1:8000/`. **Nothing to deploy separately.**
-2. **Split deploy (optional):** Vercel Hobby (free) — import the GitHub
-   repo, Root Directory = `frontend`, env `VITE_API_BASE_URL=https://<host>`
-   (the engine URL), build command `npm run build`, output `dist`. Then set
-   the engine's `FRONTEND_ORIGIN=https://<vercel-domain>` and rebuild.
-   Notes: Vercel Hobby is nominally non-commercial — Cloudflare Pages is
-   the clause-free alternative (same settings). WS always connects straight
-   to the engine; Vercel never proxies it. The login session cookie is
-   issued `SameSite=None; Secure` automatically when the request Origin is
-   a different HTTPS host, so credentialed reads work in split mode; the
-   default same-origin deployment stays `SameSite=Lax`.
-
-Since the bot is a single-operator research tool, option 1 is the sane
-default: one URL, one service, zero moving parts. Use option 2 only if you
-want a vanity domain decoupled from the engine.
-
-## Step 9 — Day-2: stop the local instance, backups, updates
+Set `FRONTEND_ORIGIN=https://bot.example.com` and recreate **only** the API:
 
 ```bash
-# On the LAPTOP — one armed cycle only, ever.
-# stop.sh waits up to 150s for an in-flight order/ledger write before SIGKILL.
-./stop.sh
-
-# On the VM — encrypted state + DB backup via the in-image script.
-# It writes into the engine_backups volume (mounted at /app/backups) with
-# retention pruning and refuses to write an incomplete archive:
-docker compose exec live python /app/scripts/backup_state.py --backup-dir /app/backups
-
-# Whole-volume snapshot (compose project prefix included; list the four
-# volumes with `docker volume ls | grep engine_`):
-docker run --rm \
-  -v trading-bot_engine_state:/s1:ro \
-  -v trading-bot_engine_data:/s2:ro \
-  -v trading-bot_engine_logs:/s3:ro \
-  -v trading-bot_engine_backups:/s4:ro \
-  -v /opt/trading-bot:/out alpine \
-  tar czf /out/state-backup-$(date +%F).tgz /s1 /s2 /s3 /s4
-
-# Updates:
-cd /opt/trading-bot/app && git pull
-docker compose up -d --build
+python3 scripts/preflight_deploy.py
+docker compose up -d api
 ```
 
-Kill switch / operator break still work from the VM shell (files under the
-`engine_state` volume). Oracle's idle-reclaim can never trigger — the bot
-produces CPU + network activity every 15–60 seconds, permanently.
+Never configure the proxy to insert `X-Admin-Token`. Preserve Caddy's normal
+forwarded-header handling. Application `TRUSTED_PROXY_CIDRS` and Uvicorn
+`FORWARDED_ALLOW_IPS` are separate settings; if topology requires overrides,
+configure both for the actual proxy peers. Do not trust an entire VCN or all
+addresses merely because the VM is on Oracle. The default host-Caddy/Compose
+loopback arrangement needs no added `10.0.0.0/8` trust.
 
-## Step 10 — Operator drills and the first-24h watch list
+From your browser, verify HTTPS, successful login, logout and rejection of
+private wallet/book views after logout. Public research/proof/feed endpoints
+are intentionally public. Confirm that 8000 and 8080 are unreachable from
+outside the host. These are operator deployment checks; the source audit does
+not claim they have already happened.
 
-Run these once on the VM **before** funding more than the micro-bootstrap
-amount. They verify the behaviours the container/compose changes rely on;
-none of them needs a code change.
+## 7. Handoff existing state before starting the signer
 
-### 10.1 Reboot drill (A3)
+On the **laptop/old host**, stop the old engine and wait for its graceful
+shutdown. Create an encrypted backup of its current state/book using
+[backup and restore](07_BACKUP_RESTORE.md). A new named volume does not
+contain the existing positions, pending trades, loss baselines or kill switch.
+Do not start a funded wallet against a fresh book while those records exist.
+
+For a migration, restore the encrypted archive into the new persistent
+volumes using that runbook with the engine stopped. Keep the restore-induced
+kill switch latched until reconciliation is reviewed. Do not use `down -v`.
+Use the same Compose project/directory for later commands so a different
+project name does not silently select fresh volumes.
+
+With `live` still stopped, validate its actual mounted state:
 
 ```bash
-sudo systemctl enable docker        # get.docker.com normally does this
-systemctl is-enabled docker         # must print: enabled
-sudo reboot
+docker compose run --rm --no-deps --entrypoint python live \
+  /app/scripts/validate_state.py --state-dir /app/backend/live_execution/state
 ```
 
-Wait ~2 minutes, SSH back in, then:
+This explicitly replaces the entrypoint and starts no engine. Inspect pending
+buys and sells, verify the expected wallet and available reserves, and run the
+documented devnet drill with a **separate disposable wallet/configuration**
+before using the changed execution code with mainnet funds. The devnet drill
+sends devnet transactions; do not run it with the production signing setup.
+It does not test real Jupiter swap routes or establish mainnet liquidity.
+
+After those gates, and only when no other engine is running:
 
 ```bash
-cd /opt/trading-bot/app
-docker compose ps                   # api, live, searxng all healthy
-docker compose logs live --tail=30  # live cycle resumed (ARMED banner/cycle lines)
+docker compose up -d live
+docker compose ps
+docker compose logs --tail=100 live
 ```
 
-`live` is `restart: unless-stopped` (§87 A3), so it returns after a daemon
-restart. `init: true` + a 150s `stop_grace_period` give the Python loop time to
-finish an in-flight order (§87 B). If `live` is missing or unhealthy after
-2 minutes, do **not** re-arm: inspect `docker compose logs live` and the
-heartbeat first.
+Expect `api` and `live` healthy and `searxng` running (the sidecar has no
+healthcheck). The first valid live heartbeat must appear; it must remain
+less than 300 seconds old. A healthy API alone does not prove live execution
+or provider connectivity. If a restore left the kill switch latched, review
+the book/chain discrepancy report before explicitly resuming.
 
-### 10.2 Graceful-stop drill (B)
+## 8. Prove alerts and backups, then supervise
+
+These commands intentionally contact the configured notification service:
 
 ```bash
-time docker compose stop live       # must finish in < 150 s
-docker compose logs live --tail=40  # last line: "graceful shutdown complete"
+docker compose exec -T live python /app/scripts/send_test_alert.py
+# Observe the test notification at the intended recipient.
+docker compose exec -T live python /app/scripts/backup_state.py --backup-dir /app/backups
+umask 077
+mkdir -p /opt/trading-bot/encrypted-backups
+docker compose cp live:/app/backups/. /opt/trading-bot/encrypted-backups/
+```
+
+Only encrypted archives belong in normal offsite replication. Do not make an
+unencrypted tar of the state/data volumes: they include runtime credentials
+and private data. Perform a throwaway-directory restore drill with the saved
+backup key and compare restored book/state before trusting scheduled backups.
+The default backup wrapper is `deploy/backup.sh`; keep its cron output private
+and rotated. Supabase requires its own database recovery procedure.
+
+During initial supervised operation, watch heartbeat age, pending reservations,
+provider/auth failures, exit failures, refusal counts, available SOL/USDC,
+spend caps and backup outcomes. An unresolved signature retains its reservation;
+never mark it failed simply to release capacity. Use `resolve_pending_buy.py`
+or `resolve_pending_sell.py` only with the engine stopped and according to
+[operations](OPERATIONS.md). Inspect help before using an operator override.
+
+Test graceful stop before unattended operation:
+
+```bash
+time docker compose stop live
+docker compose logs --tail=50 live
+# Require "graceful shutdown complete"; investigate a forced 150-second stop.
 docker compose start live
 ```
 
-The runner catches SIGTERM/SIGINT, finishes the current cycle (including a
-sign/send/ledger write), takes `_EXIT_LOCK` so the fast scanner cannot be
-cancelled mid-sell, then closes the provider/thinker. A stop that reaches
-150 s and prints no `graceful shutdown complete` means the process was
-SIGKILLed — treat that as an incident and inspect the last cycle lines.
-A stop that arrives while the cycle is sizing also skips any **new** entry
-and logs `entry skipped: shutting down`; exits and management still run, and
-an order already sent is never cancelled. The local `./stop.sh` gives the
-same 150s window and exits non-zero (with an incident warning) if it has to
-SIGKILL a process.
+Test one supervised VM reboot and confirm Docker and the intentionally running
+services return. Oracle may reclaim idle Always Free instances according to
+its documented utilization thresholds; periodic network traffic is no
+availability guarantee. Keep encrypted offsite backups and monitor the VM.
 
-### 10.3 Rollback to the last good tag
+## 9. Upgrade and roll back without losing authority
+
+Prepare a reviewed target commit and retain the current image before updating.
+Do not `git pull` an unreviewed moving branch into an armed running deployment.
 
 ```bash
 cd /opt/trading-bot/app
+docker compose stop live
+docker compose logs --tail=50 live
+# If graceful shutdown did not finish, investigate pending signatures first.
+docker compose run --rm --no-deps --entrypoint python live \
+  /app/scripts/backup_state.py --backup-dir /app/backups
+docker image tag trading-bot:latest trading-bot:previous
 git fetch --tags
-git tag --sort=-creatordate | head
-git checkout <last-good-tag>
-docker compose up -d --build
+git checkout --detach <reviewed-target-commit-or-tag>
+python3 scripts/preflight_deploy.py
+docker compose build
+docker compose run --rm --no-deps --entrypoint python live \
+  /app/scripts/validate_state.py --state-dir /app/backend/live_execution/state
+docker compose up -d searxng api
+# Verify dashboard/auth and review state compatibility before starting live.
+docker compose up -d live
 docker compose ps
 ```
 
-Keep the VM's `.env` and the `secrets/` directory untouched. The state volumes
-survive the image rebuild; if the rollback crosses a state-schema change,
-restore the matching backup (docs/07_BACKUP_RESTORE.md) instead of guessing.
+For rollback, stop `live`, preserve the current state and encrypted backup,
+return the source to the last reviewed compatible release, and restore its
+retained image tag to `trading-bot:latest`. Start with `docker compose up -d --no-build`.
+If schemas changed, follow the backup/restore procedure rather than letting
+older code reinterpret newer state. State volumes survive container recreation;
+never remove them as a troubleshooting shortcut.
 
-### 10.4 Kill-switch manual trip / clear
+## Deployment gate
 
-```bash
-# Trip (blocks every order path, including exits):
-docker compose exec -w /app/backend live python -m live_execution.scripts.confirm_trade \
-  kill "manual drill $(date -u +%FT%TZ)"
-
-# Confirm it is latched:
-docker compose exec -w /app/backend live python -m live_execution.scripts.confirm_trade list
-
-# Clear ONLY after checking the book and chain reconciliation:
-docker compose exec -w /app/backend live python -m live_execution.scripts.confirm_trade resume
-```
-
-A tripped switch is deliberately sticky: it survives restarts and must be
-cleared by a human (`resume`). `LIVE_TRADING_ENABLED` is still the outer gate.
-
-### 10.5 First-24h watch list
-
-| Signal | Where to look | What it means / action |
-|---|---|---|
-| Heartbeat age | `docker compose ps` (live healthy) and `docker compose exec live python -c "import os,time; p='/app/backend/live_execution/state/heartbeat.txt'; print(time.time()-os.path.getmtime(p))"` | Must stay < 300 s. A stale heartbeat raises `HEARTBEAT_STALE`; a hung cycle is surfaced this way, never by cancelling an order. |
-| Low USDC / low SOL | Alert channel; `LOW_USDC`, `LOW_SOL` | USDC below the minimum ticket floor or SOL below 2× `MIN_SOL_RESERVE` (default 0.01 SOL). Fund or stop; do not raise risk limits. |
-| No fills | Alert channel / `ALERT_NO_FILLS_HOURS` | After 6 h with ≥10 candidates and no fill, the bot alerts. Check whether the gate/model is refusing, not whether to loosen rules. |
-| Wallet drop | Alert channel; `WALLET_DROP` | Unexplained outflow above `$5` (alert-only unless the operator enabled the kill-switch option). Reconcile before resuming. |
-| Pending buys | `docker compose logs live \| grep -E "pending buy\|LATE BUY ADOPTED"` | A pending row is counted against caps/slots and is never priced/exited. Confirmed late land → `LATE BUY ADOPTED`; expiry needs a provably invalid blockhash, **every** RPC endpoint still reporting the signature unknown, and an age ≥ 90 s; unknown stays pending and alerts after 5 min. Resolve manually only with the engine stopped (§10.6). |
-| Unexplained holdings | Alert channel; `UNJOURNALED_HOLDING` | On-chain tokens with no ledger row and no pending buy. Never auto-added; inspect and repair manually. |
-| Exit failures | `docker compose logs live \| grep -E "backoff\|EXIT_UNRESOLVED\|risk-off exit"` | Per-mint retry backoff is 15/30/60/120/300 s (risk-off capped at 60 s); repeated failures are expected during a collapse, not a reason to disable the stop. Risk-off exits may accept up to 15% price impact by design (`EXIT_MAX_PRICE_IMPACT_PCT`); entries and profit trims stay at 2.5%. |
-| Backup + restore | `docker compose logs live \| grep backup`; docs/07_BACKUP_RESTORE.md drill | Run one manual backup and one throwaway-directory restore before trusting cron. |
-
-### 10.6 Manual pending-buy resolution
-
-The cycle resolver handles pending buys automatically. If an operator has
-conclusive chain evidence and the engine is stopped (never edit the ledger
-while the live cycle is running — there is no cross-process ledger lock):
-
-```bash
-# 1. Stop the engine so nothing else rewrites the ledger.
-docker compose stop live
-
-# 2. List the unresolved keys (read-only).
-docker compose run --rm --entrypoint python live \
-  -c "from live_execution.models import ExecutionLedger; from live_execution import config; [print(r.idempotency_key, r.mint, r.signature, r.ts) for r in ExecutionLedger(config.STATE_DIR / 'executions.json').pending_buys()]"
-
-# 3a. Expire: the transaction provably cannot land. Releases caps/slots.
-docker compose run --rm --entrypoint python live \
-  /app/scripts/resolve_pending_buy.py '<key>' --expire
-
-# 3a-alt. ONLY when the blockhash/age reads are unavailable but at least
-# two RPCs still answer: --force-expire skips ONLY those two gates. Every
-# endpoint must still answer "not found" (audit line records forced=true).
-# With RPC fully down there is NO unproven expiry: restore RPC, or open the
-# signature in a block explorer and use --adopt-from-sig if it landed.
-# Leaving the row pending is safe (caps stay held); an unproven expiry is not.
-docker compose run --rm --entrypoint python live \
-  /app/scripts/resolve_pending_buy.py '<key>' --force-expire
-
-# 3b. Adopt: the fill landed; SIG may be omitted to use the stored one.
-docker compose run --rm --entrypoint python live \
-  /app/scripts/resolve_pending_buy.py '<key>' --adopt-from-sig '<signature>' --yes
-
-# 4. Resume only after the tool reports success.
-docker compose start live
-```
-
-The tool prints the row and requires typing `expire`/`adopt`; `--yes` is
-mandatory when stdin is not a TTY. `--expire` re-verifies the chain before
-changing anything: the stored blockhash must be provably invalid, **every**
-endpoint must report the signature absent, and the row must be at least
-`PENDING_EXPIRY_MIN_AGE_SECONDS` (90 s) old. A still-valid or unknown
-blockhash, an RPC error, or a young row is refused with exit 1. A signature
-found on any endpoint refuses with `the transaction landed (status ...): use
---adopt-from-sig`. `--force-expire` is for "my blockhash/age reads are
-unavailable but at least two RPCs still answer": it skips **only** those two
-gates — every endpoint must still answer "not found", and one unreachable
-endpoint refuses because absence is not proven. With RPC fully down there is
-**no** unproven expiry: restore RPC, or open the signature in a block explorer
-and use `--adopt-from-sig` if it landed. Leaving the row pending is safe (caps
-stay held); an unproven expiry is not. Forced expiries are audited with
-`"forced": true` plus `endpoint_verdicts`. Adoption reads the
-**actual** token/USDC deltas from the confirmed transaction and refuses to
-invent a cost basis when they are unreadable. Every attempt appends one JSON
-line to `/app/backend/live_execution/state/resolve_pending_buy_audit.log` (or
-the configured `--audit-log`). A nonzero exit means nothing changed.
-
-## First 48 hours — supervised burn-in
-
-The engine is armed from the first `up`, so treat the first two days as a
-supervised burn-in: every anomaly is handled by **stopping and inspecting**,
-never by widening a risk limit or clearing a breaker.
-
-- Fund the wallet with only what you accept losing. Do not top it up to "give
-  the strategy room" during the burn-in.
-- Keep `docker compose logs -f live` open and confirm the **first heartbeat**
-  before walking away.
-- Run `send_test_alert.py` and confirm the alert reaches the phone, not just
-  the command's exit code.
-- Do not raise any hardcoded cap until 48 h pass with a clean reconcile.
-
-| Window | Check | Pass condition |
-|---|---|---|
-| 0–2 h | `docker compose ps` + `docker compose logs live --tail=100` | api/live healthy; ARMED banner and cycle lines; no traceback |
-| 0–2 h | `send_test_alert.py` | one test alert arrives on the configured channel |
-| 2–24 h | `docker compose logs live --tail=300 \| grep -E "PENDING BUY\|LATE BUY\|ERROR\|Traceback"` | no unexplained pending rows; any pending row has a signature + blockhash and is handled per §10.6 |
-| 2–24 h | docs/07_BACKUP_RESTORE.md backup + throwaway restore | backup completes; the restored ledger reconciles with no `MISMATCH` |
-| 24–48 h | one operator-approved real buy + sell on scratch state | fill lands, ledger row is confirmed, exit closes, commit is `bound` |
-| 48 h | repeat the reboot and graceful-stop drills (§10.1–10.2) | live returns; last line is `graceful shutdown complete`; no order cancelled mid-flight |
-
-Stop and inspect (do not "wait it out") if any of these appear:
-
-- three consecutive cycles with no heartbeat, or a heartbeat older than 300 s;
-- a kill-switch trip that was not operator-initiated;
-- `WALLET_DROP`, `UNJOURNALED_HOLDING`, or a pending buy older than 5 minutes;
-- a commit marked `failed` while the same signature is confirmed on-chain;
-- an exit retrying beyond the documented ladder.
-
-At the 48-hour mark, record the observed heartbeat, fill count, pending count,
-realized P&L, and any alerts in the operator log, then decide explicitly
-whether to keep the current caps. Do not raise caps during the burn-in.
-
-## Quick troubleshooting
-
-| Symptom | Fix |
-|---|---|
-| `docker compose build` fails on a pip wheel | switch Dockerfile base to `python:3.13-slim` (Step 6 note) |
-| `docker compose build` fails installing Chromium/patchright (ARM/QEMU) | rebuild without the browser: `SKIP_BROWSER=1 docker compose up -d --build`. The browser is only a fallback transport for the crowd feed (`backend/config.py` documents that the feed works 100% without a browser), so the bot is fully functional without it. |
-| Dashboard unreachable but VM pingable | you skipped ONE of the two firewalls — both the Security List (Console) AND iptables (Step 3) |
-| Live cycle "NOT started (no wallet)" | `WALLET_KEYPAIR_PATH` must be `/run/secrets/wallet_keypair` (in-container path) and the compose bind-mount must exist |
-| fomo token stops working after a rebuild | `FOMO_PRIVY_STATE_FILE` not pointed at `/app/data/...` (Step 5) |
-| Both laptop and VM trading | **stop the laptop one immediately** — exactly one armed cycle may run |
+Deployment readiness requires passing CI and host preflight, mounted-state
+validation, reviewed migration/one-engine handoff, HTTPS/access checks,
+provider/RPC verification, a separate devnet drill, observed alert delivery,
+an encrypted backup/restore drill, and supervised stop/reboot checks. The
+repository supplies these controls; their successful execution on your Oracle
+VM must be observed before unattended real-money operation.

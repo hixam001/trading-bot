@@ -53,7 +53,7 @@ and [README live-trading section](../README.md#live-trading-operator-armed).
 | Session | `SESSION_COOKIE_NAME=admin_session`, `SESSION_MAX_AGE_SECONDS=3600`, `SESSION_REVOCATION_FILE` | Cookie identity, absolute TTL and persisted logout revocations. |
 | Exposure/privacy | `LIVE_BOOK_PUBLIC=false`, `FRONTEND_ORIGIN` | Explicit public live-book opt-in; comma-separated allowed frontend origins. Holdings/stats still use their local/operator guard. |
 | HTTPS/debug | `FORCE_HTTPS`, `DEBUG=false`, `TRUSTED_PROXY_CIDRS` | TLS redirect/security headers, production error/docs behavior and real-client IP trust. Never trust arbitrary forwarding peers. |
-| Bot protection | `CAPTCHA_ENABLED`, `CAPTCHA_PROVIDER`, provider secret variables; `ALLOW_SIGNUP=false` | Server bot verification. Enabling signup does not implement registration; current browser login does not solve CAPTCHA. |
+| Bot protection | `CAPTCHA_ENABLED`, `CAPTCHA_PROVIDER`, public `CAPTCHA_SITE_KEY`, private `CAPTCHA_SECRET_KEY`; `ALLOW_SIGNUP=false` | Browser login supports internal PoW and configured Turnstile/hCaptcha widgets; the server verifies every solved token. Enabling signup does not implement registration. |
 | HTTP bounds | `MAX_REQUEST_BODY_BYTES=1048576`, `MAX_INGEST_CHARS=200000` | Default JSON-body byte cap and independent document character cap; ingestion body cap is derived as `MAX_INGEST_CHARS * 12 + 65536` bytes. |
 | Rate limiting | `RATE_LIMIT_ENABLED=true`; auth/paid/general per-minute caps 5/20/120 | Shared tier budgets per client IP in the API process. |
 | Retention | `FEED_PRUNE_KEEP`, `REGIME_PRUNE_KEEP` | Limits used by explicit pruning; do not imply automatic deletion of all telemetry. |

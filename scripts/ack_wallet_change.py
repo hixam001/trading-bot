@@ -26,6 +26,7 @@ if str(backend_dir) not in sys.path:
 
 from live_execution import config as live_config
 from live_execution.state_validation import validate_wallet_snapshot
+from live_execution.state_lock import state_lock
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 log = logging.getLogger("ack_wallet_change")
@@ -130,8 +131,9 @@ def main() -> int:
     # Atomic write via temporary file
     tmp_file = snap_file.with_suffix(".tmp")
     try:
-        tmp_file.write_text(json.dumps(payload, indent=2))
-        tmp_file.replace(snap_file)
+        with state_lock(snap_file):
+            tmp_file.write_text(json.dumps(payload, indent=2))
+            tmp_file.replace(snap_file)
         log.info("Wallet snapshot successfully acknowledged and updated at %s", snap_file)
         log.info("Baseline reset to: USDC=%.2f, SOL=%.4f, Reason='%s'", usdc, sol, args.reason)
         return 0

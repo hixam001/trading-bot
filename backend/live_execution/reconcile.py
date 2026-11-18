@@ -187,6 +187,19 @@ class WalletDropResult(dict):
 
 
 def check_wallet_drop(
+    current_usdc: Optional[float], current_sol: Optional[float],
+    sol_price_usd: Optional[float] = None, ledger: Any = None,
+    state_dir: Optional[Path] = None, now_fn: Callable[[], float] = time.time,
+) -> WalletDropResult:
+    from live_execution import config as live_config
+    from live_execution.state_lock import state_lock
+    target_dir = Path(state_dir or live_config.STATE_DIR)
+    with state_lock(target_dir / "wallet_snapshot.json"):
+        return _check_wallet_drop_locked(current_usdc, current_sol, sol_price_usd,
+                                         ledger, target_dir, now_fn)
+
+
+def _check_wallet_drop_locked(
     current_usdc: Optional[float],
     current_sol: Optional[float],
     sol_price_usd: Optional[float] = None,

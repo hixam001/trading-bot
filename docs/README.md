@@ -46,6 +46,10 @@ Related references: [frontend design](../frontend/DESIGN.md) and
 
 ## Change history and evidence
 
+The [2026-11-17 repository audit](REPOSITORY_AUDIT_2026-11-17.md) records
+security and bug fixes, final verification, and the remaining Oracle host
+checks before deployment.
+
 Read the latest relevant [handoff](../handoff.md) sections together with the
 [behavior-change map](12_BEHAVIOUR_CHANGES_SINCE_3FEA445.md),
 [mutation evidence](09_MUTATION_LOG.md),

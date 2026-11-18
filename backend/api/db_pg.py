@@ -1613,16 +1613,17 @@ async def wipe_paper_book(
     """
     tables = ["feed_events", "trades"]
     counts: dict[str, int] = {}
-    for table in tables:
-        _assert_allowed_reset_table(table)
-        row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
-        counts[table] = int(row["n"]) if row else 0
-        await conn.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
+    async with conn.transaction():
+        for table in tables:
+            _assert_allowed_reset_table(table)
+            row = await conn.fetchrow(f"SELECT COUNT(*) AS n FROM {table}")
+            counts[table] = int(row["n"]) if row else 0
+            await conn.execute(f"TRUNCATE TABLE {table} RESTART IDENTITY CASCADE")
 
-    await conn.execute(
-        "UPDATE portfolio_state SET cash_usd = $1, updated_at = $2 WHERE id = 1",
-        initial_cash_usd, _now(),
-    )
+        await conn.execute(
+            "UPDATE portfolio_state SET cash_usd = $1, updated_at = $2 WHERE id = 1",
+            initial_cash_usd, _now(),
+        )
 
     return {
         "reset": True,

@@ -1660,6 +1660,10 @@ async def run_cycle(once: bool = False, provider=None, thinker=None,
             usd = min(cash * paper_config.TICKET_CASH_FRACTION,
                       paper_config.TICKET_MAX_USD)
             sizing_reason = None
+            if c.security_unknown:
+                usd *= paper_config.UNKNOWN_SECURITY_SIZE_MULT
+                if usd < live_floor:
+                    sizing_reason = "security_unknown_below_floor"
         if usd < live_floor:
             reason = sizing_reason or f"ticket ${usd:.2f} below live floor ${live_floor:.2f}"
             log.info("%s refused: %s (equity $%.2f)", c.symbol, reason, eq)

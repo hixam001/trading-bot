@@ -100,6 +100,7 @@ services:
       # Strip wallet key material so the internet-facing API process NEVER holds the signing key:
       - WALLET_KEYPAIR_PATH=
       - WALLET_KEYPAIR_JSON=
+      - WALLET_KEYPAIR_HOST_PATH=
     healthcheck:
       test: ["CMD-SHELL", "python -c \"import urllib.request, sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/health').getcode() == 200 else 1)\""]
       interval: 30s

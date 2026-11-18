@@ -580,50 +580,56 @@ MUTATIONS: list[Mutation] = [
         mutation_id="90C2_JOURNAL_AFTER_SEND",
         file_path="backend/live_execution/jupiter_executor.py",
         exact_old_text=(
-            "    ledger.record_pending_buy(\n"
-            "        idempotency_key=idempotency_key,\n"
-            "        mint=output_mint,\n"
-            "        usd_size=usd_size,\n"
-            "        tokens_out=quote_result[\"tokens_out\"],\n"
-            "        price_usd=quote_result[\"price_usd\"],\n"
-            "        signature=signature,\n"
-            "        blockhash=blockhash,\n"
-            "        reason=\"signed; send outcome not yet known\",\n"
-            "    )\n"
-            "    log.info(\n"
-            "        \"PENDING BUY %s $%.2f sig %s journaled BEFORE send\",\n"
-            "        output_mint[:8], usd_size, signature[:16])\n"
-            "    log.info(\n"
-            "        \"EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s\",\n"
-            "        output_mint[:8], usd_size, quote_result[\"tokens_out\"],\n"
-            "        quote_result[\"price_usd\"], signature,\n"
-            "    )\n"
-            "\n"
-            "    try:\n"
-            "        sent = await solana.send_checked_swap(signed_swap)"
+            '    ledger.record_pending_buy(\n'
+            '        idempotency_key=idempotency_key,\n'
+            '        mint=output_mint,\n'
+            '        usd_size=usd_size,\n'
+            '        tokens_out=quote_result["tokens_out"],\n'
+            '        price_usd=quote_result["price_usd"],\n'
+            '        signature=signature,\n'
+            '        blockhash=blockhash,\n'
+            '        reason="signed; send outcome not yet known",\n'
+            '        commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],\n'
+            '        commit_payload=sealed["payload"], commit_sealed_at=sealed.get("sealed_at"),\n'
+            '        memo_signature=published["signature"], memo_slot=published["slot"],\n'
+            '    )\n'
+            '    log.info(\n'
+            '        "PENDING BUY %s $%.2f sig %s journaled BEFORE send",\n'
+            '        output_mint[:8], usd_size, signature[:16])\n'
+            '    log.info(\n'
+            '        "EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s",\n'
+            '        output_mint[:8], usd_size, quote_result["tokens_out"],\n'
+            '        quote_result["price_usd"], signature,\n'
+            '    )\n'
+            '\n'
+            '    try:\n'
+            '        sent = await solana.send_checked_swap(signed_swap)'
         ),
         new_text=(
-            "    log.info(\n"
-            "        \"PENDING BUY %s $%.2f sig %s journaled BEFORE send\",\n"
-            "        output_mint[:8], usd_size, signature[:16])\n"
-            "    log.info(\n"
-            "        \"EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s\",\n"
-            "        output_mint[:8], usd_size, quote_result[\"tokens_out\"],\n"
-            "        quote_result[\"price_usd\"], signature,\n"
-            "    )\n"
-            "\n"
-            "    try:\n"
-            "        sent = await solana.send_checked_swap(signed_swap)\n"
-            "        ledger.record_pending_buy(\n"
-            "            idempotency_key=idempotency_key,\n"
-            "            mint=output_mint,\n"
-            "            usd_size=usd_size,\n"
-            "            tokens_out=quote_result[\"tokens_out\"],\n"
-            "            price_usd=quote_result[\"price_usd\"],\n"
-            "            signature=signature,\n"
-            "            blockhash=blockhash,\n"
-            "            reason=\"signed; send outcome not yet known\",\n"
-            "        )"
+            '    log.info(\n'
+            '        "PENDING BUY %s $%.2f sig %s journaled BEFORE send",\n'
+            '        output_mint[:8], usd_size, signature[:16])\n'
+            '    log.info(\n'
+            '        "EXECUTE %s: $%.2f -> ~%.6f tokens @ $%.8g | sig %s",\n'
+            '        output_mint[:8], usd_size, quote_result["tokens_out"],\n'
+            '        quote_result["price_usd"], signature,\n'
+            '    )\n'
+            '\n'
+            '    try:\n'
+            '        sent = await solana.send_checked_swap(signed_swap)\n'
+            '        ledger.record_pending_buy(\n'
+            '            idempotency_key=idempotency_key,\n'
+            '            mint=output_mint,\n'
+            '            usd_size=usd_size,\n'
+            '            tokens_out=quote_result["tokens_out"],\n'
+            '            price_usd=quote_result["price_usd"],\n'
+            '            signature=signature,\n'
+            '            blockhash=blockhash,\n'
+            '            reason="signed; send outcome not yet known",\n'
+            '            commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],\n'
+            '            commit_payload=sealed["payload"], commit_sealed_at=sealed.get("sealed_at"),\n'
+            '            memo_signature=published["signature"], memo_slot=published["slot"],\n'
+            '        )'
         ),
         test_selector=(
             "backend/live_execution/tests/test_jupiter_executor.py::"

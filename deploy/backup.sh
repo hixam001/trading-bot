@@ -35,9 +35,7 @@ if [ -n "${OFFSITE_REMOTE:-}" ]; then
     echo "[$(date -u +"%Y-%m-%dT%H:%M:%SZ")] Syncing backups offsite to ${OFFSITE_REMOTE}..."
     # Copy from host mount / docker volume
     # Assumes backup volume is accessible or copied from container
-    SYNC_DIR="/tmp/trading_bot_backups_sync"
-    rm -rf "$SYNC_DIR"
-    mkdir -p "$SYNC_DIR"
+    SYNC_DIR="$(mktemp -d "${TMPDIR:-/tmp}/trading_bot_backups_sync.XXXXXXXX")"
     trap 'rm -rf "$SYNC_DIR"' EXIT
     docker compose cp live:/app/backups/. "$SYNC_DIR/"
     rclone copy "$SYNC_DIR/" "${OFFSITE_REMOTE}"

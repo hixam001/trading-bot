@@ -35,10 +35,10 @@ class CommitLog:
         self.now_fn = now_fn
 
     def _load(self) -> list:
-        if not self.path.is_file():
-            return []
         try:
             data = json.loads(self.path.read_text())
+        except FileNotFoundError:
+            return []
         except (ValueError, OSError) as exc:
             raise RuntimeError(
                 f"commit log at {self.path} is unreadable ({exc}) — refusing "

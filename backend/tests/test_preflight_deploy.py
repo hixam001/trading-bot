@@ -18,7 +18,7 @@ def _env(**overrides) -> dict[str, str]:
         "DATA_BACKEND": "live",
         "MAIN_LLM_PROVIDER": "deepseek",
         "DEEPSEEK_API_KEY": "sk-deepseek-test",
-        "ADMIN_TOKEN": "a" * 40,
+        "ADMIN_TOKEN": "0123456789abcdef" * 4,
         "SEARXNG_SECRET": "b" * 40,
         "BACKUP_ENCRYPTION_KEY": Fernet.generate_key().decode(),
         "SECRET_STORE_KEY": "",
@@ -161,7 +161,7 @@ def test_main_llm_key_follows_the_selected_provider():
 # ---------------------------------------------------------------- secrets
 
 def test_admin_token_must_be_at_least_32_chars():
-    assert pf.check_admin_token(_env(ADMIN_TOKEN="a" * 32)).status == pf.PASS
+    assert pf.check_admin_token(_env(ADMIN_TOKEN="0123456789abcdef" * 2)).status == pf.PASS
     assert pf.check_admin_token(_env(ADMIN_TOKEN="a" * 31)).status == pf.FAIL
     assert pf.check_admin_token(_env(ADMIN_TOKEN="")).status == pf.FAIL
 

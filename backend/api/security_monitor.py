@@ -94,8 +94,8 @@ class SecurityMonitor:
         self._events: deque[SecurityEvent] = deque(maxlen=max_events)
         self._lock = threading.Lock()
         self._type_counts: defaultdict[str, int] = defaultdict(int)
-        self._ip_counts: defaultdict[str, int] = defaultdict(int)
-        self._auth_failures_by_ip: defaultdict[str, deque[float]] = defaultdict(deque)
+        self._ip_counts: OrderedDict[str, int] = OrderedDict()
+        self._auth_failures_by_ip: OrderedDict[str, deque[float]] = OrderedDict()
         self._dedupe_window = (
             self.DEDUPE_WINDOW_SECONDS if dedupe_window is None
             else max(0.0, float(dedupe_window))
@@ -128,6 +128,11 @@ class SecurityMonitor:
             if expires_at > now:
                 break
             self._burst_alerted.popitem(last=False)
+        for ip, queue in list(self._auth_failures_by_ip.items()):
+            while queue and queue[0] < now - self._burst_window:
+                queue.popleft()
+            if not queue:
+                del self._auth_failures_by_ip[ip]
 
     def _record_burst_locked(self, type_str: str, client_ip: str,
                              now: float) -> bool:
@@ -137,7 +142,10 @@ class SecurityMonitor:
         if client_ip == "unknown":
             return False
         cutoff = now - self._burst_window
-        q = self._auth_failures_by_ip[client_ip]
+        q = self._auth_failures_by_ip.setdefault(client_ip, deque(maxlen=5))
+        self._auth_failures_by_ip.move_to_end(client_ip)
+        while len(self._auth_failures_by_ip) > self._max_burst:
+            self._auth_failures_by_ip.popitem(last=False)
         while q and q[0] < cutoff:
             q.popleft()
         q.append(now)
@@ -211,7 +219,10 @@ class SecurityMonitor:
                     self._dedupe.popitem(last=False)
 
             self._type_counts[type_str] += 1
-            self._ip_counts[safe_ip] += 1
+            self._ip_counts[safe_ip] = self._ip_counts.get(safe_ip, 0) + 1
+            self._ip_counts.move_to_end(safe_ip)
+            while len(self._ip_counts) > self._max_burst:
+                self._ip_counts.popitem(last=False)
             self._total_occurrences += 1
             burst = self._record_burst_locked(type_str, safe_ip, now)
 

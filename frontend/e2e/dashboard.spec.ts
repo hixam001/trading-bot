@@ -447,6 +447,7 @@ test.describe('operator login gate', () => {
         body: JSON.stringify({ detail: 'invalid operator token' }),
       }),
     )
+    await page.route('**/api/auth/challenge', route => route.fulfill({ json: { enabled: false, provider: 'internal' } }))
     await page.route('**/api/auth/login', (route) =>
       route.fulfill({
         status: 200,

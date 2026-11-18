@@ -110,6 +110,8 @@ async def publish_commit_memo(payer, seal_hash: str,
         raise MemoPublishError("no fresh blockhash from any configured rpc")
     try:
         raw = build_memo_transaction(text, payer, blockhash)
+        from solders.transaction import VersionedTransaction
+        expected_signature = str(VersionedTransaction.from_bytes(raw).signatures[0])
     except MemoError as exc:
         raise MemoPublishError(str(exc)) from exc
     try:
@@ -118,10 +120,11 @@ async def publish_commit_memo(payer, seal_hash: str,
         raise MemoPublishError(f"every rpc refused the memo transaction: {exc}") from exc
     if not sent:
         raise MemoPublishError("every rpc refused the memo transaction")
+    if sent != expected_signature:
+        raise MemoPublishError("memo receipt does not match the locally signed transaction")
     register_public_value(sent)
     conf = await solana.confirm_signature(sent, endpoints=endpoints)
-    if not conf["confirmed"]:
-        raise MemoPublishError(
-            f"memo not confirmed before timeout: {conf['err'] or 'unknown'}")
+    if not solana.is_confirmed_success(conf):
+        raise MemoPublishError("memo not confirmed with a valid successful outcome")
     log.info("commit memo published sig=%s slot=%s", sent[:16], conf.get("slot"))
     return {"signature": sent, "slot": conf.get("slot")}

@@ -212,7 +212,7 @@ def test_extension_parser_survives_non_dict_state_and_bad_fee():
         ]}},
     }
     out = ocs.parse_mint_extensions(data)
-    assert out["program"] == "spl-token-2022"
+    assert out["program"] is None  # incomplete sibling must remain unknown
     assert out["transfer_fee_bps"] == 250
     assert any("250 bps" in d for d in out["dangerous_extensions"])
 

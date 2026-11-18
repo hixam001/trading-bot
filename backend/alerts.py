@@ -355,6 +355,9 @@ async def _alert_worker_loop() -> None:
         item = await _queue.get()
         try:
             now = time.time()
+            # Digests consume the same rolling quota as individual alerts.
+            while _sent_timestamps and _sent_timestamps[0] < now - 3600.0:
+                _sent_timestamps.popleft()
 
             # 1. INFO level filter
             if item.priority == AlertPriority.INFO and not _alert_info_enabled() and item.event != AlertEvent.TEST:
@@ -373,7 +376,11 @@ async def _alert_worker_loop() -> None:
                             priority=AlertPriority.HIGH,
                             timestamp=now,
                         )
-                        ok = await _send_item(digest_item)
+                        ok = False
+                        if len(_sent_timestamps) < 20:
+                            ok = await _send_item(digest_item)
+                        else:
+                            _suppressed_count += 1
                         if ok:
                             _last_sent_at = datetime.now(timezone.utc).isoformat()
                             _sent_timestamps.append(now)
@@ -470,6 +477,7 @@ def alert_nowait(
             if _queue.full():
                 try:
                     _queue.get_nowait()
+                    _queue.task_done()
                     _dropped_count += 1
                 except Exception:
                     pass

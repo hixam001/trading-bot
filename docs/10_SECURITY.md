@@ -158,7 +158,7 @@ fails when a new write path resolves to the read-only root.
 | `<LOG_DIR>/{app,error,security}.log` | `LOG_DIR` | api, live | engine_logs:/app/logs |
 | `<BACKUP_DIR>/state-*.tar.gz.enc` | `BACKUP_DIR (CLI/env)` | operator | engine_backups:/app/backups |
 | `<LIVE_STATE_DIR>/resolve_pending_buy_audit.log` | `LIVE_STATE_DIR (operator CLI)` | operator | engine_state (or operator-specified --audit-log) |
-| `<LIVE_STATE_DIR>/safety_counters.json (ack script)` | `LIVE_STATE_DIR (operator CLI)` | operator | engine_state (or operator-specified state dir) |
+| `<LIVE_STATE_DIR>/wallet_snapshot.json (ack script)` | `LIVE_STATE_DIR (operator CLI)` | operator | engine_state (or operator-specified state dir) |
 | `<backend>/live_execution/dex_labels.json (dev refresh)` | `fixed repo path (operator/dev script)` | operator | image root (dev only; not a compose service) |
 | `repo files mutated by the mutation harness (dev/CI)` | `repo root (dev/CI tool)` | dev | repository checkout |
 | `<LIVE_STATE_DIR>/break_state.json` | `BREAK_STATE_FILE` | live | engine_state |

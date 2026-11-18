@@ -79,7 +79,8 @@ async def test_publish_happy_path_returns_sig_and_slot(payer, monkeypatch):
         return "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM"
 
     async def fake_send(raw, endpoints=None):
-        return "MEMOSIG111"
+        from solders.transaction import VersionedTransaction
+        return str(VersionedTransaction.from_bytes(raw).signatures[0])
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": True, "slot": 12345, "err": None}
@@ -89,7 +90,8 @@ async def test_publish_happy_path_returns_sig_and_slot(payer, monkeypatch):
     monkeypatch.setattr(solana, "confirm_signature", fake_confirm)
 
     res = await memo.publish_commit_memo(payer, "ab" * 32)
-    assert res == {"signature": "MEMOSIG111", "slot": 12345}
+    assert res["slot"] == 12345
+    assert isinstance(res["signature"], str) and len(res["signature"]) > 40
 
 
 async def test_publish_no_blockhash_fails_closed(payer, monkeypatch):
@@ -127,7 +129,8 @@ async def test_publish_unconfirmed_fails_closed(payer, monkeypatch):
         return "4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM"
 
     async def fake_send(raw, endpoints=None):
-        return "MEMOSIG222"
+        from solders.transaction import VersionedTransaction
+        return str(VersionedTransaction.from_bytes(raw).signatures[0])
 
     async def fake_confirm(sig, timeout_s=None, endpoints=None):
         return {"confirmed": False, "slot": None, "err": "timeout"}

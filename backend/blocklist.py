@@ -30,12 +30,17 @@ from __future__ import annotations
 
 import json
 import logging
+import math
+import os
 import re
+import tempfile
 import time
+from functools import wraps
 from pathlib import Path
 from typing import Optional
 
 import config
+from live_execution.state_lock import state_lock
 
 log = logging.getLogger(__name__)
 
@@ -105,10 +110,22 @@ def _path() -> Path:
 def _load() -> dict:
     path = _path()
     try:
-        return json.loads(path.read_text())
+        data = json.loads(path.read_text())
+        if not isinstance(data, dict) or not isinstance(data.get("mints", {}), dict):
+            raise ValueError("invalid blocklist object")
+        for entry in data.get("mints", {}).values():
+            if not isinstance(entry, dict) or not isinstance(entry.get("closes", []), list):
+                raise ValueError("invalid blocklist entry")
+            for close in entry.get("closes", []):
+                if (not isinstance(close, dict) or not isinstance(close.get("loss"), bool)
+                        or isinstance(close.get("ts"), bool)
+                        or not isinstance(close.get("ts"), (int, float))
+                        or not math.isfinite(close["ts"])):
+                    raise ValueError("invalid close history")
+        return data
     except FileNotFoundError:
         return {}
-    except ValueError:
+    except (ValueError, OverflowError):
         # Corrupt state: quarantine and start clean, but shout loudly.
         quarantined = path.with_suffix(".corrupt")
         try:
@@ -132,7 +149,16 @@ def _save(data: dict) -> None:
     path = _path()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data, indent=2, sort_keys=True))
+        fd, name = tempfile.mkstemp(prefix=".blocklist-", dir=path.parent)
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w") as file:
+                json.dump(data, file, indent=2, sort_keys=True, allow_nan=False)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
     except Exception as exc:
         # §93 R2: a silent swallow is what hid the read-only-root data loss.
         # The tick stays non-fatal, but the failure is ERROR and deduped
@@ -167,6 +193,23 @@ def _is_block_entry(entry: Optional[dict]) -> bool:
     return bool(entry and (entry.get("kind") or entry.get("reason")))
 
 
+def _serialized_policy_write(fn):
+    @wraps(fn)
+    def write(*args, **kwargs):
+        try:
+            with state_lock(_path()):
+                return fn(*args, **kwargs)
+        except OSError:
+            log.error("blocklist policy lock unavailable", exc_info=True)
+            try:
+                from alerts import alert_state_write_failure
+                alert_state_write_failure("blocklist", "policy state lock is unavailable")
+            except Exception:
+                pass
+            return False
+    return write
+
+
 def is_blocked_mint(mint: str) -> bool:
     return _is_block_entry(_load().get("mints", {}).get(mint))
 
@@ -175,8 +218,9 @@ def mint_entry(mint: str) -> Optional[dict]:
     return _load().get("mints", {}).get(mint)
 
 
+@_serialized_policy_write
 def block_mint(mint: str, symbol: str = "", reason: str = "",
-               kind: str = "manual") -> None:
+               kind: str = "manual") -> bool:
     data = _load()
     mints = data.setdefault("mints", {})
     # §49: preserve the closes history when writing a block — the block is
@@ -191,9 +235,10 @@ def block_mint(mint: str, symbol: str = "", reason: str = "",
     }
     if closes:
         mints[mint]["closes"] = closes
-    _save_or_alert(data, "block")
+    return _save_or_alert(data, "block")
 
 
+@_serialized_policy_write
 def unblock_mint(mint: str) -> bool:
     """Remove the BLOCK but keep the §49 closes history — the memory of why
     it was blocked must survive the unblock (it feeds future cooldowns)."""
@@ -206,11 +251,10 @@ def unblock_mint(mint: str) -> bool:
     if closes:
         # History-only entry: keep it, drop the block fields.
         mints[mint] = {"symbol": entry.get("symbol", ""), "closes": closes}
-        _save_or_alert(data, "unblock")
-        return True
+        return _save_or_alert(data, "unblock")
     removed = mints.pop(mint, None)
     if removed is not None:
-        _save_or_alert(data, "unblock")
+        return _save_or_alert(data, "unblock")
     return removed is not None
 
 
@@ -272,6 +316,7 @@ def _cooldown_reason(mint: str, entry: Optional[dict],
             f"{age_h:.1f}h ago < {hours:.0f}h window")
 
 
+@_serialized_policy_write
 def record_close_outcome(mint: str, symbol: str, rule_id: str,
                          pnl_usd: float, book: str = "paper") -> None:
     """
@@ -341,6 +386,7 @@ def summary() -> dict:
     }
 
 
+@_serialized_policy_write
 def maybe_autoblock(mint: str, symbol: str) -> bool:
     """
     §49 DONT-pattern killer: block the mint when its newest
@@ -358,9 +404,10 @@ def maybe_autoblock(mint: str, symbol: str) -> bool:
         if not all(c.get("loss") for c in closes[:need]):
             return False
         rules = ", ".join(str(c.get("rule")) for c in closes[:need])
-        block_mint(mint, symbol,
-                   f"{need} consecutive loss closes ({rules})",
-                   kind="auto")
+        if not block_mint(mint, symbol,
+                          f"{need} consecutive loss closes ({rules})",
+                          kind="auto"):
+            return False
         log.warning(
             "AUTO-BLOCK %s (%s): %s — mint will no longer be considered "
             "for entry on either book", symbol, mint[:12], rules)

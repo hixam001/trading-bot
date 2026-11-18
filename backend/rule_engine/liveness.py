@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import math
 import os
+import tempfile
 import time
 from pathlib import Path
 from typing import Optional
 
 import config
+from live_execution.state_lock import state_lock
 
 
 def _state_path() -> Path:
@@ -38,10 +40,10 @@ def _state_path() -> Path:
 
 def _read() -> Optional[dict]:
     path = _state_path()
-    if not path.is_file():
-        return None
     try:
         state = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
     except (ValueError, OSError) as exc:
         # Corrupt state must never silently mean "awake".
         raise RuntimeError(
@@ -80,7 +82,6 @@ MAX_BREAK_MINUTES: int = 60
 def _write(taking: bool, minutes: int, reason: str) -> None:
     path = _state_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
     
     break_until = 0.0
     if taking:
@@ -95,14 +96,19 @@ def _write(taking: bool, minutes: int, reason: str) -> None:
         break_until = time.time() + (clamped * 60)
         minutes = clamped
         
-    tmp.write_text(json.dumps({
-        "taking": taking,
-        "minutes": minutes,
-        "reason": reason,
-        "break_until": break_until,
-        "ts": time.time(),
-    }, indent=2))
-    os.replace(tmp, path)
+    with state_lock(path):
+        fd, name = tempfile.mkstemp(prefix=".break-state-", dir=path.parent)
+        tmp = Path(name)
+        try:
+            with os.fdopen(fd, "w") as file:
+                json.dump({"taking": taking, "minutes": minutes,
+                           "reason": reason, "break_until": break_until,
+                           "ts": time.time()}, file)
+                file.flush()
+                os.fsync(file.fileno())
+            os.replace(tmp, path)
+        finally:
+            tmp.unlink(missing_ok=True)
 
 
 def set_break(taking: bool, minutes: int = 0, reason: str = "") -> None:

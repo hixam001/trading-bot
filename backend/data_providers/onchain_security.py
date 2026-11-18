@@ -73,7 +73,7 @@ def parse_mint_extensions(data: dict) -> dict:
              "transfer_fee_bps": int | None, "dangerous_extensions": list[str]}.
     """
     out: dict = {
-        "program": "spl-token",
+        "program": None,
         "extensions": [],
         "transfer_fee_bps": None,
         "dangerous_extensions": [],
@@ -92,27 +92,34 @@ def parse_mint_extensions(data: dict) -> dict:
 
     parsed = data.get("parsed") if "parsed" in data else data
     info = parsed.get("info") if isinstance(parsed, dict) and "info" in parsed else parsed
-    if not isinstance(info, dict):
+    if (out["program"] is None or not isinstance(info, dict)
+            or (isinstance(parsed, dict) and parsed.get("type") not in (None, "mint"))):
+        out["program"] = None
         return out
 
-    extensions_list = info.get("extensions") or []
+    extensions_list = info.get("extensions", [])
     if not isinstance(extensions_list, list):
+        out["program"] = None
         return out
 
     ext_names = []
     dangerous = []
     transfer_fee_bps = None
     max_transfer_fee = getattr(config, "MAX_TRANSFER_FEE_BPS", 100)
+    complete = True
 
     for item in extensions_list:
         if not isinstance(item, dict):
+            complete = False
             continue
         ext_name = item.get("extension")
-        if not ext_name:
+        if not isinstance(ext_name, str) or not ext_name:
+            complete = False
             continue
         ext_names.append(ext_name)
         state = item.get("state")
         if not isinstance(state, dict):
+            complete = False
             state = {}
 
         # 1. Known dangerous extension names
@@ -135,12 +142,19 @@ def parse_mint_extensions(data: dict) -> dict:
             scheduled = newer.get("transferFeeBasisPoints")
             fees = []
             active_fee = None
+            if active is None and scheduled is None:
+                complete = False
             for raw_fee in (active, scheduled):
                 if raw_fee is None:
                     continue
                 try:
+                    if isinstance(raw_fee, bool) or not isinstance(raw_fee, (int, str)):
+                        raise ValueError
                     fee = int(raw_fee)
+                    if not 0 <= fee <= 10000:
+                        raise ValueError
                 except (ValueError, TypeError):
+                    complete = False
                     continue
                 if raw_fee is active:
                     active_fee = fee
@@ -157,6 +171,10 @@ def parse_mint_extensions(data: dict) -> dict:
     out["extensions"] = ext_names
     out["dangerous_extensions"] = dangerous
     out["transfer_fee_bps"] = transfer_fee_bps
+    if not complete:
+        # Preserve any observed dangerous extension, but never turn an
+        # incomplete response into a known-safe program classification.
+        out["program"] = None
     return out
 
 
@@ -237,10 +255,15 @@ async def get_mint_extension_flags(mint: str, timeout: float = 10.0) -> dict:
                 data = value.get("data")
                 if not isinstance(data, dict):
                     continue
-                parsed_info = _as_dict(data.get("parsed")).get("info")
-                if isinstance(parsed_info, dict) and parsed_info.get("type") not in (None, "mint"):
+                parsed_data = _as_dict(data.get("parsed"))
+                if (not isinstance(parsed_data.get("info"), dict)
+                        or parsed_data.get("type") not in (None, "mint")):
                     continue
                 parsed = parse_mint_extensions(data)
+                if parsed.get("program") is None:
+                    if parsed.get("dangerous_extensions"):
+                        return parsed
+                    continue
                 _put_extension_cache(mint, parsed, now)
                 return parsed
             except Exception:

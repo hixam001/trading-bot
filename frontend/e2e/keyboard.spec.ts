@@ -295,3 +295,25 @@ test.describe('§65 mint-history drill-down', () => {
     await expect(historyPanel).toContainText('Retrying automatically')
   })
 })
+
+test('closing mint history aborts its pending request and prevents hidden retries', async ({ page }) => {
+  await mockApi(page)
+  let requests = 0
+  let release!: () => void
+  const pending = new Promise<void>(resolve => { release = resolve })
+  await page.route('**/api/mint/*/history*', async route => {
+    requests++
+    await pending
+    try { await route.fulfill({ status: 503, json: { detail: 'delayed dummy failure' } }) } catch { /* aborted request */ }
+  })
+  await page.goto('/')
+  await page.getByTestId('tab-holdings').click()
+  await page.getByTestId('mint-history-button').first().click()
+  await expect(page.getByTestId('mint-history')).toBeVisible()
+  await expect.poll(() => requests).toBe(1)
+  await page.getByTestId('mint-history-back').click()
+  await expect(page.getByTestId('mint-history')).toBeHidden()
+  release()
+  await page.waitForTimeout(5500)
+  expect(requests).toBe(1)
+})

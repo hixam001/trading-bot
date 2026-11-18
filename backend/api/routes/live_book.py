@@ -41,7 +41,7 @@ router = APIRouter()
 # Fail-soft: during an RPC outage the last good read is reused up to 3x TTL
 # (flagged stale), then the scan reports unchecked. An EMPTY wallet ({} is
 # an answered read) is a good cached value; None is never cached.
-_scan_cache: dict = {"balances": None, "at": 0.0, "good_at": 0.0}
+_scan_cache: dict = {"balances": None, "at": 0.0, "good_at": 0.0, "at_utc": None}
 
 
 async def _wallet_balances(pubkey: str) -> tuple[Optional[dict], bool]:
@@ -60,7 +60,8 @@ async def _wallet_balances(pubkey: str) -> tuple[Optional[dict], bool]:
         if _scan_cache["balances"] is not None and now - _scan_cache["good_at"] < 3 * ttl:
             return _scan_cache["balances"], True
         return None, False
-    _scan_cache.update(balances=balances, at=now, good_at=now)
+    _scan_cache.update(balances=balances, at=now, good_at=now,
+                       at_utc=datetime.now(timezone.utc).isoformat())
     return balances, False
 
 
@@ -168,7 +169,7 @@ async def _build(request: Request) -> dict:
         from live_execution.reconcile import reconcile
         scan["checked"] = True
         scan["stale"] = stale
-        scan["at_utc"] = datetime.now(timezone.utc).isoformat()
+        scan["at_utc"] = _scan_cache.get("at_utc")
         reconcile(meta, balances)
 
     # symbols: the live cycle journals a thesis row per live entry

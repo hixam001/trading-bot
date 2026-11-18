@@ -20,6 +20,7 @@ import hashlib
 import hmac
 import json
 import logging
+import math
 import os
 import secrets
 import threading
@@ -155,17 +156,32 @@ def _ensure_revocations_loaded() -> None:
             return
         _REVOCATIONS_LOADED = True
         path = _revocation_path()
-        if path is None or not path.is_file():
+        if path is None:
             return
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-            entries = raw.get("revoked", raw) if isinstance(raw, dict) else {}
+            if not isinstance(raw, dict):
+                raise ValueError("invalid revocation registry")
+            if "version" in raw or "revoked" in raw:
+                if raw.get("version") != 1 or not isinstance(raw.get("revoked"), dict):
+                    raise ValueError("invalid revocation registry envelope")
+                entries = raw["revoked"]
+            else:
+                entries = raw  # legacy flat signature -> expiry registry
             now = time.time()
+            validated = {}
             for sig, exp in entries.items():
-                if (isinstance(sig, str) and len(sig) == 64
-                        and isinstance(exp, (int, float)) and exp > now):
-                    _REVOKED_SESSION_SIGS[sig] = float(exp)
+                if (not isinstance(sig, str) or len(sig) != 64
+                        or any(c not in "0123456789abcdef" for c in sig)
+                        or isinstance(exp, bool) or not isinstance(exp, (int, float))
+                        or not math.isfinite(exp) or exp < 0):
+                    raise ValueError("invalid revocation registry entry")
+                if exp > now:
+                    validated[sig] = float(exp)
+            _REVOKED_SESSION_SIGS.update(validated)
             _prune_revoked(now)
+        except FileNotFoundError:
+            return
         except Exception:
             _REVOCATIONS_ERROR = True
 
@@ -239,7 +255,7 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
     Validates HMAC signature and timestamp before storing to prevent memory-growth
     attacks from unauthenticated forged cookies.
     """
-    if not token or not isinstance(token, str):
+    if not token or not isinstance(token, str) or not token.isascii():
         return
 
     _ensure_revocations_loaded()
@@ -282,7 +298,7 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
             payload.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        if hmac.compare_digest(sig, expected_sig):
+        if hmac.compare_digest(sig.encode("utf-8"), expected_sig.encode("ascii")):
             valid_sig = True
             break
 
@@ -299,7 +315,7 @@ def revoke_session_token(token: str, secret: str | None = None) -> None:
 
 def is_session_revoked(token: str) -> bool:
     """Return True if the token's signature is in the revocation registry."""
-    if not token or not isinstance(token, str):
+    if not token or not isinstance(token, str) or not token.isascii():
         return False
     parts = token.split(".")
     if len(parts) != 3:
@@ -327,7 +343,7 @@ def verify_session_token(
     """Verify session token HMAC signature and age. Fail-closed on any error."""
     if is_session_revoked(token):
         return False
-    if not token:
+    if not token or not isinstance(token, str) or not token.isascii():
         return False
     if secret is not None:
         candidates = [secret]
@@ -358,7 +374,7 @@ def verify_session_token(
             payload.encode("utf-8"),
             hashlib.sha256,
         ).hexdigest()
-        if hmac.compare_digest(sig, expected_sig):
+        if hmac.compare_digest(sig.encode("utf-8"), expected_sig.encode("ascii")):
             return True
     return False
 
@@ -541,7 +557,7 @@ def require_admin_token(request: Request) -> None:
     # 1. Header authentication (API, CLI, scripts)
     supplied = request.headers.get(ADMIN_TOKEN_HEADER, "")
     token_ok = bool(configured and len(configured) >= 32) and bool(supplied) and hmac.compare_digest(
-        supplied, configured)
+        supplied.encode("utf-8", errors="surrogatepass"), configured.encode("utf-8"))
     if token_ok:
         # Clear recorded failures on successful authentication
         _clear_auth_failures(client_ip)
@@ -595,9 +611,10 @@ def require_admin_token(request: Request) -> None:
 # §55 authz audit — proxy-aware loopback trust.
 #
 # "Local" must mean DIRECTLY local. The deploy guide (docs/05_ORACLE_DEPLOY_GUIDE.md Step 7) fronts
-# the engine with `caddy reverse_proxy 127.0.0.1:8000`, and uvicorn runs
-# without --proxy-headers — so EVERY internet visitor arrives at FastAPI
-# with request.client.host == 127.0.0.1. Trusting that address would
+# the engine with `caddy reverse_proxy 127.0.0.1:8000`. Uvicorn processes
+# forwarded headers only from configured trusted peers. Any remaining
+# loopback address on a forwarded request still cannot prove direct local
+# access. Trusting only that address would
 # authenticate the whole internet as the operator on every loopback-gated
 # surface. Any forwarding header proves the socket peer is a PROXY, not the
 # operator's browser: the loopback shortcut is disabled and the operator

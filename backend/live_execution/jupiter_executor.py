@@ -82,6 +82,20 @@ ExecutionError = solana.ExecutionError
 SendRejected = solana.SendRejected
 
 
+def quote_impact_pct(quote: dict) -> float:
+    """Require a measured finite impact; Jupiter expresses it as a fraction."""
+    value = quote.get("priceImpactPct")
+    try:
+        if isinstance(value, bool) or not isinstance(value, (int, float, str)):
+            raise ValueError
+        impact = abs(float(value)) * 100.0
+        if not math.isfinite(impact):
+            raise ValueError
+    except (TypeError, ValueError, OverflowError):
+        raise ExecutionError("jupiter: price impact unavailable or invalid") from None
+    return impact
+
+
 class Refusal(ExecutionError):
     """Pre-condition failure — refused BEFORE any network call."""
 
@@ -292,10 +306,7 @@ async def get_jupiter_quote(
     # choke point every buy path shares. Previously only executor.place_buy
     # checked it, so the manual propose→approve→execute path could fill a
     # thin-pool quote (e.g. 20% impact) the automated path would refuse.
-    try:
-        impact_pct = abs(float(data.get("priceImpactPct") or 0)) * 100.0
-    except (TypeError, ValueError):
-        impact_pct = 0.0
+    impact_pct = quote_impact_pct(data)
     if impact_pct > config.MAX_PRICE_IMPACT_PCT:
         raise ExecutionError(
             f"jupiter: price impact {impact_pct:.2f}% exceeds "
@@ -951,6 +962,9 @@ async def execute_confirmed_trade(
             "usd_size": prior.usd_size,
         }
 
+    if ledger.deployed_today_usd() + usd_size > config.MAX_DAILY_DEPLOY_USD:
+        raise Refusal("daily deploy cap exceeded")
+
     # 8: mandatory manual confirmation (hardcoded default ON).
     if config.REQUIRE_MANUAL_CONFIRMATION:
         if not confirmation_id:
@@ -1010,16 +1024,28 @@ async def execute_confirmed_trade(
         except ConfirmationError as exc:
             raise Refusal(f"confirmation refused: {exc}") from exc
 
-    quote_result = await get_jupiter_quote(
-        output_mint, output_decimals, usd_size, ledger=ledger
-    )
-    swap_b64 = await _build_swap_transaction(
-        quote_result["quote"], user_public_key
-    )
-
-    signed_swap = await sign_after_checks(
-        swap_b64, payer, intent=intent, quote=quote_result["quote"]
-    )
+    # Manual execution preserves the same pre-fill audit commitment as the
+    # autonomous path. Recovery needs this material in its pending row too.
+    from live_execution import memo
+    from live_execution.commit_log import CommitLog
+    logc = CommitLog(config.STATE_DIR / "commits.json")
+    sealed = logc.seal("buy", dict(kind="buy", mint=output_mint,
+                                   symbol=output_mint, usd=usd_size))
+    try:
+        published = await memo.publish_commit_memo(payer, sealed["hash"])
+        logc.record_memo(sealed["hash"], published["signature"], published["slot"])
+        quote_result = await get_jupiter_quote(
+            output_mint, output_decimals, usd_size, ledger=ledger
+        )
+        swap_b64 = await _build_swap_transaction(
+            quote_result["quote"], user_public_key
+        )
+        signed_swap = await sign_after_checks(
+            swap_b64, payer, intent=intent, quote=quote_result["quote"]
+        )
+    except Exception as exc:
+        logc.fail(sealed["hash"], f"manual buy refused: {type(exc).__name__}")
+        raise ExecutionError(f"manual buy refused: {exc}") from exc
     signature = signed_swap.signature
     blockhash = getattr(signed_swap, "blockhash", "") or ""
 
@@ -1037,6 +1063,9 @@ async def execute_confirmed_trade(
         signature=signature,
         blockhash=blockhash,
         reason="signed; send outcome not yet known",
+        commit_hash=sealed["hash"], commit_nonce=sealed["nonce"],
+        commit_payload=sealed["payload"], commit_sealed_at=sealed.get("sealed_at"),
+        memo_signature=published["signature"], memo_slot=published["slot"],
     )
     log.info(
         "PENDING BUY %s $%.2f sig %s journaled BEFORE send",
@@ -1053,43 +1082,18 @@ async def execute_confirmed_trade(
         reason = f"every rpc refused the transaction: {exc}"
         ledger.settle_pending_buy(
             idempotency_key, "failed", reason=reason)
+        logc.fail(sealed["hash"], reason)
         raise ExecutionError(reason) from exc
-    if not sent:
-        # An ambiguous send is not a definitive rejection: the signed
-        # transaction may have landed. Resolve the LOCAL signature before
-        # declaring failure — same rule as executor._broadcast_and_confirm.
-        # Without this, a real fill stays unjournaled and an operator retry
-        # can double-spend.
-        try:
-            status = await solana.get_signature_status(signature)
-        except Exception as exc:
-            log.warning("signature status lookup failed for %s: %s",
-                        signature[:16], exc)
-            status = None
-        if status is None:
-            raise ExecutionError(
-                "send outcome unresolved (signature not found on-chain)")
-        if status.get("err"):
-            reason = f"landed-failed (fee paid): {status['err']}"
-            ledger.settle_pending_buy(
-                idempotency_key, "failed", reason=reason)
-            raise ExecutionError(reason)
-        if status.get("confirmationStatus") in ("confirmed", "finalized"):
-            conf = {"confirmed": True, "slot": status.get("slot"), "err": None}
-        else:
-            conf = await solana.confirm_signature(signature)
-            if not conf["confirmed"]:
-                raise ExecutionError(
-                    f"not confirmed before timeout: "
-                    f"{conf['err'] or 'unknown'}")
-        sent = signature
-    else:
-        conf = await solana.confirm_signature(sent)
-        if not conf["confirmed"]:
-            raise ExecutionError(
-                f"not confirmed before timeout: "
-                f"{conf['err'] or 'unknown'}")
-    signature = sent
+    # Imported lazily because executor imports this module's quote/signing
+    # helpers. Both entry paths use exactly the same post-send decision.
+    from live_execution.executor import _confirm_sent_swap
+    outcome = await _confirm_sent_swap(signed_swap, sent, logc, sealed)
+    if outcome.status != "filled":
+        if not outcome.unresolved:
+            ledger.settle_pending_buy(idempotency_key, "failed", reason=outcome.reason)
+            logc.fail(sealed["hash"], outcome.reason)
+        raise ExecutionError(outcome.reason)
+    signature = outcome.signature
 
     record = ledger.record_buy(
         idempotency_key=idempotency_key,
@@ -1128,6 +1132,8 @@ if __name__ == "__main__":
     p.add_argument("--decimals", type=int, required=True,
                    help="output token mint decimals (refused if unknown)")
     p.add_argument("--usd", type=float, required=True)
+    p.add_argument("--reference-price-usd", type=float,
+                   help="independent market price required when executing")
     p.add_argument("--propose", action="store_true",
                    help="queue for approval only; print the confirmation id")
     p.add_argument("--confirmation-id", default=None)
@@ -1144,5 +1150,6 @@ if __name__ == "__main__":
             args.mint, args.decimals, args.usd,
             confirmation_id=args.confirmation_id,
             idempotency_key=args.idempotency_key,
+            reference_price_usd=args.reference_price_usd,
         ))
         print(json.dumps(result, indent=2))

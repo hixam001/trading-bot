@@ -41,6 +41,8 @@ export default function MintHistory({
   const listRef = useRef<HTMLDivElement>(null)
   const retryTimer = useRef<number | null>(null)
   const inFlight = useRef(false)
+  const generation = useRef(0)
+  const controller = useRef<AbortController | null>(null)
 
   // Fresh state for the §65 registry (subscribed once, never stale).
   const stateRef = useRef({ events, expanded, cursor, total })
@@ -50,6 +52,9 @@ export default function MintHistory({
     async (offset: number) => {
       if (inFlight.current) return
       inFlight.current = true
+      const requestGeneration = generation.current
+      const abort = new AbortController()
+      controller.current = abort
       if (retryTimer.current) {
         window.clearTimeout(retryTimer.current)
         retryTimer.current = null
@@ -59,9 +64,11 @@ export default function MintHistory({
       try {
         const r = await fetch(
           apiUrl(`/api/mint/${encodeURIComponent(mint)}/history?limit=${PAGE}&offset=${offset}`),
+          { signal: abort.signal, credentials: 'include' },
         )
         if (!r.ok) throw new Error(`HTTP ${r.status}`)
         const body = (await r.json()) as MintHistoryResponse
+        if (abort.signal.aborted || generation.current !== requestGeneration) return
         setTotal(body.total)
         setDone(offset + body.events.length >= body.total)
         setEvents((prev) => {
@@ -72,21 +79,32 @@ export default function MintHistory({
           return [...prev, ...body.events.filter((ev) => !seen.has(ev.id))]
         })
       } catch (e) {
+        if (abort.signal.aborted || generation.current !== requestGeneration) return
         setError(e instanceof Error ? e.message : String(e))
         // §3.3: the retry is automatic, not a dead end.
         if (retryTimer.current) window.clearTimeout(retryTimer.current)
         retryTimer.current = window.setTimeout(() => void fetchPage(offset), RETRY_MS)
       } finally {
-        inFlight.current = false
-        setLoading(false)
+        if (generation.current === requestGeneration) {
+          inFlight.current = false
+          setLoading(false)
+        }
       }
     },
     [mint],
   )
 
   useEffect(() => {
+    setEvents([])
+    setTotal(0)
+    setDone(false)
+    setCursor(0)
+    setExpanded(null)
     void fetchPage(0)
     return () => {
+      generation.current += 1
+      controller.current?.abort()
+      inFlight.current = false
       if (retryTimer.current) window.clearTimeout(retryTimer.current)
     }
   }, [fetchPage])

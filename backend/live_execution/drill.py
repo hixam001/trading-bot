@@ -106,11 +106,12 @@ async def run_drill() -> list:
     except SendRejected as exc:
         step(False, "broadcast", f"every rpc refused: {exc}")
         return steps
-    if not sig:
-        step(False, "broadcast", "every rpc refused")
+    if not sig or sig != str(vtx.signatures[0]):
+        step(False, "broadcast", "missing receipt or signature differs from local transaction")
         return steps
     conf = await confirm_signature(sig, endpoints=[config.DRILL_RPC_URL])
-    if not step(bool(conf.get("confirmed")), "confirm",
+    from live_execution.solana import is_confirmed_success
+    if not step(is_confirmed_success(conf), "confirm",
                 conf.get("err") or ("slot %s" % conf.get("slot"))):
         return steps
 

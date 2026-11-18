@@ -40,13 +40,20 @@ def is_https_request(request: Request) -> bool:
 
 
 def content_security_policy(request: Request) -> str:
+    captcha_hosts = ""
+    if config.CAPTCHA_ENABLED:
+        if config.CAPTCHA_PROVIDER.lower() == "turnstile":
+            captcha_hosts = " https://challenges.cloudflare.com"
+        elif config.CAPTCHA_PROVIDER.lower() == "hcaptcha":
+            captcha_hosts = " https://hcaptcha.com https://*.hcaptcha.com"
     directives = [
         "default-src 'self'",
-        "script-src 'self'",
-        "style-src 'self' 'unsafe-inline'",
+        "script-src 'self'" + captcha_hosts,
+        "style-src 'self' 'unsafe-inline'" + captcha_hosts,
         "img-src 'self' data: https:",
         "font-src 'self' data:",
-        "connect-src 'self' ws: wss:",
+        "connect-src 'self' ws: wss:" + captcha_hosts,
+        "frame-src 'self'" + captcha_hosts,
         "object-src 'none'",
         # A base tag can rewrite every relative URL on the page. The app never
         # needs one, so forbid it outright instead of allowing 'self'.

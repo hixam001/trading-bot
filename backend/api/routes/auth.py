@@ -107,7 +107,8 @@ class SignupRequest(BaseModel):
 @router.get("/challenge")
 async def get_challenge():
     """Generate a server-side proof-of-work bot challenge for clients."""
-    return create_bot_challenge()
+    return dict(create_bot_challenge(), enabled=config.CAPTCHA_ENABLED,
+                provider=config.CAPTCHA_PROVIDER.lower(), site_key=config.CAPTCHA_SITE_KEY)
 
 
 @router.post("/login")
@@ -140,7 +141,8 @@ async def login(req: LoginRequest, request: Request, response: Response):
 
     # Credential check first (mirroring §70 A7):
     # A valid credential always authenticates and clears lockout history.
-    valid = bool(req.token) and hmac.compare_digest(req.token, configured)
+    valid = bool(req.token) and hmac.compare_digest(
+        req.token.encode("utf-8", errors="surrogatepass"), configured.encode("utf-8"))
     if valid:
         # Clear lockout history on successful login
         _clear_auth_failures(client_ip)
@@ -245,7 +247,7 @@ async def get_session(request: Request):
 
     # 1. Check header
     supplied = request.headers.get("X-Admin-Token", "")
-    if supplied and hmac.compare_digest(supplied, configured):
+    if supplied and hmac.compare_digest(supplied.encode("utf-8", errors="surrogatepass"), configured.encode("utf-8")):
         return {
             "authenticated": True,
             "auth_type": "header",

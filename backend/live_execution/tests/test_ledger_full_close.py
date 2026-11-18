@@ -73,7 +73,7 @@ def test_full_close_closes_all_open_buys_of_the_mint(tmp_path):
     assert rec.rule_id == "exit_stop_loss"
 
 
-def test_partial_trim_still_targets_only_oldest_buy(tmp_path):
+def test_partial_trim_reduces_all_open_buys(tmp_path):
     ledger = ExecutionLedger(tmp_path / "exec.json", now_fn=Clock())
     ledger.record_buy("b1", "MINT", 10.0, 5.0, 2.0, "sig", status="confirmed")
     ledger.record_buy("b2", "MINT", 30.0, 10.0, 3.0, "sig", status="confirmed")
@@ -82,9 +82,9 @@ def test_partial_trim_still_targets_only_oldest_buy(tmp_path):
     assert len(opens) == 2                            # both still open
     oldest = next(r for r in opens if r["idempotency_key"] == "b1")
     newest = next(r for r in opens if r["idempotency_key"] == "b2")
-    assert oldest["usd_size"] == pytest.approx(5.0)   # FIFO trim on b1 only
+    assert oldest["usd_size"] == pytest.approx(5.0)   # each lot shrinks proportionally
     assert oldest["tokens_out"] == pytest.approx(2.5)
-    assert newest["usd_size"] == pytest.approx(30.0)  # b2 untouched
+    assert newest["usd_size"] == pytest.approx(15.0)  # complete mint position
 
 
 # --- out-of-band close (2026-08-29, the vanished-position repair) --------------
